@@ -15,9 +15,10 @@ public keys are pinned (threshold 2,
 they ship with the next application release. That does not open the gate
 and needs no sign-off for the closed state: verification stays fail
 closed, the artifact lock is empty, and nothing has been released with
-the keys. Both secret keys are currently held in one 1Password vault of
-one account; independent custody (a second person holding key B) is
-pending and is listed under K.
+the keys. Both secret keys are held in one 1Password vault of one
+account. DeckPilot is a single-maintainer project: there is no second
+person to hold key B, and this is an **accepted risk: single maintainer
+(owner decision 2026-11-21)**, listed under K.
 
 Update 2026-11-21 (privileged plugins): everything needed to distribute
 the five privileged plugins as signed artifacts is implemented **with the
@@ -239,8 +240,10 @@ K. **Known open items** (not blockers for the closed state):
    reachable at run time.)
    Key custody: both production secret keys are held in one 1Password
    vault of one account; threshold 2 protects against one leaked secret
-   or signing job, not against that account. Independent custody needs a
-   second person holding key B (pending, owner action).
+   or signing job, not against that account. There is no independent
+   custody and no second human release reviewer: **accepted risk: single
+   maintainer (owner decision 2026-11-21)**. Release approval follows the
+   protected-tag authority model.
    The key test (`release test-sign`, `test-verify`): confirm that a
    test signature never counts for a release (another trusted comment
    domain; `a_key_test_signature_is_never_a_release_signature`) and that
@@ -320,9 +323,10 @@ L. **Privileged plugins: the checklist for opening the gate.** Review
       only the gate constant and the record's `review` (and, in the
       plugin repository, its copy of the record); the CI of both is green.
    9. **Conditions from item 8 above** (a hardware-backed key,
-      reproducible-build attestation for Git and Docker, independent key
-      custody of K): decide which are required before opening, and record
-      them in the sign-off.
+      reproducible-build attestation for Git and Docker): decide which are
+      required before opening, and record them in the sign-off. Key
+      custody and a second human reviewer are not conditions: accepted
+      risk, single maintainer (owner decision 2026-11-21).
 
    **Recording the outcome.** The reviewer fills in, in the DeckPilot
    draft, `review` of `publisher/privileged-policy.json`:

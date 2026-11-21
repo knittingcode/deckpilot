@@ -308,8 +308,39 @@ fn this_build_s_gate_opens_only_with_the_approved_review() {
 fn the_compiled_gate_refuses_what_the_record_does_not_list() {
     let a = ThrowawayKey::generate();
     let b = ThrowawayKey::generate();
-    let cases: [(&str, &str, &str, Box<dyn Fn(&mut Value)>); 3] = [
+    let cases: [(&str, &str, &str, Box<dyn Fn(&mut Value)>); 6] = [
         ("another version", "workflows", "0.1.2", Box::new(|_| {})),
+        (
+            "a broader permission",
+            "projects",
+            "0.1.1",
+            Box::new(|m| m["permissions"][1]["open"] = json!(true)),
+        ),
+        (
+            "another executable",
+            "git",
+            "0.1.1",
+            Box::new(|m| {
+                m["permissions"][0]["tools"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({
+                        "executable": "docker",
+                        "subcommands": [{"name": "ps"}]
+                    }));
+            }),
+        ),
+        (
+            "another git subcommand",
+            "git",
+            "0.1.1",
+            Box::new(|m| {
+                m["permissions"][0]["tools"][0]["subcommands"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"name": "fetch"}));
+            }),
+        ),
         (
             "an extra construct",
             "workflows",
@@ -358,6 +389,45 @@ fn the_compiled_gate_refuses_what_the_record_does_not_list() {
                     | PublisherError::PrivilegedNotReviewed { .. })
             ),
             "{what}: {result:?}"
+        );
+    }
+}
+
+/// The production gate never admits a privileged release with fewer than
+/// two distinct pinned keys, even exactly the reviewed one: one key with
+/// threshold 1, two keys with threshold 1, threshold 2 with one signature.
+#[test]
+fn the_compiled_gate_needs_two_distinct_keys() {
+    let a = ThrowawayKey::generate();
+    let b = ThrowawayKey::generate();
+    let bytes = PluginDir::new("git", "0.1.1", |_| {}).bundled_rules_package();
+    let claim = claim(&bytes, "deckpilot.git", "0.1.1");
+    let by_a = signed(&a, &bytes, &claim);
+    let by_b = signed(&b, &bytes, &claim);
+    for (signatures, pinned) in [
+        (vec![by_a.clone()], keys(&[&a], 1)),
+        (vec![by_a.clone(), by_b.clone()], keys(&[&a, &b], 1)),
+        (vec![by_a.clone()], keys(&[&a, &b], 2)),
+    ] {
+        let result = verify(
+            &bytes,
+            &signatures,
+            &pinned,
+            &claim,
+            PrivilegedGate::compiled(),
+            None,
+            &[],
+            &host(),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(PublisherError::PrivilegedGateClosed { .. }
+                    | PublisherError::PrivilegedNotReviewed { .. }
+                    | PublisherError::BelowThreshold { .. })
+            ),
+            "threshold {}: {result:?}",
+            pinned.threshold
         );
     }
 }

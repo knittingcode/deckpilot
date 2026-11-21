@@ -1826,6 +1826,49 @@ fn the_opening_path_needs_the_review_two_keys_and_exactly_the_policy() {
     );
 }
 
+/// With the production gate (pending or approved), a registry delivery of
+/// exactly the reviewed release, signed by two distinct pinned keys, is
+/// refused (X12: privileged plugins only as bundled copies) and raises no
+/// floor.
+#[test]
+fn the_compiled_gate_refuses_every_registry_delivery_of_a_privileged_plugin() {
+    let env = Env::new();
+    let second = Key::new(env.root.path(), "second.key");
+    let official = env.official_with(keys(&[&env.key, &second], 2, &[]), Vec::new());
+    assert_eq!(official.gate, compiled_gate());
+    for name in ["git", "docker", "projects", "workflows", "workspace"] {
+        let plugin = format!("deckpilot.{name}");
+        let package = raw_package(&real_files(name, "0.1.1", |_| {}));
+        let expected = expected_as(&plugin, &package, "0.1.1");
+        let signatures = [
+            signed_as(&env.key, &plugin, &package, "0.1.1"),
+            signed_as(&second, &plugin, &package, "0.1.1"),
+        ];
+        let host = host();
+        let result = official.verify(&Delivery {
+            expected: &expected,
+            package: &package,
+            signatures: &signatures,
+            pin: None,
+            host: Some(&host),
+            now: Utc::now(),
+        });
+        assert!(
+            matches!(
+                result,
+                Err(Refusal::BundledOnly { .. }
+                    | Refusal::Publisher(PublisherError::PrivilegedGateClosed { .. }))
+            ),
+            "{plugin}: {result:?}"
+        );
+        assert!(official.floor(&pid(&plugin)).is_none(), "{plugin}");
+        assert_eq!(
+            env.audit().last().unwrap().record.outcome,
+            publisher::AuditOutcome::Refused
+        );
+    }
+}
+
 /// What an application build does with a reviewed privileged artifact
 /// (plugins/first-party/artifacts.sh): `release verify` with the gate open
 /// (here in the test), then the verified files unpacked as the bundled

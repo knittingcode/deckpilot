@@ -553,9 +553,10 @@ exactly these ids, threshold 2, publisher `deckpilot`, distinct.
 currently held in **one 1Password vault of one account**, and stored as
 the environment secrets of `official-release`. Threshold 2 therefore
 protects against a leak of one GitHub secret or one signing job, but not
-yet against the compromise of that one account: **independent custody
-requires a second person holding key B, which is pending.** Until then,
-two signatures prove two keys, not two people.
+against the compromise of that one account. DeckPilot is a
+single-maintainer project, so there is no independent custody: **accepted
+risk: single maintainer (owner decision 2026-11-21).** Two signatures
+prove two keys, not two people.
 
 **Key test.** The plugin repository's `official-test-sign.yml` (manual,
 protected by the `official-release` environment) signs a fixed message
