@@ -134,6 +134,78 @@ pub fn key_id(public_key_b64: &str) -> Option<String> {
 /// replace them.
 pub const PINNED_KEYS: &str = include_str!("../publisher/first-party.json");
 
+/// The minisign key ids of the production first-party publisher keys the
+/// owner made on 2026-11-21 (key A, key B), as [`PINNED_KEYS`] pins them
+/// with threshold 2. A test holds the compiled keys to exactly these.
+pub const PRODUCTION_KEY_IDS: [&str; 2] = ["BDCDC80985EB60B5", "8C3C4E42700FA702"];
+
+/// Prefix of the trusted comment of a **key test** signature
+/// ([`test_comment`]): a separate domain from [`COMMENT_PREFIX`], so a test
+/// signature never counts for a release, whatever bytes it covers.
+pub const TEST_COMMENT_PREFIX: &str = "deckpilot-publisher-test v1 role:test";
+
+/// Largest key test run number.
+pub const MAX_TEST_RUN: u32 = 9999;
+
+/// The fixed message a key test signs for run `run`
+/// (`deckpilot.publisher-test--v<run>`): text, never a `.dpplugin` (not a
+/// ZIP archive, no manifest), the same bytes on every machine.
+pub fn test_message(run: u32) -> Vec<u8> {
+    format!(
+        "deckpilot-publisher-test v1 run:{run}\n\
+         This message tests the DeckPilot first-party publisher keys. It is not a plugin \
+         package, and a signature of it is never a release signature.\n"
+    )
+    .into_bytes()
+}
+
+/// The file name of the key test message of run `run`; its signature files
+/// are `<this>.<KEYID>.minisig` ([`signature_file_name`]).
+pub fn test_message_file_name(run: u32) -> String {
+    format!("deckpilot-publisher-test-v{run}.txt")
+}
+
+/// `deckpilot-publisher-test v1 role:test run:<run> sha256:<hex>
+/// size:<bytes>`: the trusted comment of a key test signature of
+/// [`test_message`].
+pub fn test_comment(run: u32, message: &PackageDigest) -> String {
+    format!(
+        "{TEST_COMMENT_PREFIX} run:{run} sha256:{} size:{}",
+        message.sha256, message.size
+    )
+}
+
+/// Checks a key test (`release test-verify`): `signatures` of
+/// [`test_message`] `run` by a threshold of distinct, current `keys`, each
+/// with exactly [`test_comment`]. Proves that whoever made them holds the
+/// secret keys of `keys`. It is the only check that accepts a test
+/// signature; [`verify_release`] never does (its comment is another
+/// domain).
+pub fn verify_test_signatures(
+    signatures: &[SignatureFile],
+    keys: &PublisherKeys,
+    run: u32,
+) -> Result<Signatures, PublisherError> {
+    keys.validate().map_err(PublisherError::Keys)?;
+    if !keys.is_provisioned() {
+        return Err(PublisherError::NotProvisioned);
+    }
+    if run == 0 || run > MAX_TEST_RUN {
+        return Err(PublisherError::Package(format!(
+            "test run {run}: 1 to {MAX_TEST_RUN}"
+        )));
+    }
+    if signatures.len() > MAX_SIGNATURE_FILES {
+        return Err(PublisherError::TooManySignatures {
+            count: signatures.len(),
+        });
+    }
+    let message = test_message(run);
+    let comment = test_comment(run, &digest_of(&message));
+    let checks = report_with_comment(&message, signatures, keys, &comment)?;
+    threshold_of(keys, checks)
+}
+
 /// `deckpilot-publisher v1 role:release id:<id> version:<version>
 /// sha256:<hex> size:<bytes>`: what a release signature's trusted comment
 /// must be, byte for byte.
@@ -147,8 +219,9 @@ pub fn release_comment(id: &PluginId, version: &Version, package: &PackageDigest
 /// `publisher/first-party.json`: the first-party publisher role.
 ///
 /// `keys` empty means **not provisioned**: the file is valid, but every
-/// verification fails with [`PublisherError::NotProvisioned`]. That is the
-/// state until the owner creates the production publisher key.
+/// verification fails with [`PublisherError::NotProvisioned`]. The
+/// production keys were provisioned on 2026-11-21 ([`PRODUCTION_KEY_IDS`],
+/// threshold 2); an empty set is still refused, fail closed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PublisherKeys {
@@ -697,6 +770,14 @@ pub fn check_signatures(
     claim: &ReleaseClaim,
 ) -> Result<Signatures, PublisherError> {
     let checks = signature_report(package, files, keys, claim)?;
+    threshold_of(keys, checks)
+}
+
+/// The counted keys of `checks`, refused below `keys.threshold`.
+fn threshold_of(
+    keys: &PublisherKeys,
+    checks: Vec<SignatureCheck>,
+) -> Result<Signatures, PublisherError> {
     let signers: Vec<String> = checks
         .iter()
         .filter_map(|c| match c {
@@ -734,11 +815,21 @@ pub fn signature_report(
     keys: &PublisherKeys,
     claim: &ReleaseClaim,
 ) -> Result<Vec<SignatureCheck>, PublisherError> {
+    let comment = release_comment(&claim.id, &claim.version, &claim.package);
+    report_with_comment(package, files, keys, &comment)
+}
+
+/// [`signature_report`] for the trusted comment `comment`.
+fn report_with_comment(
+    package: &[u8],
+    files: &[SignatureFile],
+    keys: &PublisherKeys,
+    comment: &str,
+) -> Result<Vec<SignatureCheck>, PublisherError> {
     keys.validate().map_err(PublisherError::Keys)?;
     if files.len() > MAX_SIGNATURE_FILES {
         return Err(PublisherError::TooManySignatures { count: files.len() });
     }
-    let comment = release_comment(&claim.id, &claim.version, &claim.package);
     let by_id = |list: &[String]| -> BTreeMap<String, String> {
         list.iter()
             .filter_map(|k| key_id(k).map(|id| (id, k.clone())))
@@ -749,7 +840,7 @@ pub fn signature_report(
     let mut counted = BTreeSet::new();
     let mut checks = Vec::new();
     for file in files {
-        let check = match check_file(package, file, &current, &revoked, &counted, &comment)? {
+        let check = match check_file(package, file, &current, &revoked, &counted, comment)? {
             Ok(print) => {
                 counted.insert(file.key_id.clone());
                 SignatureCheck::Counted {
@@ -1056,12 +1147,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pinned_keys_are_valid_and_not_provisioned() {
-        // No production publisher key exists yet (the owner creates it).
-        // When one is pinned, this test changes with it in review.
+    fn the_pinned_keys_are_the_two_production_keys() {
+        // The production keys of 2026-11-21 (docs/marketplace/
+        // publisher-signature.md, "Provisioning"): exactly key A and key B,
+        // distinct, threshold 2, publisher deckpilot, nothing revoked.
+        // Changing them changes this test in review.
         let keys = PublisherKeys::pinned().unwrap();
-        assert!(!keys.is_provisioned());
-        assert_eq!(keys.fingerprints(), Vec::<String>::new());
+        assert!(keys.is_provisioned());
+        assert_eq!(keys.publisher, FIRST_PARTY_PUBLISHER);
+        assert_eq!(keys.publisher_keys_version, KEYS_VERSION);
+        assert_eq!(keys.threshold, 2);
+        assert_eq!(keys.keys.len(), 2);
+        assert_eq!(keys.revoked_keys, Vec::<String>::new());
+        assert_eq!(keys.signature_key_ids(), PRODUCTION_KEY_IDS);
+        assert_ne!(PRODUCTION_KEY_IDS[0], PRODUCTION_KEY_IDS[1]);
+        let identities: BTreeSet<[u8; 32]> =
+            keys.keys.iter().map(|k| key_identity(k).unwrap()).collect();
+        assert_eq!(identities.len(), 2, "two distinct Ed25519 keys");
+        // As docs/marketplace/publisher-signature.md lists them.
+        assert_eq!(
+            keys.fingerprints(),
+            ["8f3f9b211a1f2bad", "98a1f76b2dddce87"]
+        );
+        // The base64 public key files (`<key>.pub` with its newline), as the
+        // key ceremony recorded them.
+        let file_sha256: Vec<String> = keys
+            .keys
+            .iter()
+            .map(|k| sha256(format!("{k}\n").as_bytes()).to_string())
+            .collect();
+        assert_eq!(
+            file_sha256,
+            [
+                "16bdfa14a38950fb9d767724733a0ab577bce3f459c690fe399c7a3a0501fc93",
+                "4d7127c66e16e6b6040f8b172f9aa5267f9b935532732615a8bbfd07033c3f14",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_comments_are_another_domain() {
+        let message = test_message(1);
+        let comment = test_comment(1, &digest_of(&message));
+        assert!(comment.starts_with("deckpilot-publisher-test v1 role:test run:1 sha256:"));
+        assert!(!comment.starts_with(COMMENT_PREFIX));
+        assert!(!comment.starts_with(sig::COMMENT_PREFIX));
+        // Fixed bytes, and never a package.
+        assert_eq!(message, test_message(1));
+        assert_ne!(message, test_message(2));
+        assert!(!message.starts_with(b"PK"));
+        assert!(read_archive(&message, &Limits::default()).is_err());
+        assert_eq!(test_message_file_name(7), "deckpilot-publisher-test-v7.txt");
     }
 
     #[test]

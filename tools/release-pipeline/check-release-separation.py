@@ -81,11 +81,12 @@ PUBLISHING_COMMAND = re.compile(
     r"|\bgit\s+push\b[^\n]*\bgh-pages\b"
 )
 
-# deckpilot-registry subcommands that write or sign; verify-site, help and
-# `release verify` (the publisher signature check a build runs) only read.
+# deckpilot-registry subcommands that write or sign (`release test-sign`, the
+# publisher key test, included); verify-site, help and `release verify` (the
+# publisher signature check a build runs) only read.
 REGISTRY_COMMAND = re.compile(
     r"\bdeckpilot-registry\b[^\n]*?\s(keys|keyset|package|publisher|add-version|yank|revoke"
-    r"|lift-revocation|build-index|sign-index|timestamp|release\s+sign)\b"
+    r"|lift-revocation|build-index|sign-index|timestamp|release\s+(?:test-)?sign)\b"
     r"|\bcargo\s+run\b[^\n]*deckpilot-plugin-registry[^\n]*\s--\s+(?!verify-site\b|help\b)\S"
 )
 # A plugin package copied, moved or mapped into the application bundle.

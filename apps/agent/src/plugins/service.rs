@@ -1314,9 +1314,11 @@ impl PluginService {
     ) -> Result<deckpilot_plugin_registry::InstallTarget, IpcError> {
         // An official plugin (`deckpilot.*`, the bundled ones included)
         // comes from a registry only as a first-party release signed by the
-        // publisher keys compiled into this agent (`official.rs`); without
-        // them (none are provisioned yet) it is refused before any download
-        // and a bundled one comes only from the application bundle.
+        // publisher keys compiled into this agent (`official.rs`, the two
+        // production keys, threshold 2); when this agent cannot verify one
+        // (no key pinned, an invalid lock, unreadable floors) it is refused
+        // before any download and a bundled one comes only from the
+        // application bundle.
         if deckpilot_plugin_store::is_first_party(id)
             && let Err(why) = self.official.ready()
         {

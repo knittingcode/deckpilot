@@ -346,28 +346,54 @@ impl VerdictSource for NoVerdicts {
 // ------------------------------------------------------------ the keys
 
 #[test]
-fn this_build_cannot_verify_any_official_release() {
-    // No publisher key is pinned (the owner provisions it): every official
-    // install is refused before any download, and a verification attempt
-    // is refused and audited.
+fn this_build_pins_the_production_keys_and_counts_no_other() {
+    // The two production publisher keys are pinned (threshold 2): this
+    // build can verify an official release before any download, but only
+    // one both production keys signed. A release signed by any other key
+    // is refused and audited, and raises no floor.
     let env = Env::new();
     let official = Official::open(&env.state());
-    assert!(
-        official
-            .ready()
-            .unwrap_err()
-            .contains("no first-party publisher key"),
-        "{:?}",
-        official.ready()
-    );
+    official.ready().unwrap();
+    let (ids, threshold) = official.signature_key_ids().unwrap();
+    assert_eq!(ids, publisher::PRODUCTION_KEY_IDS);
+    assert_eq!(threshold, 2);
     let release = Release::new(&env, "0.1.1", &notifications());
     let host = host();
     let refused = refusal(official.verify(&release.delivery(None, &host)));
-    assert_eq!(refused, Refusal::Publisher(PublisherError::NotProvisioned));
+    assert!(
+        matches!(
+            &refused,
+            Refusal::Publisher(PublisherError::BelowThreshold {
+                valid: 0,
+                threshold: 2,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
     let audit = env.audit();
     assert_eq!(audit.len(), 1);
     assert_eq!(audit[0].record.outcome, publisher::AuditOutcome::Refused);
     assert!(official.floor(&id()).is_none());
+    // An empty key set is still refused before any download (fail closed).
+    let empty = PublisherKeys {
+        publisher_keys_version: publisher::KEYS_VERSION,
+        publisher: "deckpilot".into(),
+        keys: Vec::new(),
+        threshold: 1,
+        revoked_keys: Vec::new(),
+    };
+    let unprovisioned = env.official_with(empty, Vec::new());
+    assert!(
+        unprovisioned
+            .ready()
+            .unwrap_err()
+            .contains("no first-party publisher key"),
+        "{:?}",
+        unprovisioned.ready()
+    );
+    let refused = refusal(unprovisioned.verify(&release.delivery(None, &host)));
+    assert_eq!(refused, Refusal::Publisher(PublisherError::NotProvisioned));
 }
 
 #[test]

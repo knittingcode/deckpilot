@@ -2067,7 +2067,7 @@ bundle on disk. A registry compromise delivering a privileged
 package (`BUNDLED_PLUGIN_IDS` included) only as a first-party release
 signed by the publisher keys compiled into the agent, and never with these
 kinds ([publisher-signature.md](publisher-signature.md#the-agent-installing-and-updating-official-plugins);
-no key is pinned yet, so it serves none). Updates that need these kinds
+two production keys are pinned since 2026-11-21, and nothing is signed with them yet). Updates that need these kinds
 ride app releases only.
 
 *Residual.* The trust is DeckPilot's release pipeline. A compromised
