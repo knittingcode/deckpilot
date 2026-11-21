@@ -1354,6 +1354,7 @@ dependencies = [
  "chrono",
  "deckpilot-plugin-manifest",
  "deckpilot-plugin-package",
+ "deckpilot-plugin-registry",
  "deckpilot-update",
  "flate2",
  "jsonschema",

@@ -38,6 +38,10 @@ publish = ["dep:minisign", "dep:zeroize"]
 # builds always do (`roots::choose`). Enabled by the agent's `test-hooks`;
 # never part of a release build.
 test-hooks = []
+# PrivilegedGate::open_for_tests: an open privileged-kinds gate for tests.
+# Enabled only through `[dev-dependencies]` (this crate's own below, the
+# agent's), so never in a library, binary or release build.
+test-privileged-gate = []
 
 # build.rs checks DECKPILOT_REGISTRY_ROOT_PUBKEYS with src/roots_check.rs.
 [build-dependencies]
@@ -67,6 +71,8 @@ required-features = ["publish"]
 name = "registry_roots"
 
 [dev-dependencies]
+# This crate itself with the test-only open gate, for its integration tests.
+deckpilot-plugin-registry = { path = ".", features = ["test-privileged-gate"] }
 # Signs test documents with throwaway keys generated per test.
 minisign = "0.10"
 # Validates the documents the tests sign against the bundled #191 schemas.

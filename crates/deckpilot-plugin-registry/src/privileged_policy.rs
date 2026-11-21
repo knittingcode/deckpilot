@@ -85,9 +85,39 @@ pub const PROCESS_ALLOW_LIST: [(&str, &str); 2] =
 pub enum PrivilegedGate<'a> {
     /// Every privileged usage is refused ([`PublisherError::PrivilegedGateClosed`]).
     Closed,
-    /// Exactly what the policy lists is admitted. Outside this module only
-    /// tests construct it; production code takes [`PrivilegedGate::compiled`].
-    Open(&'a PrivilegedPolicy),
+    /// Exactly what the policy lists is admitted. [`ReviewedGate`] cannot
+    /// be built outside this module: an open gate comes only from
+    /// [`PrivilegedGate::compiled`] or, in tests,
+    /// [`PrivilegedGate::open_for_tests`] (feature `test-privileged-gate`,
+    /// a dev-dependency feature only).
+    Open(ReviewedGate<'a>),
+}
+
+/// The policy an open gate admits. Its field is private, so no code outside
+/// this module can make one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReviewedGate<'a> {
+    policy: &'a PrivilegedPolicy,
+}
+
+impl<'a> ReviewedGate<'a> {
+    /// The policy this open gate admits.
+    pub fn policy(&self) -> &'a PrivilegedPolicy {
+        self.policy
+    }
+}
+
+#[cfg(any(test, feature = "test-privileged-gate"))]
+impl<'a> PrivilegedGate<'a> {
+    /// **Tests only.** An open gate for `policy`, whatever
+    /// [`PRIVILEGED_GATE_OPEN`] says. Compiled only for this crate's unit
+    /// tests and with the feature `test-privileged-gate`, which only
+    /// `[dev-dependencies]` enable (this crate's own, the agent's): never in
+    /// a release build. `tests/privileged.rs`
+    /// (`only_tests_construct_an_open_gate`) refuses any production use.
+    pub fn open_for_tests(policy: &'a PrivilegedPolicy) -> Self {
+        Self::Open(ReviewedGate { policy })
+    }
 }
 
 impl PrivilegedGate<'static> {
@@ -100,7 +130,7 @@ impl PrivilegedGate<'static> {
             return Self::Closed;
         }
         match compiled_policy() {
-            Ok(policy) if policy.is_approved() => Self::Open(policy),
+            Ok(policy) if policy.is_approved() => Self::Open(ReviewedGate { policy }),
             _ => Self::Closed,
         }
     }
@@ -141,6 +171,21 @@ pub struct Review {
     pub outcome: ReviewOutcome,
     /// Where the review is recorded (the sign-off row and its report).
     pub record: String,
+}
+
+impl Review {
+    /// An approved sign-off, all of it: the outcome `approved`, a reviewer
+    /// named (not empty, not a `pending…` placeholder), a `YYYY-MM-DD`
+    /// date and a record. Anything less opens nothing, whatever the
+    /// outcome says.
+    pub fn is_approved(&self) -> bool {
+        let reviewer = self.reviewer.trim();
+        self.outcome == ReviewOutcome::Approved
+            && !reviewer.is_empty()
+            && !reviewer.to_ascii_lowercase().starts_with("pending")
+            && is_date(self.date.trim())
+            && !self.record.trim().is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,9 +238,7 @@ impl PrivilegedPolicy {
 
     /// Whether the review is recorded and approved.
     pub fn is_approved(&self) -> bool {
-        self.review
-            .as_ref()
-            .is_some_and(|r| r.outcome == ReviewOutcome::Approved)
+        self.review.as_ref().is_some_and(Review::is_approved)
     }
 
     /// The document's rules: version 1, `minThreshold` at least
@@ -402,11 +445,12 @@ pub fn check<'a>(
     if usages.is_empty() {
         return Ok(Privileged::None);
     }
-    let PrivilegedGate::Open(policy) = gate else {
+    let PrivilegedGate::Open(reviewed) = gate else {
         return Err(PublisherError::PrivilegedGateClosed {
             usages: usages.into_iter().map(|(path, _)| path).collect(),
         });
     };
+    let policy = reviewed.policy();
     let refuse = |reason: String| PublisherError::PrivilegedNotReviewed {
         id: id.to_string(),
         version: version.to_string(),
@@ -565,6 +609,88 @@ mod tests {
         policy
     }
 
+    /// An approval opens only when the whole sign-off is there: a named
+    /// reviewer (not a `pending` placeholder), a date and a record.
+    #[test]
+    fn an_approval_needs_a_named_reviewer_a_date_and_a_record() {
+        let review = |reviewer: &str, date: &str, record: &str| Review {
+            reviewer: reviewer.into(),
+            date: date.into(),
+            outcome: ReviewOutcome::Approved,
+            record: record.into(),
+        };
+        assert!(review("A. Reviewer", "2026-11-22", "report").is_approved());
+        for refused in [
+            review("", "2026-11-22", "report"),
+            review("   ", "2026-11-22", "report"),
+            review("pending: the independent reviewer", "2026-11-22", "report"),
+            review("Pending", "2026-11-22", "report"),
+            review("A. Reviewer", "", "report"),
+            review("A. Reviewer", "22.11.2026", "report"),
+            review("A. Reviewer", "2026-11-22", ""),
+            review("A. Reviewer", "2026-11-22", "  "),
+            Review {
+                outcome: ReviewOutcome::Pending,
+                ..review("A. Reviewer", "2026-11-22", "report")
+            },
+        ] {
+            assert!(!refused.is_approved(), "{refused:?}");
+            let mut policy = compiled_policy().unwrap().clone();
+            policy.review = Some(refused);
+            assert!(!policy.is_approved());
+        }
+        // A missing date or record does not even parse.
+        for review in [
+            r#"{"reviewer": "A. Reviewer", "outcome": "approved", "record": "x"}"#,
+            r#"{"reviewer": "A. Reviewer", "date": "2026-11-22", "outcome": "approved"}"#,
+        ] {
+            let mut doc: Value = serde_json::from_str(POLICY_JSON).unwrap();
+            doc["review"] = serde_json::from_str(review).unwrap();
+            assert!(PrivilegedPolicy::from_json(&serde_json::to_vec(&doc).unwrap()).is_err());
+        }
+    }
+
+    /// The record's `review` is the last row of the Sign-off table in
+    /// docs/marketplace/publisher-review-request.md (reviewer, date,
+    /// outcome), and no review means an empty row: the two are changed
+    /// together, by the reviewer.
+    #[test]
+    fn the_review_is_the_last_sign_off_row() {
+        let doc = include_str!("../../../docs/marketplace/publisher-review-request.md");
+        let table = doc
+            .split("## Sign-off")
+            .nth(1)
+            .expect("the review request has a Sign-off section");
+        let row = table
+            .lines()
+            .take_while(|l| l.trim().is_empty() || l.trim_start().starts_with('|'))
+            .filter(|l| l.trim_start().starts_with('|'))
+            .last()
+            .expect("the Sign-off table has a row");
+        let cells: Vec<&str> = row
+            .trim()
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .collect();
+        assert!(cells.len() >= 3, "{row}");
+        let policy = compiled_policy().unwrap();
+        match &policy.review {
+            None => assert_eq!(&cells[..3], ["", "", ""], "{row}"),
+            Some(review) => {
+                let outcome = match review.outcome {
+                    ReviewOutcome::Pending => "pending",
+                    ReviewOutcome::Approved => "approved",
+                };
+                assert_eq!(
+                    &cells[..3],
+                    [review.reviewer.as_str(), review.date.as_str(), outcome],
+                    "{row}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_gate_is_closed_and_the_policy_records_no_review() {
         // Opening the gate changes these assertions in review.
@@ -597,7 +723,7 @@ mod tests {
             let name = plugin.id.as_str().strip_prefix("deckpilot.").unwrap();
             let manifest = at_version(name, &plugin.version.to_string());
             let found = check(
-                PrivilegedGate::Open(&policy),
+                PrivilegedGate::open_for_tests(&policy),
                 &manifest,
                 &plugin.id,
                 &plugin.version,
@@ -750,7 +876,7 @@ mod tests {
     #[allow(clippy::too_many_lines)] // one case after the other
     fn open_admits_exactly_the_record_and_nothing_more() {
         let policy = approved();
-        let open = PrivilegedGate::Open(&policy);
+        let open = PrivilegedGate::open_for_tests(&policy);
         let git = PluginId::parse("deckpilot.git").unwrap();
         let v011 = Version::new(0, 1, 1);
         let edit = |f: &dyn Fn(&mut Value)| {
@@ -856,7 +982,7 @@ mod tests {
         };
         assert!(matches!(
             check(
-                PrivilegedGate::Open(&policy_without),
+                PrivilegedGate::open_for_tests(&policy_without),
                 &edit(&|_| {}),
                 &git,
                 &v011
@@ -867,20 +993,30 @@ mod tests {
         let mut pending = approved();
         pending.review.as_mut().unwrap().outcome = ReviewOutcome::Pending;
         assert!(matches!(
-            check(PrivilegedGate::Open(&pending), &edit(&|_| {}), &git, &v011),
+            check(PrivilegedGate::open_for_tests(&pending), &edit(&|_| {}), &git, &v011),
             Err(PublisherError::PrivilegedNotReviewed { reason, .. }) if reason.contains("no approved")
         ));
         let mut none = approved();
         none.review = None;
         assert!(matches!(
-            check(PrivilegedGate::Open(&none), &edit(&|_| {}), &git, &v011),
+            check(
+                PrivilegedGate::open_for_tests(&none),
+                &edit(&|_| {}),
+                &git,
+                &v011
+            ),
             Err(PublisherError::PrivilegedNotReviewed { .. })
         ));
         // An invalid policy opens nothing.
         let mut invalid = approved();
         invalid.min_threshold = 1;
         assert!(matches!(
-            check(PrivilegedGate::Open(&invalid), &edit(&|_| {}), &git, &v011),
+            check(
+                PrivilegedGate::open_for_tests(&invalid),
+                &edit(&|_| {}),
+                &git,
+                &v011
+            ),
             Err(PublisherError::PrivilegedNotReviewed { .. })
         ));
         // A manifest that does not parse never reaches the policy.

@@ -1527,12 +1527,13 @@ fn check_artifact_entry(
         Err(_) => false,
     };
     if gated || PRIVILEGED.contains(&id) {
-        let PrivilegedGate::Open(policy) = gate else {
+        let PrivilegedGate::Open(reviewed) = gate else {
             return Err(format!(
                 "{id} declares plugin API 1.9 privileged kinds: the gate is closed, it is built \
                  from source"
             ));
         };
+        let policy = reviewed.policy();
         if !policy.is_approved() {
             return Err(format!(
                 "{id} declares plugin API 1.9 privileged kinds: the privileged policy records no \
@@ -1830,18 +1831,18 @@ fn a_privileged_artifact_entry_needs_the_open_gate_and_the_reviewed_version() {
         check_bundled(&plugins, &lock, &two, &first_party_dir(), gate)
     };
     for id in PRIVILEGED {
-        check(id, "0.1.1", PrivilegedGate::Open(&approved)).unwrap();
+        check(id, "0.1.1", PrivilegedGate::open_for_tests(&approved)).unwrap();
         for (version, gate, expected) in [
             ("0.1.1", PrivilegedGate::Closed, "the gate is closed"),
             ("0.1.1", PrivilegedGate::compiled(), "the gate is closed"),
             (
                 "0.1.1",
-                PrivilegedGate::Open(&pending),
+                PrivilegedGate::open_for_tests(&pending),
                 "no approved review",
             ),
             (
                 "0.1.2",
-                PrivilegedGate::Open(&approved),
+                PrivilegedGate::open_for_tests(&approved),
                 "reviewed 0.1.1 only",
             ),
         ] {
@@ -1852,7 +1853,12 @@ fn a_privileged_artifact_entry_needs_the_open_gate_and_the_reviewed_version() {
     // A privileged plugin the policy does not list.
     let mut without = approved.clone();
     without.plugins.retain(|p| p.id.as_str() != "deckpilot.git");
-    let error = check("deckpilot.git", "0.1.1", PrivilegedGate::Open(&without)).unwrap_err();
+    let error = check(
+        "deckpilot.git",
+        "0.1.1",
+        PrivilegedGate::open_for_tests(&without),
+    )
+    .unwrap_err();
     assert!(error.contains("does not list"), "{error}");
 }
 
