@@ -15,23 +15,38 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-21
+
 ### Security
 
-- Official plugins (`deckpilot.*`) from a plugin registry are installed or
-  updated only as first-party releases signed by the DeckPilot publisher
-  key built into the agent, on top of the registry's own signatures, with
-  a rollback floor per plugin, revocations checked at every start and a
-  hash-chained audit log; a verified signature grants no permission.
-  Revocations also apply at enable, every run and rollback, and fail
-  closed when the agent has no record of a release; the releases
-  DeckPilot shipped are compiled-in minimum versions; module migrations
-  derive grants only for the copy shipped with the app. The bundled
-  plugins keep coming from the application.
-- The two production first-party publisher public keys (key ids
-  `BDCDC80985EB60B5` and `8C3C4E42700FA702`) are pinned with a threshold of
-  two: a first-party release counts only when both keys signed it. The
-  keys ship with the next app release; nothing has been released with them
-  yet, and the privileged plugin kinds stay refused.
+- Official plugins come only from DeckPilot. An official plugin
+  (`deckpilot.*`) that the Marketplace offers is installed or updated only
+  as a DeckPilot release signed by **both** production publisher keys
+  built into the app (key ids `BDCDC80985EB60B5` and `8C3C4E42700FA702`,
+  threshold 2), on top of the registry's own signatures. A release signed
+  by only one key, by an unknown or revoked key, or delivered with a
+  missing or altered signature is refused. A valid signature grants no
+  permission: the plugin still asks for its permissions as before.
+- Rollback protection for official plugins: DeckPilot never installs an
+  older official release than one it has already verified or shipped
+  with the app, and the same version only with the same files. Revoked
+  releases are refused at install, enable, every run and rollback, and an
+  installed copy that is revoked or cannot be verified is set aside with
+  the reason shown. Verifications are recorded in a tamper-evident audit
+  log.
+- The privileged gate stays closed. Official plugins that run processes
+  or reach into projects, files or the app's own views (Docker, Git,
+  Projects, Workflows and Workspace) are accepted only as the copies
+  bundled with the app, never from the Marketplace, whatever their
+  signature.
+
+### Changed
+
+- The nine bundled plugins are unchanged: the same versions and the same
+  files as in 0.10.0, still built from this repository and trusted by the
+  pins compiled into the app. The plugin API stays 1.9. Nothing has been
+  published with the new publisher keys yet; this release is what brings
+  them to installations.
 
 ## [0.10.0] - 2026-11-21
 
