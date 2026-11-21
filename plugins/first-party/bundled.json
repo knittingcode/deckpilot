@@ -1,14 +1,19 @@
 {
   "$comment": "The first-party plugins the application bundles (plugins/first-party/README.md). The built-in modules that moved here are removed from the app (docs/marketplace/module-migration.md §9, §11). A `default`-class plugin is seeded on every computer, fresh or upgraded, unless the user removed or disabled it; a `migration`-class plugin is installed only by the migration engine. The built-in's action types are routed to either only once ACTION_ALIASES lists them and the migration is cut over.",
   "plugins": [
-    {"id": "deckpilot.docker", "version": "0.1.1", "class": "migration", "source": "artifact"},
-    {"id": "deckpilot.git", "version": "0.1.1", "class": "migration", "source": "artifact"},
-    {"id": "deckpilot.github", "version": "0.2.1", "class": "migration", "source": "artifact"},
-    {"id": "deckpilot.gitlab", "version": "0.1.2", "class": "migration", "source": "artifact"},
-    {"id": "deckpilot.jira", "version": "0.1.2", "class": "migration", "source": "artifact"},
-    {"id": "deckpilot.notifications", "version": "0.1.2", "class": "default", "source": "artifact"},
-    {"id": "deckpilot.projects", "version": "0.1.1", "class": "migration", "source": "artifact"},
-    {"id": "deckpilot.workflows", "version": "0.1.1", "class": "default", "source": "artifact"},
-    {"id": "deckpilot.workspace", "version": "0.1.1", "class": "migration", "source": "artifact"}
+    { "id": "deckpilot.docker", "version": "0.1.1", "class": "migration", "source": "artifact" },
+    { "id": "deckpilot.git", "version": "0.1.1", "class": "migration", "source": "artifact" },
+    { "id": "deckpilot.github", "version": "0.2.1", "class": "migration", "source": "artifact" },
+    { "id": "deckpilot.gitlab", "version": "0.1.2", "class": "migration", "source": "artifact" },
+    { "id": "deckpilot.jira", "version": "0.1.2", "class": "migration", "source": "artifact" },
+    {
+      "id": "deckpilot.notifications",
+      "version": "0.1.2",
+      "class": "default",
+      "source": "artifact"
+    },
+    { "id": "deckpilot.projects", "version": "0.1.1", "class": "migration", "source": "artifact" },
+    { "id": "deckpilot.workflows", "version": "0.1.1", "class": "default", "source": "artifact" },
+    { "id": "deckpilot.workspace", "version": "0.1.1", "class": "migration", "source": "artifact" }
   ]
 }
