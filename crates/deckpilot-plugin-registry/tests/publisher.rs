@@ -17,7 +17,8 @@ use deckpilot_plugin_registry::publish::{Io, run};
 use deckpilot_plugin_registry::publisher::{
     AuditOutcome, AuditRecord, MAX_SIGNATURE_FILES, PublisherError, PublisherKeys, ReleaseClaim,
     ReleaseFloor, ReleasePolicy, RevokedRelease, SignatureCheck, SignatureFile, digest_of,
-    is_key_id, key_id_in_file_name, release_comment, signature_file_name, verify_release,
+    is_key_id, key_id_in_file_name, release_comment, signature_file_name, test_comment,
+    test_message, verify_release, verify_test_signatures,
 };
 use deckpilot_plugin_registry::sig::index_comment;
 use tempfile::TempDir;
@@ -150,13 +151,106 @@ fn a_signed_release_verifies_and_grants_nothing() {
 fn nothing_verifies_without_a_provisioned_key() {
     let key = ThrowawayKey::generate();
     let case = Case::new("deckpilot.alpha", "1.2.0");
-    let pinned = PublisherKeys::pinned().unwrap();
-    assert!(!pinned.is_provisioned());
+    let empty = keys(&[], 1, &[]);
+    assert!(!empty.is_provisioned());
     assert_eq!(
-        case.verify(&[case.signed(&key)], &pinned, None, &[])
+        case.verify(&[case.signed(&key)], &empty, None, &[])
             .unwrap_err(),
         PublisherError::NotProvisioned
     );
+}
+
+#[test]
+fn the_pinned_production_keys_count_no_other_key() {
+    // The keys compiled into this build are the two production keys
+    // (threshold 2): a throwaway key's signatures never count, also two of
+    // them under the production keys' ids.
+    let pinned = PublisherKeys::pinned().unwrap();
+    assert!(pinned.is_provisioned());
+    assert_eq!(pinned.threshold, 2);
+    assert_eq!(
+        pinned.signature_key_ids(),
+        deckpilot_plugin_registry::publisher::PRODUCTION_KEY_IDS
+    );
+    let (a, b) = (ThrowawayKey::generate(), ThrowawayKey::generate());
+    let case = Case::new("deckpilot.alpha", "1.2.0");
+    below(
+        case.verify(&[case.signed(&a), case.signed(&b)], &pinned, None, &[]),
+        0,
+        &["not a pinned publisher key"],
+    );
+    let ids = pinned.signature_key_ids();
+    let disguised = [
+        named(&ids[0], &sign(&a, &case.bytes, &case.claim)),
+        named(&ids[1], &sign(&b, &case.bytes, &case.claim)),
+    ];
+    below(
+        case.verify(&disguised, &pinned, None, &[]),
+        0,
+        &["the file is named for key"],
+    );
+}
+
+#[test]
+fn a_key_test_signature_is_never_a_release_signature() {
+    let (a, b) = (ThrowawayKey::generate(), ThrowawayKey::generate());
+    let test_keys = keys(&[&a, &b], 2, &[]);
+    let message = test_message(3);
+    let comment = test_comment(3, &digest_of(&message));
+    let tested = |key: &ThrowawayKey| named(&key.key_id(), &key.sign(&message, &comment));
+    // The key test verifies with both keys, and needs both.
+    let verified = verify_test_signatures(&[tested(&a), tested(&b)], &test_keys, 3).unwrap();
+    assert_eq!(verified.signers.len(), 2);
+    below(verify_test_signatures(&[tested(&a)], &test_keys, 3), 1, &[]);
+    // Another run's message or comment does not count.
+    below(
+        verify_test_signatures(&[tested(&a), tested(&b)], &test_keys, 4),
+        0,
+        &[],
+    );
+    // Without keys: refused.
+    assert_eq!(
+        verify_test_signatures(&[tested(&a), tested(&b)], &keys(&[], 1, &[]), 3).unwrap_err(),
+        PublisherError::NotProvisioned
+    );
+
+    // As a release: the message claimed as any plugin is refused (its
+    // signatures carry the test comment), for real ids and versions too.
+    for (plugin, version) in [
+        ("deckpilot.notifications", "0.1.2"),
+        ("deckpilot.github", "0.2.1"),
+        ("deckpilot.publisher-test", "3.0.0"),
+    ] {
+        let claim = claim_for(&message, plugin, version);
+        let policy = ReleasePolicy {
+            host: Some(&host()),
+            floor: None,
+            revoked: &[],
+            limits: &Limits::default(),
+        };
+        let refused = verify_release(
+            &message,
+            &[tested(&a), tested(&b)],
+            &test_keys,
+            &claim,
+            &policy,
+        );
+        below(refused, 0, &["comment"]);
+    }
+    // Even the test comment over a real package's bytes never counts for
+    // its release.
+    let case = Case::new("deckpilot.alpha", "1.2.0");
+    let package_comment = test_comment(3, &case.claim.package);
+    let over_package =
+        |key: &ThrowawayKey| named(&key.key_id(), &key.sign(&case.bytes, &package_comment));
+    below(
+        case.verify(&[over_package(&a), over_package(&b)], &test_keys, None, &[]),
+        0,
+        &["comment"],
+    );
+    // And a release signature is no key test.
+    let release = [case.signed(&a), case.signed(&b)];
+    below(verify_test_signatures(&release, &test_keys, 3), 0, &[]);
 }
 
 #[test]
@@ -988,9 +1082,11 @@ fn cli_signs_with_two_keys_verifies_audits_and_unpacks() {
     let file_b = cli.path(&format!("{PACKAGE}.{id_b}.minisig"));
     std::fs::copy(&file_b_job, &file_b).unwrap();
 
-    // The pinned keys are not provisioned: refused, and audited.
+    // The pinned keys are the production keys: the throwaway keys'
+    // signatures do not count; refused, and audited.
     let error = cli.verify(&digest, &[]).unwrap_err();
-    assert!(error.contains("no first-party publisher key"), "{error}");
+    assert!(error.contains("0 valid signature(s)"), "{error}");
+    assert!(error.contains("not a pinned publisher key"), "{error}");
     assert!(error.contains("threshold of the pinned keys"), "{error}");
 
     // With the test keys and unpacking.
@@ -1267,4 +1363,215 @@ fn the_released_pins_give_the_rollback_floor() {
     assert!(floor.files.contains_key("plugin.wasm"));
     let unknown = floor_from_released_pins(pins, &id("deckpilot.unknown"), Platform::Macos);
     assert!(unknown.unwrap().is_none());
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one flow, step by step
+fn cli_key_test_signs_only_the_test_message_and_release_verify_refuses_it() {
+    let mut cli = Cli::new();
+    let public_a = cli.generate("publisher-a.key");
+    let public_b = cli.generate("publisher-b.key");
+    let (id_a, id_b) = (key_id_of(&public_a), key_id_of(&public_b));
+    keys_file(&cli.path("keys.json"), &[&public_a, &public_b], 2, &[]);
+    let keys = cli.path("keys.json");
+    for dir in ["job-a", "job-b", "verify"] {
+        std::fs::create_dir(cli.path(dir)).unwrap();
+    }
+    let secret = std::fs::read_to_string(cli.path("publisher-a.key")).unwrap();
+    cli.env.insert("DECKPILOT_PUBLISHER_KEY_A".into(), secret);
+
+    // Run numbers: 1 to 9999, canonical.
+    for bad in ["0", "01", "10000", "-1", "1.0", "x", ""] {
+        let error = cli
+            .run(&[
+                "release",
+                "test-message",
+                "--run",
+                bad,
+                "--out-dir",
+                &cli.path("verify"),
+            ])
+            .unwrap_err();
+        assert!(error.contains("--run"), "{bad}: {error}");
+    }
+    // No other input is accepted: only the fixed message is signed.
+    let error = cli
+        .run(&[
+            "release",
+            "test-sign",
+            "--run",
+            "1",
+            "--key-env",
+            "DECKPILOT_PUBLISHER_KEY_A",
+            "--out-dir",
+            &cli.path("job-a"),
+            "--package",
+            &cli.path("x"),
+        ])
+        .unwrap_err();
+    assert!(error.contains("unknown option --package"), "{error}");
+
+    let out = cli
+        .run(&[
+            "release",
+            "test-sign",
+            "--run",
+            "1",
+            "--key-env",
+            "DECKPILOT_PUBLISHER_KEY_A",
+            "--out-dir",
+            &cli.path("job-a"),
+        ])
+        .unwrap();
+    assert!(out.contains(&format!("publisher key {id_a}")), "{out}");
+    assert!(out.contains("never a release signature"), "{out}");
+    let name = "deckpilot-publisher-test-v1.txt";
+    let file_a = cli.path(&format!("job-a/{name}.{id_a}.minisig"));
+    assert!(Path::new(&file_a).is_file());
+    let error = cli
+        .run(&[
+            "release",
+            "test-sign",
+            "--run",
+            "1",
+            "--key-env",
+            "DECKPILOT_PUBLISHER_KEY_A",
+            "--out-dir",
+            &cli.path("job-a"),
+        ])
+        .unwrap_err();
+    assert!(error.contains("refusing to overwrite"), "{error}");
+    let key_b = cli.path("publisher-b.key");
+    cli.run(&[
+        "release",
+        "test-sign",
+        "--run",
+        "1",
+        "--key",
+        &key_b,
+        "--out-dir",
+        &cli.path("job-b"),
+    ])
+    .unwrap();
+    let file_b = cli.path(&format!("job-b/{name}.{id_b}.minisig"));
+
+    // One signature: below the threshold.
+    std::fs::copy(&file_a, cli.path(&format!("verify/{name}.{id_a}.minisig"))).unwrap();
+    let verify = cli.path("verify");
+    let error = cli
+        .run(&[
+            "release",
+            "test-verify",
+            "--run",
+            "1",
+            "--signatures-dir",
+            &verify,
+            "--keys",
+            &keys,
+        ])
+        .unwrap_err();
+    assert!(error.contains("1 valid signature(s)"), "{error}");
+    std::fs::copy(&file_b, cli.path(&format!("verify/{name}.{id_b}.minisig"))).unwrap();
+    let out = cli
+        .run(&[
+            "release",
+            "test-verify",
+            "--run",
+            "1",
+            "--signatures-dir",
+            &verify,
+            "--keys",
+            &keys,
+        ])
+        .unwrap();
+    assert!(out.contains("key test 1 verified: 2 distinct"), "{out}");
+    assert!(out.contains("not the pinned keys"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "counted  {}",
+            Path::new(&verify)
+                .join(format!("{name}.{id_a}.minisig"))
+                .display()
+        )),
+        "{out}"
+    );
+    // Another run: refused.
+    let error = cli
+        .run(&[
+            "release",
+            "test-verify",
+            "--run",
+            "2",
+            "--signatures-dir",
+            &verify,
+            "--keys",
+            &keys,
+        ])
+        .unwrap_err();
+    assert!(error.contains("refused"), "{error}");
+    // The pinned (production) keys: the throwaway keys do not count.
+    let error = cli
+        .run(&[
+            "release",
+            "test-verify",
+            "--run",
+            "1",
+            "--signatures-dir",
+            &verify,
+        ])
+        .unwrap_err();
+    assert!(error.contains("threshold of the pinned keys"), "{error}");
+    assert!(error.contains("0 valid signature(s)"), "{error}");
+
+    // The message, and `release verify` refusing it as a release of a real
+    // plugin id and version, with the same two keys pinned.
+    let out = cli
+        .run(&[
+            "release",
+            "test-message",
+            "--run",
+            "1",
+            "--out-dir",
+            &verify,
+        ])
+        .unwrap();
+    let message = std::fs::read(cli.path(&format!("verify/{name}"))).unwrap();
+    assert_eq!(message, test_message(1));
+    let digest = digest_of(&message);
+    assert!(out.contains(&digest.sha256.to_string()), "{out}");
+    let as_release = "deckpilot.notifications-0.1.2.dpplugin";
+    std::fs::write(cli.path(&format!("verify/{as_release}")), &message).unwrap();
+    for (id, file) in [(&id_a, &file_a), (&id_b, &file_b)] {
+        std::fs::copy(file, cli.path(&format!("verify/{as_release}.{id}.minisig"))).unwrap();
+    }
+    let error = cli
+        .run(&[
+            "release",
+            "verify",
+            "--package",
+            &cli.path(&format!("verify/{as_release}")),
+            "--id",
+            "deckpilot.notifications",
+            "--version",
+            "0.1.2",
+            "--sha256",
+            &digest.sha256.to_string(),
+            "--size",
+            &digest.size.to_string(),
+            "--app-version",
+            "0.10.0",
+            "--plugin-api",
+            "1.9",
+            "--platform",
+            "macos",
+            "--keys",
+            &keys,
+        ])
+        .unwrap_err();
+    assert!(error.contains("refused"), "{error}");
+    assert!(error.contains("0 valid signature(s)"), "{error}");
+    assert!(
+        error.contains("deckpilot-publisher-test v1 role:test"),
+        "{error}"
+    );
 }

@@ -25,9 +25,13 @@ released either. 0.6.0 is the first version intended for publication.
   Revocations also apply at enable, every run and rollback, and fail
   closed when the agent has no record of a release; the releases
   DeckPilot shipped are compiled-in minimum versions; module migrations
-  derive grants only for the copy shipped with the app. No
-  publisher key is provisioned yet, so every such package is still
-  refused and the bundled plugins keep coming from the application.
+  derive grants only for the copy shipped with the app. The bundled
+  plugins keep coming from the application.
+- The two production first-party publisher public keys (key ids
+  `BDCDC80985EB60B5` and `8C3C4E42700FA702`) are pinned with a threshold of
+  two: a first-party release counts only when both keys signed it. The
+  keys ship with the next app release; nothing has been released with them
+  yet, and the privileged plugin kinds stay refused.
 
 ## [0.10.0] - 2026-11-21
 

@@ -81,6 +81,18 @@ First-party release artifacts (the publisher signature, crate::publisher):
       the output says so), revocations, the host and the released pins (rollback);
       appends the outcome to --audit; --unpack writes the files of a verified
       artifact. Authenticity only: it grants no permission.
+
+A key test of the publisher keys (never a release; official-test-sign.yml):
+  release test-message --run N --out-dir DIR
+      Writes the fixed key test message of run N (1-9999) to
+      DIR/deckpilot-publisher-test-vN.txt: text, not a package.
+  release test-sign --run N (--key FILE | --key-env NAME) --out-dir DIR
+      Signs only that message, with the trusted comment `deckpilot-publisher-test v1
+      role:test run:N ...` (another domain than a release's), with ONE publisher key,
+      to DIR/deckpilot-publisher-test-vN.txt.<KEYID>.minisig; never overwrites.
+  release test-verify --run N --signatures-dir DIR [--keys FILE]
+      A threshold of distinct pinned publisher keys (--keys: others, for tests)
+      signed run N's message. `release verify` refuses these signatures.
 ";
 
 /// Where a command reads secrets and writes its output. Tests pass their
@@ -697,6 +709,49 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
                 unpack: unpack.as_deref(),
                 now,
             })?
+        }
+        "release test-message" => {
+            let run = super::release::parse_test_run(&opts.required("run")?)?;
+            let dir = PathBuf::from(opts.required("out-dir")?);
+            opts.finish()?;
+            let message = crate::publisher::test_message(run);
+            let out = dir.join(crate::publisher::test_message_file_name(run));
+            write_new(&out, &message)?;
+            let digest = crate::publisher::digest_of(&message);
+            format!(
+                "key test message {run} (sha256 {}, {} bytes) to {}",
+                digest.sha256,
+                digest.size,
+                out.display()
+            )
+        }
+        "release test-sign" => {
+            let run = super::release::parse_test_run(&opts.required("run")?)?;
+            let dir = PathBuf::from(opts.required("out-dir")?);
+            let key = release_key(&opts, io)?;
+            opts.finish()?;
+            let signature = super::release::test_sign(run, &key)?;
+            let public = key.public().to_owned();
+            drop(key);
+            let key_id = super::release::check_test_signed(run, &signature, &public)?;
+            let out = dir.join(crate::publisher::signature_file_name(
+                &crate::publisher::test_message_file_name(run),
+                &key_id,
+            ));
+            write_new(&out, format!("{signature}\n").as_bytes())?;
+            format!(
+                "signed key test message {run} with publisher key {key_id} (fingerprint {}) to {}; \
+                 a key test only, never a release signature",
+                crate::publisher::fingerprint(&public).unwrap_or_default(),
+                out.display()
+            )
+        }
+        "release test-verify" => {
+            let run = super::release::parse_test_run(&opts.required("run")?)?;
+            let dir = PathBuf::from(opts.required("signatures-dir")?);
+            let keys = opts.path("keys")?;
+            opts.finish()?;
+            super::release::test_verify(run, &dir, keys.as_deref())?
         }
         other => return fail(format!("unknown command `{other}`; see `help`")),
     };

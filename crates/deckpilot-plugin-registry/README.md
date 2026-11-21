@@ -169,8 +169,8 @@ Publisher keys (U-2) were an optional extension in the spike and are not
 part of #191's schemas. Only one publisher role exists, for DeckPilot's
 own release artifacts: [`publisher`](src/publisher.rs) verifies the
 first-party publisher signature of a `.dpplugin` before an application
-build bundles it (pinned keys in `publisher/first-party.json`, none
-provisioned yet; authenticity only, and the plugin API 1.9 privileged
+build bundles it (pinned keys in `publisher/first-party.json`: the two
+production keys since 2026-11-21, threshold 2; authenticity only, and the plugin API 1.9 privileged
 kinds stay refused). See
 [docs/marketplace/publisher-signature.md](../../docs/marketplace/publisher-signature.md).
 

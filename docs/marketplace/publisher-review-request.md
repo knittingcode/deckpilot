@@ -1,8 +1,17 @@
 # Security review request: first-party publisher signature
 
 Status: **requested, not done.** Until a reviewer independent of the
-author signs off below, the privileged-kinds gate stays closed and no
-production publisher key is pinned.
+author signs off below, the privileged-kinds gate stays closed.
+
+Update 2026-11-21: on the owner's decision, the two production publisher
+public keys are pinned (threshold 2,
+[publisher-signature.md](publisher-signature.md#provisioning-2026-11-21));
+they ship with the next application release. That does not open the gate
+and needs no sign-off for the closed state: verification stays fail
+closed, the artifact lock is empty, and nothing has been released with
+the keys. Both secret keys are currently held in one 1Password vault of
+one account; independent custody (a second person holding key B) is
+pending and is listed under K.
 
 ## Scope
 
@@ -13,11 +22,11 @@ pipeline of `knittingcode/deckpilot-plugins` that produces them.
 | Area | Files |
 | --- | --- |
 | Verifier | `crates/deckpilot-plugin-registry/src/publisher.rs`, `src/sig.rs` (reused) |
-| Signing and CLI | `crates/deckpilot-plugin-registry/src/publish/release.rs`, `src/publish/keys.rs` (`--role publisher`, `from_text`), `src/publish/cli.rs` (`release sign`, `release verify`) |
+| Signing and CLI | `crates/deckpilot-plugin-registry/src/publish/release.rs`, `src/publish/keys.rs` (`--role publisher`, `from_text`), `src/publish/cli.rs` (`release sign`, `release verify`, and the key test `release test-message`, `test-sign`, `test-verify`) |
 | Pinned keys and lock | `crates/deckpilot-plugin-registry/publisher/first-party.json`, `plugins/first-party/artifacts.json` |
 | Tests | `crates/deckpilot-plugin-registry/tests/publisher.rs`, the unit tests in `publisher.rs` |
 | Agent (host side) | `apps/agent/src/plugins/official.rs`, its tests, and the calls in `service.rs`, `registry.rs`, `fetch.rs` (checklist below) |
-| Plugin repository | `official/`, `tools/official.sh`, `tools/check-official.py`, `.github/workflows/official.yml`, `official-release.yml` |
+| Plugin repository | `official/`, `tools/official.sh`, `tools/check-official.py`, `.github/workflows/official.yml`, `official-release.yml`, `official-test-sign.yml` (the key test) |
 
 ## What the reviewer must check
 
@@ -110,6 +119,10 @@ A. **Every `deckpilot.*` registry download is publisher-verified.**
       registry source.
    2. Without provisioned keys, a valid lock and readable floors,
       `pins` refuses before any byte is downloaded (`Official::ready`).
+      The production keys are pinned now, so `ready` passes in a release
+      build; check that the download path still needs a threshold-2
+      verification by the pinned keys
+      (`this_build_pins_the_production_keys_and_counts_no_other`).
    3. File and dev installs of `deckpilot.*` stay refused
       (`InstallSource::allows`, `install_steps`).
 B. **The claim and the trust anchor.** The claim is the registry's
@@ -188,6 +201,14 @@ K. **Known open items** (not blockers for the closed state):
    keys). (The former item "only one `.minisig` per release is fetched" is
    resolved: one `<package>.<KEYID>.minisig` per pinned key, threshold 2
    reachable at run time.)
+   Key custody: both production secret keys are held in one 1Password
+   vault of one account; threshold 2 protects against one leaked secret
+   or signing job, not against that account. Independent custody needs a
+   second person holding key B (pending, owner action).
+   The key test (`release test-sign`, `test-verify`): confirm that a
+   test signature never counts for a release (another trusted comment
+   domain; `a_key_test_signature_is_never_a_release_signature`) and that
+   `test-sign` signs nothing but the fixed message.
 
 Run: `cargo test -p deckpilot-plugin-registry --all-features --test publisher`
 (the multi-signature rules),

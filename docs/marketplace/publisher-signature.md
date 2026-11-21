@@ -1,10 +1,14 @@
 # First-party publisher signature
 
-Status: **implemented, not provisioned** (Wave A of moving the bundled
-plugins to `knittingcode/deckpilot-plugins`). No publisher key exists
-yet, so nothing verifies and nothing changes in any build: every release
-bundle is still built from `plugins/first-party/` and trusted by the pins
-compiled into the agent ([module-migration.md §4.4](module-migration.md#44-who-signs-bundled-plugins)).
+Status: **implemented; production keys pinned on 2026-11-21** (Wave A of
+moving the bundled plugins to `knittingcode/deckpilot-plugins`). The two
+production publisher keys are pinned with threshold 2
+([Provisioning](#provisioning-2026-11-21)); they reach users with the next
+application release. Nothing has been signed with them for a release yet
+and the artifact lock is empty, so nothing changes in any build: every
+release bundle is still built from `plugins/first-party/` and trusted by
+the pins compiled into the agent ([module-migration.md §4.4](module-migration.md#44-who-signs-bundled-plugins)).
+The privileged-kinds gate stays closed.
 Security review request: [publisher-review-request.md](publisher-review-request.md).
 
 ## Why
@@ -31,7 +35,7 @@ rollback floor is `released-pins.json`, whose guard already exists.
 
 | What | Where | Format |
 | --- | --- | --- |
-| Pinned public keys | `crates/deckpilot-plugin-registry/publisher/first-party.json`, compiled in (`publisher::PINNED_KEYS`) | `{"publisherKeysVersion": 1, "publisher": "deckpilot", "keys": [...], "threshold": n, "revokedKeys": [...]}`; keys are base64-wrapped minisign public keys; `keys` empty = not provisioned |
+| Pinned public keys | `crates/deckpilot-plugin-registry/publisher/first-party.json`, compiled in (`publisher::PINNED_KEYS`) | `{"publisherKeysVersion": 1, "publisher": "deckpilot", "keys": [...], "threshold": n, "revokedKeys": [...]}`; keys are base64-wrapped minisign public keys; `keys` empty = not provisioned (refused, fail closed); since 2026-11-21 the two production keys, threshold 2 |
 | Release artifact | GitHub Release `<id>--v<version>` of `knittingcode/deckpilot-plugins` | `<id>-<version>.dpplugin`, unchanged format |
 | Signatures | next to it, one file per signing key | `<id>-<version>.dpplugin.<KEYID>.minisig`, `KEYID` the signing key's minisign key id as 16 uppercase hex characters in the byte order minisign itself prints it (`publisher::signature_file_name`). Each file: base64 minisign over exactly the package bytes, trusted comment exactly `deckpilot-publisher v1 role:release id:<id> version:<version> sha256:<hex> size:<bytes>`. A threshold of distinct pinned keys must verify ([below](#threshold-and-signature-files)). The single name `<package>.minisig` is not read or written (nothing was released with it) |
 | Artifact lock | `plugins/first-party/artifacts.json` | `{"artifactsVersion": 1, "plugins": [{"id", "version", "sha256", "size"}], "revoked": [{"id", "versions", "reason"}]}` (`publisher::ArtifactLock`); empty in Wave A |
@@ -145,10 +149,14 @@ artifact, and the X12 tests would grow a "signed artifact" case).
 
 ## The agent: installing and updating official plugins
 
-Status: **implemented, inert until a key is provisioned.** Every agent
-build refuses every registry-delivered `deckpilot.*` package before any
-download today, because `publisher/first-party.json` pins no key
-(`this_build_cannot_verify_any_official_release`). Nothing changes for the
+Status: **implemented; the production keys are pinned, the other
+authorities are not.** An agent built with the pinned keys passes
+`Official::ready`, but accepts a registry-delivered `deckpilot.*` package
+only when both production keys signed that release
+(`this_build_pins_the_production_keys_and_counts_no_other`); a key set
+without keys is still refused before any download. Registry delivery
+also needs the root-authorized registry key set below, which does not
+exist yet, so in practice nothing is delivered. Nothing changes for the
 bundled copies: they are seeded offline from the application bundle and
 trusted by the compiled pins exactly as before.
 
@@ -276,12 +284,14 @@ it to the store's update with source `registry`:
   can restore the bundled one (`restoreBundledPlugin`), which the compiled
   pins vouch for whatever the floor.
 
-**What turns it on (owner actions, none done).** Registry delivery of an
-official plugin needs all of these. The first two are independent
-authorities, and each is required:
+**What turns it on (owner actions; the first is done in the source, not
+yet released).** Registry delivery of an official plugin needs all of
+these. The first two are independent authorities, and each is required:
 
 1. A production publisher key pinned in `publisher/first-party.json`
-   ([Keys](#keys)), shipped in an application release.
+   ([Keys](#keys)), shipped in an application release. Pinned on
+   2026-11-21 (two keys, threshold 2); ships with the next application
+   release.
 2. A production registry key set (root-signed, U-10/U-12) whose
    `first_party` field authorizes the `deckpilot` namespace, an index
    that lists `deckpilot` as a verified publisher, and the registry root
@@ -397,6 +407,45 @@ stolen key or secret cannot sign a release. The intended handling:
    compromise in `artifacts.json`. Until an application release carries
    the new keys, builds simply cannot verify; no user installation trusts
    the key at run time.
+
+## Provisioning (2026-11-21)
+
+The owner made the two production keys in a key ceremony on 2026-11-21
+and pinned them here (`publisher/first-party.json`, threshold 2,
+`revokedKeys` empty). Only the public keys are in any repository.
+
+| Key | minisign key id | sha256 of the public key file (`.pub`, base64 with its newline) | fingerprint (`publisher::fingerprint`) |
+| --- | --- | --- | --- |
+| A (`DECKPILOT_PUBLISHER_KEY_A`) | `BDCDC80985EB60B5` | `16bdfa14a38950fb9d767724733a0ab577bce3f459c690fe399c7a3a0501fc93` | `8f3f9b211a1f2bad` |
+| B (`DECKPILOT_PUBLISHER_KEY_B`) | `8C3C4E42700FA702` | `4d7127c66e16e6b6040f8b172f9aa5267f9b935532732615a8bbfd07033c3f14` | `98a1f76b2dddce87` |
+
+`first-party.json` itself has sha256
+`5f2318c65c38078796fe5f206162d844eac5416fa62f439fd28b2cf4e826ca60`. The
+plugin repository reads exactly this file at its pinned DeckPilot commit
+(`tools/deckpilot.env`); its release workflow verifies against it and
+its hygiene check requires threshold 2 of two distinct keys.
+`the_pinned_keys_are_the_two_production_keys` holds the compiled keys to
+exactly these ids, threshold 2, publisher `deckpilot`, distinct.
+
+**Custody, honestly stated.** Both secret keys and their passwords are
+currently held in **one 1Password vault of one account**, and stored as
+the environment secrets of `official-release`. Threshold 2 therefore
+protects against a leak of one GitHub secret or one signing job, but not
+yet against the compromise of that one account: **independent custody
+requires a second person holding key B, which is pending.** Until then,
+two signatures prove two keys, not two people.
+
+**Key test.** The plugin repository's `official-test-sign.yml` (manual,
+protected by the `official-release` environment) signs a fixed message
+in a separate domain (`deckpilot-registry release test-sign`, trusted
+comment `deckpilot-publisher-test v1 role:test run:<n> ...`,
+`publisher::test_comment`) with each stored secret, in separate jobs, and
+checks both against the pinned keys with threshold 2
+(`release test-verify`). A pass proves that the stored secrets are the
+pinned keys and that their passwords unlock them. `release verify`, the
+agent and the application build refuse such signatures as a release
+(`a_key_test_signature_is_never_a_release_signature`): the comment is
+another domain, and the message is not a package.
 
 ## Wave B: consuming an artifact
 
