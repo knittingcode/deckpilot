@@ -66,6 +66,17 @@ released either. 0.6.0 is the first version intended for publication.
 - Escape clears the Device Editor's selection (after closing a menu,
   cancelling a drag or leaving a text field first); the deselect button is
   gone.
+- Action Library: **gesture presets**, one entry that puts several actions
+  on the gestures of a key at once. *Brightness Control* (Device) dims by
+  10% on a single press, sets 100% on a double click and 50% on a long
+  press. Dropped on a key it creates ordinary actions and gesture bindings
+  in one undo step (keeping an occupied key's look and its other
+  gestures), or nothing when the key cannot take it; dropped on one
+  gesture card only that gesture changes. Every gesture stays editable on
+  its own; nothing of the preset is stored.
+- Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
+  presets over its own actions, with localized texts and `allowPartial`.
+  Presets grant nothing; each action keeps its permissions and checks.
 - Folders: **Exit after action completes**, a switch of its own in the
   folder key's Inspector next to Automatic exit. The folder is left once
   what its key started is over (an action, a plugin's action, a workflow or
