@@ -21,8 +21,13 @@
 #      signature files, released-pins.json (no downgrade, the same version
 #      only with the same files), artifacts.json's revocations, the audit
 #      log and --unpack into bundled/<id>/;
-#   5. every listed key id counted, and the unpacked files: the manifest's
-#      id and version, and only the files a bundled plugin may contain.
+#   5. every listed key id counted; the privileged-kinds line of the
+#      verification (`privileged: none`, or `privileged: reviewed: <id>
+#      <version> …` when the compiled gate is open and the package is
+#      exactly the reviewed privileged policy's entry: with the gate closed
+#      `release verify` refuses every privileged package before this); and
+#      the unpacked files: the manifest's id and version, and only the
+#      files a bundled plugin may contain.
 # Uses build.sh's variables and helpers (here, plugins, target_dir, out,
 # bundled, lock, artifacts, the options, fail, jq, sha, size).
 
@@ -85,7 +90,7 @@ allowed_file() {
 
 stage_artifacts() {
   local cache tool work audit entry id version locked url expected sha256 bytes
-  local package key_id key_ids counted listing file
+  local package key_id key_ids counted listing file admission
   cache=${artifacts_dir:-$target_dir/first-party-artifacts}
   mkdir -p "$cache"
   cache=$(cd "$cache" && pwd)
@@ -166,10 +171,20 @@ stage_artifacts() {
     }
     printf '%s\n' "$listing"
 
-    # 5. Every listed key counted; the unpacked files.
+    # 5. Every listed key counted; the privileged-kinds admission; the
+    # unpacked files.
     counted=$(sed -n 's/^  counted  .*: key \([0-9A-F]\{16\}\) (fingerprint .*$/\1/p' <<< "$listing" | LC_ALL=C sort)
     [ "$counted" = "$(LC_ALL=C sort <<< "$key_ids")" ] \
       || fail "$id $version: the keys that counted ($(tr '\n' ' ' <<< "$counted")) are not the keyIds artifacts.json lists ($(tr '\n' ' ' <<< "$key_ids"))"
+    admission=$(sed -n 's/^  privileged: //p' <<< "$listing")
+    [ "$(grep -c '^  privileged: ' <<< "$listing")" = 1 ] \
+      || fail "$id $version: release verify did not print exactly one privileged-kinds line (a deckpilot-registry older than the reviewed privileged policy?)"
+    case "$admission" in
+      none) ;;
+      "reviewed: $id $version "*)
+        echo "build.sh: $id $version declares privileged kinds; admitted by the reviewed privileged policy ($admission)" ;;
+      *) fail "$id $version: unexpected privileged-kinds admission: $admission" ;;
+    esac
     [ "$(jq -r .id "$bundled/$id/manifest.json")@$(jq -r .version "$bundled/$id/manifest.json")" = "$id@$version" ] \
       || fail "$id $version: the unpacked manifest is not $id $version"
     [ "$(jq 'has("assets")' "$bundled/$id/manifest.json")" = false ] \

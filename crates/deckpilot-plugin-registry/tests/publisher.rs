@@ -13,6 +13,7 @@ use common::{ThrowawayKey, id, package, t0, v};
 use deckpilot_plugin_manifest::{ApiLevel, HostEnvironment, PackageDigest, Platform};
 use deckpilot_plugin_package::Limits;
 use deckpilot_plugin_registry::RevokedVersions;
+use deckpilot_plugin_registry::privileged_policy::PrivilegedGate;
 use deckpilot_plugin_registry::publish::{Io, run};
 use deckpilot_plugin_registry::publisher::{
     AuditOutcome, AuditRecord, MAX_SIGNATURE_FILES, PublisherError, PublisherKeys, ReleaseClaim,
@@ -102,6 +103,7 @@ impl Case {
             floor,
             revoked,
             limits: &self.limits,
+            gate: PrivilegedGate::compiled(),
         };
         verify_release(&self.bytes, signatures, keys, &self.claim, &policy)
     }
@@ -227,6 +229,7 @@ fn a_key_test_signature_is_never_a_release_signature() {
             floor: None,
             revoked: &[],
             limits: &Limits::default(),
+            gate: PrivilegedGate::compiled(),
         };
         let refused = verify_release(
             &message,
@@ -1487,11 +1490,15 @@ fn check_source_entry(
 }
 
 /// A `bundled.json` artifact entry: locked with the same version, and not a
-/// plugin the closed gate refuses.
+/// plugin the gate refuses: with the gate closed no privileged plugin; with
+/// it open only a privileged plugin the reviewed policy lists at exactly the
+/// locked version (`release verify` then checks the package itself against
+/// the policy).
 fn check_artifact_entry(
     entry: &serde_json::Value,
     lock: &deckpilot_plugin_registry::publisher::ArtifactLock,
     first_party: &Path,
+    gate: PrivilegedGate<'_>,
 ) -> Result<String, String> {
     use deckpilot_plugin_registry::publisher::is_privileged;
     let (None, Some(id), Some(version)) = (
@@ -1520,10 +1527,34 @@ fn check_artifact_entry(
         Err(_) => false,
     };
     if gated || PRIVILEGED.contains(&id) {
-        return Err(format!(
-            "{id} declares plugin API 1.9 privileged kinds: the gate is closed, it is built from \
-             source"
-        ));
+        let PrivilegedGate::Open(policy) = gate else {
+            return Err(format!(
+                "{id} declares plugin API 1.9 privileged kinds: the gate is closed, it is built \
+                 from source"
+            ));
+        };
+        if !policy.is_approved() {
+            return Err(format!(
+                "{id} declares plugin API 1.9 privileged kinds: the privileged policy records no \
+                 approved review"
+            ));
+        }
+        match policy.plugins.iter().find(|p| p.id.as_str() == id) {
+            Some(reviewed) if reviewed.version == locked.version => {}
+            Some(reviewed) => {
+                return Err(format!(
+                    "{id} {version} declares plugin API 1.9 privileged kinds: the privileged \
+                     policy reviewed {} only",
+                    reviewed.version
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{id} declares plugin API 1.9 privileged kinds the privileged policy does \
+                     not list"
+                ));
+            }
+        }
     }
     Ok(id.to_owned())
 }
@@ -1569,6 +1600,7 @@ fn check_bundled(
     lock: &deckpilot_plugin_registry::publisher::ArtifactLock,
     keys: &PublisherKeys,
     first_party: &Path,
+    gate: PrivilegedGate<'_>,
 ) -> Result<(), String> {
     let mut ids = std::collections::BTreeSet::new();
     let mut artifacts = std::collections::BTreeSet::new();
@@ -1583,7 +1615,7 @@ fn check_bundled(
         let id = match entry["source"].as_str().unwrap_or("source") {
             "source" => check_source_entry(entry, lock, first_party)?,
             "artifact" => {
-                let id = check_artifact_entry(entry, lock, first_party)?;
+                let id = check_artifact_entry(entry, lock, first_party, gate)?;
                 artifacts.insert(id.clone());
                 id
             }
@@ -1649,7 +1681,14 @@ fn every_bundled_plugin_is_built_from_source_or_a_locked_artifact() {
     let lock = ArtifactLock::from_json(ARTIFACTS.as_bytes()).unwrap();
     let bundled: serde_json::Value = serde_json::from_str(BUNDLED).unwrap();
     let pinned = PublisherKeys::pinned().unwrap();
-    check_bundled(&bundled, &lock, &pinned, &first_party_dir()).unwrap();
+    check_bundled(
+        &bundled,
+        &lock,
+        &pinned,
+        &first_party_dir(),
+        PrivilegedGate::compiled(),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1672,6 +1711,7 @@ fn bundled_json_and_the_lock_must_agree() {
                 &lock,
                 keys,
                 &first_party_dir(),
+                PrivilegedGate::compiled(),
             )
         };
     let n = "deckpilot.notifications";
@@ -1750,6 +1790,70 @@ fn bundled_json_and_the_lock_must_agree() {
         let error = check(plugins, lock, keys).unwrap_err();
         assert!(error.contains(expected), "{expected}: {error}");
     }
+}
+
+/// With the gate opened (in this test only), a privileged plugin may be
+/// listed as a release artifact only at exactly the version the approved
+/// privileged policy reviewed; closed, or with a pending review, never.
+#[test]
+fn a_privileged_artifact_entry_needs_the_open_gate_and_the_reviewed_version() {
+    use deckpilot_plugin_registry::privileged_policy::{
+        PrivilegedPolicy, Review, ReviewOutcome, compiled_policy,
+    };
+    use deckpilot_plugin_registry::publisher::ArtifactLock;
+    let a = ThrowawayKey::generate();
+    let b = ThrowawayKey::generate();
+    let two = keys(&[&a, &b], 2, &[]);
+    let both = [a.key_id(), b.key_id()];
+    let with_review = |outcome| {
+        let mut policy: PrivilegedPolicy = compiled_policy().unwrap().clone();
+        policy.review = Some(Review {
+            reviewer: "throwaway test reviewer".into(),
+            date: "2026-11-21".into(),
+            outcome,
+            record: "tests/publisher.rs".into(),
+        });
+        policy
+    };
+    let approved = with_review(ReviewOutcome::Approved);
+    let pending = with_review(ReviewOutcome::Pending);
+    let check = |id: &str, version: &str, gate: PrivilegedGate<'_>| {
+        let lock = ArtifactLock::from_json(
+            lock_doc(vec![lock_entry(id, version, &both)], serde_json::json!([])).as_bytes(),
+        )
+        .unwrap();
+        let plugins = serde_json::json!({ "plugins": [
+            { "id": id, "version": version, "class": "default", "source": "artifact" }
+        ]});
+        // The privileged plugin's own source entry is left out: one or the
+        // other.
+        check_bundled(&plugins, &lock, &two, &first_party_dir(), gate)
+    };
+    for id in PRIVILEGED {
+        check(id, "0.1.1", PrivilegedGate::Open(&approved)).unwrap();
+        for (version, gate, expected) in [
+            ("0.1.1", PrivilegedGate::Closed, "the gate is closed"),
+            ("0.1.1", PrivilegedGate::compiled(), "the gate is closed"),
+            (
+                "0.1.1",
+                PrivilegedGate::Open(&pending),
+                "no approved review",
+            ),
+            (
+                "0.1.2",
+                PrivilegedGate::Open(&approved),
+                "reviewed 0.1.1 only",
+            ),
+        ] {
+            let error = check(id, version, gate).unwrap_err();
+            assert!(error.contains(expected), "{id} {version}: {error}");
+        }
+    }
+    // A privileged plugin the policy does not list.
+    let mut without = approved.clone();
+    without.plugins.retain(|p| p.id.as_str() != "deckpilot.git");
+    let error = check("deckpilot.git", "0.1.1", PrivilegedGate::Open(&without)).unwrap_err();
+    assert!(error.contains("does not list"), "{error}");
 }
 
 #[test]

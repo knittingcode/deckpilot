@@ -72,6 +72,10 @@ minisign = "0.10"
 # Validates the documents the tests sign against the bundled #191 schemas.
 # Without default features: no HTTP or file reference resolution.
 jsonschema = { version = "0.61", default-features = false }
+# Write packages with no content check (tests/privileged.rs: what the
+# verifier must refuse even when it is signed).
+flate2.workspace = true
+tar.workspace = true
 
 [lints]
 workspace = true
@@ -79,4 +83,11 @@ workspace = true
 # The first-party publisher signature and `release sign|verify`.
 [[test]]
 name = "publisher"
+required-features = ["publish"]
+
+# The privileged-kinds gate and the reviewed privileged policy: every
+# refusal and the accepted reviewed case, with throwaway keys and the gate
+# opened in the test only.
+[[test]]
+name = "privileged"
 required-features = ["publish"]

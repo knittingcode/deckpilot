@@ -42,16 +42,24 @@
 //! (credentials, private network, process execution through `tools`, …)
 //! waits for the user's consent.
 //!
-//! **The privileged-kinds gate is closed.** A signed artifact may not
-//! declare any of plugin API 1.9's privileged kinds (`tools`, which is
-//! process execution, `resources`, `projectContext`, `hostViews`,
-//! `openUrl.fromParams`, `resource` parameters, `node.changesContext`):
-//! [`verify_release`] refuses it with [`PublisherError::PrivilegedGateClosed`]
-//! whatever the signature says. Those kinds reach a plugin only from
-//! sources built in this repository and pinned in the agent, as today
-//! (X12). Opening the gate needs the independent security review of
-//! `docs/marketplace/publisher-review-request.md` and a code change; there
-//! is no configuration, flag or key that opens it.
+//! **The privileged-kinds gate is closed** ([`crate::privileged_policy`]).
+//! A signed artifact may not declare any of plugin API 1.9's privileged
+//! kinds (`tools`, which is process execution, `resources`,
+//! `projectContext`, `hostViews`, `openUrl.fromParams`, `resource`
+//! parameters, `node.changesContext`, host sources, host views,
+//! `statusItems`, `dashboardCards`): [`verify_release`] refuses it with
+//! [`PublisherError::PrivilegedGateClosed`] whatever the signature says.
+//! Those kinds reach a plugin only from sources built in this repository
+//! and pinned in the agent, as today (X12). Opening the gate needs the
+//! independent security review of
+//! `docs/marketplace/publisher-review-request.md` and a code change
+//! (`PRIVILEGED_GATE_OPEN` and the review recorded in the compiled
+//! privileged policy); there is no configuration, flag or key that opens
+//! it. An opened gate admits exactly the reviewed policy (each plugin's
+//! one version, its exact permissions and privileged constructs) with at
+//! least two distinct pinned keys, reads the package with the bundled
+//! rules, and is still only a way to **stage a bundled plugin**: a
+//! registry copy of a privileged plugin stays refused by the store.
 //!
 //! No signing code is in this module: signing is the `publish` feature's
 //! (`deckpilot-registry publisher sign`), run only in
@@ -64,8 +72,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use chrono::{DateTime, Utc};
 use deckpilot_plugin_manifest::{
-    FIRST_PARTY_PUBLISHER, HostEnvironment, Incompatibility, IssueCode, Manifest, PackageDigest,
-    PluginId, Sha256Digest,
+    FIRST_PARTY_PUBLISHER, HostEnvironment, Incompatibility, Manifest, PackageDigest, PluginId,
+    Sha256Digest,
 };
 use deckpilot_plugin_package::{
     ExpectedPackage, Files, Limits, MANIFEST, PackageError, read_archive, sha256, verify_package,
@@ -74,6 +82,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::model::RevokedVersions;
+use crate::privileged_policy::{self, Privileged, PrivilegedGate};
 use crate::sig::{self, SigError, key_identity};
 
 /// Prefix of every publisher trusted comment. Distinct from the registry's
@@ -517,6 +526,10 @@ pub struct ReleasePolicy<'a> {
     pub floor: Option<&'a ReleaseFloor>,
     pub revoked: &'a [RevokedRelease],
     pub limits: &'a Limits,
+    /// The privileged-kinds gate: [`PrivilegedGate::compiled`] everywhere
+    /// but in tests. Closed refuses every privileged usage; open admits
+    /// exactly the reviewed policy with at least two distinct keys.
+    pub gate: PrivilegedGate<'a>,
 }
 
 /// Why a release was refused. Every variant is a refusal: there is no
@@ -566,6 +579,15 @@ pub enum PublisherError {
         .usages.join(", ")
     )]
     PrivilegedGateClosed { usages: Vec<String> },
+    #[error(
+        "{id} {version} declares plugin API 1.9's privileged kinds that the reviewed privileged \
+         policy does not admit: {reason}"
+    )]
+    PrivilegedNotReviewed {
+        id: String,
+        version: String,
+        reason: String,
+    },
     #[error("the package is invalid: {0}")]
     Package(String),
     #[error("not compatible with this DeckPilot: {}", list(.0))]
@@ -611,9 +633,18 @@ pub struct VerifiedRelease {
     files: Files,
     signers: Vec<String>,
     checks: Vec<SignatureCheck>,
+    /// `None`: no privileged kind. Otherwise how the reviewed policy
+    /// admitted it ([`Privileged::describe`]).
+    privileged: Option<String>,
 }
 
 impl VerifiedRelease {
+    /// How the open gate admitted the release's privileged kinds, or
+    /// `None` when it declares none.
+    pub fn privileged(&self) -> Option<&str> {
+        self.privileged.as_deref()
+    }
+
     pub fn claim(&self) -> &ReleaseClaim {
         &self.claim
     }
@@ -948,7 +979,32 @@ pub fn verify_release(
         });
     }
 
-    let verified = check_contents(package, claim, policy.limits)?;
+    let (verified, privileged) = check_contents(package, claim, policy.limits, policy.gate)?;
+    let privileged = match privileged {
+        Privileged::None => None,
+        reviewed @ Privileged::Reviewed {
+            policy: reviewed_policy,
+            ..
+        } => {
+            // A privileged release needs at least two distinct pinned keys
+            // that actually signed, and at least the policy's threshold,
+            // whatever the pinned threshold says.
+            let needed = reviewed_policy.needed_signers(keys.threshold);
+            let signed = u64::try_from(signers.len()).unwrap_or(0);
+            if keys.threshold < privileged_policy::MIN_THRESHOLD || signed < needed {
+                return Err(PublisherError::PrivilegedNotReviewed {
+                    id: claim.id.to_string(),
+                    version: claim.version.to_string(),
+                    reason: format!(
+                        "a privileged release needs {needed} distinct pinned publisher keys \
+                         (pinned threshold {}), {signed} signed",
+                        keys.threshold
+                    ),
+                });
+            }
+            Some(reviewed.describe())
+        }
+    };
     if let Some(host) = policy.host {
         verified
             .manifest()
@@ -964,18 +1020,22 @@ pub fn verify_release(
         files: verified.files().clone(),
         signers,
         checks,
+        privileged,
     })
 }
 
 /// What [`verify_release`] checks of a package besides its signature,
 /// revocation, host and floor: the claimed bytes, the privileged-kinds gate
-/// and the first-party package rules, with the claim's id and version.
-/// `release sign` runs it **before** it loads the secret key, so no
-/// archive is parsed while the key is in memory.
+/// `gate` and the first-party package rules, with the claim's id and
+/// version. `release sign` runs it **before** it loads the secret key, so
+/// no archive is parsed while the key is in memory. (The threshold of a
+/// privileged release is [`verify_release`]'s check: here no signature
+/// exists yet.)
 pub fn check_release_package(
     package: &[u8],
     claim: &ReleaseClaim,
     limits: &Limits,
+    gate: PrivilegedGate<'_>,
 ) -> Result<Manifest, PublisherError> {
     if claim.id.publisher() != FIRST_PARTY_PUBLISHER {
         return Err(PublisherError::NotFirstParty {
@@ -983,21 +1043,37 @@ pub fn check_release_package(
         });
     }
     check_bytes(package, claim, limits)?;
-    Ok(check_contents(package, claim, limits)?.manifest().clone())
+    Ok(check_contents(package, claim, limits, gate)?
+        .0
+        .manifest()
+        .clone())
 }
 
-/// The package, with the first-party rules. The privileged kinds are named
-/// first, so the refusal says it is the gate.
-fn check_contents(
+/// The package, with the first-party rules. The privileged kinds are
+/// checked first, so a refusal says it is the gate. A package the open gate
+/// admits (exactly the reviewed policy) is read with the bundled rules, the
+/// only ones that accept the privileged kinds, against its own files (its
+/// bytes already matched the claim).
+fn check_contents<'g>(
     package: &[u8],
     claim: &ReleaseClaim,
     limits: &Limits,
-) -> Result<deckpilot_plugin_package::VerifiedPackage, PublisherError> {
+    gate: PrivilegedGate<'g>,
+) -> Result<(deckpilot_plugin_package::VerifiedPackage, Privileged<'g>), PublisherError> {
     let files = read_archive(package, limits)?;
     let manifest_bytes = files
         .get(MANIFEST)
         .ok_or_else(|| PublisherError::Package(format!("{MANIFEST} is missing")))?;
-    check_gate(manifest_bytes)?;
+    let privileged = privileged_policy::check(gate, manifest_bytes, &claim.id, &claim.version)?;
+    if let Privileged::Reviewed { .. } = privileged {
+        let pinned = deckpilot_plugin_package::ExpectedFiles {
+            id: claim.id.clone(),
+            version: claim.version.clone(),
+            files: digests(&files),
+        };
+        let verified = deckpilot_plugin_package::verify_bundled_files(files, &pinned, limits)?;
+        return Ok((verified, privileged));
+    }
     let expected = ExpectedPackage {
         id: claim.id.clone(),
         version: claim.version.clone(),
@@ -1006,7 +1082,7 @@ fn check_contents(
         permissions: None,
         first_party: true,
     };
-    Ok(verify_package(package, &expected, limits)?)
+    Ok((verify_package(package, &expected, limits)?, privileged))
 }
 
 /// The bytes are the claimed bytes, before anything parses them.
@@ -1050,24 +1126,19 @@ pub fn is_privileged(manifest_bytes: &[u8]) -> Result<bool, PublisherError> {
     }
 }
 
-/// The privileged-kinds gate: closed (see the module documentation). A
+/// The closed privileged-kinds gate (see the module documentation). A
 /// manifest that does not even parse is refused here, never waved through
 /// to a later check.
 fn check_gate(manifest_bytes: &[u8]) -> Result<(), PublisherError> {
     let manifest = Manifest::from_slice(manifest_bytes)
         .map_err(|e| PublisherError::Package(format!("{MANIFEST}: {e}")))?;
-    if let Err(errors) = manifest.validate_first_party() {
-        let usages: Vec<String> = errors
-            .0
-            .iter()
-            .filter(|issue| issue.code == IssueCode::FirstPartyOnly)
-            .map(|issue| issue.path.clone())
-            .collect();
-        if !usages.is_empty() {
-            return Err(PublisherError::PrivilegedGateClosed { usages });
-        }
-    }
-    Ok(())
+    privileged_policy::check(
+        PrivilegedGate::Closed,
+        manifest_bytes,
+        &manifest.id,
+        &manifest.version,
+    )
+    .map(|_| ())
 }
 
 /// Never below what a release shipped; the same version only with the same

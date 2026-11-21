@@ -203,6 +203,7 @@ diff -r "$work/source/bundled/$id" "$out/$id" > /dev/null || bad "the unpacked f
 [ "$(jq '.plugins | length' "$out/pins.json")" = 1 ] || bad "pins.json lists more than the artifact"
 grep -F -q "counted" "$work/offline.log" || bad "release verify listed no counted key"
 grep -F -q "not the pinned keys" "$work/offline.log" || bad "the test keys were not reported as such"
+grep -F -x -q "  privileged: none" "$work/offline.log" || bad "release verify printed no privileged-kinds line"
 [ "$(wc -l < "$work/out-offline/artifacts-audit.jsonl" | tr -d ' ')" = 1 ] || bad "not one audit record"
 grep -F -q '"outcome":"verified"' "$work/out-offline/artifacts-audit.jsonl" || bad "no accepted audit record"
 [ -f "$out/NOT-FOR-RELEASE" ] || bad "a bundle verified with test keys is not marked"

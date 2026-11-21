@@ -13,6 +13,17 @@ the keys. Both secret keys are currently held in one 1Password vault of
 one account; independent custody (a second person holding key B) is
 pending and is listed under K.
 
+Update 2026-11-21 (privileged plugins): everything needed to distribute
+the five privileged plugins as signed artifacts is implemented **with the
+gate closed**: the reviewed privileged policy (the record of exactly what
+each plugin's reviewed version may declare), its check in every tool, and
+the tests with the gate opened in tests only
+([publisher-signature.md](publisher-signature.md#privileged-plugins-the-reviewed-privileged-policy)).
+Opening the gate is a separate **draft** pull request in each repository
+that only flips the gate constant and fills in the review record; it
+needs this review's sign-off (item L of [the host side](#host-side-the-agents-install-and-update-path))
+and the owner's approval, and is not merged before both.
+
 ## Scope
 
 The verification of signed first-party release artifacts
@@ -24,9 +35,10 @@ pipeline of `knittingcode/deckpilot-plugins` that produces them.
 | Verifier | `crates/deckpilot-plugin-registry/src/publisher.rs`, `src/sig.rs` (reused) |
 | Signing and CLI | `crates/deckpilot-plugin-registry/src/publish/release.rs`, `src/publish/keys.rs` (`--role publisher`, `from_text`), `src/publish/cli.rs` (`release sign`, `release verify`, and the key test `release test-message`, `test-sign`, `test-verify`) |
 | Pinned keys and lock | `crates/deckpilot-plugin-registry/publisher/first-party.json`, `plugins/first-party/artifacts.json` |
+| Privileged gate and policy | `crates/deckpilot-plugin-registry/src/privileged_policy.rs`, `publisher/privileged-policy.json` (the record), `src/publish/pack.rs` (`package --first-party`), `deckpilot-plugin-package` `PackageBuilder::reviewed_privileged`, `Manifest::privileged_usages`, `plugins/first-party/artifacts.sh` (the `privileged:` line), `tests/privileged.rs` |
 | Tests | `crates/deckpilot-plugin-registry/tests/publisher.rs`, the unit tests in `publisher.rs` |
 | Agent (host side) | `apps/agent/src/plugins/official.rs`, its tests, and the calls in `service.rs`, `registry.rs`, `fetch.rs` (checklist below) |
-| Plugin repository | `official/`, `tools/official.sh`, `tools/check-official.py`, `.github/workflows/official.yml`, `official-release.yml`, `official-test-sign.yml` (the key test) |
+| Plugin repository | `official/`, `official/privileged-policy.json` (the record's copy), `tools/official.sh`, `tools/check-official.py`, `.github/workflows/official.yml`, `official-release.yml`, `official-test-sign.yml` (the key test) |
 
 ## What the reviewer must check
 
@@ -168,17 +180,20 @@ F. **Authenticity is not authorization.** Nothing in `official.rs` writes
    the user's consent only; a transition from the bundle derives nothing
    (unlike seeding); escalations stay staged (`AwaitingConsent`). Confirm
    `decided_by` for any grant touched by this path is `user`.
-G. **The gate.** `PRIVILEGED_GATE` is `Closed`; it is a `const`, read in
-   `Official::with` only; `admit_privileged` returns the original refusal
-   unless `Open` and every review condition holds (threshold at least 2 and
-   at least the review's, counted over the keys that actually signed;
-   plugin listed; every privileged construct of
-   `privileged_constructs` listed; the registry's manifest hash and
-   permissions), and then uses only the bundled reader. The store still
-   refuses every privileged construct from a non-bundled source
-   (`check_privileged_source`), and `check_gate` refuses an unparsable
-   manifest.
-   Confirm no other code constructs `PrivilegedGate::Open` outside tests.
+G. **The gate.** The agent's gate is the registry crate's
+   `PrivilegedGate::compiled()` (`PRIVILEGED_GATE_OPEN` is `false`), read
+   in `Official::with` only; the registry delivery verifies with the gate
+   closed, and `admit_privileged` returns the original refusal unless the
+   gate is open and every condition holds (an approved review in the
+   policy; at least 2 distinct pinned keys that actually signed, at least
+   the policy's `minThreshold` and the pinned threshold; the registry's
+   manifest hash and permissions; exactly the reviewed manifest,
+   `privileged_policy::check`), and then uses only the bundled reader.
+   The store still refuses every privileged construct from a non-bundled
+   source (`check_privileged_source`), and `check_gate` refuses an
+   unparsable manifest. Confirm no other code constructs
+   `PrivilegedGate::Open` outside tests (`only_tests_construct_an_open_gate`
+   scans for it; check its heuristics too).
 H. **Transition.** `check_transition` runs only for a record whose source
    is `bundled`, before `trial_load`; it refuses dropped action ids,
    settings and credential slots. The bundled copy stays active on every
@@ -210,8 +225,96 @@ K. **Known open items** (not blockers for the closed state):
    domain; `a_key_test_signature_is_never_a_release_signature`) and that
    `test-sign` signs nothing but the fixed message.
 
+L. **Privileged plugins: the checklist for opening the gate.** Review
+   these against the code and the draft pull requests (DeckPilot and
+   deckpilot-plugins, titled "requires the owner's approval and the
+   independent security review"), not against this list. Every item must
+   hold before the outcome `approved` is recorded:
+   1. **Delivery path.** Privileged plugins reach users only as bundled
+      copies staged by `artifacts.sh` from a locked, verified artifact and
+      pinned in the agent. A registry copy is refused with the gate open:
+      `check_privileged_source` for every non-bundled source, the agent's
+      registry verification with `gate: Closed`, `admit_privileged` only
+      as a second lock (`the_opening_path_needs_the_review_two_keys_and_exactly_the_policy`
+      ends with the store's refusal). Search for any other caller that
+      installs a privileged package with a non-bundled source.
+   2. **The record.** `publisher/privileged-policy.json`: for each of the
+      five plugins, the one version, the exact `permissions` and every
+      construct with its value. Read each entry against the plugin's
+      source and behaviour (its `src/` in `knittingcode/deckpilot-plugins`
+      `official/<name>/` at the release tag) and decide whether those
+      exact privileges are acceptable: the git and docker subcommands and
+      options against X3's allow-lists and denylists, `network`
+      (`ls-remote`) and `modify` (compose up/down/restart) as separate
+      grants, `resources` (`paths`, `open`), `projectContext.select`,
+      `openUrl.fromParams` for Workspace, host views, status items and
+      dashboard cards for Projects. Confirm that
+      `the_policy_is_exactly_what_the_sources_declare` ties the record to
+      `plugins/first-party/<name>/manifest.json`, and that the plugin
+      repository's copy is byte-identical (`check-official.py --deckpilot`).
+   3. **Exactness.** `privileged_policy::check` admits only exactly the
+      record: permissions by JSON equality in order; constructs by path,
+      label and value, none added, none dropped; the claimed id and
+      version equal to the manifest's and the record's. Try to find a
+      manifest change that broadens what a plugin can do without changing
+      `permissions` or a privileged construct (for example a new action,
+      setting, view or locale that the host treats as privileged); if one
+      exists, the record must cover it before the gate opens.
+   4. **Process allow-list.** `PROCESS_ALLOW_LIST` (git for
+      `deckpilot.git`, docker for `deckpilot.docker`, nothing else) is
+      enforced when the policy parses, independently of the record; the
+      host's own X3 limits are unchanged (argument arrays, no shell, the
+      bound project folder as working directory, time and output limits,
+      consent, audit).
+   5. **Every tool, one rule.** `package --first-party`
+      (`pack::package_with_gate`), `release sign` (`preflight`, then
+      `check_signed` after the key is dropped), `release verify` and
+      `verify_release` (at least 2 distinct pinned keys that signed, and a
+      pinned threshold of at least 2, for a privileged release),
+      `artifacts.sh` (exactly one `privileged:` line, `reviewed: <id>
+      <version> …` for a privileged artifact), the *Rust* check of
+      `bundled.json` artifact entries (the reviewed version only), the
+      plugin repository's `check-official.py`, and the agent. All take
+      the compiled gate; the `*_with_gate` functions exist for tests.
+   6. **Fail closed.** `PrivilegedGate::compiled()` stays closed with the
+      constant `false`, with an invalid policy, and with a review that is
+      missing or `pending`. Nothing at run time or build time (flag,
+      environment, setting, key, file) changes it. The release CLI's
+      `--keys` (item K) cannot admit a privileged release signed by
+      production keys alone; with test keys `build.sh` marks the bundle
+      `NOT-FOR-RELEASE` and `check-bundled-plugins.sh` refuses it.
+   7. **Grants, migration, rollback.** A staged privileged copy is an
+      ordinary bundled plugin: seeding derives low-tier grants only;
+      process execution and the other high-tier grants are only the
+      user's (consent on first use, every run audited); an update keeps a
+      grant only where still declared and covered, stages anything broader
+      while the old copy runs; the migration engine derives onto bundled
+      copies only (J); the bundled copy never goes backwards, and a
+      release below `released-pins.json` or the bundled pin, or the same
+      version with other files, is refused
+      (`a_reviewed_artifact_updates_the_bundled_copy_under_the_store_s_consent_rules`,
+      `an_unchanged_reviewed_artifact_keeps_every_grant`,
+      `reviewed_releases_still_meet_revocation_rollback_and_compatibility`).
+   8. **The draft changes nothing else.** Each draft pull request changes
+      only the gate constant and the record's `review` (and, in the
+      plugin repository, its copy of the record); the CI of both is green.
+   9. **Conditions from item 8 above** (a hardware-backed key,
+      reproducible-build attestation for Git and Docker, independent key
+      custody of K): decide which are required before opening, and record
+      them in the sign-off.
+
+   **Recording the outcome.** The reviewer fills in, in the DeckPilot
+   draft, `review` of `publisher/privileged-policy.json`:
+   `{"reviewer": "<name>", "date": "<YYYY-MM-DD>", "outcome": "approved",
+   "record": "docs/marketplace/publisher-review-request.md#sign-off; <report link>"}`
+   (or leaves `pending` and records findings), the same in the plugin
+   repository's copy, and a row of the Sign-off table below. Until then
+   the drafts keep the gate closed in effect (`pending`), and they are
+   merged only by the owner.
+
 Run: `cargo test -p deckpilot-plugin-registry --all-features --test publisher`
-(the multi-signature rules),
+(the multi-signature rules), `--test privileged` and `--lib` (the
+privileged gate and policy),
 `cargo test -p deckpilot-agent --features plugins --lib official`
 and `cargo test -p deckpilot-agent --features plugins --test
 plugins_registry_https`.
@@ -227,3 +330,11 @@ broker and denial matrix (reviewed in
 | Reviewer | Date | Outcome | Gate |
 | --- | --- | --- | --- |
 | | | | closed |
+
+The gate opens only with a row here whose outcome is *approved*, the same
+reviewer, date and outcome in the `review` of
+`crates/deckpilot-plugin-registry/publisher/privileged-policy.json` (and of
+`official/privileged-policy.json` in `knittingcode/deckpilot-plugins`),
+`PRIVILEGED_GATE_OPEN = true` (and `PRIVILEGED_GATE_OPEN = True` in
+`tools/check-official.py`), and the owner's merge of both draft pull
+requests.

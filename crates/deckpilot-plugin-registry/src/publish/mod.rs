@@ -29,9 +29,11 @@ pub use catalog::PluginInfo;
 pub use cli::{Io, run};
 pub use keys::{KeyRole, Password, SigningKey, generate_key};
 pub use layout::{SiteSource, Workspace};
-pub use pack::package;
+pub use pack::{package, package_with_gate};
 pub use release::{
-    VerifyRequest, check_signed, floor_from_released_pins, preflight, sign as sign_release,
+    VerifyRequest, check_signed, check_signed_with_gate, floor_from_released_pins, preflight,
+    preflight_with_gate, sign as sign_release, verify as verify_release_files,
+    verify_with_gate as verify_release_files_with_gate,
 };
 pub use verify::{SiteReport, verify_site};
 

@@ -29,11 +29,14 @@
 //! [`publisher`] verifies the first-party publisher signature of a
 //! `.dpplugin` release artifact of DeckPilot's own plugins, before an
 //! application build bundles it (authenticity only; it grants nothing).
+//! [`privileged_policy`] is its privileged-kinds gate (closed) and the
+//! reviewed policy an opened gate would admit, exactly.
 
 mod client;
 mod datetime;
 mod error;
 mod model;
+pub mod privileged_policy;
 #[cfg(feature = "publish")]
 pub mod publish;
 pub mod publisher;
