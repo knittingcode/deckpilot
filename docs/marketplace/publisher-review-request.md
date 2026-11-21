@@ -1,7 +1,9 @@
 # Security review request: first-party publisher signature
 
-Status: **requested, not done.** Until a reviewer independent of the
-author signs off below, the privileged-kinds gate stays closed.
+Status: **approved** on 2026-11-21 (Sign-off below; report and
+remediation: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md)).
+The privileged-kinds gate is open for exactly the reviewed privileged
+policy.
 
 Update 2026-11-21: on the owner's decision, the two production publisher
 public keys are pinned (threshold 2,
@@ -9,9 +11,10 @@ public keys are pinned (threshold 2,
 they ship with the next application release. That does not open the gate
 and needs no sign-off for the closed state: verification stays fail
 closed, the artifact lock is empty, and nothing has been released with
-the keys. Both secret keys are currently held in one 1Password vault of
-one account; independent custody (a second person holding key B) is
-pending and is listed under K.
+the keys. Both secret keys are held in one 1Password vault of one
+account. DeckPilot is a single-maintainer project: there is no second
+person to hold key B, and this is an **accepted risk: single maintainer
+(owner decision 2026-11-21)**, listed under K.
 
 Update 2026-11-21 (privileged plugins): everything needed to distribute
 the five privileged plugins as signed artifacts is implemented **with the
@@ -23,6 +26,18 @@ Opening the gate is a separate **draft** pull request in each repository
 that only flips the gate constant and fills in the review record; it
 needs this review's sign-off (item L of [the host side](#host-side-the-agents-install-and-update-path))
 and the owner's approval, and is not merged before both.
+
+**The opening change** (knittingcode/deckpilot#388) sets
+`PRIVILEGED_GATE_OPEN = true` and records the approved review in
+`publisher/privileged-policy.json`, on the owner's decision of 2026-11-21
+after the final independent review ("yes, with conditions", every finding
+fixed: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md)).
+A pending or incomplete review would keep `PrivilegedGate::compiled()`
+closed (the tests assert both states). Merge order: this change first,
+then a DeckPilot release that carries it, then the plugin repository's
+`tools/deckpilot.env` pin to that release, and only then the plugin
+repository's opening draft (whose `check --deckpilot` refuses an open
+gate while the pinned DeckPilot lacks the same record).
 
 ## Scope
 
@@ -223,8 +238,10 @@ K. **Known open items** (not blockers for the closed state):
    reachable at run time.)
    Key custody: both production secret keys are held in one 1Password
    vault of one account; threshold 2 protects against one leaked secret
-   or signing job, not against that account. Independent custody needs a
-   second person holding key B (pending, owner action).
+   or signing job, not against that account. There is no independent
+   custody and no second human release reviewer: **accepted risk: single
+   maintainer (owner decision 2026-11-21)**. Release approval follows the
+   protected-tag authority model.
    The key test (`release test-sign`, `test-verify`): confirm that a
    test signature never counts for a release (another trusted comment
    domain; `a_key_test_signature_is_never_a_release_signature`) and that
@@ -304,9 +321,10 @@ L. **Privileged plugins: the checklist for opening the gate.** Review
       only the gate constant and the record's `review` (and, in the
       plugin repository, its copy of the record); the CI of both is green.
    9. **Conditions from item 8 above** (a hardware-backed key,
-      reproducible-build attestation for Git and Docker, independent key
-      custody of K): decide which are required before opening, and record
-      them in the sign-off.
+      reproducible-build attestation for Git and Docker): decide which are
+      required before opening, and record them in the sign-off. Key
+      custody and a second human reviewer are not conditions: accepted
+      risk, single maintainer (owner decision 2026-11-21).
 
    **Recording the outcome.** The reviewer fills in, in the DeckPilot
    draft, `review` of `publisher/privileged-policy.json`:
@@ -335,6 +353,8 @@ broker and denial matrix (reviewed in
 | Reviewer | Date | Outcome | Gate |
 | --- | --- | --- | --- |
 | | | | closed |
+| pending: the independent security reviewer (not the author) | 2026-11-21 | pending | constant open; closed in effect until approved |
+| Independent security-review agent (Claude Code, not the implementer), commissioned under the owner's authorization; owner approval recorded 2026-11-21 | 2026-11-21 | approved | open for exactly the reviewed policy; report: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md) |
 
 The gate opens only with a row here whose outcome is *approved*, the same
 reviewer, date and outcome in the `review` of

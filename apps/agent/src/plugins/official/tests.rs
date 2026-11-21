@@ -1607,15 +1607,19 @@ fn reviewed(
 }
 
 #[test]
-fn the_privileged_gate_is_closed() {
-    // The compiled gate. Changing these assertions is the review's job.
-    const { assert!(!privileged_policy::PRIVILEGED_GATE_OPEN) };
-    assert_eq!(compiled_gate(), PrivilegedGate::Closed);
+fn the_privileged_gate_opens_only_with_the_approved_review() {
+    // The opening change: the constant is open; the compiled gate is open
+    // only once the record's review is approved.
+    const { assert!(privileged_policy::PRIVILEGED_GATE_OPEN) };
+    let approved = privileged_policy::compiled_policy().unwrap().is_approved();
+    assert_eq!(compiled_gate() == PrivilegedGate::Closed, !approved);
     let env = Env::new();
-    assert_eq!(Official::open(&env.state()).gate, PrivilegedGate::Closed);
+    assert_eq!(Official::open(&env.state()).gate, compiled_gate());
     let second = Key::new(env.root.path(), "second.key");
-    // Even with two distinct keys and exactly the reviewed release.
-    let official = env.official_with(keys(&[&env.key, &second], 2, &[]), Vec::new());
+    // Closed, even with two distinct keys and exactly the reviewed release.
+    let official = env
+        .official_with(keys(&[&env.key, &second], 2, &[]), Vec::new())
+        .with_gate(PrivilegedGate::Closed);
     let package = raw_package(&real_files("workflows", "0.1.1", |_| {}));
     let expected = expected_as("deckpilot.workflows", &package, "0.1.1");
     let signatures = [
@@ -1699,7 +1703,6 @@ fn the_opening_path_needs_the_review_two_keys_and_exactly_the_policy() {
         reviewed(|p| {
             p.review.as_mut().unwrap().outcome = privileged_policy::ReviewOutcome::Pending;
         }),
-        PrivilegedGate::open_for_tests(privileged_policy::compiled_policy().unwrap()),
     ] {
         let official = gated(keys(&[&env.key, &second], 2, &[]), gate);
         assert!(closed(official.verify(&delivery(&expected, &both))));
@@ -1821,6 +1824,49 @@ fn the_opening_path_needs_the_review_two_keys_and_exactly_the_policy() {
         ),
         "{refused}"
     );
+}
+
+/// With the production gate (pending or approved), a registry delivery of
+/// exactly the reviewed release, signed by two distinct pinned keys, is
+/// refused (X12: privileged plugins only as bundled copies) and raises no
+/// floor.
+#[test]
+fn the_compiled_gate_refuses_every_registry_delivery_of_a_privileged_plugin() {
+    let env = Env::new();
+    let second = Key::new(env.root.path(), "second.key");
+    let official = env.official_with(keys(&[&env.key, &second], 2, &[]), Vec::new());
+    assert_eq!(official.gate, compiled_gate());
+    for name in ["git", "docker", "projects", "workflows", "workspace"] {
+        let plugin = format!("deckpilot.{name}");
+        let package = raw_package(&real_files(name, "0.1.1", |_| {}));
+        let expected = expected_as(&plugin, &package, "0.1.1");
+        let signatures = [
+            signed_as(&env.key, &plugin, &package, "0.1.1"),
+            signed_as(&second, &plugin, &package, "0.1.1"),
+        ];
+        let host = host();
+        let result = official.verify(&Delivery {
+            expected: &expected,
+            package: &package,
+            signatures: &signatures,
+            pin: None,
+            host: Some(&host),
+            now: Utc::now(),
+        });
+        assert!(
+            matches!(
+                result,
+                Err(Refusal::BundledOnly { .. }
+                    | Refusal::Publisher(PublisherError::PrivilegedGateClosed { .. }))
+            ),
+            "{plugin}: {result:?}"
+        );
+        assert!(official.floor(&pid(&plugin)).is_none(), "{plugin}");
+        assert_eq!(
+            env.audit().last().unwrap().record.outcome,
+            publisher::AuditOutcome::Refused
+        );
+    }
 }
 
 /// What an application build does with a reviewed privileged artifact
