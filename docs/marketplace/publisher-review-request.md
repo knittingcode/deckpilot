@@ -1,7 +1,13 @@
 # Security review request: first-party publisher signature
 
-Status: **requested, not done.** Until a reviewer independent of the
-author signs off below, the privileged-kinds gate stays closed.
+<!-- AT APPROVAL, replace the next paragraph with: Status: **approved** on <YYYY-MM-DD> by <reviewer> (Sign-off below); the privileged-kinds gate is open for exactly the reviewed privileged policy. -->
+
+Status: **reviewed: yes, with conditions** (the final independent review
+found no high or medium findings; its findings are fixed in
+knittingcode/deckpilot#389 and knittingcode/deckpilot-plugins#74).
+**Outcome pending the owner's decision:** until the outcome `approved` is
+recorded below and in the record, the privileged-kinds gate stays closed
+in effect.
 
 Update 2026-11-21: on the owner's decision, the two production publisher
 public keys are pinned (threshold 2,
@@ -23,6 +29,16 @@ Opening the gate is a separate **draft** pull request in each repository
 that only flips the gate constant and fills in the review record; it
 needs this review's sign-off (item L of [the host side](#host-side-the-agents-install-and-update-path))
 and the owner's approval, and is not merged before both.
+
+**This is that change (draft).** It sets `PRIVILEGED_GATE_OPEN = true` and
+records the review in `publisher/privileged-policy.json` as `pending`.
+With a pending review the compiled gate stays closed
+(`PrivilegedGate::compiled()`; the tests assert it). The reviewer records
+the outcome below and in the record; the owner then decides on the merge. Merge order: this change first,
+then a DeckPilot release that carries it, then the plugin repository's
+`tools/deckpilot.env` pin to that release, and only then the plugin
+repository's opening draft (whose `check --deckpilot` refuses an open
+gate while the pinned DeckPilot lacks the same record).
 
 ## Scope
 
@@ -335,6 +351,7 @@ broker and denial matrix (reviewed in
 | Reviewer | Date | Outcome | Gate |
 | --- | --- | --- | --- |
 | | | | closed |
+| pending: the independent security reviewer (not the author) | 2026-11-21 | pending | constant open; closed in effect until approved |
 
 The gate opens only with a row here whose outcome is *approved*, the same
 reviewer, date and outcome in the `review` of

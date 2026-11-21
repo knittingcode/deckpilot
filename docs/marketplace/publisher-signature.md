@@ -10,7 +10,9 @@ release bundle is still built from `plugins/first-party/` and trusted by
 the pins compiled into the agent ([module-migration.md §4.4](module-migration.md#44-who-signs-bundled-plugins)).
 The application build can already take a bundled plugin from its signed
 release artifact instead ([Wave B](#wave-b-consuming-an-artifact)); no
-plugin is switched to it yet. The privileged-kinds gate stays closed.
+plugin is switched to it yet.
+<!-- AT APPROVAL, replace the next line with: The privileged-kinds gate is open for exactly the reviewed privileged policy ([Privileged plugins](#privileged-plugins-the-reviewed-privileged-policy)). -->
+The privileged-kinds gate is closed in effect until the review's outcome is recorded as approved.
 Security review request: [publisher-review-request.md](publisher-review-request.md).
 
 ## Why
@@ -135,7 +137,8 @@ update with exactly the consent the user gave: a `deckpilot.*` registry
 package is checked with the first-party rules and never receives the 1.9
 privileged kinds.
 
-**The privileged-kinds gate is closed.** A signed artifact that declares
+<!-- AT APPROVAL, replace the next line with: **The privileged-kinds gate is open for exactly the reviewed policy.** Outside it, a signed artifact that declares -->
+**The privileged-kinds gate is closed** (the constant is open; `PrivilegedGate::compiled()` stays closed while the record's review is `pending`). A signed artifact that declares
 any plugin API 1.9 privileged kind (`tools`, i.e. process execution;
 `resources`; `projectContext`; `hostViews`; `openUrl.fromParams`;
 `resource` parameters; `node.changesContext`; host variable sources; host
@@ -145,7 +148,9 @@ covers Docker, Git, Projects, Workflows and Workspace; GitHub, GitLab,
 Jira and Notifications pass it (unit test
 `the_privileged_kinds_gate_is_closed`). There is no flag, key or
 configuration that opens it: the gate is the compiled constant
-`privileged_policy::PRIVILEGED_GATE_OPEN = false`
+`privileged_policy::PRIVILEGED_GATE_OPEN` (set to `true` by the opening
+change, which keeps it closed in effect until the review's outcome is
+`approved`)
 (`crates/deckpilot-plugin-registry/src/privileged_policy.rs`), shared by
 the release tools and the agent. What an opened gate would admit is
 fixed in advance, exactly, by the reviewed privileged policy

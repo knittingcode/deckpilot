@@ -1712,7 +1712,7 @@ fn bundled_json_and_the_lock_must_agree() {
                 &lock,
                 keys,
                 &first_party_dir(),
-                PrivilegedGate::compiled(),
+                PrivilegedGate::Closed,
             )
         };
     let n = "deckpilot.notifications";
@@ -1834,7 +1834,6 @@ fn a_privileged_artifact_entry_needs_the_open_gate_and_the_reviewed_version() {
         check(id, "0.1.1", PrivilegedGate::open_for_tests(&approved)).unwrap();
         for (version, gate, expected) in [
             ("0.1.1", PrivilegedGate::Closed, "the gate is closed"),
-            ("0.1.1", PrivilegedGate::compiled(), "the gate is closed"),
             (
                 "0.1.1",
                 PrivilegedGate::open_for_tests(&pending),

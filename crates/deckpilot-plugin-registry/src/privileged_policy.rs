@@ -46,11 +46,13 @@ use serde_json::Value;
 
 use crate::publisher::PublisherError;
 
-/// **Closed.** Opening the gate is a reviewed change of this constant
-/// together with the review recorded in [`POLICY_JSON`] (`review`, outcome
-/// `approved`) and in `docs/marketplace/publisher-review-request.md`
-/// (Sign-off). Nothing at run time or build time changes it.
-pub const PRIVILEGED_GATE_OPEN: bool = false;
+/// **Open, pending the review.** This is the reviewed change that opens
+/// the gate (it needs the owner's approval). It admits nothing yet:
+/// [`PrivilegedGate::compiled`] stays closed until the independent reviewer
+/// records the outcome `approved` in [`POLICY_JSON`] (`review`) and in
+/// `docs/marketplace/publisher-review-request.md` (Sign-off). Nothing at
+/// run time or build time changes either.
+pub const PRIVILEGED_GATE_OPEN: bool = true;
 
 /// The reviewed privileged policy, compiled in.
 pub const POLICY_JSON: &str = include_str!("../publisher/privileged-policy.json");
@@ -691,15 +693,34 @@ mod tests {
         }
     }
 
+    /// The opening change: the constant is open, the record names the
+    /// review, and the compiled gate opens exactly when that review is
+    /// approved (closed while it is pending).
     #[test]
-    fn the_gate_is_closed_and_the_policy_records_no_review() {
-        // Opening the gate changes these assertions in review.
-        const { assert!(!PRIVILEGED_GATE_OPEN) };
-        assert_eq!(PrivilegedGate::compiled(), PrivilegedGate::Closed);
+    fn the_gate_opens_only_with_the_approved_review() {
+        const { assert!(PRIVILEGED_GATE_OPEN) };
         let policy = compiled_policy().unwrap();
-        assert_eq!(policy.review, None);
-        assert!(!policy.is_approved());
+        let review = policy
+            .review
+            .as_ref()
+            .expect("the opening change records the review");
+        assert!(
+            review.record.contains("publisher-review-request.md"),
+            "{review:?}"
+        );
         assert_eq!(policy.min_threshold, MIN_THRESHOLD);
+        match review.outcome {
+            ReviewOutcome::Approved => {
+                assert_eq!(
+                    PrivilegedGate::compiled(),
+                    PrivilegedGate::open_for_tests(policy)
+                );
+            }
+            ReviewOutcome::Pending => {
+                assert!(!policy.is_approved());
+                assert_eq!(PrivilegedGate::compiled(), PrivilegedGate::Closed);
+            }
+        }
     }
 
     #[test]

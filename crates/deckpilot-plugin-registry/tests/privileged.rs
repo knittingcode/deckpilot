@@ -247,10 +247,119 @@ fn name_of(id: &str) -> &str {
 
 // ------------------------------------------------------------- closed
 
+/// The opening change: the constant is open; the compiled gate is open
+/// exactly when the record's review is approved, and with it the
+/// packager, `release sign` and `release verify` admit the reviewed
+/// releases; while the review is pending they refuse them as closed.
 #[test]
-fn this_build_s_gate_is_closed() {
-    const { assert!(!privileged_policy::PRIVILEGED_GATE_OPEN) };
-    assert_eq!(PrivilegedGate::compiled(), PrivilegedGate::Closed);
+fn this_build_s_gate_opens_only_with_the_approved_review() {
+    const { assert!(privileged_policy::PRIVILEGED_GATE_OPEN) };
+    let compiled = privileged_policy::compiled_policy().unwrap();
+    let approved = compiled.is_approved();
+    assert_eq!(
+        PrivilegedGate::compiled() == PrivilegedGate::Closed,
+        !approved
+    );
+    let a = ThrowawayKey::generate();
+    let b = ThrowawayKey::generate();
+    for plugin in PRIVILEGED_PLUGIN_IDS {
+        let dir = PluginDir::new(name_of(plugin), "0.1.1", |_| {});
+        let packaged = dir.package(PrivilegedGate::compiled());
+        let preflight = preflight_with_gate(
+            &dir.unchecked_package(),
+            id(plugin),
+            v("0.1.1"),
+            PrivilegedGate::compiled(),
+        );
+        let bytes = dir.bundled_rules_package();
+        let claim = claim(&bytes, plugin, "0.1.1");
+        let signatures = [signed(&a, &bytes, &claim), signed(&b, &bytes, &claim)];
+        let verified = verify(
+            &bytes,
+            &signatures,
+            &keys(&[&a, &b], 2),
+            &claim,
+            PrivilegedGate::compiled(),
+            None,
+            &[],
+            &host(),
+        );
+        if approved {
+            packaged.unwrap();
+            preflight.unwrap();
+            verified.unwrap();
+        } else {
+            assert!(packaged.unwrap_err().contains(CLOSED_MESSAGE), "{plugin}");
+            assert!(preflight.is_err(), "{plugin}");
+            assert!(
+                matches!(verified, Err(PublisherError::PrivilegedGateClosed { .. })),
+                "{plugin}"
+            );
+        }
+    }
+}
+
+/// The production gate (`PrivilegedGate::compiled()`, whatever the
+/// record's outcome, pending or approved) refuses what the record does not
+/// list: another version, an extra construct, another plugin id with
+/// reviewed privileges. In the packager, `release sign`'s preflight and
+/// `verify_release` with two distinct keys.
+#[test]
+fn the_compiled_gate_refuses_what_the_record_does_not_list() {
+    let a = ThrowawayKey::generate();
+    let b = ThrowawayKey::generate();
+    let cases: [(&str, &str, &str, Box<dyn Fn(&mut Value)>); 3] = [
+        ("another version", "workflows", "0.1.2", Box::new(|_| {})),
+        (
+            "an extra construct",
+            "workflows",
+            "0.1.1",
+            Box::new(|m| m["contributes"]["statusItems"] = json!(["activeProject"])),
+        ),
+        (
+            "another plugin id",
+            "git",
+            "0.1.1",
+            Box::new(|m| m["id"] = json!("deckpilot.github")),
+        ),
+    ];
+    for (what, name, version, edit) in cases {
+        let dir = PluginDir::new(name, version, |m| edit(m));
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(dir.dir.path().join("manifest.json")).unwrap())
+                .unwrap();
+        let plugin = manifest["id"].as_str().unwrap().to_owned();
+        assert!(
+            dir.package(PrivilegedGate::compiled()).is_err(),
+            "{what}: packaged"
+        );
+        let bytes = dir.unchecked_package();
+        assert!(
+            preflight_with_gate(&bytes, id(&plugin), v(version), PrivilegedGate::compiled())
+                .is_err(),
+            "{what}: preflight"
+        );
+        let claim = claim(&bytes, &plugin, version);
+        let signatures = [signed(&a, &bytes, &claim), signed(&b, &bytes, &claim)];
+        let result = verify(
+            &bytes,
+            &signatures,
+            &keys(&[&a, &b], 2),
+            &claim,
+            PrivilegedGate::compiled(),
+            None,
+            &[],
+            &host(),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(PublisherError::PrivilegedGateClosed { .. }
+                    | PublisherError::PrivilegedNotReviewed { .. })
+            ),
+            "{what}: {result:?}"
+        );
+    }
 }
 
 /// `package --first-party` refuses every privileged plugin with the gate
@@ -259,10 +368,8 @@ fn this_build_s_gate_is_closed() {
 fn the_packager_refuses_every_privileged_plugin_while_closed() {
     for plugin in PRIVILEGED_PLUGIN_IDS {
         let dir = PluginDir::new(name_of(plugin), "0.1.1", |_| {});
-        for gate in [PrivilegedGate::compiled(), PrivilegedGate::Closed] {
-            let error = dir.package(gate).unwrap_err();
-            assert!(error.contains(CLOSED_MESSAGE), "{plugin}: {error}");
-        }
+        let error = dir.package(PrivilegedGate::Closed).unwrap_err();
+        assert!(error.contains(CLOSED_MESSAGE), "{plugin}: {error}");
     }
     // The other first-party plugins package as before.
     let github = PluginDir::new("github", "0.2.9", |_| {});
@@ -275,7 +382,7 @@ fn release_sign_and_verify_refuse_every_privileged_plugin_while_closed() {
     let b = ThrowawayKey::generate();
     for plugin in PRIVILEGED_PLUGIN_IDS {
         let bytes = PluginDir::new(name_of(plugin), "0.1.1", |_| {}).unchecked_package();
-        let error = preflight_with_gate(&bytes, id(plugin), v("0.1.1"), PrivilegedGate::compiled())
+        let error = preflight_with_gate(&bytes, id(plugin), v("0.1.1"), PrivilegedGate::Closed)
             .unwrap_err()
             .to_string();
         assert!(error.contains("refusing to sign"), "{error}");
@@ -287,7 +394,7 @@ fn release_sign_and_verify_refuse_every_privileged_plugin_while_closed() {
             &signatures,
             &keys(&[&a, &b], 2),
             &claim,
-            PrivilegedGate::compiled(),
+            PrivilegedGate::Closed,
             None,
             &[],
             &host(),
@@ -581,13 +688,14 @@ fn a_pending_or_missing_review_opens_nothing() {
         .package(PrivilegedGate::open_for_tests(pending))
         .unwrap_err();
     assert!(error.contains("no approved security review"), "{error}");
-    // The compiled policy records no review at all.
+    // The compiled policy, while its review is pending.
     let compiled = privileged_policy::compiled_policy().unwrap();
-    assert!(compiled.review.is_none());
-    let error = dir
-        .package(PrivilegedGate::open_for_tests(compiled))
-        .unwrap_err();
-    assert!(error.contains("no approved security review"), "{error}");
+    if !compiled.is_approved() {
+        let error = dir
+            .package(PrivilegedGate::open_for_tests(compiled))
+            .unwrap_err();
+        assert!(error.contains("no approved security review"), "{error}");
+    }
 }
 
 /// Admission changes nothing about revocation, rollback and compatibility.
@@ -700,9 +808,11 @@ fn release_verify_reports_the_admission_line() {
         unpack: Some(&unpack),
         now: common::t0(),
     };
-    let error = verify_release_files(&request).unwrap_err().to_string();
-    assert!(error.contains("refused"), "{error}");
-    assert!(!unpack.exists());
+    if !privileged_policy::compiled_policy().unwrap().is_approved() {
+        let error = verify_release_files(&request).unwrap_err().to_string();
+        assert!(error.contains("refused"), "{error}");
+        assert!(!unpack.exists());
+    }
     let listing = verify_release_files_with_gate(&request, open()).unwrap();
     let lines: Vec<&str> = listing
         .lines()
