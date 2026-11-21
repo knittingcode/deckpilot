@@ -23,6 +23,7 @@ pub mod face;
 pub mod folder;
 pub mod folder_control;
 pub mod gesture;
+pub mod gesture_preset;
 pub mod graph;
 pub mod history;
 pub mod i18n;
@@ -115,6 +116,10 @@ pub use folder::{
 pub use folder_control::{
     FOLDER_CONTROL_TRIGGER, NormalizedFolderControl, NormalizedFolderLabel, RecoveredBindings,
     RecoveredError, RecoveryReason,
+};
+pub use gesture_preset::{
+    GestureAssignment, GesturePreset, GesturePresetId, PresetGesture, PresetIssue, PresetPlan,
+    PresetRefusal,
 };
 pub use history::{
     ExecutionRecord, ExecutionState, ExecutionSummary, ExecutionTrigger, ProjectOutcome,
