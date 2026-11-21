@@ -401,6 +401,16 @@ fn module_code(error: &ModuleError) -> (String, Params) {
             params([module(id), ("window", window.clone().into())]),
         ),
         ModuleError::Variables(e) => ("variables", detail(e)),
+        ModuleError::GesturePreset(issues) => (
+            "gesturePreset",
+            detail(
+                &issues
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ),
+        ),
         ModuleError::InvalidConfig(problems) => (
             "invalidConfig",
             detail(
