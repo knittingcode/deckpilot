@@ -12,6 +12,7 @@
 //! `--keys` names others (CI with throwaway keys; the output then says so).
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -460,4 +461,121 @@ pub fn host(
         plugin_api,
         platform,
     })
+}
+
+// ------------------------------------------------------------ key test
+//
+// `release test-sign` and `release test-verify`: a test of the production
+// publisher keys that is never a release (`publisher::test_message`,
+// `publisher::test_comment`). The plugin repository's protected
+// official-test-sign.yml signs run N's fixed message with each key in its
+// own job and checks both against the pinned keys, threshold 2, and that
+// `release verify` refuses them.
+
+/// A key test run number: 1 to [`publisher::MAX_TEST_RUN`].
+pub fn parse_test_run(text: &str) -> Result<u32> {
+    let bad = || {
+        PublishError(format!(
+            "--run `{text}`: a number from 1 to {}",
+            publisher::MAX_TEST_RUN
+        ))
+    };
+    if text.is_empty() || text.len() > 4 || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    let run: u32 = text.parse().map_err(|_| bad())?;
+    if run == 0 || text.starts_with('0') {
+        return Err(bad());
+    }
+    Ok(run)
+}
+
+/// The signature of run `run`'s test message with `key`, and the key's id.
+/// Only the fixed message is ever signed, with the test comment; the new
+/// signature is checked against the key's public half (after `key` is
+/// dropped by the caller) with [`check_test_signed`].
+pub fn test_sign(run: u32, key: &SigningKey) -> Result<String> {
+    let message = publisher::test_message(run);
+    let comment = publisher::test_comment(run, &publisher::digest_of(&message));
+    key.sign(&message, &comment)
+}
+
+/// The new test signature verifies against `public_key` alone.
+pub fn check_test_signed(run: u32, signature: &str, public_key: &str) -> Result<String> {
+    let key_id = publisher::key_id(public_key)
+        .ok_or_else(|| PublishError("the signing key has no key id".into()))?;
+    let keys = PublisherKeys {
+        publisher_keys_version: publisher::KEYS_VERSION,
+        publisher: FIRST_PARTY_PUBLISHER.to_owned(),
+        keys: vec![public_key.to_owned()],
+        threshold: 1,
+        revoked_keys: Vec::new(),
+    };
+    let file = SignatureFile {
+        key_id: key_id.clone(),
+        bytes: format!("{signature}\n").into_bytes(),
+    };
+    publisher::verify_test_signatures(&[file], &keys, run)
+        .map_err(|e| PublishError(format!("the new test signature does not verify: {e}")))?;
+    Ok(key_id)
+}
+
+/// `release test-verify`: the test signatures of run `run` in `dir`
+/// against `keys` (a file) or the pinned keys. The message says what
+/// counted and that this is no release.
+pub fn test_verify(run: u32, dir: &Path, keys: Option<&Path>) -> Result<String> {
+    let (key_set, keys_note) = match keys {
+        Some(path) => (
+            PublisherKeys::from_json(&read(path)?),
+            format!("the keys in {} (not the pinned keys)", path.display()),
+        ),
+        None => (PublisherKeys::pinned(), "the pinned keys".to_owned()),
+    };
+    let key_set = key_set.map_err(|e| PublishError(e.to_string()))?;
+    let name = publisher::test_message_file_name(run);
+    let files = signature_files(Path::new(&name), Some(dir))?;
+    let signatures: Vec<SignatureFile> = files.iter().map(|(_, f)| f.clone()).collect();
+    let listing = |checks: &[SignatureCheck]| -> String {
+        files
+            .iter()
+            .zip(checks)
+            .map(|((path, _), check)| match check {
+                SignatureCheck::Counted {
+                    key_id,
+                    fingerprint,
+                } => format!(
+                    "\n  counted  {}: key {key_id} (fingerprint {fingerprint})",
+                    path.display()
+                ),
+                SignatureCheck::Ignored { reason, .. } => {
+                    format!("\n  ignored  {}: {reason}", path.display())
+                }
+            })
+            .collect()
+    };
+    match publisher::verify_test_signatures(&signatures, &key_set, run) {
+        Ok(verified) => Ok(format!(
+            "key test {run} verified: {} distinct publisher key(s) signed {name}, threshold {} of \
+             {keys_note}; a key test only, never a release signature{}",
+            verified.signers.len(),
+            key_set.threshold,
+            listing(&verified.checks)
+        )),
+        Err(error) => {
+            let mut found = String::new();
+            for (path, _) in &files {
+                let _ = write!(found, "\n  found    {}", path.display());
+            }
+            if files.is_empty() {
+                let _ = write!(
+                    found,
+                    "\n  no signature file {name}.<KEYID>.minisig in {}",
+                    dir.display()
+                );
+            }
+            fail(format!(
+                "key test {run} refused (threshold of {keys_note}): {error}{found}"
+            ))
+        }
+    }
 }
