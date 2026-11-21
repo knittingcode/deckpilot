@@ -220,9 +220,10 @@ plugins/first-party/test-build.sh target/first-party-artifacts-test target/debug
 ### Activation checklist, per plugin
 
 For each of `github` (0.2.1), `gitlab` (0.1.2), `jira` (0.1.2) and
-`notifications` (0.1.2), once its signed release exists (none does yet)
-and the production publisher keys are pinned with threshold 2 in
-`crates/deckpilot-plugin-registry/publisher/first-party.json`:
+`notifications` (0.1.2), once its signed release exists (none does yet;
+the production publisher keys are pinned with threshold 2 in
+`crates/deckpilot-plugin-registry/publisher/first-party.json` since
+2026-11-21):
 
 1. Add its `artifacts.json` entry: `id`, `version`, `url`
    (`https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.<name>--v<version>/deckpilot.<name>-<version>.dpplugin`),

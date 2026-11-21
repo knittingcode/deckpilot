@@ -123,7 +123,8 @@ This repository's CI only *tests* the registry tooling, with throwaway keys
 made inside the tests. The same holds for the first-party publisher
 signature of release artifacts ([publisher-signature.md](publisher-signature.md)):
 this repository only *verifies* it (against the public keys pinned in
-`crates/deckpilot-plugin-registry/publisher/first-party.json`, none yet);
+`crates/deckpilot-plugin-registry/publisher/first-party.json`: two
+production keys, threshold 2);
 `release sign` runs only in `knittingcode/deckpilot-plugins`' release
 environment.
 The application build verifies it when a bundled plugin is taken from its
