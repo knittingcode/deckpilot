@@ -114,7 +114,7 @@ while IFS= read -r path; do
   done
   pins=$(jq --arg id "$pid" --arg v "$(jq -r .version "$manifest")" --argjson f "$files" \
     '. + [{id: $id, version: $v, class: "default", files: $f}]' <<< "$pins")
-done < <(jq -r '.plugins[].path' "$root/plugins/first-party/bundled.json")
+done < <(jq -r '.plugins[] | .path // (.id | ltrimstr("deckpilot."))' "$root/plugins/first-party/bundled.json")
 jq -S -n --argjson p "$pins" '{pinsVersion: 1, plugins: ($p | sort_by(.id))}' > "$bundled_source/pins.json"
 cp "$bundled_source/pins.json" "$work/compiled-pins.json"
 # bundled <dir>: the bundled plugins at <dir> (the resources' bundled/).

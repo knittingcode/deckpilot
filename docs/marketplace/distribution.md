@@ -126,6 +126,20 @@ this repository only *verifies* it (against the public keys pinned in
 `crates/deckpilot-plugin-registry/publisher/first-party.json`, none yet);
 `release sign` runs only in `knittingcode/deckpilot-plugins`' release
 environment.
+The application build verifies it when a bundled plugin is taken from its
+release artifact instead of its source here (`"source": "artifact"` in
+`plugins/first-party/bundled.json`, locked by `plugins/first-party/artifacts.json`;
+none is yet): `plugins/first-party/build.sh` downloads the package and one
+signature file per locked key id from the release's immutable URL (or
+takes them from a pre-downloaded `--artifacts-dir`, `--offline`), checks
+size and sha256 against the lock, runs `deckpilot-registry release
+verify` with the pinned keys, `released-pins.json` and the lock's
+revocations, and unpacks the files into `bundled/<id>/`, where they are
+pinned and shipped inside the installers like every bundled plugin. The
+package and its signatures never become release assets of this repository
+or part of the bundle
+([publisher-signature.md](publisher-signature.md#wave-b-consuming-an-artifact),
+which also lists the per-plugin activation steps).
 The agent verifies it too, at run time, before it installs or updates any
 `deckpilot.*` package a registry delivers (both signatures are needed: the
 registry's for the listing and the pins, the publisher's for the release),

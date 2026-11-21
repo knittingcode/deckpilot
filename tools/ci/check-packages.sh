@@ -175,12 +175,17 @@ expect_file() {
 }
 
 # The plugin ids the application must bundle: those of
-# plugins/first-party/bundled.json (never a test fixture), sorted.
+# plugins/first-party/bundled.json (never a test fixture), sorted: a source
+# entry's manifest id, or a release artifact's id.
 release_plugin_ids() {
   local path
-  jq -r '.plugins[].path' plugins/first-party/bundled.json | tr -d '\r' | while IFS= read -r path; do
-    jq -r .id "plugins/first-party/$path/manifest.json" | tr -d '\r'
-  done | LC_ALL=C sort
+  {
+    jq -r '.plugins[] | select(.source == "artifact") | .id' plugins/first-party/bundled.json | tr -d '\r'
+    jq -r '.plugins[] | select((.source // "source") == "source") | .path' plugins/first-party/bundled.json | tr -d '\r' \
+      | while IFS= read -r path; do
+        jq -r .id "plugins/first-party/$path/manifest.json" | tr -d '\r'
+      done
+  } | LC_ALL=C sort
 }
 
 # plugin_runtime <host> <bundled dir> <agent> <what>: the plugin host is

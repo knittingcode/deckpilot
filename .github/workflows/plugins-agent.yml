@@ -220,13 +220,14 @@ jobs:
           # other files. check-bundled-plugins.sh below checks it again.
           tools/release-pipeline/check-released-pins.sh "$RUNNER_TEMP/bundle-release/bundled/pins.json"
           jq -c '[.plugins[] | {id, class}] | sort_by(.id)' "$RUNNER_TEMP/bundle-release/bundled/pins.json" | tr -d '\r' > "$RUNNER_TEMP/release-set.json"
-          # What bundled.json lists (each directory's manifest id is
-          # `deckpilot.<directory>`, checked here too), as the built pins must say.
-          for path in $(jq -r '.plugins[].path' plugins/first-party/bundled.json | tr -d '\r'); do
+          # What bundled.json lists (each source directory's manifest id is
+          # `deckpilot.<directory>`, checked here too; a release artifact
+          # names its id), as the built pins must say.
+          for path in $(jq -r '.plugins[] | select((.source // "source") == "source") | .path' plugins/first-party/bundled.json | tr -d '\r'); do
             id=$(jq -r .id "plugins/first-party/$path/manifest.json" | tr -d '\r')
             [ "$id" = "deckpilot.$path" ] || { echo "plugins/first-party/$path has id $id"; exit 1; }
           done
-          jq -c '[.plugins[] | {id: ("deckpilot." + .path), class}] | sort_by(.id)' plugins/first-party/bundled.json | tr -d '\r' | diff - "$RUNNER_TEMP/release-set.json"
+          jq -c '[.plugins[] | {id: (.id // ("deckpilot." + .path)), class}] | sort_by(.id)' plugins/first-party/bundled.json | tr -d '\r' | diff - "$RUNNER_TEMP/release-set.json"
           for run in a b; do
             plugins/first-party/build.sh --test-fixtures --out "$RUNNER_TEMP/bundle-$run" --target-dir "$RUNNER_TEMP/first-party-$run"
           done
@@ -234,6 +235,18 @@ jobs:
           DECKPILOT_BUNDLED_PINS="$RUNNER_TEMP/bundle-a/bundled/pins.json" \
             cargo build --locked -p deckpilot-agent --features plugins --bin deckpilot-agent
           tools/release-pipeline/check-bundled-plugins.sh "$RUNNER_TEMP/bundle-a/bundled" "target/debug/deckpilot-agent$exe"
+      # plugins/first-party/build.sh's release-artifact path (artifacts.sh):
+      # a valid two-signature artifact staged and pinned (offline cache,
+      # download through a curl stand-in, fetch-only), every refusal
+      # (tampered bytes, one signature, a wrong or revoked key, a downgrade,
+      # a wrong id or version, a missing file, a mutable URL, the pinned
+      # keys), never both, and a mixed source and artifact build. Throwaway
+      # keys made in the test, through the test-only keys hook; no network.
+      - name: Bundled plugins from release artifacts
+        run: |
+          exe=""; [ "$RUNNER_OS" = Windows ] && exe=.exe
+          cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckpilot-registry
+          plugins/first-party/test-build.sh "$RUNNER_TEMP/first-party-artifacts-test" "target/debug/deckpilot-registry$exe"
       # The release set the dry run built (pins.json and every plugin's
       # files), to compare byte for byte with a build on another machine
       # when this platform's recorded pins (released-pins.json) differ.

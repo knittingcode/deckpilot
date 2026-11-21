@@ -311,15 +311,23 @@ pub struct ArtifactLock {
     pub revoked: Vec<RevokedRelease>,
 }
 
-/// One locked artifact: the claim, and where the package and its signature
-/// are downloaded from.
+/// One locked artifact: the claim, where the package is downloaded from,
+/// and the keys whose signature files are fetched next to it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LockedArtifact {
     pub id: PluginId,
     pub version: Version,
     pub sha256: Sha256Digest,
     pub size: u64,
+    /// The package's immutable release URL: exactly
+    /// [`LockedArtifact::package_url`] (the release of this version, never
+    /// `latest`), written out so that the reviewed entry shows it.
+    pub url: String,
+    /// The minisign key ids (16 uppercase hex) of the keys that signed the
+    /// release: one signature file `<url>.<KEYID>.minisig` is fetched per
+    /// id. Trust still comes only from the pinned keys and their threshold.
+    pub key_ids: Vec<String>,
 }
 
 impl LockedArtifact {
@@ -353,7 +361,8 @@ impl LockedArtifact {
 
 impl ArtifactLock {
     /// Parses and checks a lock: format 1, first-party ids only, one entry
-    /// per id, no locked release that the lock itself revokes.
+    /// per id, each `url` the release's immutable package URL, distinct
+    /// well-formed `keyIds`, no locked release that the lock itself revokes.
     pub fn from_json(bytes: &[u8]) -> Result<Self, String> {
         let lock: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         if lock.artifacts_version != ARTIFACTS_VERSION {
@@ -369,6 +378,36 @@ impl ArtifactLock {
             }
             if !ids.insert(artifact.id.as_str()) {
                 return Err(format!("{} is locked twice", artifact.id));
+            }
+            if artifact.url != artifact.package_url() {
+                return Err(format!(
+                    "{} {}: url `{}` is not the release's immutable package URL {}",
+                    artifact.id,
+                    artifact.version,
+                    artifact.url,
+                    artifact.package_url()
+                ));
+            }
+            if artifact.key_ids.is_empty() {
+                return Err(format!(
+                    "{} {}: keyIds names no signing key",
+                    artifact.id, artifact.version
+                ));
+            }
+            let mut key_ids = BTreeSet::new();
+            for key_id in &artifact.key_ids {
+                if !is_key_id(key_id) {
+                    return Err(format!(
+                        "{} {}: keyIds `{key_id}` is not a key id (16 characters 0-9A-F)",
+                        artifact.id, artifact.version
+                    ));
+                }
+                if !key_ids.insert(key_id.as_str()) {
+                    return Err(format!(
+                        "{} {}: keyIds lists {key_id} twice",
+                        artifact.id, artifact.version
+                    ));
+                }
             }
             if let Some(r) = lock
                 .revoked
@@ -904,6 +943,20 @@ fn check_bytes(
         });
     }
     Ok(())
+}
+
+/// Whether the closed privileged-kinds gate would refuse a release of this
+/// manifest: `Ok(true)` when it declares any of plugin API 1.9's privileged
+/// kinds. The application repository's checks use it to refuse marking
+/// such a plugin as built from a release artifact (`bundled.json`
+/// `"source": "artifact"`) before anything is downloaded; the verification
+/// itself always applies the gate.
+pub fn is_privileged(manifest_bytes: &[u8]) -> Result<bool, PublisherError> {
+    match check_gate(manifest_bytes) {
+        Ok(()) => Ok(false),
+        Err(PublisherError::PrivilegedGateClosed { .. }) => Ok(true),
+        Err(other) => Err(other),
+    }
 }
 
 /// The privileged-kinds gate: closed (see the module documentation). A
