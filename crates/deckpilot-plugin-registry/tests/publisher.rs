@@ -1874,7 +1874,12 @@ fn cli_key_test_signs_only_the_test_message_and_release_verify_refuses_it() {
     assert!(out.contains("key test 1 verified: 2 distinct"), "{out}");
     assert!(out.contains("not the pinned keys"), "{out}");
     assert!(
-        out.contains(&format!("counted  {verify}/{name}.{id_a}.minisig")),
+        out.contains(&format!(
+            "counted  {}",
+            Path::new(&verify)
+                .join(format!("{name}.{id_a}.minisig"))
+                .display()
+        )),
         "{out}"
     );
     // Another run: refused.
