@@ -56,7 +56,7 @@ fn approved() -> &'static PrivilegedPolicy {
 }
 
 fn open() -> PrivilegedGate<'static> {
-    PrivilegedGate::Open(approved())
+    PrivilegedGate::open_for_tests(approved())
 }
 
 fn host() -> HostEnvironment {
@@ -397,7 +397,7 @@ fn the_open_gate_needs_two_distinct_pinned_keys_that_signed() {
         &[by_a.clone(), by_b.clone()],
         &keys(&[&a, &b, &c], 2),
         &claim,
-        PrivilegedGate::Open(three),
+        PrivilegedGate::open_for_tests(three),
         None,
         &[],
         &host(),
@@ -577,12 +577,16 @@ fn a_pending_or_missing_review_opens_nothing() {
     let mut pending = approved().clone();
     pending.review.as_mut().unwrap().outcome = ReviewOutcome::Pending;
     let pending: &'static PrivilegedPolicy = Box::leak(Box::new(pending));
-    let error = dir.package(PrivilegedGate::Open(pending)).unwrap_err();
+    let error = dir
+        .package(PrivilegedGate::open_for_tests(pending))
+        .unwrap_err();
     assert!(error.contains("no approved security review"), "{error}");
     // The compiled policy records no review at all.
     let compiled = privileged_policy::compiled_policy().unwrap();
     assert!(compiled.review.is_none());
-    let error = dir.package(PrivilegedGate::Open(compiled)).unwrap_err();
+    let error = dir
+        .package(PrivilegedGate::open_for_tests(compiled))
+        .unwrap_err();
     assert!(error.contains("no approved security review"), "{error}");
 }
 
@@ -712,51 +716,232 @@ fn release_verify_reports_the_admission_line() {
     assert!(unpack.join("manifest.json").is_file());
 }
 
-/// No production code opens the gate: outside `privileged_policy.rs`
-/// (`PrivilegedGate::compiled`) only test code constructs
-/// `PrivilegedGate::Open`.
+/// No production code opens the gate. `PrivilegedGate::Open` holds a
+/// `ReviewedGate` that only `privileged_policy.rs` can build (in
+/// `compiled()`, and in the test-only `open_for_tests`); this lint is the
+/// second line: in the production code of every Rust file of the
+/// repository (test files, `#[cfg(test)]` and `#[cfg(any(test, …))]` items
+/// left out) it refuses
+///
+/// * any use of `open_for_tests`, and any `ReviewedGate { policy … }`
+///   outside `compiled()`;
+/// * `use` of `PrivilegedGate::Open`, a glob of `PrivilegedGate` or of
+///   `privileged_policy`, and a bare `Open(` in a file that imports it;
+/// * `PrivilegedGate::Open(…)` that is not a pattern, also across lines;
+/// * a call of `*_with_gate(…)` or `.with_gate(…)` whose arguments are
+///   not `PrivilegedGate::compiled()` or `PrivilegedGate::Closed`, also
+///   across lines.
 #[test]
 fn only_tests_construct_an_open_gate() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut offenders = Vec::new();
-    for dir in ["crates", "apps", "tools", "plugins/runtime"] {
+    for dir in ["crates", "apps", "tools", "plugins"] {
         for file in rust_files(&root.join(dir)) {
-            let text = std::fs::read_to_string(&file).unwrap();
             let rel = file
                 .strip_prefix(&root)
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
-            let test_file = rel.contains("/tests/")
-                || rel.ends_with("/tests.rs")
-                || rel.contains("/tests/")
-                || rel.ends_with("_tests.rs");
-            if test_file || rel.ends_with("deckpilot-plugin-registry/src/privileged_policy.rs") {
+            if is_test_file(&rel) {
                 continue;
             }
-            // Production part: before the file's unit tests.
-            let production = text.split("#[cfg(test)]").next().unwrap_or("");
-            // A pattern (`let PrivilegedGate::Open(policy) = gate else`, a
-            // match arm) reads a gate; anything else would make one.
-            let constructs = production
-                .lines()
-                .any(|line| line.contains("PrivilegedGate::Open(") && !reads_a_gate(line));
-            if constructs {
-                offenders.push(rel);
+            let text = std::fs::read_to_string(&file).unwrap();
+            let policy_module = rel.ends_with("deckpilot-plugin-registry/src/privileged_policy.rs");
+            for problem in gate_lint(&production_code(&text), policy_module) {
+                offenders.push(format!("{rel}: {problem}"));
             }
         }
     }
-    assert!(offenders.is_empty(), "{offenders:?}");
+    assert!(offenders.is_empty(), "{offenders:#?}");
 }
 
-/// A pattern (`let PrivilegedGate::Open(policy) = gate else`, a match
-/// arm) or a comment reads a gate; anything else would make one.
-fn reads_a_gate(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("let PrivilegedGate::Open(")
-        || line.starts_with("if let PrivilegedGate::Open(")
-        || (line.starts_with("PrivilegedGate::Open(") && line.contains("=>"))
-        || line.starts_with("//")
+/// The lint catches what it must, and lets the real readers pass.
+#[test]
+fn the_gate_lint_catches_every_way_to_open_the_gate() {
+    let caught = |code: &str| !gate_lint(&production_code(code), false).is_empty();
+    for bad in [
+        "let g = PrivilegedGate::open_for_tests(&p);",
+        "use deckpilot_plugin_registry::privileged_policy::PrivilegedGate::Open;",
+        "use deckpilot_plugin_registry::privileged_policy::PrivilegedGate::{Closed, Open};",
+        "use deckpilot_plugin_registry::privileged_policy::PrivilegedGate::*;",
+        "use deckpilot_plugin_registry::privileged_policy::*;",
+        "use deckpilot_plugin_registry::privileged_policy::PrivilegedGate::{\n    Open as O,\n};",
+        "fn f() { let g = PrivilegedGate::Open(\n    r,\n); }",
+        "fn f() { let g = PrivilegedGate\n    ::Open(r); }",
+        "fn f() { verify_with_gate(&request, gate); }",
+        "fn f() { package_with_gate(\n  dir,\n  module,\n  true,\n  other,\n); }",
+        "fn f() { official.with_gate(g); }",
+        "fn f() { let g = ReviewedGate { policy: p }; }",
+    ] {
+        assert!(caught(bad), "not caught: {bad}");
+    }
+    for good in [
+        "fn f() { let PrivilegedGate::Open(reviewed) = gate else { return; }; }",
+        "fn f() { match gate { PrivilegedGate::Open(r) => r, PrivilegedGate::Closed => x } }",
+        "fn f() { package_with_gate(dir, module, true, PrivilegedGate::compiled()) }",
+        "fn f() { preflight_with_gate(\n  p,\n  id,\n  v,\n  PrivilegedGate::Closed,\n) }",
+        "pub fn verify_with_gate(request: &R, gate: PrivilegedGate<'_>) -> X { y }",
+        "#[cfg(test)]\nfn t() { verify_with_gate(&r, PrivilegedGate::open_for_tests(&p)); }",
+        "#[cfg(test)]\nmod tests { use super::*; fn t() { x.with_gate(PrivilegedGate::open_for_tests(&p)); } }",
+        "// PrivilegedGate::open_for_tests(&p) in a comment",
+    ] {
+        assert!(!caught(good), "flagged: {good}");
+    }
+}
+
+fn is_test_file(rel: &str) -> bool {
+    rel.contains("/tests/")
+        || rel.contains("/benches/")
+        || rel.ends_with("/tests.rs")
+        || rel.ends_with("_tests.rs")
+}
+
+/// The code of `text` outside comments and test-only items: a `#[cfg(…)]`
+/// attribute that names `test` removes the item after it (up to its `;` or
+/// its balanced `{…}`). Whitespace is collapsed to single spaces.
+fn production_code(text: &str) -> String {
+    let mut code = String::new();
+    for line in text.lines() {
+        let line = match line.find("//") {
+            Some(at) if !line[..at].contains('"') => &line[..at],
+            _ => line,
+        };
+        code.push_str(line);
+        code.push(' ');
+    }
+    let bytes = code.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if code[i..].starts_with("#[cfg(") {
+            let end = code[i..].find(']').map_or(bytes.len(), |e| i + e + 1);
+            let attribute = &code[i..end];
+            if attribute.contains("test") {
+                // Skip the item: to its `;` or its balanced braces.
+                let mut j = end;
+                let mut depth = 0usize;
+                while j < bytes.len() {
+                    match bytes[j] {
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                j += 1;
+                                break;
+                            }
+                        }
+                        b';' if depth == 0 => {
+                            j += 1;
+                            break;
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+        }
+        let c = code[i..].chars().next().unwrap();
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The arguments of the call whose `(` is at `open` in `code`.
+fn arguments(code: &str, open: usize) -> &str {
+    let mut depth = 0usize;
+    for (k, c) in code[open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &code[open + 1..open + k];
+                }
+            }
+            _ => {}
+        }
+    }
+    &code[open..]
+}
+
+fn gate_lint(code: &str, policy_module: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    let tight = code.replace(" ::", "::").replace(":: ", "::");
+    if tight.contains("PrivilegedGate::open_for_tests") && !policy_module {
+        problems.push("uses PrivilegedGate::open_for_tests".to_owned());
+    }
+    let constructions = tight.matches("ReviewedGate { policy").count();
+    if constructions > usize::from(policy_module) {
+        problems.push("builds a ReviewedGate".to_owned());
+    }
+    for statement in tight.split(';') {
+        let statement = statement.trim();
+        let Some(path) = statement
+            .strip_prefix("use ")
+            .or_else(|| statement.strip_prefix("pub use "))
+            .or_else(|| statement.strip_prefix("pub(crate) use "))
+            .or_else(|| statement.strip_prefix("pub(super) use "))
+        else {
+            continue;
+        };
+        let path = path.replace(' ', "");
+        if path.contains("PrivilegedGate::Open")
+            || path.contains("PrivilegedGate::*")
+            || path.contains("privileged_policy::*")
+            || (path.contains("PrivilegedGate::{") && path.contains("Open"))
+        {
+            problems.push(format!("imports the open gate: use {path}"));
+        }
+    }
+    // A bare `Open(` is only possible after such an import (reported
+    // above); every qualified one must be a pattern.
+    let mut from = 0;
+    while let Some(at) = tight[from..].find("PrivilegedGate::Open(") {
+        let start = from + at;
+        let open = start + "PrivilegedGate::Open".len();
+        let args = arguments(&tight, open);
+        let after = tight[open + args.len() + 2..].trim_start();
+        let before = tight[..start].trim_end();
+        let pattern = before.ends_with("let")
+            || after.starts_with("=>")
+            || after.starts_with('|')
+            || (after.starts_with('=') && !after.starts_with("=="));
+        if !pattern {
+            problems.push(format!("PrivilegedGate::Open({args}) is not a pattern"));
+        }
+        from = open;
+    }
+    for (needle, call) in [("_with_gate(", true), (".with_gate(", false)] {
+        let mut from = 0;
+        while let Some(at) = tight[from..].find(needle) {
+            let start = from + at;
+            let open = start + needle.len() - 1;
+            let name_start = tight[..start]
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .map_or(0, |p| p + 1);
+            let definition = tight[..name_start].trim_end().ends_with("fn");
+            let args = arguments(&tight, open);
+            let compiled_only = args.contains("PrivilegedGate::compiled()")
+                || args
+                    .trim()
+                    .trim_end_matches(',')
+                    .trim_end()
+                    .ends_with("PrivilegedGate::Closed");
+            if !definition && !compiled_only {
+                let what = if call {
+                    "a *_with_gate call"
+                } else {
+                    "a .with_gate call"
+                };
+                problems.push(format!("{what} with another gate: ({args})"));
+            }
+            from = open;
+        }
+    }
+    problems
 }
 
 fn rust_files(dir: &Path) -> Vec<PathBuf> {

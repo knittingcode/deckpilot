@@ -166,7 +166,9 @@ agent. A registry copy of a privileged plugin stays refused whatever the
 gate: the store refuses privileged constructs from every source but the
 bundle (`check_privileged_source`, X12), and the agent's registry path
 verifies official releases with the gate closed; its opening path
-(`official::admit_privileged`) only adds a second lock.
+(`official::admit_privileged`) only adds a second lock. Even a release it
+admits is refused there (`Refusal::BundledOnly`), audited as refused, and
+raises no floor: nothing reaches the store.
 
 **The record.** `crates/deckpilot-plugin-registry/publisher/privileged-policy.json`,
 compiled in (`privileged_policy::POLICY_JSON`) and copied byte for byte to
@@ -193,8 +195,19 @@ changes.
 
 **The gate.** `PrivilegedGate::compiled()` is `Closed` unless
 `PRIVILEGED_GATE_OPEN` is `true` **and** the compiled policy is valid and
-its review's outcome is `approved` (fail closed: a pending or missing
-review keeps it closed). `privileged_policy::check` then admits a
+its review is approved (`Review::is_approved`: the outcome `approved`, a
+named reviewer that is not a `pending…` placeholder, a `YYYY-MM-DD` date
+and a record; fail closed: anything less keeps it closed). The record's
+`review` must equal the last row of the Sign-off table of
+[publisher-review-request.md](publisher-review-request.md)
+(`the_review_is_the_last_sign_off_row`). An open gate cannot be built
+outside `privileged_policy.rs`: `PrivilegedGate::Open` holds a
+`ReviewedGate` whose field is private, made only by `compiled()` and by the
+test-only `PrivilegedGate::open_for_tests` (feature
+`test-privileged-gate`, enabled only through `[dev-dependencies]`); the
+lint `only_tests_construct_an_open_gate` also refuses imports of `Open`,
+globs, multi-line constructions and `*_with_gate`/`.with_gate` calls with
+any gate but `compiled()` or `Closed` in production code. `privileged_policy::check` then admits a
 manifest only if it is exactly the record's entry for its id and the
 claimed version: the same permissions, the same constructs with the same
 values, nothing added, nothing dropped. Everything else is
@@ -212,7 +225,7 @@ another version, a pending review, an invalid policy.
 | `artifacts.sh` staging | never reached (verify refuses) | staged and pinned like any artifact; requires the one `privileged:` line | refused |
 | `bundled.json` artifact entry (the *Rust* check) | refused | only the reviewed version | refused |
 | `tools/check-official.py` (plugin repository) | refused unless `held` | accepted | refused |
-| the agent (registry delivery) | refused | admitted by `admit_privileged`, then refused by the store (X12) | refused |
+| the agent (registry delivery) | refused | admitted by `admit_privileged`, then refused (`BundledOnly`, audited, no floor); the store refuses it too (X12) | refused |
 
 Revocation, the rollback floor (`released-pins.json`, the bundled pin),
 compatibility with the host and the archive limits apply to a reviewed
@@ -427,7 +440,9 @@ registry's manifest hash and permissions, exactly the reviewed manifest
 for that id and version (`privileged_policy::check`: its permissions and
 every privileged construct, nothing more), then the bundled reader rules
 (`verify_bundled_files`, `validate_bundled`), compatibility and the floor.
-The store's backstop (`check_privileged_source`) refuses the same
+Then the delivery is refused all the same (`Refusal::BundledOnly`): it is
+audited as refused, no floor or release is recorded, and nothing reaches
+the store. The store's backstop (`check_privileged_source`) refuses the same
 constructs from every source but the bundle, whatever the manifest rules
 said. The publisher verifier's gate itself refuses a manifest that does
 not parse (`check_gate`).

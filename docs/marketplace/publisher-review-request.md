@@ -191,9 +191,14 @@ G. **The gate.** The agent's gate is the registry crate's
    `privileged_policy::check`), and then uses only the bundled reader.
    The store still refuses every privileged construct from a non-bundled
    source (`check_privileged_source`), and `check_gate` refuses an
-   unparsable manifest. Confirm no other code constructs
-   `PrivilegedGate::Open` outside tests (`only_tests_construct_an_open_gate`
-   scans for it; check its heuristics too).
+   unparsable manifest. Even an admitted registry delivery is refused
+   (`Refusal::BundledOnly`), audited as refused, before any floor is
+   raised. `PrivilegedGate::Open` holds a `ReviewedGate` that only
+   `compiled()` and the test-only `open_for_tests` (feature
+   `test-privileged-gate`, dev-dependencies only) can build; confirm the
+   feature never reaches a release build, and check the heuristics of the
+   lint `only_tests_construct_an_open_gate` (imports, globs, multi-line
+   constructions, `*_with_gate` and `.with_gate` calls).
 H. **Transition.** `check_transition` runs only for a record whose source
    is `bundled`, before `trial_load`; it refuses dropped action ids,
    settings and credential slots. The bundled copy stays active on every

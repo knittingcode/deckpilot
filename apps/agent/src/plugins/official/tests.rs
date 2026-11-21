@@ -1603,7 +1603,7 @@ fn reviewed(
         record: "official/tests.rs".into(),
     });
     edit(&mut policy);
-    PrivilegedGate::Open(Box::leak(Box::new(policy)))
+    PrivilegedGate::open_for_tests(Box::leak(Box::new(policy)))
 }
 
 #[test]
@@ -1699,7 +1699,7 @@ fn the_opening_path_needs_the_review_two_keys_and_exactly_the_policy() {
         reviewed(|p| {
             p.review.as_mut().unwrap().outcome = privileged_policy::ReviewOutcome::Pending;
         }),
-        PrivilegedGate::Open(privileged_policy::compiled_policy().unwrap()),
+        PrivilegedGate::open_for_tests(privileged_policy::compiled_policy().unwrap()),
     ] {
         let official = gated(keys(&[&env.key, &second], 2, &[]), gate);
         assert!(closed(official.verify(&delivery(&expected, &both))));
@@ -1752,27 +1752,67 @@ fn the_opening_path_needs_the_review_two_keys_and_exactly_the_policy() {
         gated(pinned(), open).verify(&delivery(&relabeled, &both)),
         Err(Refusal::Publisher(PublisherError::Package(_)))
     ));
-    // Everything holds: admitted, recording exactly the two real signers.
-    let admitted = gated(pinned(), open)
-        .verify(&delivery(&expected, &both))
-        .unwrap();
-    assert!(
-        GrantSet::from_manifest(admitted.manifest())
-            .keys()
-            .any(GrantKey::is_first_party_only)
-    );
-    let mut recorded = env.audit().last().unwrap().record.signers.clone();
-    recorded.sort();
+    // Everything holds: the opening path admits it, counting exactly the
+    // two real signers, and the registry delivery is refused all the same
+    // (bundled copies only), audited as refused, with no floor raised.
+    let official = gated(pinned(), open);
+    let Err(Refusal::BundledOnly { mut signers }) = official.verify(&delivery(&expected, &both))
+    else {
+        panic!("a privileged registry delivery must be refused");
+    };
+    signers.sort();
     let mut real = vec![
         publisher::fingerprint(&env.key.public()).unwrap(),
         publisher::fingerprint(&second.public()).unwrap(),
     ];
     real.sort();
-    assert_eq!(recorded, real);
-    // ... and the store refuses it from a registry all the same.
+    assert_eq!(signers, real);
+    let last = env.audit().last().unwrap().record.clone();
+    assert_eq!(last.outcome, publisher::AuditOutcome::Refused);
+    assert!(
+        last.reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("bundled copy"),
+        "{last:?}"
+    );
+    assert_eq!(last.signers, Vec::<String>::new());
+    assert!(
+        official.floor(&pid(WORKFLOWS)).is_none(),
+        "no floor is raised"
+    );
+    // The store is the second lock: the package the opening path admits is
+    // refused from a registry too.
+    let limits = Limits::default();
+    let policy = ReleasePolicy {
+        host: Some(&host),
+        floor: None,
+        revoked: &[],
+        limits: &limits,
+        gate: PrivilegedGate::Closed,
+    };
+    let admitted = admit_privileged(
+        open,
+        PublisherError::PrivilegedGateClosed { usages: Vec::new() },
+        &pinned(),
+        &both,
+        &expected,
+        &package,
+        &policy,
+    )
+    .unwrap();
+    assert!(
+        GrantSet::from_manifest(admitted.package.manifest())
+            .keys()
+            .any(GrantKey::is_first_party_only)
+    );
     let mut manager = env.open();
     let refused = manager
-        .install(&admitted, &registry_source(), &Consent::of(vec![], "user"))
+        .install(
+            &admitted.package,
+            &registry_source(),
+            &Consent::of(vec![], "user"),
+        )
         .unwrap_err();
     assert!(
         matches!(
@@ -2035,7 +2075,8 @@ fn a_reviewed_artifact_updates_the_bundled_copy_under_the_store_s_consent_rules(
         Err(PublisherError::SameVersionOtherFiles { .. })
     ));
     // A registry copy of the next version, admitted by the agent's opening
-    // path, is refused by the store: the bundled copy stays.
+    // path, is refused (bundled copies only), audited, and raises no floor:
+    // the bundled copy stays.
     let next = raw_package(&real_files("git", "0.1.2", |_| {}));
     let next_expected = expected_as(GIT, &next, "0.1.2");
     let next_signed = [
@@ -2050,24 +2091,19 @@ fn a_reviewed_artifact_updates_the_bundled_copy_under_the_store_s_consent_rules(
     let official = env
         .official_with(keys(&[&env.key, &second], 2, &[]), Vec::new())
         .with_gate(next_gate);
-    let admitted = official
-        .verify(&Delivery {
-            expected: &next_expected,
-            package: &next,
-            signatures: &next_signed,
-            pin: after.pins.get(&pid(GIT)),
-            host: Some(&host),
-            now: Utc::now(),
-        })
-        .unwrap();
-    let refused = manager.update(&admitted, &registry_source()).unwrap_err();
+    let refused = official.verify(&Delivery {
+        expected: &next_expected,
+        package: &next,
+        signatures: &next_signed,
+        pin: after.pins.get(&pid(GIT)),
+        host: Some(&host),
+        now: Utc::now(),
+    });
     assert!(
-        matches!(
-            refused,
-            deckpilot_plugin_store::StoreError::SourceNotAllowed { .. }
-        ),
-        "{refused}"
+        matches!(refused, Err(Refusal::BundledOnly { .. })),
+        "{refused:?}"
     );
+    assert!(official.floor(&pid(GIT)).is_none(), "no floor is raised");
     let record = manager.store().plugin(&pid(GIT)).unwrap().unwrap();
     assert_eq!(record.active().unwrap().version, v("0.1.1"));
     assert_eq!(record.source, InstallSource::Bundled);

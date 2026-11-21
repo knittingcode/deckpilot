@@ -110,6 +110,10 @@ fn compiled_gate() -> PrivilegedGate<'static> {
 /// What the gate's opening path admitted, and the keys that signed it.
 #[derive(Debug)]
 pub(super) struct Admitted {
+    /// Read only by the tests of the store's second lock: the agent never
+    /// installs it (registry copies of privileged plugins are refused,
+    /// `Refusal::BundledOnly`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub package: VerifiedPackage,
     pub signers: Vec<String>,
 }
@@ -149,6 +153,7 @@ pub(super) fn admit_privileged(
     let PrivilegedGate::Open(reviewed) = gate else {
         return Err(refusal);
     };
+    let reviewed = reviewed.policy();
     if !reviewed.is_approved() || reviewed.validate().is_err() {
         return Err(refusal);
     }
@@ -312,6 +317,11 @@ pub(super) enum Refusal {
     /// This agent cannot verify official releases now (keys, lock, floors,
     /// host), with the reason.
     Unavailable(String),
+    /// A privileged release that the gate's opening path admitted, refused
+    /// all the same: privileged plugins reach users only as bundled copies
+    /// (X12). Audited as refused; no floor is raised and nothing reaches
+    /// the store. Carries the fingerprints of the keys that signed it.
+    BundledOnly { signers: Vec<String> },
 }
 
 impl std::fmt::Display for Refusal {
@@ -319,6 +329,10 @@ impl std::fmt::Display for Refusal {
         match self {
             Self::Publisher(e) => write!(f, "{e}"),
             Self::Package(m) | Self::Unavailable(m) => f.write_str(m),
+            Self::BundledOnly { .. } => f.write_str(
+                "it declares plugin API 1.9's privileged kinds: a privileged plugin reaches users \
+                 only as a bundled copy of a DeckPilot release, never from a registry (X12)",
+            ),
         }
     }
 }
@@ -739,8 +753,13 @@ impl Official {
                         &policy,
                     )
                     .map_err(Refusal::Publisher)?;
-                    let files = digests(admitted.package.files());
-                    (admitted.package, files, admitted.signers)
+                    // Admitted by every review condition, and still never
+                    // installed from a registry: refused and audited here,
+                    // before any floor is raised, rather than left for the
+                    // store's own X12 refusal after the floor moved.
+                    return Err(Refusal::BundledOnly {
+                        signers: admitted.signers,
+                    });
                 }
                 Err(refusal) => return Err(Refusal::Publisher(refusal)),
             };
