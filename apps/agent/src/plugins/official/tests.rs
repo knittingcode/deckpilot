@@ -1368,7 +1368,12 @@ fn compiled_floors_hold_on_a_fresh_install() {
             "id": ID,
             "version": "0.5.0",
             "sha256": digest(&locked.package).sha256.to_string(),
-            "size": locked.package.len()
+            "size": locked.package.len(),
+            "url": format!(
+                "https://github.com/knittingcode/deckpilot-plugins/releases/download/\
+                 {ID}--v0.5.0/{ID}-0.5.0.dpplugin"
+            ),
+            "keyIds": [env.key.key_id()]
         }],
         "revoked": []
     });

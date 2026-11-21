@@ -4,6 +4,8 @@
 # (docs/marketplace/module-migration.md §4.4, §4.5).
 #
 #   plugins/first-party/build.sh --out DIR [--test-fixtures] [--target-dir DIR]
+#       [--artifacts-dir DIR] [--offline | --fetch-only] [--registry-tool FILE]
+#       [--app-version V] [--plugin-api MAJOR.MINOR] [--platform macos|linux|windows]
 #
 # Writes DIR/bundled/<id>/manifest.json, plugin.wasm, LICENSE, the icons,
 # the visual assets (contributes.visualAssets, PNG or JPEG under assets/)
@@ -19,15 +21,45 @@
 # test plugin deckpilot.example-default), for tests and dry runs only:
 # a release bundle never contains a test fixture.
 #
+# Each entry is built from its source here ({"path": "<dir>", "class"},
+# "source": "source", the default) or taken from a signed release artifact
+# of knittingcode/deckpilot-plugins ({"id", "version", "class", "source":
+# "artifact"}), never both. For an artifact the reviewed entry of
+# artifacts.json (id, version, url, sha256, size, keyIds) is the claim:
+# the package and one <package>.<KEYID>.minisig per key id are taken from
+# --artifacts-dir (default <target dir>/first-party-artifacts) or, when
+# missing there, downloaded from exactly that immutable release URL; size
+# and sha256 are checked first; then `deckpilot-registry release verify`
+# with the PINNED publisher keys, released-pins.json (no downgrade, the same
+# version only with the same files), artifacts.json's revocations, the
+# audit log DIR/artifacts-audit.jsonl, and --unpack into DIR/bundled/<id>/;
+# every key id must have counted. Any mismatch refuses the build. No network
+# is used for source entries, or at all with --offline (every file must be
+# in --artifacts-dir). --fetch-only downloads into --artifacts-dir, checks
+# size and sha256 and stops (pre-staging a cache for an offline build).
+# --registry-tool names a deckpilot-registry binary (default: built with
+# cargo, feature publish, only when an artifact is listed). The host the
+# artifact is checked for: --app-version (default: the workspace version),
+# --plugin-api (default 1.9, the agent's), --platform (default: this one).
+#
 # Reproducible on one platform, like plugins/examples/build.sh: the pinned
 # toolchain (rust-toolchain.toml), the locked plugins/runtime workspace,
 # the `guest` profile, remapped source and Cargo paths, and no flags from
 # the calling environment. Independent of where the checkout is: the build
 # runs in a copy of the workspace rooted at the plugins directory (below),
-# so the same commit builds the same files on every machine of a platform. No package (.dpplugin) and no signature is
-# made: bundled plugins are trusted by the pins, never by a key.
+# so the same commit builds the same files on every machine of a platform.
+# An artifact is unpacked byte for byte, so the same lock gives the same
+# files and pins. No package (.dpplugin) and no signature is staged:
+# bundled plugins are trusted by the pins, never by a key.
 #
-# Needs cargo (with the wasm32-unknown-unknown target) and jq.
+# Tests only: --test-only-publisher-keys FILE verifies artifacts against
+# the throwaway keys in FILE instead of the pinned ones (`release verify
+# --keys`). It needs DECKPILOT_TEST_ONLY_PUBLISHER_KEYS=1 and leaves
+# DIR/bundled/NOT-FOR-RELEASE, which check-bundled-plugins.sh refuses, so
+# such a bundle can never ship.
+#
+# Needs cargo (with the wasm32-unknown-unknown target) and jq; curl to
+# download an artifact.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -36,17 +68,41 @@ runtime="$plugins/runtime"
 target_dir="$runtime/target"
 out=""
 fixtures=false
+artifacts_dir=""
+offline=false
+fetch_only=false
+registry_tool=""
+app_version=""
+# The plugin API the agent hosts (PLUGIN_API, apps/agent/src/plugins/service.rs).
+plugin_api="1.9"
+platform=""
+test_keys=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) out=$2; shift 2 ;;
     --target-dir) target_dir=$2; shift 2 ;;
     --test-fixtures) fixtures=true; shift ;;
-    -h | --help) sed -n '2,28p' "$0"; exit 0 ;;
+    --artifacts-dir) artifacts_dir=$2; shift 2 ;;
+    --offline) offline=true; shift ;;
+    --fetch-only) fetch_only=true; shift ;;
+    --registry-tool) registry_tool=$2; shift 2 ;;
+    --app-version) app_version=$2; shift 2 ;;
+    --plugin-api) plugin_api=$2; shift 2 ;;
+    --platform) platform=$2; shift 2 ;;
+    --test-only-publisher-keys) test_keys=$2; shift 2 ;;
+    -h | --help) sed -n '2,64p' "$0"; exit 0 ;;
     *) echo "build.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$out" ] || { echo "build.sh: --out DIR is required" >&2; exit 2; }
+[ -n "$out" ] || [ "$fetch_only" = true ] || { echo "build.sh: --out DIR is required" >&2; exit 2; }
+[ "$offline" = false ] || [ "$fetch_only" = false ] || { echo "build.sh: --offline and --fetch-only exclude each other" >&2; exit 2; }
+[ "$offline" = false ] || [ -n "$artifacts_dir" ] || { echo "build.sh: --offline needs --artifacts-dir DIR" >&2; exit 2; }
+[ "$fetch_only" = false ] || [ -n "$artifacts_dir" ] || { echo "build.sh: --fetch-only needs --artifacts-dir DIR" >&2; exit 2; }
+if [ -n "$test_keys" ] && [ "${DECKPILOT_TEST_ONLY_PUBLISHER_KEYS:-}" != 1 ]; then
+  echo "build.sh: --test-only-publisher-keys is for tests only and needs DECKPILOT_TEST_ONLY_PUBLISHER_KEYS=1; a release verifies against the pinned keys" >&2
+  exit 2
+fi
 # Cargo runs in plugins/runtime: a relative target directory is the caller's.
 mkdir -p "$target_dir"
 target_dir=$(cd "$target_dir" && pwd)
@@ -62,31 +118,89 @@ else
 fi
 size() { wc -c < "$1" | tr -d ' '; }
 
-# The plugin list: "<directory relative to plugins/first-party> <class>".
+# The plugin lists: "<directory relative to plugins/first-party> <class>"
+# for a source build, "<id> <version> <class>" for a release artifact.
 lists=("$here/bundled.json")
 [ "$fixtures" = false ] || lists+=("$here/test-fixtures/bundled.json")
+lock="$here/artifacts.json"
+[ -f "$lock" ] || fail "$lock is missing"
+jq -e '.artifactsVersion == 1 and (.plugins | type == "array") and (.revoked | type == "array")' "$lock" > /dev/null \
+  || fail "$lock is not artifacts format 1"
 entries=()
+artifacts=()
+listed_ids=()
 for list in "${lists[@]}"; do
   base=$(dirname "$list")
-  while IFS=$'\t' read -r path class; do
-    [ -n "$path" ] || continue
-    case "$class" in default | migration) ;; *) fail "$list: $path has class '$class' (default or migration)" ;; esac
-    rel=${base#"$here"}
-    rel=${rel#/}
-    entries+=("${rel:+$rel/}$path"$'\t'"$class")
-  done < <(jq -r '.plugins[] | [.path, .class] | @tsv' "$list")
+  # Fields joined by U+001F: a tab-separated empty field would be dropped.
+  while IFS=$'\x1f' read -r source path id version class; do
+    case "$class" in default | migration) ;; *) fail "$list: ${path:-$id} has class '$class' (default or migration)" ;; esac
+    case "$source" in
+      source)
+        [ -n "$path" ] && [ -z "$id" ] && [ -z "$version" ] \
+          || fail "$list: a source entry names its directory (path) and nothing else: ${path:-$id}"
+        rel=${base#"$here"}
+        rel=${rel#/}
+        entries+=("${rel:+$rel/}$path"$'\t'"$class")
+        ;;
+      artifact)
+        [ -z "$path" ] && [ -n "$id" ] && [ -n "$version" ] \
+          || fail "$list: an artifact entry names id and version and no path: ${path:-$id}"
+        artifacts+=("$id"$'\t'"$version"$'\t'"$class")
+        listed_ids+=("$id")
+        ;;
+      *) fail "$list: ${path:-$id} has source '$source' (source or artifact)" ;;
+    esac
+  done < <(jq -r '.plugins[] | [(.source // "source"), (.path // ""), (.id // ""), (.version // ""), .class] | join("\u001f")' "$list")
 done
 
-bundled="$out/bundled"
-rm -rf "$bundled"
-mkdir -p "$bundled"
+# Never both: every locked artifact is listed as one, no artifact twice,
+# and no source build of a locked id (checked again by id below, once the
+# manifests are read).
+while IFS=$'\t' read -r id version; do
+  found=false
+  for entry in ${artifacts[@]+"${artifacts[@]}"}; do
+    IFS=$'\t' read -r aid aversion _ <<< "$entry"
+    [ "$aid" = "$id" ] || continue
+    [ "$aversion" = "$version" ] \
+      || fail "artifacts.json locks $id $version, bundled.json lists $id $aversion: they must agree"
+    found=true
+  done
+  [ "$found" = true ] || fail "artifacts.json locks $id $version, which bundled.json does not list with \"source\": \"artifact\""
+done < <(jq -r '.plugins[] | [.id, .version] | @tsv' "$lock")
+duplicates=$(printf '%s\n' ${listed_ids[@]+"${listed_ids[@]}"} | LC_ALL=C sort | uniq -d)
+[ -z "$duplicates" ] || fail "$duplicates is listed twice"
+
+if [ ${#artifacts[@]} -eq 0 ] && [ "$fetch_only" = true ]; then
+  echo "build.sh: no plugin is taken from a release artifact; nothing to fetch"
+  exit 0
+fi
+
+if [ "$fetch_only" = false ]; then
+  bundled="$out/bundled"
+  rm -rf "$bundled"
+  mkdir -p "$bundled"
+fi
 
 crates=()
 for entry in ${entries[@]+"${entries[@]}"}; do
   dir="$here/${entry%%$'\t'*}"
   [ -f "$dir/Cargo.toml" ] || fail "$dir has no Cargo.toml"
   crates+=("$(sed -n 's/^name = "\(.*\)"$/\1/p' "$dir/Cargo.toml" | head -n 1)")
+  # Never both, before anything is downloaded or built.
+  id=$(jq -r .id "$dir/manifest.json")
+  [ "$(jq --arg id "$id" '[.plugins[] | select(.id == $id)] | length' "$lock")" = 0 ] \
+    || fail "$id is built from $dir and locked as a release artifact in artifacts.json: a plugin is one or the other"
+  for listed in ${listed_ids[@]+"${listed_ids[@]}"}; do
+    [ "$listed" != "$id" ] || fail "$id is listed as a release artifact and built from $dir: a plugin is one or the other"
+  done
 done
+
+if [ ${#artifacts[@]} -gt 0 ]; then
+  # shellcheck source=plugins/first-party/artifacts.sh
+  source "$here/artifacts.sh"
+  stage_artifacts
+fi
+[ "$fetch_only" = false ] || exit 0
 
 if [ ${#crates[@]} -gt 0 ]; then
   # Cargo hashes a path package into its -C metadata (and so into symbol
@@ -141,6 +255,22 @@ if [ ${#crates[@]} -gt 0 ]; then
 fi
 
 pins='[]'
+# pin <id> <version> <class>: the size and sha256 of every file of
+# bundled/<id>/, added to the pins.
+pin() {
+  local id=$1 version=$2 class=$3 target="$bundled/$1" files='{}' file
+  while IFS= read -r file; do
+    files=$(jq --arg f "$file" --arg s "$(sha "$target/$file")" --argjson n "$(size "$target/$file")" \
+      '. + {($f): {sha256: $s, size: $n}}' <<< "$files")
+  done < <(cd "$target" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)
+  pins=$(jq --arg id "$id" --arg v "$version" --arg c "$class" --argjson f "$files" \
+    '. + [{id: $id, version: $v, class: $c, files: $f}]' <<< "$pins")
+}
+for entry in ${artifacts[@]+"${artifacts[@]}"}; do
+  IFS=$'\t' read -r id version class <<< "$entry"
+  pin "$id" "$version" "$class"
+  printf '%s  %s %s (%s, release artifact)\n' "$(sha "$bundled/$id/plugin.wasm")" "$id" "$version" "$class"
+done
 index=0
 for entry in ${entries[@]+"${entries[@]}"}; do
   dir="$here/${entry%%$'\t'*}"
@@ -182,15 +312,15 @@ for entry in ${entries[@]+"${entries[@]}"}; do
     cp "$dir/locales/$tag.json" "$target/locales/$tag.json"
   done < <(jq -r '.locales // [] | .[]' "$manifest")
 
-  files='{}'
-  while IFS= read -r file; do
-    files=$(jq --arg f "$file" --arg s "$(sha "$target/$file")" --argjson n "$(size "$target/$file")" \
-      '. + {($f): {sha256: $s, size: $n}}' <<< "$files")
-  done < <(cd "$target" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)
-  pins=$(jq --arg id "$id" --arg v "$version" --arg c "$class" --argjson f "$files" \
-    '. + [{id: $id, version: $v, class: $c, files: $f}]' <<< "$pins")
+  pin "$id" "$version" "$class"
   printf '%s  %s %s (%s)\n' "$(sha "$target/plugin.wasm")" "$id" "$version" "$class"
 done
 
 jq -S -n --argjson p "$pins" '{pinsVersion: 1, plugins: ($p | sort_by(.id))}' > "$bundled/pins.json"
 echo "wrote $bundled/pins.json ($(jq '.plugins | length' "$bundled/pins.json") plugins)"
+if [ -n "$test_keys" ]; then
+  # Verified with throwaway keys: never shippable (check-bundled-plugins.sh
+  # refuses anything but pins.json and the plugins at the top level).
+  echo "verified with the test-only publisher keys $test_keys, not the pinned keys: NOT FOR RELEASE" > "$bundled/NOT-FOR-RELEASE"
+  echo "build.sh: test-only publisher keys: $bundled is not for release" >&2
+fi

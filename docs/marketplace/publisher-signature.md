@@ -5,6 +5,9 @@ plugins to `knittingcode/deckpilot-plugins`). No publisher key exists
 yet, so nothing verifies and nothing changes in any build: every release
 bundle is still built from `plugins/first-party/` and trusted by the pins
 compiled into the agent ([module-migration.md §4.4](module-migration.md#44-who-signs-bundled-plugins)).
+The application build can already take a bundled plugin from its signed
+release artifact instead ([Wave B](#wave-b-consuming-an-artifact)); no
+plugin is switched to it yet.
 Security review request: [publisher-review-request.md](publisher-review-request.md).
 
 ## Why
@@ -34,7 +37,8 @@ rollback floor is `released-pins.json`, whose guard already exists.
 | Pinned public keys | `crates/deckpilot-plugin-registry/publisher/first-party.json`, compiled in (`publisher::PINNED_KEYS`) | `{"publisherKeysVersion": 1, "publisher": "deckpilot", "keys": [...], "threshold": n, "revokedKeys": [...]}`; keys are base64-wrapped minisign public keys; `keys` empty = not provisioned |
 | Release artifact | GitHub Release `<id>--v<version>` of `knittingcode/deckpilot-plugins` | `<id>-<version>.dpplugin`, unchanged format |
 | Signatures | next to it, one file per signing key | `<id>-<version>.dpplugin.<KEYID>.minisig`, `KEYID` the signing key's minisign key id as 16 uppercase hex characters in the byte order minisign itself prints it (`publisher::signature_file_name`). Each file: base64 minisign over exactly the package bytes, trusted comment exactly `deckpilot-publisher v1 role:release id:<id> version:<version> sha256:<hex> size:<bytes>`. A threshold of distinct pinned keys must verify ([below](#threshold-and-signature-files)). The single name `<package>.minisig` is not read or written (nothing was released with it) |
-| Artifact lock | `plugins/first-party/artifacts.json` | `{"artifactsVersion": 1, "plugins": [{"id", "version", "sha256", "size"}], "revoked": [{"id", "versions", "reason"}]}` (`publisher::ArtifactLock`); empty in Wave A |
+| Artifact lock | `plugins/first-party/artifacts.json` | `{"artifactsVersion": 1, "plugins": [{"id", "version", "url", "sha256", "size", "keyIds"}], "revoked": [{"id", "versions", "reason"}]}` (`publisher::ArtifactLock`): `url` exactly the release's immutable package URL (`LockedArtifact::package_url`, never `latest`), `keyIds` the distinct key ids whose signature files are fetched; empty until the first plugin moves |
+| Bundled list | `plugins/first-party/bundled.json` | a source entry `{"path": "<dir>", "class"}` (optionally `"source": "source"`), or a release artifact `{"id", "version", "class", "source": "artifact"}` ([below](#wave-b-consuming-an-artifact)) |
 | Audit log | the file `release verify --audit` names | JSON Lines, one `publisher::AuditRecord` per verification, accepted or refused |
 
 The comment is domain-separated from the registry's
@@ -400,19 +404,147 @@ stolen key or secret cannot sign a release. The intended handling:
 
 ## Wave B: consuming an artifact
 
-Not done in Wave A. The first plugin that moves (proposed:
-`deckpilot.notifications`) needs, in one pull request each side:
+Status: **implemented, inactive.** `plugins/first-party/build.sh` can
+stage a bundled plugin from its signed release artifact instead of
+building it here; no plugin is marked so yet (`artifacts.json` is empty,
+every `bundled.json` entry is a source entry), so every release bundle is
+still built from `plugins/first-party/`.
 
-- deckpilot-plugins: its source under `official/`, a release of
-  `<id>--v<new patch version>` signed in `official-release`;
-- here: its `artifacts.json` entry, `bundled.json` marking it
-  `"source": "artifact"`, and `plugins/first-party/build.sh` downloading,
-  verifying (`release verify` with `--released-pins` and `--audit`) and
-  unpacking it into `bundled/<id>/` before the pins are written, then
-  deleting `plugins/first-party/<name>/`.
+### What the build does
+
+A `bundled.json` entry `{"id": "deckpilot.<name>", "version": "X.Y.Z",
+"class": "default" | "migration", "source": "artifact"}` is taken from
+the release `deckpilot.<name>--vX.Y.Z` of `knittingcode/deckpilot-plugins`;
+a source entry (`{"path", "class"}`) is built exactly as before, with no
+network access. A plugin is one or the other, never both. For each
+artifact `build.sh` (its `artifacts.sh` half), in order, refusing the
+build at the first failure:
+
+1. **The reviewed entry.** `artifacts.json` locks the id exactly once,
+   with the version `bundled.json` names; `url` is exactly
+   `https://github.com/knittingcode/deckpilot-plugins/releases/download/<id>--v<version>/<id>-<version>.dpplugin`
+   (no `latest`, no other host, repository, tag or scheme); `sha256`,
+   `size` and the distinct `keyIds` are well formed.
+2. **The files.** The package and one
+   `<package>.<KEYID>.minisig` per listed key id, from the cache directory
+   (`--artifacts-dir`, default `<target dir>/first-party-artifacts`) or,
+   for a file missing there, downloaded from exactly that URL (HTTPS only,
+   redirects to HTTPS only, size-capped). With `--offline` nothing is
+   downloaded and a missing file refuses the build.
+3. **Size and sha256** of the package against the lock, before anything
+   parses it.
+4. **`deckpilot-registry release verify`** on a fresh directory holding
+   only the package and its listed signature files, with the **pinned
+   keys** (never `--keys` in a real build), the threshold,
+   `--released-pins plugins/first-party/released-pins.json` (no downgrade
+   below a shipped version, the same version only with the same files),
+   `--revocations plugins/first-party/artifacts.json`, the host
+   (`--app-version`: the workspace version, `--plugin-api 1.9`,
+   `--platform`: this one), `--audit <out>/artifacts-audit.jsonl` and
+   `--unpack <out>/bundled/<id>/`. The verifier applies the closed
+   privileged-kinds gate as always.
+5. **Every listed key id counted**, and the unpacked files are the
+   manifest's id and version and only what a bundled plugin may contain
+   (`manifest.json`, `plugin.wasm`, `LICENSE`, images under `assets/`,
+   `locales/<tag>.json`).
+
+The existing pins step then pins the unpacked files like any other
+bundled plugin: the bytes are the package's, so the same lock and cache
+give the same bundled files and `pins.json`. The audit log stays beside
+the bundle, never in it; no package or signature is staged
+(`check-bundled-plugins.sh` refuses them).
+
+**Offline release builds.** `build.sh --fetch-only --artifacts-dir DIR`
+downloads what `artifacts.json` locks into `DIR` and checks sizes and
+digests; a later `build.sh --out OUT --artifacts-dir DIR --offline`
+verifies those files exactly as a download, so a release build need not
+depend on GitHub being available. A file left in the cache is never
+trusted for being there: it passes the same size, digest and signature
+checks, and a stale or corrupt one refuses the build (delete it).
+
+**Never both, in CI.** `build.sh` refuses, before it downloads or builds
+anything, a locked artifact that `bundled.json` does not list as one (or
+with another version), an artifact entry `artifacts.json` does not lock,
+and a source entry whose id is locked or listed as an artifact. The
+required *Rust* checks run the same rules over the committed files
+(`every_bundled_plugin_is_built_from_source_or_a_locked_artifact` in
+`crates/deckpilot-plugin-registry/tests/publisher.rs`), and also refuse an
+artifact entry for a privileged plugin (Docker, Git, Projects, Workflows,
+Workspace: `PRIVILEGED`, checked against the gate by
+`the_privileged_list_is_the_gate_s`), a locked key id that is not a pinned
+current key, fewer key ids than the pinned threshold, and any locked
+artifact while no key is pinned.
+
+**Tests.** `plugins/first-party/test-build.sh` (*Plugins in the agent*
+workflow, every OS) builds the test plugin `deckpilot.example-default`
+from source in a copy of the plugins tree, packages it, signs it with two
+throwaway keys generated in the test, and runs `build.sh` against it:
+a valid two-signature artifact staged and pinned from the offline cache,
+through a download (a curl stand-in that records every URL) and through
+`--fetch-only` then `--offline`, reproducibly; refused for tampered bytes
+(size or digest, and a lock rewritten to the tampered digest), one
+signature, a missing signature file (offline and online), a wrong key, a
+revoked key, a revoked release, a downgrade below `released-pins.json`
+and the same version with other files, a version or id that disagrees
+between `bundled.json` and the lock, a package relabelled as another
+version, a missing package, a mutable, foreign or plain-HTTP URL (never
+fetched), the pinned keys (which are not the throwaway keys), never both;
+and a mixed build of the artifact and a source plugin. The throwaway keys
+reach `release verify --keys` only through `build.sh
+--test-only-publisher-keys FILE`, which refuses to run without
+`DECKPILOT_TEST_ONLY_PUBLISHER_KEYS=1` and leaves `bundled/NOT-FOR-RELEASE`,
+which `check-bundled-plugins.sh` refuses, so such a bundle can never ship.
+No workflow or release script passes it.
 
 The bytes of a plugin built in deckpilot-plugins differ from those
 `build.sh` builds here for the same source (Cargo hashes the SDK's git
 source into the module), so the first artifact of each plugin is a **new
 patch version**; `check-released-pins.sh` and the rollback floor refuse
 anything else.
+
+### Activating a plugin
+
+Only GitHub, GitLab, Jira and Notifications can move while the gate is
+closed (their sources are in `knittingcode/deckpilot-plugins`
+`official/`: github 0.2.1, gitlab 0.1.2, jira 0.1.2, notifications 0.1.2,
+each a patch above what DeckPilot 0.10.0 shipped). Prerequisite for all:
+the production publisher keys pinned in `publisher/first-party.json` with
+threshold 2 (a separate, reviewed change). Then, for each `<name>`, once
+the signed release `deckpilot.<name>--v<version>` exists with its package
+and two `<package>.<KEYID>.minisig` files (none does yet):
+
+1. **Lock it** (one pull request here): add to `artifacts.json`
+   `{"id": "deckpilot.<name>", "version": "<version>", "url":
+   "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.<name>--v<version>/deckpilot.<name>-<version>.dpplugin",
+   "sha256": "<hex>", "size": <bytes>, "keyIds": ["<KEYID A>", "<KEYID B>"]}`,
+   taking sha256 and size from the downloaded package (and the release's
+   own record), and the key ids from the two signature file names; check
+   them with `deckpilot-registry release verify` against the pinned keys
+   locally. In the same pull request replace the entry
+   `{"path": "<name>", "class": "<class>"}` of `bundled.json` with
+   `{"id": "deckpilot.<name>", "version": "<version>", "class": "<class>",
+   "source": "artifact"}` (the same class). Keep `plugins/first-party/<name>/`.
+   CI: the *Rust* checks (lock and list agree, keys pinned), the
+   *Plugins in the agent* bundle dry run (which now downloads and verifies
+   the release) and *Packaging*.
+2. **Release it.** At the next application release, release preparation
+   records the bundle's pins in `released-pins.json` as for every release
+   (`check-released-pins.sh --record`, [docs/releasing.md](../releasing.md)):
+   the artifact's version and files become the floor, so no later build
+   can go below them or change them under that version. For an offline
+   release build, pre-stage the cache with `build.sh --fetch-only`.
+3. **Remove the copy** (a later pull request, after that release): delete
+   `plugins/first-party/<name>/`, its member in `plugins/runtime/Cargo.toml`
+   and `Cargo.lock`, and adjust what builds or reads it from source:
+   the agent's end-to-end tests that compile it
+   (`apps/agent/tests/plugins_<name>.rs`, `plugins_cutover.rs`, `plugins_cutover_servers.rs`,
+   `core_without_plugins.rs`), the contract tests
+   (`crates/deckpilot-modules/tests/contracts.rs`), the *Core without
+   optional plugins* plugin build (`.github/workflows/ci.yml`),
+   `tools/ci/test-check-packages.sh` (stand-ins from the source manifest)
+   and the docs naming the directory; the `PRIVILEGED` check keeps
+   covering the remaining sources.
+
+Do the four one at a time (proposed order: notifications, then github,
+gitlab, jira), each with its own lock entry; the privileged five stay
+source entries until the gate's review.

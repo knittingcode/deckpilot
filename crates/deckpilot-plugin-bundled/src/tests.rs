@@ -510,8 +510,9 @@ fn resources_are_found_next_to_an_installed_agent() {
 
 #[test]
 fn the_bundled_ids_are_those_of_the_release_bundle() {
-    // plugins/first-party/bundled.json lists the plugin directories; each
-    // manifest names its id.
+    // plugins/first-party/bundled.json lists the plugin directories (each
+    // manifest names its id) and the ids of the plugins taken from a release
+    // artifact ("source": "artifact").
     let first_party = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/first-party");
     let list: serde_json::Value =
         serde_json::from_slice(&std::fs::read(first_party.join("bundled.json")).unwrap()).unwrap();
@@ -520,6 +521,9 @@ fn the_bundled_ids_are_those_of_the_release_bundle() {
         .unwrap()
         .iter()
         .map(|entry| {
+            if entry["source"] == "artifact" {
+                return entry["id"].as_str().unwrap().to_owned();
+            }
             let dir = first_party.join(entry["path"].as_str().unwrap());
             let manifest: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(dir.join(MANIFEST)).unwrap()).unwrap();

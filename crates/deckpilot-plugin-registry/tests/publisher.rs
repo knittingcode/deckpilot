@@ -1201,30 +1201,43 @@ fn no_signature_files(cli: &Cli) -> bool {
 const ARTIFACTS: &str = include_str!("../../../plugins/first-party/artifacts.json");
 const RELEASED_PINS: &str = include_str!("../../../plugins/first-party/released-pins.json");
 
+/// The immutable release URL of `id` `version`.
+fn lock_url(id: &str, version: &str) -> String {
+    format!(
+        "https://github.com/knittingcode/deckpilot-plugins/releases/download/\
+         {id}--v{version}/{id}-{version}.dpplugin"
+    )
+}
+
+/// An `artifacts.json` entry (`key_ids` signature files, a stand-in digest).
+fn lock_entry(id: &str, version: &str, key_ids: &[String]) -> serde_json::Value {
+    serde_json::json!({ "id": id, "version": version,
+                        "sha256": digest_of(b"x").sha256.to_string(), "size": 1,
+                        "url": lock_url(id, version), "keyIds": key_ids })
+}
+
+fn lock_doc(plugins: Vec<serde_json::Value>, revoked: serde_json::Value) -> String {
+    let mut doc = serde_json::json!({ "artifactsVersion": 1 });
+    doc["plugins"] = serde_json::Value::Array(plugins);
+    doc["revoked"] = revoked;
+    doc.to_string()
+}
+
+fn two_key_ids() -> Vec<String> {
+    vec!["0123456789ABCDEF".into(), "FEDCBA9876543210".into()]
+}
+
 #[test]
 fn the_artifact_lock_parses_and_locks_nothing_yet() {
     use deckpilot_plugin_registry::publisher::ArtifactLock;
     let lock = ArtifactLock::from_json(ARTIFACTS.as_bytes()).unwrap();
-    // Wave A: no plugin is consumed from a release artifact yet.
+    // No plugin is consumed from a release artifact yet.
     assert_eq!(lock.plugins, Vec::new());
     assert_eq!(lock.revoked, Vec::new());
 
-    let entry = |id: &str, version: &str| {
-        serde_json::json!({ "id": id, "version": version,
-                            "sha256": digest_of(b"x").sha256.to_string(), "size": 1 })
-    };
-    let doc = |plugins: Vec<serde_json::Value>, revoked: serde_json::Value| {
-        serde_json::json!({ "artifactsVersion": 1, "plugins": plugins, "revoked": revoked })
-            .to_string()
-    };
-    let one = ArtifactLock::from_json(
-        doc(
-            vec![entry("deckpilot.github", "0.2.1")],
-            serde_json::json!([]),
-        )
-        .as_bytes(),
-    )
-    .unwrap();
+    let entry = lock_entry("deckpilot.github", "0.2.1", &two_key_ids());
+    let one =
+        ArtifactLock::from_json(lock_doc(vec![entry], serde_json::json!([])).as_bytes()).unwrap();
     assert_eq!(
         one.plugins[0].package_url(),
         "https://github.com/knittingcode/deckpilot-plugins/releases/download/\
@@ -1236,21 +1249,79 @@ fn the_artifact_lock_parses_and_locks_nothing_yet() {
          deckpilot.github--v0.2.1/deckpilot.github-0.2.1.dpplugin.0123456789ABCDEF.minisig"
     );
     assert_eq!(one.plugins[0].claim().version, v("0.2.1"));
+    assert_eq!(one.plugins[0].url, one.plugins[0].package_url());
+    assert_eq!(one.plugins[0].key_ids, two_key_ids());
+}
+
+#[test]
+fn the_artifact_lock_refuses_what_it_cannot_pin() {
+    use deckpilot_plugin_registry::publisher::ArtifactLock;
+    let github = "deckpilot.github";
+    let entry = || lock_entry(github, "0.2.1", &two_key_ids());
+    let with = |field: &str, value: serde_json::Value| {
+        let mut entry = entry();
+        entry[field] = value;
+        entry
+    };
+    let url = lock_url(github, "0.2.1");
+    let releases = "https://github.com/knittingcode/deckpilot-plugins/releases";
+    let none = || serde_json::json!([]);
     for bad in [
-        doc(vec![entry("acme.github", "0.2.1")], serde_json::json!([])),
-        doc(
-            vec![
-                entry("deckpilot.github", "0.2.1"),
-                entry("deckpilot.github", "0.2.2"),
-            ],
-            serde_json::json!([]),
+        // A mutable or another release's URL, another repository, plain HTTP.
+        lock_doc(
+            vec![with(
+                "url",
+                format!("{releases}/latest/download/deckpilot.github-0.2.1.dpplugin").into(),
+            )],
+            none(),
         ),
-        doc(
-            vec![entry("deckpilot.github", "0.2.1")],
-            serde_json::json!([{ "id": "deckpilot.github", "versions": "*", "reason": "x" }]),
+        lock_doc(vec![with("url", lock_url(github, "0.2.2").into())], none()),
+        lock_doc(
+            vec![with(
+                "url",
+                url.replace("/knittingcode/", "/someone/").into(),
+            )],
+            none(),
         ),
-        doc(vec![], serde_json::json!([]))
-            .replace("\"artifactsVersion\":1", "\"artifactsVersion\":2"),
+        lock_doc(
+            vec![with("url", url.replace("https:", "http:").into())],
+            none(),
+        ),
+        // No, malformed or duplicate key ids; a missing field.
+        lock_doc(vec![with("keyIds", serde_json::json!([]))], none()),
+        lock_doc(
+            vec![with("keyIds", serde_json::json!(["0123456789abcdef"]))],
+            none(),
+        ),
+        lock_doc(
+            vec![with(
+                "keyIds",
+                serde_json::json!(["0123456789ABCDEF", "0123456789ABCDEF"]),
+            )],
+            none(),
+        ),
+        lock_doc(
+            vec![{
+                let mut e = entry();
+                e.as_object_mut().unwrap().remove("url");
+                e
+            }],
+            none(),
+        ),
+        // Not first-party, locked twice, locked and revoked, format 2.
+        lock_doc(
+            vec![lock_entry("acme.github", "0.2.1", &two_key_ids())],
+            none(),
+        ),
+        lock_doc(
+            vec![entry(), lock_entry(github, "0.2.2", &two_key_ids())],
+            none(),
+        ),
+        lock_doc(
+            vec![entry()],
+            serde_json::json!([{ "id": github, "versions": "*", "reason": "x" }]),
+        ),
+        lock_doc(vec![], none()).replace("\"artifactsVersion\":1", "\"artifactsVersion\":2"),
     ] {
         assert!(ArtifactLock::from_json(bad.as_bytes()).is_err(), "{bad}");
     }
@@ -1267,4 +1338,320 @@ fn the_released_pins_give_the_rollback_floor() {
     assert!(floor.files.contains_key("plugin.wasm"));
     let unknown = floor_from_released_pins(pins, &id("deckpilot.unknown"), Platform::Macos);
     assert!(unknown.unwrap().is_none());
+}
+
+// ------------------------------------- bundled.json: from source or artifact
+
+const BUNDLED: &str = include_str!("../../../plugins/first-party/bundled.json");
+
+/// The bundled plugins the closed privileged-kinds gate refuses from a
+/// signed artifact: they are built from source here until the gate's review
+/// (docs/marketplace/publisher-review-request.md). Checked against the gate
+/// for every plugin whose source is still in plugins/first-party/, and kept
+/// for those whose source has gone.
+const PRIVILEGED: [&str; 5] = [
+    "deckpilot.docker",
+    "deckpilot.git",
+    "deckpilot.projects",
+    "deckpilot.workflows",
+    "deckpilot.workspace",
+];
+
+fn first_party_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/first-party")
+}
+
+/// A `bundled.json` source entry: its directory's manifest id, never also
+/// locked as an artifact.
+fn check_source_entry(
+    entry: &serde_json::Value,
+    lock: &deckpilot_plugin_registry::publisher::ArtifactLock,
+    first_party: &Path,
+) -> Result<String, String> {
+    let (Some(path), None, None) = (
+        entry["path"].as_str(),
+        entry.get("id"),
+        entry.get("version"),
+    ) else {
+        return Err(format!(
+            "{entry}: a source entry names its directory (path) only"
+        ));
+    };
+    let manifest = std::fs::read(first_party.join(path).join("manifest.json"))
+        .map_err(|e| format!("plugins/first-party/{path}/manifest.json: {e}"))?;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&manifest).map_err(|e| format!("{path}: {e}"))?;
+    let id = manifest["id"].as_str().unwrap_or_default().to_owned();
+    if lock.plugins.iter().any(|a| a.id.as_str() == id) {
+        return Err(format!(
+            "{id} is built from source and locked as a release artifact: one or the other"
+        ));
+    }
+    Ok(id)
+}
+
+/// A `bundled.json` artifact entry: locked with the same version, and not a
+/// plugin the closed gate refuses.
+fn check_artifact_entry(
+    entry: &serde_json::Value,
+    lock: &deckpilot_plugin_registry::publisher::ArtifactLock,
+    first_party: &Path,
+) -> Result<String, String> {
+    use deckpilot_plugin_registry::publisher::is_privileged;
+    let (None, Some(id), Some(version)) = (
+        entry.get("path"),
+        entry["id"].as_str(),
+        entry["version"].as_str(),
+    ) else {
+        return Err(format!(
+            "{entry}: an artifact entry names id and version, no path"
+        ));
+    };
+    let locked = lock
+        .plugins
+        .iter()
+        .find(|a| a.id.as_str() == id)
+        .ok_or_else(|| format!("{id} is an artifact that artifacts.json does not lock"))?;
+    if locked.version.to_string() != version {
+        return Err(format!(
+            "bundled.json lists {id} {version}, artifacts.json locks {id} {}",
+            locked.version
+        ));
+    }
+    let name = id.strip_prefix("deckpilot.").unwrap_or(id);
+    let gated = match std::fs::read(first_party.join(name).join("manifest.json")) {
+        Ok(manifest) => is_privileged(&manifest).map_err(|e| format!("{id}: {e}"))?,
+        Err(_) => false,
+    };
+    if gated || PRIVILEGED.contains(&id) {
+        return Err(format!(
+            "{id} declares plugin API 1.9 privileged kinds: the gate is closed, it is built from \
+             source"
+        ));
+    }
+    Ok(id.to_owned())
+}
+
+/// A locked artifact's key ids: pinned current keys, at least the threshold.
+fn check_locked_keys(
+    locked: &deckpilot_plugin_registry::publisher::LockedArtifact,
+    keys: &PublisherKeys,
+) -> Result<(), String> {
+    if !keys.is_provisioned() {
+        return Err(format!(
+            "{} is locked, but no publisher key is pinned to verify it",
+            locked.id
+        ));
+    }
+    let pinned = keys.signature_key_ids();
+    if let Some(unknown) = locked.key_ids.iter().find(|k| !pinned.contains(k)) {
+        return Err(format!(
+            "{}: keyIds {unknown} is not a pinned current key",
+            locked.id
+        ));
+    }
+    if u64::try_from(locked.key_ids.len()).unwrap_or(u64::MAX) < keys.threshold {
+        return Err(format!(
+            "{}: {} key id(s), the pinned threshold is {}",
+            locked.id,
+            locked.key_ids.len(),
+            keys.threshold
+        ));
+    }
+    Ok(())
+}
+
+/// The checks `plugins/first-party/build.sh` also makes before it builds or
+/// downloads anything, here so that a required CI check fails on them:
+/// each entry of `bundled` is built from source (`path`) or taken from a
+/// release artifact (`id`, `version`, `"source": "artifact"`), never both;
+/// every artifact is locked by `lock` with the same id and version, and
+/// every locked artifact is listed; no privileged plugin is an artifact;
+/// the locked key ids are pinned current keys, at least the threshold.
+fn check_bundled(
+    bundled: &serde_json::Value,
+    lock: &deckpilot_plugin_registry::publisher::ArtifactLock,
+    keys: &PublisherKeys,
+    first_party: &Path,
+) -> Result<(), String> {
+    let mut ids = std::collections::BTreeSet::new();
+    let mut artifacts = std::collections::BTreeSet::new();
+    let entries = bundled["plugins"]
+        .as_array()
+        .ok_or("bundled.json has no plugins list")?;
+    for entry in entries {
+        let class = entry["class"].as_str().unwrap_or_default();
+        if class != "default" && class != "migration" {
+            return Err(format!("{entry}: class `{class}` (default or migration)"));
+        }
+        let id = match entry["source"].as_str().unwrap_or("source") {
+            "source" => check_source_entry(entry, lock, first_party)?,
+            "artifact" => {
+                let id = check_artifact_entry(entry, lock, first_party)?;
+                artifacts.insert(id.clone());
+                id
+            }
+            other => return Err(format!("{entry}: source `{other}` (source or artifact)")),
+        };
+        if !ids.insert(id.clone()) {
+            return Err(format!("{id} is listed twice"));
+        }
+    }
+    for locked in &lock.plugins {
+        if !artifacts.contains(locked.id.as_str()) {
+            return Err(format!(
+                "artifacts.json locks {} {}, which bundled.json does not list as an artifact",
+                locked.id, locked.version
+            ));
+        }
+        check_locked_keys(locked, keys)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_privileged_list_is_the_gate_s() {
+    use deckpilot_plugin_registry::publisher::is_privileged;
+    let mut gated = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(first_party_dir()).unwrap() {
+        let dir = entry.unwrap().path();
+        let Ok(manifest) = std::fs::read(dir.join("manifest.json")) else {
+            continue;
+        };
+        let id = serde_json::from_slice::<serde_json::Value>(&manifest).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        if is_privileged(&manifest).unwrap() {
+            gated.insert(id.clone());
+        }
+        seen.insert(id);
+    }
+    let listed: std::collections::BTreeSet<String> = PRIVILEGED
+        .iter()
+        .map(|s| (*s).to_owned())
+        .filter(|id| seen.contains(id))
+        .collect();
+    assert_eq!(
+        gated, listed,
+        "update PRIVILEGED to the plugins the gate refuses"
+    );
+    for open in [
+        "deckpilot.github",
+        "deckpilot.gitlab",
+        "deckpilot.jira",
+        "deckpilot.notifications",
+    ] {
+        assert!(seen.contains(open) && !gated.contains(open), "{open}");
+    }
+}
+
+#[test]
+fn every_bundled_plugin_is_built_from_source_or_a_locked_artifact() {
+    use deckpilot_plugin_registry::publisher::ArtifactLock;
+    let lock = ArtifactLock::from_json(ARTIFACTS.as_bytes()).unwrap();
+    let bundled: serde_json::Value = serde_json::from_str(BUNDLED).unwrap();
+    let pinned = PublisherKeys::pinned().unwrap();
+    check_bundled(&bundled, &lock, &pinned, &first_party_dir()).unwrap();
+}
+
+#[test]
+fn bundled_json_and_the_lock_must_agree() {
+    use deckpilot_plugin_registry::publisher::ArtifactLock;
+    // Throwaway keys and lock entries.
+    let a = ThrowawayKey::generate();
+    let b = ThrowawayKey::generate();
+    let two = keys(&[&a, &b], 2, &[]);
+    let unpinned = keys(&[], 1, &[]);
+    let artifact = |id: &str, version: &str| serde_json::json!({ "id": id, "version": version, "class": "default", "source": "artifact" });
+    let source = |path: &str| serde_json::json!({ "path": path, "class": "migration" });
+    let both = [a.key_id(), b.key_id()];
+    let check =
+        |plugins: Vec<serde_json::Value>, lock: Vec<serde_json::Value>, keys: &PublisherKeys| {
+            let lock =
+                ArtifactLock::from_json(lock_doc(lock, serde_json::json!([])).as_bytes()).unwrap();
+            check_bundled(
+                &serde_json::json!({ "plugins": plugins }),
+                &lock,
+                keys,
+                &first_party_dir(),
+            )
+        };
+    let n = "deckpilot.notifications";
+    let locked_n = || vec![lock_entry(n, "0.1.3", &both)];
+    check(
+        vec![source("github"), artifact(n, "0.1.3")],
+        locked_n(),
+        &two,
+    )
+    .unwrap();
+    for (plugins, lock, keys, expected) in [
+        // The lock and bundled.json disagree on the version or the id.
+        (
+            vec![artifact(n, "0.1.4")],
+            locked_n(),
+            &two,
+            "artifacts.json locks",
+        ),
+        (
+            vec![artifact(n, "0.1.3")],
+            vec![lock_entry("deckpilot.jira", "0.1.3", &both)],
+            &two,
+            "does not lock",
+        ),
+        (vec![], locked_n(), &two, "does not list"),
+        // Never both.
+        (
+            vec![source("notifications")],
+            locked_n(),
+            &two,
+            "one or the other",
+        ),
+        (
+            vec![artifact(n, "0.1.3"), source("notifications")],
+            locked_n(),
+            &two,
+            "one or the other",
+        ),
+        // A privileged plugin.
+        (
+            vec![artifact("deckpilot.git", "0.1.1")],
+            vec![lock_entry("deckpilot.git", "0.1.1", &both)],
+            &two,
+            "privileged",
+        ),
+        (
+            vec![artifact("deckpilot.workflows", "0.1.1")],
+            vec![lock_entry("deckpilot.workflows", "0.1.1", &both)],
+            &two,
+            "privileged",
+        ),
+        // Keys: none pinned, unknown, below the threshold.
+        (
+            vec![artifact(n, "0.1.3")],
+            locked_n(),
+            &unpinned,
+            "no publisher key",
+        ),
+        (
+            vec![artifact(n, "0.1.3")],
+            vec![lock_entry(
+                n,
+                "0.1.3",
+                &[a.key_id(), "0123456789ABCDEF".into()],
+            )],
+            &two,
+            "not a pinned",
+        ),
+        (
+            vec![artifact(n, "0.1.3")],
+            vec![lock_entry(n, "0.1.3", &[a.key_id()])],
+            &two,
+            "threshold is 2",
+        ),
+    ] {
+        let error = check(plugins, lock, keys).unwrap_err();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
 }
