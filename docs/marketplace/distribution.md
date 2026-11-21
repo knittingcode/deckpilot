@@ -160,6 +160,17 @@ Without a pinned publisher key every such package is refused.
 - **GitHub Releases** of that repository hold the signed plugin packages
   (`<id>-<version>.dpplugin`), pinned by sha256 and size in the signed
   index; one release per plugin version.
+- **The plugins DeckPilot bundles** are released there too (`official/`,
+  signed by the first-party publisher keys, threshold 2;
+  [publisher-signature.md](publisher-signature.md)) and reach users inside
+  the application: an application build verifies and stages each release
+  artifact as a bundled plugin. The five that use plugin API 1.9's
+  privileged kinds (Docker, Git, Projects, Workflows, Workspace) are
+  distributed **only** that way, never through the registry, and only at
+  exactly the version and privileges the reviewed privileged policy lists,
+  once the independent review has opened the gate
+  ([publisher-signature.md](publisher-signature.md#privileged-plugins-the-reviewed-privileged-policy));
+  until then they are built from source here.
 - Its workflows sign only in its own environments, with its own keys:
   `publish.yml` signs the index and the timestamp in `registry-release`
   (release tags `*--v*`), and `refresh-timestamp.yml` re-signs the

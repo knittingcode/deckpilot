@@ -203,7 +203,10 @@ and the required *Rust* checks
 plugin that is both a source and an artifact, a lock and `bundled.json`
 that disagree on an id or version, and an artifact entry for a plugin with
 plugin API 1.9's privileged kinds (Docker, Git, Projects, Workflows,
-Workspace: the gate is closed, they stay source builds). Details:
+Workspace: the gate is closed, they stay source builds; once a reviewed
+change opens it, only at exactly the version the reviewed privileged
+policy lists, and `artifacts.sh` then requires `release verify`'s
+`privileged: reviewed: …` line). Details:
 [publisher-signature.md](../../docs/marketplace/publisher-signature.md#wave-b-consuming-an-artifact).
 
 **Tests** (`test-build.sh`) use throwaway keys generated in the test,

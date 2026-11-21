@@ -15,6 +15,8 @@ use deckpilot_plugin_package::{
 };
 
 use super::{PublishError, Result};
+use crate::privileged_policy::{self, Privileged, PrivilegedGate};
+use crate::publisher::PublisherError;
 
 fn read(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| PublishError(format!("{}: {e}", path.display())))
@@ -24,7 +26,24 @@ fn read(path: &Path) -> Result<Vec<u8>> {
 /// executable artifact. `first_party` checks the manifest with the
 /// first-party rules (a `deckpilot.*` plugin, `--first-party`); without it
 /// the reserved publisher `deckpilot` is refused like every other.
+///
+/// The first-party rules refuse plugin API 1.9's privileged kinds while the
+/// compiled gate is closed ([`PrivilegedGate::compiled`]). With it open, a
+/// manifest that is exactly the reviewed privileged policy's entry for its
+/// id and version is packaged with the bundled rules; any other privileged
+/// manifest is refused ([`privileged_policy::check`]).
 pub fn package(plugin_dir: &Path, module: &Path, first_party: bool) -> Result<BuiltPackage> {
+    package_with_gate(plugin_dir, module, first_party, PrivilegedGate::compiled())
+}
+
+/// [`package`] with the given gate (tests of the opened gate only; the CLI
+/// always uses the compiled one).
+pub fn package_with_gate(
+    plugin_dir: &Path,
+    module: &Path,
+    first_party: bool,
+    gate: PrivilegedGate<'_>,
+) -> Result<BuiltPackage> {
     let manifest_bytes = read(&plugin_dir.join(MANIFEST))?;
     let manifest = Manifest::from_slice(&manifest_bytes)
         .map_err(|e| PublishError(format!("{MANIFEST}: {e}")))?;
@@ -52,7 +71,17 @@ pub fn package(plugin_dir: &Path, module: &Path, first_party: bool) -> Result<Bu
                 manifest.id
             )));
         }
-        builder.first_party();
+        match privileged_policy::check(gate, &manifest_bytes, &manifest.id, &manifest.version) {
+            Ok(Privileged::Reviewed { .. }) => {
+                builder.reviewed_privileged();
+            }
+            // Closed: the first-party rules refuse the privileged kinds
+            // with their own message (one issue per usage).
+            Ok(Privileged::None) | Err(PublisherError::PrivilegedGateClosed { .. }) => {
+                builder.first_party();
+            }
+            Err(e) => return Err(PublishError(format!("refusing to package: {e}"))),
+        }
     }
     builder.build().map_err(|e| PublishError(e.to_string()))
 }

@@ -40,11 +40,14 @@
 //! stay staged until the user approves them, and an update keeps a grant only
 //! where the new version still declares it (the store's permission diff).
 //!
-//! **The privileged-kinds gate stays closed** ([`PRIVILEGED_GATE`]). Its
-//! opening path ([`admit_privileged`]) is reviewed code behind a compiled
-//! constant, not a flag, and even an opened gate would still meet the
-//! store's own rule that plugin API 1.9's privileged kinds come only from a
-//! bundled source (`check_privileged_source`, X12).
+//! **The privileged-kinds gate stays closed** (`privileged_policy` of the
+//! registry crate: `PRIVILEGED_GATE_OPEN` and the compiled, reviewed
+//! privileged policy). Its opening path ([`admit_privileged`]) is reviewed
+//! code behind that compiled constant, not a flag, admits only exactly the
+//! reviewed policy, and even then meets the store's own rule that plugin
+//! API 1.9's privileged kinds come only from a bundled source
+//! (`check_privileged_source`, X12): privileged plugins reach users only
+//! as bundled copies staged at build time from verified artifacts.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -60,6 +63,7 @@ use deckpilot_plugin_package::{
     ExpectedFiles, ExpectedPackage, Files, Limits, PackageError, VerifiedPackage, read_archive,
     sha256, verify_bundled_files, verify_package,
 };
+use deckpilot_plugin_registry::privileged_policy::{self, Privileged, PrivilegedGate};
 use deckpilot_plugin_registry::publisher::{
     self, ArtifactLock, AuditRecord, PublisherError, PublisherKeys, ReleaseClaim, ReleaseFloor,
     ReleasePolicy, RevokedRelease, SignatureFile, VerifiedRelease,
@@ -95,41 +99,13 @@ pub const TEST_KEYS_ENV: &str = "DECKPILOT_TEST_PUBLISHER_KEYS";
 
 // ------------------------------------------------------------------ gate
 
-/// The privileged-kinds gate for official artifacts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PrivilegedGate {
-    /// Every artifact declaring a plugin API 1.9 privileged kind is
-    /// refused (`PublisherError::PrivilegedGateClosed`).
-    Closed,
-    /// Opened by a recorded review, for the plugins and privileged
-    /// permissions it names, under its conditions.
-    #[cfg_attr(not(test), allow(dead_code))]
-    Open(&'static GateReview),
+/// The agent's privileged-kinds gate: the registry crate's compiled one
+/// ([`PrivilegedGate::compiled`], closed: `PRIVILEGED_GATE_OPEN` and an
+/// approved review in the compiled privileged policy would open it). One
+/// switch for the release tools and the agent; nothing here opens it.
+fn compiled_gate() -> PrivilegedGate<'static> {
+    PrivilegedGate::compiled()
 }
-
-/// What an independent security review allowed when it opened the gate
-/// (`docs/marketplace/publisher-review-request.md`, Sign-off).
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct GateReview {
-    pub reviewer: &'static str,
-    pub date: &'static str,
-    /// Distinct publisher keys a privileged release needs; at least 2.
-    pub min_threshold: u64,
-    /// Per plugin id, every privileged construct it may declare, as
-    /// [`deckpilot_plugin_store::privileged_constructs`] names them: the
-    /// privileged grant keys (`tools:git`, `resources`, `hostViews`, …) and
-    /// the other gated constructs by their labels ("a \`resource\`
-    /// parameter", "\`node.changesContext\`", "the host source \`…\`", "the
-    /// \`projects\` view", "\`statusItems\`", "\`dashboardCards\`"). Anything
-    /// else stays refused.
-    pub plugins: &'static [(&'static str, &'static [&'static str])],
-}
-
-/// **Closed.** Opening it is a reviewed code change to this constant (with
-/// the review recorded in `publisher-review-request.md`), never a flag,
-/// setting, key or environment variable; `the_privileged_gate_is_closed`
-/// fails until that review updates it too.
-pub(super) const PRIVILEGED_GATE: PrivilegedGate = PrivilegedGate::Closed;
 
 /// What the gate's opening path admitted, and the keys that signed it.
 #[derive(Debug)]
@@ -141,16 +117,25 @@ pub(super) struct Admitted {
 /// The gate's opening path, for an artifact the verifier refused only
 /// because it declares privileged kinds (so its size, sha256, signatures
 /// and revocations already passed: [`publisher::verify_release`] checks
-/// those first). Closed: the refusal stands. Open: the review's
-/// conditions (threshold, plugin, every privileged construct), the keys
-/// that actually signed (counted again here with the verifier's rules,
-/// [`publisher::check_signatures`]: distinct pinned current keys, one file
-/// each, at least the review's `min_threshold`, never below 2), the
-/// registry's pins (manifest hash, permissions), then the bundled reader
-/// rules (`verify_bundled_files`, the only reader that accepts the
-/// privileged kinds), compatibility and the floor.
+/// those first). Closed: the refusal stands. Open: the reviewed privileged
+/// policy's conditions, all of them: an approved review recorded in the
+/// policy; the keys that actually signed (counted again here with the
+/// verifier's rules, [`publisher::check_signatures`]: distinct pinned
+/// current keys, one file each), at least the policy's `minThreshold`, the
+/// pinned threshold and never below 2; the registry's pins (manifest hash,
+/// permissions); exactly the reviewed manifest for this id and version
+/// ([`privileged_policy::check`]: its permissions and every privileged
+/// construct, nothing more); then the bundled reader rules
+/// (`verify_bundled_files`, the only reader that accepts the privileged
+/// kinds), compatibility and the floor.
+///
+/// Even admitted, a registry copy is refused by the store
+/// (`check_privileged_source`, X12): privileged plugins reach users only as
+/// bundled copies staged at the application's build from reviewed
+/// artifacts. This path is the second lock behind that rule, not a way
+/// around it.
 pub(super) fn admit_privileged(
-    gate: PrivilegedGate,
+    gate: PrivilegedGate<'_>,
     refusal: PublisherError,
     keys: &PublisherKeys,
     signatures: &[SignatureFile],
@@ -161,41 +146,41 @@ pub(super) fn admit_privileged(
     let PublisherError::PrivilegedGateClosed { .. } = &refusal else {
         return Err(refusal);
     };
-    let PrivilegedGate::Open(review) = gate else {
+    let PrivilegedGate::Open(reviewed) = gate else {
         return Err(refusal);
     };
-    if review.min_threshold < 2 || keys.threshold < review.min_threshold {
+    if !reviewed.is_approved() || reviewed.validate().is_err() {
         return Err(refusal);
     }
-    let Some((_, allowed)) = review
-        .plugins
-        .iter()
-        .find(|(id, _)| *id == expected.id.as_str())
-    else {
+    let needed = reviewed.needed_signers(keys.threshold);
+    if keys.threshold < privileged_policy::MIN_THRESHOLD {
         return Err(refusal);
-    };
+    }
     let claim = ReleaseClaim {
         id: expected.id.clone(),
         version: expected.version.clone(),
         package: expected.package.clone(),
     };
     let signers = publisher::check_signatures(package, signatures, keys, &claim)?.signers;
-    let needed = review.min_threshold.max(keys.threshold).max(2);
     if u64::try_from(signers.len()).unwrap_or(0) < needed {
         return Err(refusal);
     }
     let files = read_archive(package, policy.limits)?;
     check_registry_pins(expected, &files)?;
+    let manifest = files
+        .get(deckpilot_plugin_package::MANIFEST)
+        .ok_or_else(|| PublisherError::Package("manifest.json is missing".into()))?;
+    let Privileged::Reviewed { .. } =
+        privileged_policy::check(gate, manifest, &expected.id, &expected.version)?
+    else {
+        return Err(refusal);
+    };
     let pinned = ExpectedFiles {
         id: expected.id.clone(),
         version: expected.version.clone(),
         files: digests(&files),
     };
     let verified = verify_bundled_files(files, &pinned, policy.limits)?;
-    let constructs = deckpilot_plugin_store::privileged_constructs(verified.manifest());
-    if constructs.iter().any(|c| !allowed.contains(&c.as_str())) {
-        return Err(refusal);
-    }
     let host = policy.host.ok_or(refusal)?;
     verified
         .manifest()
@@ -509,7 +494,7 @@ pub(super) struct Official {
     /// The floors file holds fields of a newer DeckPilot: read, never
     /// rewritten (see `read_floors`).
     floors_newer: Option<String>,
-    gate: PrivilegedGate,
+    gate: PrivilegedGate<'static>,
     /// [`MAX_AUDIT_BYTES`], smaller in tests.
     max_audit_bytes: u64,
 }
@@ -544,14 +529,14 @@ impl Official {
             dir: dir.to_path_buf(),
             floors: Mutex::new(floors),
             floors_newer,
-            gate: PRIVILEGED_GATE,
+            gate: compiled_gate(),
             max_audit_bytes: MAX_AUDIT_BYTES,
         }
     }
 
     /// With another gate (tests of the opening path only).
     #[cfg(test)]
-    pub fn with_gate(mut self, gate: PrivilegedGate) -> Self {
+    pub fn with_gate(mut self, gate: PrivilegedGate<'static>) -> Self {
         self.gate = gate;
         self
     }
@@ -732,6 +717,10 @@ impl Official {
             floor: floor.as_ref(),
             revoked,
             limits: &limits,
+            // The registry verifier never admits privileged kinds for a
+            // registry delivery; the agent's own opening path below does,
+            // under the policy, and the store still refuses the copy (X12).
+            gate: PrivilegedGate::Closed,
         };
         let (package, files, signers) =
             match publisher::verify_release(delivery.package, signatures, keys, claim, &policy) {

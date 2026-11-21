@@ -26,6 +26,7 @@ use serde::Deserialize;
 
 use super::keys::SigningKey;
 use super::{PublishError, Result, fail};
+use crate::privileged_policy::PrivilegedGate;
 use crate::publisher::{
     self, AuditRecord, PublisherError, PublisherKeys, ReleaseClaim, ReleaseFloor, ReleasePolicy,
     RevokedRelease, SignatureCheck, SignatureFile,
@@ -111,13 +112,27 @@ pub fn signature_files(
 /// rules, the gate, id and version equal to the claim). Nothing that could
 /// never verify is signed, and no archive is parsed while the key is in
 /// memory.
+///
+/// The privileged-kinds gate is the compiled one
+/// ([`PrivilegedGate::compiled`]): closed, nothing privileged is signed;
+/// open, only exactly the reviewed privileged policy.
 pub fn preflight(package: &[u8], id: PluginId, version: Version) -> Result<ReleaseClaim> {
+    preflight_with_gate(package, id, version, PrivilegedGate::compiled())
+}
+
+/// [`preflight`] with the given gate (tests of the opened gate only).
+pub fn preflight_with_gate(
+    package: &[u8],
+    id: PluginId,
+    version: Version,
+    gate: PrivilegedGate<'_>,
+) -> Result<ReleaseClaim> {
     let claim = ReleaseClaim {
         id,
         version,
         package: publisher::digest_of(package),
     };
-    publisher::check_release_package(package, &claim, &Limits::default())
+    publisher::check_release_package(package, &claim, &Limits::default(), gate)
         .map_err(|e| PublishError(format!("refusing to sign: {e}")))?;
     Ok(claim)
 }
@@ -132,15 +147,34 @@ pub fn sign(package: &[u8], claim: &ReleaseClaim, key: &SigningKey) -> Result<St
     key.sign(package, &comment)
 }
 
-/// Step 3, after the secret key is dropped: the signature, as the file
-/// named for `public_key`'s key id, verifies with the verifier's rules
-/// against `public_key` alone (the host's compatibility is the application
-/// build's check: it knows the host).
+/// Step 3, after the secret key is dropped: the package passes the
+/// preflight's checks again (with the compiled gate), and the signature, as
+/// the file named for `public_key`'s key id, verifies with the verifier's
+/// signature rules against `public_key` alone. The threshold is the
+/// combining job's `release verify` (each key signs in its own job), and
+/// the host's compatibility is the application build's check.
 pub fn check_signed(
     package: &[u8],
     signature: &str,
     public_key: &str,
     claim: &ReleaseClaim,
+) -> Result<()> {
+    check_signed_with_gate(
+        package,
+        signature,
+        public_key,
+        claim,
+        PrivilegedGate::compiled(),
+    )
+}
+
+/// [`check_signed`] with the given gate (tests of the opened gate only).
+pub fn check_signed_with_gate(
+    package: &[u8],
+    signature: &str,
+    public_key: &str,
+    claim: &ReleaseClaim,
+    gate: PrivilegedGate<'_>,
 ) -> Result<()> {
     let key_id = publisher::key_id(public_key)
         .ok_or_else(|| PublishError("the signing key has no key id".into()))?;
@@ -151,18 +185,12 @@ pub fn check_signed(
         threshold: 1,
         revoked_keys: Vec::new(),
     };
-    let limits = Limits::default();
-    let policy = ReleasePolicy {
-        host: None,
-        floor: None,
-        revoked: &[],
-        limits: &limits,
-    };
     let file = SignatureFile {
         key_id,
         bytes: format!("{signature}\n").into_bytes(),
     };
-    publisher::verify_release(package, &[file], &keys, claim, &policy)
+    publisher::check_release_package(package, claim, &Limits::default(), gate)
+        .and_then(|_| publisher::check_signatures(package, &[file], &keys, claim))
         .map(|_| ())
         .map_err(|e| PublishError(format!("the new signature does not verify: {e}")))
 }
@@ -268,8 +296,16 @@ pub struct VerifyRequest<'a> {
 /// Runs the verification, appends the audit record (accepted or refused)
 /// when asked, unpacks the files when asked, and returns the message: the
 /// outcome, then one line per signature file found (counted or ignored,
-/// with the reason), accepted or refused.
+/// with the reason), accepted or refused, and on acceptance the line
+/// `  privileged: none` or `  privileged: reviewed: …` (the reviewed
+/// privileged policy admitted it; `plugins/first-party/artifacts.sh`
+/// requires that line). The gate is the compiled one.
 pub fn verify(request: &VerifyRequest<'_>) -> Result<String> {
+    verify_with_gate(request, PrivilegedGate::compiled())
+}
+
+/// [`verify`] with the given gate (tests of the opened gate only).
+pub fn verify_with_gate(request: &VerifyRequest<'_>, gate: PrivilegedGate<'_>) -> Result<String> {
     let keys_note = match request.keys {
         Some(path) => format!("the keys in {} (not the pinned keys)", path.display()),
         None => "the pinned keys".to_owned(),
@@ -278,7 +314,7 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<String> {
     let outcome = inputs
         .as_ref()
         .map_err(Clone::clone)
-        .and_then(|inputs| verify_inputs(request, inputs));
+        .and_then(|inputs| verify_inputs(request, inputs, gate));
     if let Some(audit) = request.audit {
         let record = match &outcome {
             Ok(verified) => verified.audit(request.now),
@@ -310,12 +346,14 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<String> {
     let threshold = inputs.map(|i| i.keys.threshold).unwrap_or_default();
     Ok(format!(
         "{} {} verified: sha256 {}, {} bytes, signed by {} distinct publisher key(s), threshold \
-         {threshold} of {keys_note}; authenticity only, no permission is granted by it{listing}",
+         {threshold} of {keys_note}; authenticity only, no permission is granted by it{listing}\n  \
+         privileged: {}",
         request.claim.id,
         request.claim.version,
         request.claim.package.sha256,
         request.claim.package.size,
         verified.signers().len(),
+        verified.privileged().unwrap_or("none"),
     ))
 }
 
@@ -383,6 +421,7 @@ fn listing(request: &VerifyRequest<'_>, inputs: &Inputs) -> String {
 fn verify_inputs(
     request: &VerifyRequest<'_>,
     inputs: &Inputs,
+    gate: PrivilegedGate<'_>,
 ) -> Result<publisher::VerifiedRelease, Refusal> {
     let signatures: Vec<SignatureFile> = inputs.files.iter().map(|(_, f)| f.clone()).collect();
     let floor = request
@@ -403,6 +442,7 @@ fn verify_inputs(
         floor: floor.as_ref(),
         revoked: &revoked,
         limits: &limits,
+        gate,
     };
     publisher::verify_release(
         &inputs.package,

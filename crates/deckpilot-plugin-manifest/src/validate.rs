@@ -29,7 +29,7 @@ use crate::{MANIFEST_VERSION, path_rules};
 #[path = "privileged.rs"]
 mod privileged;
 pub use privileged::OPTIONAL_PERMISSIONS;
-pub(crate) use privileged::first_party_only;
+pub(crate) use privileged::{first_party_only, usages as privileged_usages};
 
 /// Error codes every plugin may return without declaring them (`SharedCode`
 /// in the SDK). `errorCodes` must not redeclare them (section 7, rule 13).

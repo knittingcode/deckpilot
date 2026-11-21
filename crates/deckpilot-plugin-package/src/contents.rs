@@ -118,6 +118,17 @@ pub(crate) fn parse_manifest(files: &Files, first_party: bool) -> Result<Manifes
     Ok(manifest)
 }
 
+/// Parses `manifest.json` and validates it with the bundled first-party
+/// rules ([`Manifest::validate_bundled`]), the only ones that accept the
+/// privileged kinds (see `PackageBuilder::reviewed_privileged`).
+pub(crate) fn parse_bundled_manifest(files: &Files) -> Result<Manifest, PackageError> {
+    let manifest = Manifest::from_slice(&files[MANIFEST])?;
+    manifest
+        .validate_bundled()
+        .map_err(deckpilot_plugin_manifest::ManifestError::from)?;
+    Ok(manifest)
+}
+
 /// The integrity record of `files` as `package`, checked against the
 /// manifest: only files the manifest names (plus the required ones and
 /// README/CHANGELOG), every named file present, size range; and every

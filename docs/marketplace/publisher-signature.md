@@ -138,17 +138,116 @@ privileged kinds.
 **The privileged-kinds gate is closed.** A signed artifact that declares
 any plugin API 1.9 privileged kind (`tools`, i.e. process execution;
 `resources`; `projectContext`; `hostViews`; `openUrl.fromParams`;
-`resource` parameters; `node.changesContext`) is refused with
+`resource` parameters; `node.changesContext`; host variable sources; host
+views; `statusItems`; `dashboardCards`) is refused with
 `PublisherError::PrivilegedGateClosed`, whatever the signature. That
 covers Docker, Git, Projects, Workflows and Workspace; GitHub, GitLab,
 Jira and Notifications pass it (unit test
 `the_privileged_kinds_gate_is_closed`). There is no flag, key or
-configuration that opens it; the agent's copy of the gate
-(`apps/agent/src/plugins/official.rs`, `PRIVILEGED_GATE`) is a compiled
-constant, `Closed`. Opening it needs the independent review of
-[publisher-review-request.md](publisher-review-request.md) and a code
-change (the reader would apply `Manifest::validate_bundled` to such an
-artifact, and the X12 tests would grow a "signed artifact" case).
+configuration that opens it: the gate is the compiled constant
+`privileged_policy::PRIVILEGED_GATE_OPEN = false`
+(`crates/deckpilot-plugin-registry/src/privileged_policy.rs`), shared by
+the release tools and the agent. What an opened gate would admit is
+fixed in advance, exactly, by the reviewed privileged policy
+([below](#privileged-plugins-the-reviewed-privileged-policy)).
+
+## Privileged plugins: the reviewed privileged policy
+
+The five privileged plugins (`deckpilot.docker`, `.git`, `.projects`,
+`.workflows`, `.workspace`) may be distributed as signed artifacts only
+under these rules, all implemented and tested with the gate closed; the
+gate itself opens only in a separate change that the owner approves after
+the independent review ([publisher-review-request.md](publisher-review-request.md)).
+
+**One delivery path: bundled copies.** A privileged plugin reaches users
+only as a bundled copy that an application build staged from its verified
+release artifact (`plugins/first-party/artifacts.sh`) and pinned in the
+agent. A registry copy of a privileged plugin stays refused whatever the
+gate: the store refuses privileged constructs from every source but the
+bundle (`check_privileged_source`, X12), and the agent's registry path
+verifies official releases with the gate closed; its opening path
+(`official::admit_privileged`) only adds a second lock.
+
+**The record.** `crates/deckpilot-plugin-registry/publisher/privileged-policy.json`,
+compiled in (`privileged_policy::POLICY_JSON`) and copied byte for byte to
+`knittingcode/deckpilot-plugins` `official/privileged-policy.json`, lists
+for each privileged plugin the **one version** it reviewed (0.1.1, the
+first release from the plugin repository), its exact `permissions` (JSON
+equality, in order: every git and docker subcommand and option, the
+`network` and `modify` sub-grants, resources, project context, profile,
+device, …) and every privileged construct as
+`Manifest::privileged_usages` names it (`path`, `what`), with the JSON
+`value` at that path for the constructs outside `permissions` (each
+`resource` parameter's kinds, each `node.changesContext`, host variable
+source, host view kind, the `statusItems` and `dashboardCards` lists). It
+records the review in `review` (`reviewer`, `date`, `outcome`, `record`);
+it is `null` now. The policy does not parse unless: version 1,
+`minThreshold` at least 2, only those five ids and each once, every
+construct well-formed, and process execution only for `deckpilot.git`
+(`git`) and `deckpilot.docker` (`docker`), whatever else the record says
+(`PROCESS_ALLOW_LIST`). The unit test
+`the_policy_is_exactly_what_the_sources_declare` holds the record to the
+sources of the five plugins in `plugins/first-party/`: changing a
+plugin's privileges fails CI until the record, and with it the review,
+changes.
+
+**The gate.** `PrivilegedGate::compiled()` is `Closed` unless
+`PRIVILEGED_GATE_OPEN` is `true` **and** the compiled policy is valid and
+its review's outcome is `approved` (fail closed: a pending or missing
+review keeps it closed). `privileged_policy::check` then admits a
+manifest only if it is exactly the record's entry for its id and the
+claimed version: the same permissions, the same constructs with the same
+values, nothing added, nothing dropped. Everything else is
+`PublisherError::PrivilegedNotReviewed` with the reason: a new construct,
+a broader permission, an extra executable or subcommand, another plugin,
+another version, a pending review, an invalid policy.
+
+**Where it applies.** The same check, with the same compiled gate:
+
+| Step | Closed (this build) | Open, exactly the record | Open, anything else |
+| --- | --- | --- | --- |
+| `deckpilot-registry package --first-party` | refused by the first-party rules (`is only for DeckPilot's own plugins shipped inside the app`) | packaged with the bundled rules (`PackageBuilder::reviewed_privileged`) | `refusing to package: … privileged policy does not admit` |
+| `release sign` (preflight before the key is loaded; check after) | `refusing to sign: … PrivilegedGateClosed` | signed | refused |
+| `release verify`, `publisher::verify_release` | `PrivilegedGateClosed` | verified, read with the bundled rules, **only with at least 2 distinct pinned keys that signed and a pinned threshold of at least 2**; prints `privileged: reviewed: <id> <version> …` | `PrivilegedNotReviewed` |
+| `artifacts.sh` staging | never reached (verify refuses) | staged and pinned like any artifact; requires the one `privileged:` line | refused |
+| `bundled.json` artifact entry (the *Rust* check) | refused | only the reviewed version | refused |
+| `tools/check-official.py` (plugin repository) | refused unless `held` | accepted | refused |
+| the agent (registry delivery) | refused | admitted by `admit_privileged`, then refused by the store (X12) | refused |
+
+Revocation, the rollback floor (`released-pins.json`, the bundled pin),
+compatibility with the host and the archive limits apply to a reviewed
+release exactly as to any other.
+
+**Grants.** Admission grants nothing. A staged privileged copy is a
+bundled plugin: seeding derives low-tier grants only; `tools:git`,
+`tools:git:network`, `tools:docker`, `tools:docker:modify`,
+`resources:open` and project selection are high tier and only ever the
+user's (consent on first use, every run audited, as today); an update
+keeps a grant only where the new version still declares it with no
+broader scope, and stages anything broader for the user while the old
+copy keeps running; the bundled copy never goes backwards. Tests:
+`a_reviewed_artifact_updates_the_bundled_copy_under_the_store_s_consent_rules`
+and `an_unchanged_reviewed_artifact_keeps_every_grant`
+(`apps/agent/src/plugins/official/tests.rs`).
+
+**Tests** (throwaway keys, the gate opened in the test only):
+`crates/deckpilot-plugin-registry/tests/privileged.rs` (every refusal and
+the accepted case, through the packager, `release sign`, `release verify`
+and `verify_release`, the threshold, revocation, rollback and
+compatibility, and that no production code constructs an open gate),
+the unit tests of `privileged_policy.rs` (the record, its rules, the
+process allow-list), `a_privileged_artifact_entry_needs_the_open_gate_and_the_reviewed_version`
+(`tests/publisher.rs`), and the agent's
+`the_opening_path_needs_the_review_two_keys_and_exactly_the_policy`.
+
+**Opening the gate** is a separate, draft change that only sets
+`PRIVILEGED_GATE_OPEN = true` (and `PRIVILEGED_GATE_OPEN = True` in the
+plugin repository's `tools/check-official.py`) and fills in `review`; it
+stays closed in effect until the independent reviewer records the
+outcome `approved` there and in the Sign-off of
+[publisher-review-request.md](publisher-review-request.md), and the
+owner merges it. A plugin is then released and staged one at a time, as
+in [Activating a plugin](#activating-a-plugin).
 
 ## The agent: installing and updating official plugins
 
@@ -312,21 +411,21 @@ refuse the reserved publisher, and `PluginService::fetch` runs the
 publisher verification for every registry download of a `deckpilot.*` id.
 
 The plugins that declare privileged kinds (Docker, Git, Projects,
-Workflows, Workspace) cannot make this transition while the gate is
-closed, and the store refuses privileged kinds from any non-bundled source
-(`check_privileged_source`) even if it were open.
+Workflows, Workspace) never make this transition: they reach users only
+as bundled copies ([Privileged plugins](#privileged-plugins-the-reviewed-privileged-policy)),
+and the store refuses privileged kinds from any non-bundled source
+(`check_privileged_source`) whatever the gate.
 
 **The gate's opening path** (`official::admit_privileged`): reachable only
-through `PRIVILEGED_GATE = Open(&GateReview)`, a reviewed code change. It
+when the compiled gate is open (`PRIVILEGED_GATE_OPEN` and an approved
+review in the compiled privileged policy), a reviewed code change. It
 applies only to an artifact whose size, sha256, signatures and revocations
-already passed, and needs the review's `min_threshold` (at least 2) of
-distinct keys that actually signed (counted again, and recorded as the
-signers), the plugin named by the review, **every** privileged construct
-of the manifest named by the review
-(`deckpilot_plugin_store::privileged_constructs`: the privileged grant
-keys and the `resource` parameters, `node.changesContext`, host variable
-sources, host views, `statusItems` and `dashboardCards`), the registry's
-manifest hash and permissions, then the bundled reader rules
+already passed, and needs an approved review in the policy, the policy's
+`minThreshold`, the pinned threshold and at least 2 distinct pinned keys
+that actually signed (counted again, and recorded as the signers), the
+registry's manifest hash and permissions, exactly the reviewed manifest
+for that id and version (`privileged_policy::check`: its permissions and
+every privileged construct, nothing more), then the bundled reader rules
 (`verify_bundled_files`, `validate_bundled`), compatibility and the floor.
 The store's backstop (`check_privileged_source`) refuses the same
 constructs from every source but the bundle, whatever the manifest rules
@@ -338,7 +437,7 @@ derives low and medium grants (§5.5 of module-migration.md) only onto a
 copy installed from the bundle; a newer registry copy of the same
 `deckpilot.*` id keeps exactly what the user granted, and the store
 refuses `derive_grants` for any other source.
-Tested behind a test-only gate (`the_opening_path_needs_its_review_conditions_and_meets_the_store_lock`),
+Tested behind a test-only gate (`the_opening_path_needs_the_review_two_keys_and_exactly_the_policy`),
 which also shows the store's second lock.
 
 Tests: `apps/agent/src/plugins/official/tests.rs` (tampered package,
@@ -596,3 +695,14 @@ and two `<package>.<KEYID>.minisig` files (none does yet):
 Do the four one at a time (proposed order: notifications, then github,
 gitlab, jira), each with its own lock entry; the privileged five stay
 source entries until the gate's review.
+
+**A privileged plugin**, once the gate is open (the reviewed draft
+merged and a DeckPilot release made with it, which the plugin
+repository's pinned commit then names): the plugin repository removes
+`held` from its entry and releases exactly the reviewed version (its
+`package --first-party` and `release sign` now accept exactly the record),
+and step 1 above locks it here. The *Rust* check accepts the artifact
+entry only at the policy's version; `artifacts.sh` stages it only with
+`privileged: reviewed: <id> <version> …` from `release verify`. A new
+version of a privileged plugin needs a new record entry, which is a new
+review.

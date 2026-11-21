@@ -907,138 +907,6 @@ fn a_revoked_key_never_counts_with_threshold_two() {
         .unwrap();
 }
 
-// ---------------------------------------------------------------- gate
-
-fn privileged_files(version: &str) -> Files {
-    files(
-        version,
-        &json!([{ "kind": "hostViews", "justification": "Test fixture: privileged." }]),
-        "",
-        |m| m["engines"]["pluginApi"] = json!("^1.9"),
-    )
-}
-
-#[test]
-fn the_privileged_gate_is_closed() {
-    // The compiled gate. Changing this assertion is the review's job.
-    assert_eq!(PRIVILEGED_GATE, PrivilegedGate::Closed);
-    let env = Env::new();
-    let second = Key::new(env.root.path(), "second.key");
-    // Even with two distinct keys and a perfect release.
-    let official = env.official_with(keys(&[&env.key, &second], 2, &[]), Vec::new());
-    let package = raw_package(&privileged_files("0.1.1"));
-    let expected = expected_for(&package, "0.1.1");
-    let signatures = [
-        env.key.sign(&package, "0.1.1"),
-        second.sign(&package, "0.1.1"),
-    ];
-    let host = host();
-    let delivery = Delivery {
-        expected: &expected,
-        package: &package,
-        signatures: &signatures,
-        pin: None,
-        host: Some(&host),
-        now: Utc::now(),
-    };
-    assert!(matches!(
-        refusal(official.verify(&delivery)),
-        Refusal::Publisher(PublisherError::PrivilegedGateClosed { .. })
-    ));
-    assert!(official.floor(&id()).is_none());
-}
-
-static REVIEW: GateReview = GateReview {
-    reviewer: "test",
-    date: "2026-11-21",
-    min_threshold: 2,
-    plugins: &[(ID, &["hostViews"])],
-};
-
-static ONE_KEY_REVIEW: GateReview = GateReview {
-    reviewer: "test",
-    date: "2026-11-21",
-    min_threshold: 1,
-    plugins: &[(ID, &["hostViews"])],
-};
-
-static OTHER_KEYS_REVIEW: GateReview = GateReview {
-    reviewer: "test",
-    date: "2026-11-21",
-    min_threshold: 2,
-    plugins: &[(ID, &["tools:git"])],
-};
-
-/// The opening path, tested behind a test-only gate: its own conditions
-/// refuse, and when they hold the package passes the bundled reader. The
-/// store still refuses to install it from a registry (X12's second lock).
-#[test]
-fn the_opening_path_needs_its_review_conditions_and_meets_the_store_lock() {
-    let env = Env::new();
-    let second = Key::new(env.root.path(), "second.key");
-    let package = raw_package(&privileged_files("0.1.1"));
-    let expected = expected_for(&package, "0.1.1");
-    let signatures = [
-        env.key.sign(&package, "0.1.1"),
-        second.sign(&package, "0.1.1"),
-    ];
-    let host = host();
-    let delivery = Delivery {
-        expected: &expected,
-        package: &package,
-        signatures: &signatures,
-        pin: None,
-        host: Some(&host),
-        now: Utc::now(),
-    };
-    let gated = |keys: PublisherKeys, gate| env.official_with(keys, Vec::new()).with_gate(gate);
-    let closed = |r: Result<VerifiedPackage, Refusal>| {
-        matches!(
-            r,
-            Err(Refusal::Publisher(
-                PublisherError::PrivilegedGateClosed { .. }
-            ))
-        )
-    };
-    // One key is never enough, whatever the review says.
-    let one = gated(
-        keys(&[&env.key], 1, &[]),
-        PrivilegedGate::Open(&ONE_KEY_REVIEW),
-    );
-    assert!(closed(one.verify(&delivery)));
-    let one = gated(keys(&[&env.key], 1, &[]), PrivilegedGate::Open(&REVIEW));
-    assert!(closed(one.verify(&delivery)));
-    // A kind the review does not name.
-    let other = gated(
-        keys(&[&env.key, &second], 2, &[]),
-        PrivilegedGate::Open(&OTHER_KEYS_REVIEW),
-    );
-    assert!(closed(other.verify(&delivery)));
-    // Everything holds: the bundled reader accepts it.
-    let open = gated(
-        keys(&[&env.key, &second], 2, &[]),
-        PrivilegedGate::Open(&REVIEW),
-    );
-    let admitted = open.verify(&delivery).unwrap();
-    assert!(
-        GrantSet::from_manifest(admitted.manifest())
-            .keys()
-            .any(GrantKey::is_first_party_only)
-    );
-    // ... and the store refuses it from a registry all the same.
-    let mut manager = env.open();
-    let refused = manager
-        .install(&admitted, &registry_source(), &Consent::of(vec![], "user"))
-        .unwrap_err();
-    assert!(
-        matches!(
-            refused,
-            deckpilot_plugin_store::StoreError::SourceNotAllowed { .. }
-        ),
-        "{refused}"
-    );
-}
-
 // ---------------------------------------------------------- transition
 
 /// Bundled 0.1.0 → official 0.1.1 through the store's update: the id, the
@@ -1526,98 +1394,6 @@ fn early_refusals_are_audited_and_rotation_keeps_generations() {
     }
 }
 
-const STATUS_FIXTURE: &str = "Test fixture: privileged.";
-
-fn host_views_and_status_items(version: &str) -> Files {
-    files(
-        version,
-        &json!([{ "kind": "hostViews", "justification": STATUS_FIXTURE }]),
-        "",
-        |m| {
-            m["engines"]["pluginApi"] = json!("^1.9");
-            m["contributes"]["statusItems"] = json!(["activeProject"]);
-        },
-    )
-}
-
-static HOST_VIEWS_ONLY: GateReview = GateReview {
-    reviewer: "test",
-    date: "2026-11-21",
-    min_threshold: 2,
-    plugins: &[(ID, &["hostViews"])],
-};
-
-static HOST_VIEWS_AND_STATUS: GateReview = GateReview {
-    reviewer: "test",
-    date: "2026-11-21",
-    min_threshold: 2,
-    plugins: &[(ID, &["hostViews", "`statusItems`"])],
-};
-
-/// Finding 6: the opening path limits every privileged construct, keeps the
-/// registry's manifest and permission pins, and records the keys that
-/// actually signed.
-#[test]
-fn the_opening_path_limits_every_construct_and_records_the_real_signers() {
-    let env = Env::new();
-    let second = Key::new(env.root.path(), "second.key");
-    let third = Key::new(env.root.path(), "third.key");
-    let package = raw_package(&host_views_and_status_items("0.1.1"));
-    let expected = expected_for(&package, "0.1.1");
-    // Two of the three pinned keys sign.
-    let signatures = [
-        env.key.sign(&package, "0.1.1"),
-        second.sign(&package, "0.1.1"),
-    ];
-    let host = host();
-    let delivery = |expected| Delivery {
-        expected,
-        package: &package,
-        signatures: &signatures,
-        pin: None,
-        host: Some(&host),
-        now: Utc::now(),
-    };
-    let gated = |gate| {
-        env.official_with(keys(&[&env.key, &second, &third], 2, &[]), Vec::new())
-            .with_gate(gate)
-    };
-    // `statusItems` is not in the review: refused.
-    assert!(matches!(
-        gated(PrivilegedGate::Open(&HOST_VIEWS_ONLY)).verify(&delivery(&expected)),
-        Err(Refusal::Publisher(
-            PublisherError::PrivilegedGateClosed { .. }
-        ))
-    ));
-    // The registry's permissions are still checked on this path.
-    let mut relabeled = expected.clone();
-    relabeled.permissions = Some(Vec::new());
-    assert!(matches!(
-        gated(PrivilegedGate::Open(&HOST_VIEWS_AND_STATUS)).verify(&delivery(&relabeled)),
-        Err(Refusal::Publisher(PublisherError::Package(_)))
-    ));
-    let mut other_manifest = expected.clone();
-    other_manifest.manifest_sha256 = sha256(b"another manifest");
-    assert!(matches!(
-        gated(PrivilegedGate::Open(&HOST_VIEWS_AND_STATUS)).verify(&delivery(&other_manifest)),
-        Err(Refusal::Publisher(PublisherError::Package(_)))
-    ));
-    // Everything named: admitted, with exactly the two signers.
-    let open = gated(PrivilegedGate::Open(&HOST_VIEWS_AND_STATUS));
-    open.verify(&delivery(&expected)).unwrap();
-    let audit = env.audit();
-    let recorded = &audit.last().unwrap().record.signers;
-    let mut real = vec![
-        publisher::fingerprint(&env.key.public()).unwrap(),
-        publisher::fingerprint(&second.public()).unwrap(),
-    ];
-    real.sort();
-    let mut recorded = recorded.clone();
-    recorded.sort();
-    assert_eq!(recorded, real);
-    assert!(!recorded.contains(&publisher::fingerprint(&third.public()).unwrap()));
-}
-
 // ------------------------------------------------- re-review (N2, floors)
 
 fn make_writable_and_flip(path: &Path) {
@@ -1747,4 +1523,593 @@ fn floors_of_a_newer_agent_are_read_but_never_rewritten() {
         withheld[&(id(), v("0.1.1"))].reason.contains("cannot read"),
         "{withheld:?}"
     );
+}
+
+// ------------------------------------- privileged plugins (reviewed policy)
+//
+// The gate is closed in this build. These tests open it in the test only,
+// with the compiled privileged policy and an approved test review, and use
+// the real manifests of deckpilot.workflows and deckpilot.git
+// (plugins/first-party/<name>) with throwaway keys.
+
+const FIRST_PARTY: &str = "../../plugins/first-party";
+
+fn pid(text: &str) -> PluginId {
+    PluginId::parse(text).unwrap()
+}
+
+/// The real plugin `name`'s files at `version` (its manifest edited by
+/// `edit`), with a stand-in module whose bytes carry the version.
+fn real_files(name: &str, version: &str, edit: impl FnOnce(&mut Value)) -> Files {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(FIRST_PARTY)
+        .join(name);
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    manifest["version"] = version.into();
+    edit(&mut manifest);
+    let mut files = Files::new();
+    files.insert(
+        MANIFEST.into(),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    );
+    files.insert(
+        "LICENSE".into(),
+        std::fs::read(dir.join("LICENSE")).unwrap(),
+    );
+    for sub in ["locales", "assets"] {
+        let Ok(entries) = std::fs::read_dir(dir.join(sub)) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry.unwrap();
+            files.insert(
+                format!("{sub}/{}", entry.file_name().to_str().unwrap()),
+                std::fs::read(entry.path()).unwrap(),
+            );
+        }
+    }
+    files.insert(
+        "plugin.wasm".into(),
+        deckpilot_plugin_package::wasm::minimal_abi_module_with_note(&format!("{name} {version}")),
+    );
+    files
+}
+
+/// What a verified registry chain would pin for `package` as `plugin`.
+fn expected_as(plugin: &str, package: &[u8], version: &str) -> ExpectedPackage {
+    let mut expected = expected_for(package, version);
+    expected.id = pid(plugin);
+    expected
+}
+
+fn signed_as(key: &Key, plugin: &str, package: &[u8], version: &str) -> SignatureFile {
+    let comment = publisher::release_comment(&pid(plugin), &v(version), &digest(package));
+    SignatureFile {
+        key_id: key.key_id(),
+        bytes: key.signing.sign(package, &comment).unwrap().into_bytes(),
+    }
+}
+
+/// The compiled privileged policy with an approved test review and `edit`.
+fn reviewed(
+    edit: impl FnOnce(&mut privileged_policy::PrivilegedPolicy),
+) -> PrivilegedGate<'static> {
+    let mut policy = privileged_policy::compiled_policy().unwrap().clone();
+    policy.review = Some(privileged_policy::Review {
+        reviewer: "throwaway test reviewer".into(),
+        date: "2026-11-21".into(),
+        outcome: privileged_policy::ReviewOutcome::Approved,
+        record: "official/tests.rs".into(),
+    });
+    edit(&mut policy);
+    PrivilegedGate::Open(Box::leak(Box::new(policy)))
+}
+
+#[test]
+fn the_privileged_gate_is_closed() {
+    // The compiled gate. Changing these assertions is the review's job.
+    const { assert!(!privileged_policy::PRIVILEGED_GATE_OPEN) };
+    assert_eq!(compiled_gate(), PrivilegedGate::Closed);
+    let env = Env::new();
+    assert_eq!(Official::open(&env.state()).gate, PrivilegedGate::Closed);
+    let second = Key::new(env.root.path(), "second.key");
+    // Even with two distinct keys and exactly the reviewed release.
+    let official = env.official_with(keys(&[&env.key, &second], 2, &[]), Vec::new());
+    let package = raw_package(&real_files("workflows", "0.1.1", |_| {}));
+    let expected = expected_as("deckpilot.workflows", &package, "0.1.1");
+    let signatures = [
+        signed_as(&env.key, "deckpilot.workflows", &package, "0.1.1"),
+        signed_as(&second, "deckpilot.workflows", &package, "0.1.1"),
+    ];
+    let host = host();
+    let delivery = Delivery {
+        expected: &expected,
+        package: &package,
+        signatures: &signatures,
+        pin: None,
+        host: Some(&host),
+        now: Utc::now(),
+    };
+    assert!(matches!(
+        refusal(official.verify(&delivery)),
+        Refusal::Publisher(PublisherError::PrivilegedGateClosed { .. })
+    ));
+    assert!(official.floor(&pid("deckpilot.workflows")).is_none());
+}
+
+/// The opening path, behind a test-only open gate: the review record, at
+/// least two distinct pinned keys that signed, exactly the reviewed
+/// manifest and the registry's pins; then the store refuses the registry
+/// copy all the same (X12): privileged plugins come only as bundled
+/// copies.
+#[test]
+#[allow(clippy::too_many_lines)] // one flow, step by step
+fn the_opening_path_needs_the_review_two_keys_and_exactly_the_policy() {
+    const WORKFLOWS: &str = "deckpilot.workflows";
+    let env = Env::new();
+    let second = Key::new(env.root.path(), "second.key");
+    let third = Key::new(env.root.path(), "third.key");
+    let host = host();
+    let package = raw_package(&real_files("workflows", "0.1.1", |_| {}));
+    let expected = expected_as(WORKFLOWS, &package, "0.1.1");
+    let both = [
+        signed_as(&env.key, WORKFLOWS, &package, "0.1.1"),
+        signed_as(&second, WORKFLOWS, &package, "0.1.1"),
+    ];
+    let delivery = |expected, signatures| Delivery {
+        expected,
+        package: &package,
+        signatures,
+        pin: None,
+        host: Some(&host),
+        now: Utc::now(),
+    };
+    let gated = |keys: PublisherKeys, gate| env.official_with(keys, Vec::new()).with_gate(gate);
+    let closed = |r: Result<VerifiedPackage, Refusal>| {
+        matches!(
+            r,
+            Err(Refusal::Publisher(
+                PublisherError::PrivilegedGateClosed { .. }
+            ))
+        )
+    };
+    let not_reviewed = |r: Result<VerifiedPackage, Refusal>, text: &str| match r {
+        Err(Refusal::Publisher(PublisherError::PrivilegedNotReviewed { reason, .. })) => {
+            assert!(reason.contains(text), "`{text}` not in {reason}");
+        }
+        other => panic!("{other:?} (expected {text})"),
+    };
+    let open = reviewed(|_| {});
+    // One key is never enough, whatever the policy says.
+    let one = gated(keys(&[&env.key], 1, &[]), open);
+    assert!(closed(one.verify(&delivery(&expected, &both[..1]))));
+    // Two pinned keys with threshold 1: the pinned threshold must be 2.
+    let low = gated(keys(&[&env.key, &second], 1, &[]), open);
+    assert!(closed(low.verify(&delivery(&expected, &both))));
+    // A policy asking for three keys.
+    let three = gated(
+        keys(&[&env.key, &second, &third], 2, &[]),
+        reviewed(|p| p.min_threshold = 3),
+    );
+    assert!(closed(three.verify(&delivery(&expected, &both))));
+    // No approved review recorded.
+    for gate in [
+        reviewed(|p| p.review = None),
+        reviewed(|p| {
+            p.review.as_mut().unwrap().outcome = privileged_policy::ReviewOutcome::Pending;
+        }),
+        PrivilegedGate::Open(privileged_policy::compiled_policy().unwrap()),
+    ] {
+        let official = gated(keys(&[&env.key, &second], 2, &[]), gate);
+        assert!(closed(official.verify(&delivery(&expected, &both))));
+    }
+    let pinned = || keys(&[&env.key, &second, &third], 2, &[]);
+    // Another version than the reviewed one.
+    let other_version = reviewed(|p| {
+        let w = p
+            .plugins
+            .iter_mut()
+            .find(|p| p.id.as_str() == WORKFLOWS)
+            .unwrap();
+        w.version = v("0.1.2");
+    });
+    not_reviewed(
+        gated(pinned(), other_version).verify(&delivery(&expected, &both)),
+        "covers version 0.1.2 only",
+    );
+    // A plugin the policy does not list.
+    let without = reviewed(|p| p.plugins.retain(|p| p.id.as_str() != WORKFLOWS));
+    not_reviewed(
+        gated(pinned(), without).verify(&delivery(&expected, &both)),
+        "does not cover this plugin",
+    );
+    // A new construct (status items) in a release signed by both keys.
+    let broader = raw_package(&real_files("workflows", "0.1.1", |m| {
+        m["contributes"]["statusItems"] = json!(["activeProject"]);
+    }));
+    let broader_expected = expected_as(WORKFLOWS, &broader, "0.1.1");
+    let broader_signed = [
+        signed_as(&env.key, WORKFLOWS, &broader, "0.1.1"),
+        signed_as(&second, WORKFLOWS, &broader, "0.1.1"),
+    ];
+    let broader_delivery = Delivery {
+        expected: &broader_expected,
+        package: &broader,
+        signatures: &broader_signed,
+        pin: None,
+        host: Some(&host),
+        now: Utc::now(),
+    };
+    not_reviewed(
+        gated(pinned(), open).verify(&broader_delivery),
+        "`statusItems`) is not reviewed",
+    );
+    // The registry's pins still hold on this path.
+    let mut relabeled = expected.clone();
+    relabeled.permissions = Some(Vec::new());
+    assert!(matches!(
+        gated(pinned(), open).verify(&delivery(&relabeled, &both)),
+        Err(Refusal::Publisher(PublisherError::Package(_)))
+    ));
+    // Everything holds: admitted, recording exactly the two real signers.
+    let admitted = gated(pinned(), open)
+        .verify(&delivery(&expected, &both))
+        .unwrap();
+    assert!(
+        GrantSet::from_manifest(admitted.manifest())
+            .keys()
+            .any(GrantKey::is_first_party_only)
+    );
+    let mut recorded = env.audit().last().unwrap().record.signers.clone();
+    recorded.sort();
+    let mut real = vec![
+        publisher::fingerprint(&env.key.public()).unwrap(),
+        publisher::fingerprint(&second.public()).unwrap(),
+    ];
+    real.sort();
+    assert_eq!(recorded, real);
+    // ... and the store refuses it from a registry all the same.
+    let mut manager = env.open();
+    let refused = manager
+        .install(&admitted, &registry_source(), &Consent::of(vec![], "user"))
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            deckpilot_plugin_store::StoreError::SourceNotAllowed { .. }
+        ),
+        "{refused}"
+    );
+}
+
+/// What an application build does with a reviewed privileged artifact
+/// (plugins/first-party/artifacts.sh): `release verify` with the gate open
+/// (here in the test), then the verified files unpacked as the bundled
+/// copy and pinned.
+fn stage_reviewed(
+    env: &Env,
+    files: &Files,
+    plugin: &str,
+    version: &str,
+    gate: PrivilegedGate<'_>,
+    floor: Option<&ReleaseFloor>,
+    second: &Key,
+) -> Result<Bundle, PublisherError> {
+    let mut builder = PackageBuilder::new();
+    builder.reviewed_privileged();
+    for (path, bytes) in files {
+        builder.add(path, bytes.clone()).unwrap();
+    }
+    let package = builder.build().unwrap().bytes;
+    let claim = ReleaseClaim {
+        id: pid(plugin),
+        version: v(version),
+        package: digest(&package),
+    };
+    let signatures = [
+        signed_as(&env.key, plugin, &package, version),
+        signed_as(second, plugin, &package, version),
+    ];
+    let limits = Limits::default();
+    let host = host();
+    let policy = ReleasePolicy {
+        host: Some(&host),
+        floor,
+        revoked: &[],
+        limits: &limits,
+        gate,
+    };
+    let release = publisher::verify_release(
+        &package,
+        &signatures,
+        &keys(&[&env.key, second], 2, &[]),
+        &claim,
+        &policy,
+    )?;
+    assert!(release.privileged().is_some());
+    Ok(bundle_of(env, plugin, version, release.files()))
+}
+
+/// `files` unpacked as the bundled copy of `plugin` and pinned (class
+/// `default`, so that seeding handles it).
+fn bundle_of(env: &Env, plugin: &str, version: &str, files: &Files) -> Bundle {
+    let dir = env.root.path().join("resources").join(BUNDLED_DIR);
+    let target = dir.join(plugin);
+    let _ = std::fs::remove_dir_all(&target);
+    for (path, bytes) in files {
+        let file = target.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, bytes).unwrap();
+    }
+    let pins = Pins::compute(&dir, &[(pid(plugin), v(version), BundleClass::Default)]).unwrap();
+    Bundle {
+        dir: Some(dir),
+        pins,
+        trust: Ok(()),
+    }
+}
+
+fn grants_of(manager: &PluginManager, plugin: &str) -> BTreeMap<String, (GrantStatus, String)> {
+    manager
+        .store()
+        .grants(&pid(plugin))
+        .unwrap()
+        .into_iter()
+        .map(|g| (g.key.to_string(), (g.status, g.decided_by)))
+        .collect()
+}
+
+fn granted(manager: &PluginManager, plugin: &str) -> BTreeSet<String> {
+    grants_of(manager, plugin)
+        .into_iter()
+        .filter(|(_, (status, _))| *status == GrantStatus::Granted)
+        .map(|(key, _)| key)
+        .collect()
+}
+
+/// The migration of a privileged plugin from the bundled copy built from
+/// source to the bundled copy staged from its reviewed artifact, with the
+/// gate open in the test: the store's consent rules decide, exactly as for
+/// any bundled update. Process execution (`tools:git`) is never derived by
+/// seeding, only granted by the user; a grant the new version no longer
+/// declares is dropped; one it broadens waits for consent while the old
+/// copy keeps running; and the bundled copy never goes backwards.
+#[test]
+#[allow(clippy::too_many_lines)] // one flow, step by step
+fn a_reviewed_artifact_updates_the_bundled_copy_under_the_store_s_consent_rules() {
+    const GIT: &str = "deckpilot.git";
+    let env = Env::new();
+    let second = Key::new(env.root.path(), "second.key");
+    let open = reviewed(|_| {});
+
+    // The application release before: deckpilot.git 0.1.0 built from source,
+    // with one git subcommand fewer and a notifications permission that
+    // 0.1.1 no longer declares.
+    let source = real_files("git", "0.1.0", |m| {
+        let subcommands = m["permissions"][0]["tools"][0]["subcommands"]
+            .as_array_mut()
+            .unwrap();
+        subcommands.retain(|s| s["name"] != "log");
+        m["permissions"].as_array_mut().unwrap().push(json!({
+            "kind": "notifications",
+            "justification": "Test: dropped by the next version."
+        }));
+    });
+    let before = bundle_of(&env, GIT, "0.1.0", &source);
+    let mut manager = env.open();
+    let report = bundled::seed(&mut manager, &before);
+    let Seeded::AwaitingConsent(waiting) = &report[0].1 else {
+        panic!("{report:?}")
+    };
+    // Seeding derived only low-tier grants: never process execution.
+    let keys_waiting: BTreeSet<String> = waiting.iter().map(ToString::to_string).collect();
+    for high in ["tools:git", "tools:git:network", "resources:open"] {
+        assert!(
+            keys_waiting.contains(high),
+            "{high} waits: {keys_waiting:?}"
+        );
+        assert!(!granted(&manager, GIT).contains(high), "{high} not derived");
+    }
+    assert!(granted(&manager, GIT).contains("notifications"));
+    // The user consents to everything 0.1.0 asks for.
+    manager
+        .grant(&pid(GIT), &Consent::of(waiting.clone(), "user"))
+        .unwrap();
+    let consented = granted(&manager, GIT);
+    for key in &keys_waiting {
+        assert!(consented.contains(key), "{key}");
+        assert_eq!(grants_of(&manager, GIT)[key].1, "user");
+    }
+
+    // The application release after: 0.1.1 from its reviewed artifact,
+    // above the 0.1.0 bundled floor.
+    let floor = ReleaseFloor {
+        version: v("0.1.0"),
+        files: before.pins.get(&pid(GIT)).unwrap().files.clone(),
+    };
+    let reviewed_files = real_files("git", "0.1.1", |_| {});
+    // Closed, it is not staged at all.
+    assert!(matches!(
+        stage_reviewed(
+            &env,
+            &reviewed_files,
+            GIT,
+            "0.1.1",
+            PrivilegedGate::Closed,
+            Some(&floor),
+            &second
+        ),
+        Err(PublisherError::PrivilegedGateClosed { .. })
+    ));
+    let after = stage_reviewed(
+        &env,
+        &reviewed_files,
+        GIT,
+        "0.1.1",
+        open,
+        Some(&floor),
+        &second,
+    )
+    .unwrap();
+    let report = bundled::seed(&mut manager, &after);
+    // `tools:git` is broader (the `log` subcommand): staged for consent,
+    // the 0.1.0 copy keeps running with its grants.
+    assert_eq!(report[0].1, Seeded::UpdateAwaitingConsent, "{report:?}");
+    let record = manager.store().plugin(&pid(GIT)).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version, v("0.1.0"));
+    assert_eq!(granted(&manager, GIT), consented);
+    let (staged, diff) = manager.pending_update(&pid(GIT)).unwrap().unwrap();
+    assert_eq!(staged, v("0.1.1"));
+    let escalations: Vec<String> = diff.escalations().iter().map(ToString::to_string).collect();
+    assert_eq!(escalations, ["tools:git"], "{diff:?}");
+    // Seeding again does not approve it.
+    let report = bundled::seed(&mut manager, &after);
+    assert!(
+        matches!(&report[0].1, Seeded::Skipped(why) if why.contains("approval")),
+        "{report:?}"
+    );
+    // The user approves: 0.1.1 runs; the dropped permission's grant is gone,
+    // the still-valid ones are kept as the user decided them.
+    manager
+        .approve_update(&pid(GIT), &Consent::of(diff.escalations(), "user"))
+        .unwrap();
+    let record = manager.store().plugin(&pid(GIT)).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version, v("0.1.1"));
+    assert_eq!(record.source, InstallSource::Bundled);
+    let now = granted(&manager, GIT);
+    assert!(!now.contains("notifications"), "{now:?}");
+    for key in [
+        "tools:git",
+        "tools:git:network",
+        "resources",
+        "resources:open",
+    ] {
+        assert!(now.contains(key), "{key} kept: {now:?}");
+        assert_eq!(grants_of(&manager, GIT)[key].1, "user", "{key}");
+    }
+
+    // Rollback: an application that bundles 0.1.0 again never replaces
+    // 0.1.1, and a 0.1.0 artifact below the 0.1.1 floor is refused.
+    let report = bundled::seed(&mut manager, &before);
+    assert!(
+        matches!(&report[0].1, Seeded::Skipped(why) if why.contains("newer")),
+        "{report:?}"
+    );
+    let shipped = ReleaseFloor {
+        version: v("0.1.1"),
+        files: after.pins.get(&pid(GIT)).unwrap().files.clone(),
+    };
+    let old_reviewed = reviewed(|p| {
+        let g = p.plugins.iter_mut().find(|p| p.id.as_str() == GIT).unwrap();
+        g.version = v("0.1.0");
+    });
+    assert!(matches!(
+        stage_reviewed(
+            &env,
+            &real_files("git", "0.1.0", |_| {}),
+            GIT,
+            "0.1.0",
+            old_reviewed,
+            Some(&shipped),
+            &second
+        ),
+        Err(PublisherError::Rollback { .. })
+    ));
+    // The same version with other files is refused too.
+    let rebuilt = real_files("git", "0.1.1", |_| {})
+        .into_iter()
+        .map(|(path, bytes)| {
+            if path == "plugin.wasm" {
+                (
+                    path,
+                    deckpilot_plugin_package::wasm::minimal_abi_module_with_note("rebuilt"),
+                )
+            } else {
+                (path, bytes)
+            }
+        })
+        .collect::<Files>();
+    assert!(matches!(
+        stage_reviewed(&env, &rebuilt, GIT, "0.1.1", open, Some(&shipped), &second),
+        Err(PublisherError::SameVersionOtherFiles { .. })
+    ));
+    // A registry copy of the next version, admitted by the agent's opening
+    // path, is refused by the store: the bundled copy stays.
+    let next = raw_package(&real_files("git", "0.1.2", |_| {}));
+    let next_expected = expected_as(GIT, &next, "0.1.2");
+    let next_signed = [
+        signed_as(&env.key, GIT, &next, "0.1.2"),
+        signed_as(&second, GIT, &next, "0.1.2"),
+    ];
+    let host = host();
+    let next_gate = reviewed(|p| {
+        let g = p.plugins.iter_mut().find(|p| p.id.as_str() == GIT).unwrap();
+        g.version = v("0.1.2");
+    });
+    let official = env
+        .official_with(keys(&[&env.key, &second], 2, &[]), Vec::new())
+        .with_gate(next_gate);
+    let admitted = official
+        .verify(&Delivery {
+            expected: &next_expected,
+            package: &next,
+            signatures: &next_signed,
+            pin: after.pins.get(&pid(GIT)),
+            host: Some(&host),
+            now: Utc::now(),
+        })
+        .unwrap();
+    let refused = manager.update(&admitted, &registry_source()).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            deckpilot_plugin_store::StoreError::SourceNotAllowed { .. }
+        ),
+        "{refused}"
+    );
+    let record = manager.store().plugin(&pid(GIT)).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version, v("0.1.1"));
+    assert_eq!(record.source, InstallSource::Bundled);
+}
+
+/// An unchanged reviewed release (the same privileges as the copy built
+/// from source) updates the bundled copy and keeps every grant as the user
+/// decided it; nothing new is asked for and nothing is derived.
+#[test]
+fn an_unchanged_reviewed_artifact_keeps_every_grant() {
+    const WORKFLOWS: &str = "deckpilot.workflows";
+    let env = Env::new();
+    let second = Key::new(env.root.path(), "second.key");
+    let before = bundle_of(
+        &env,
+        WORKFLOWS,
+        "0.1.0",
+        &real_files("workflows", "0.1.0", |_| {}),
+    );
+    let mut manager = env.open();
+    let report = bundled::seed(&mut manager, &before);
+    // hostViews is low tier: derived at seeding, enabled.
+    assert_eq!(report[0].1, Seeded::Enabled, "{report:?}");
+    let grants = grants_of(&manager, WORKFLOWS);
+    let floor = ReleaseFloor {
+        version: v("0.1.0"),
+        files: before.pins.get(&pid(WORKFLOWS)).unwrap().files.clone(),
+    };
+    let after = stage_reviewed(
+        &env,
+        &real_files("workflows", "0.1.1", |_| {}),
+        WORKFLOWS,
+        "0.1.1",
+        reviewed(|_| {}),
+        Some(&floor),
+        &second,
+    )
+    .unwrap();
+    let report = bundled::seed(&mut manager, &after);
+    assert_eq!(report[0].1, Seeded::Updated, "{report:?}");
+    assert_eq!(grants_of(&manager, WORKFLOWS), grants);
+    let record = manager.store().plugin(&pid(WORKFLOWS)).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version, v("0.1.1"));
+    assert_eq!(record.state, PluginState::Enabled);
 }
