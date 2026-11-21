@@ -1,13 +1,9 @@
 # Security review request: first-party publisher signature
 
-<!-- AT APPROVAL, replace the next paragraph with: Status: **approved** on <YYYY-MM-DD> by <reviewer> (Sign-off below); the privileged-kinds gate is open for exactly the reviewed privileged policy. -->
-
-Status: **reviewed: yes, with conditions** (the final independent review
-found no high or medium findings; its findings are fixed in
-knittingcode/deckpilot#389 and knittingcode/deckpilot-plugins#74).
-**Outcome pending the owner's decision:** until the outcome `approved` is
-recorded below and in the record, the privileged-kinds gate stays closed
-in effect.
+Status: **approved** on 2026-11-21 (Sign-off below; report and
+remediation: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md)).
+The privileged-kinds gate is open for exactly the reviewed privileged
+policy.
 
 Update 2026-11-21: on the owner's decision, the two production publisher
 public keys are pinned (threshold 2,
@@ -31,11 +27,13 @@ that only flips the gate constant and fills in the review record; it
 needs this review's sign-off (item L of [the host side](#host-side-the-agents-install-and-update-path))
 and the owner's approval, and is not merged before both.
 
-**This is that change (draft).** It sets `PRIVILEGED_GATE_OPEN = true` and
-records the review in `publisher/privileged-policy.json` as `pending`.
-With a pending review the compiled gate stays closed
-(`PrivilegedGate::compiled()`; the tests assert it). The reviewer records
-the outcome below and in the record; the owner then decides on the merge. Merge order: this change first,
+**The opening change** (knittingcode/deckpilot#388) sets
+`PRIVILEGED_GATE_OPEN = true` and records the approved review in
+`publisher/privileged-policy.json`, on the owner's decision of 2026-11-21
+after the final independent review ("yes, with conditions", every finding
+fixed: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md)).
+A pending or incomplete review would keep `PrivilegedGate::compiled()`
+closed (the tests assert both states). Merge order: this change first,
 then a DeckPilot release that carries it, then the plugin repository's
 `tools/deckpilot.env` pin to that release, and only then the plugin
 repository's opening draft (whose `check --deckpilot` refuses an open
@@ -356,6 +354,7 @@ broker and denial matrix (reviewed in
 | --- | --- | --- | --- |
 | | | | closed |
 | pending: the independent security reviewer (not the author) | 2026-11-21 | pending | constant open; closed in effect until approved |
+| Independent security-review agent (Claude Code, not the implementer), commissioned under the owner's authorization; owner approval recorded 2026-11-21 | 2026-11-21 | approved | open for exactly the reviewed policy; report: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md) |
 
 The gate opens only with a row here whose outcome is *approved*, the same
 reviewer, date and outcome in the `review` of

@@ -46,12 +46,13 @@ use serde_json::Value;
 
 use crate::publisher::PublisherError;
 
-/// **Open, pending the review.** This is the reviewed change that opens
-/// the gate (it needs the owner's approval). It admits nothing yet:
-/// [`PrivilegedGate::compiled`] stays closed until the independent reviewer
-/// records the outcome `approved` in [`POLICY_JSON`] (`review`) and in
-/// `docs/marketplace/publisher-review-request.md` (Sign-off). Nothing at
-/// run time or build time changes either.
+/// **Open**, by the reviewed change knittingcode/deckpilot#388 (owner
+/// decision 2026-11-21 after the final independent review,
+/// `docs/marketplace/reviews/2026-11-21-privileged-gate-review.md`). It
+/// admits exactly the reviewed privileged policy, and only while
+/// [`POLICY_JSON`] records that review as approved and complete
+/// ([`Review::is_approved`]): otherwise [`PrivilegedGate::compiled`] stays
+/// closed. Nothing at run time or build time changes either.
 pub const PRIVILEGED_GATE_OPEN: bool = true;
 
 /// The reviewed privileged policy, compiled in.

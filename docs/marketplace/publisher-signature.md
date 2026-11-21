@@ -11,8 +11,7 @@ the pins compiled into the agent ([module-migration.md §4.4](module-migration.m
 The application build can already take a bundled plugin from its signed
 release artifact instead ([Wave B](#wave-b-consuming-an-artifact)); no
 plugin is switched to it yet.
-<!-- AT APPROVAL, replace the next line with: The privileged-kinds gate is open for exactly the reviewed privileged policy ([Privileged plugins](#privileged-plugins-the-reviewed-privileged-policy)). -->
-The privileged-kinds gate is closed in effect until the review's outcome is recorded as approved.
+The privileged-kinds gate is open for exactly the reviewed privileged policy ([Privileged plugins](#privileged-plugins-the-reviewed-privileged-policy)).
 Security review request: [publisher-review-request.md](publisher-review-request.md).
 
 ## Why
@@ -137,8 +136,7 @@ update with exactly the consent the user gave: a `deckpilot.*` registry
 package is checked with the first-party rules and never receives the 1.9
 privileged kinds.
 
-<!-- AT APPROVAL, replace the next line with: **The privileged-kinds gate is open for exactly the reviewed policy.** Outside it, a signed artifact that declares -->
-**The privileged-kinds gate is closed** (the constant is open; `PrivilegedGate::compiled()` stays closed while the record's review is `pending`). A signed artifact that declares
+**The privileged-kinds gate is open for exactly the reviewed policy** (approved 2026-11-21, [the review](reviews/2026-11-21-privileged-gate-review.md)). Outside it, a signed artifact that declares
 any plugin API 1.9 privileged kind (`tools`, i.e. process execution;
 `resources`; `projectContext`; `hostViews`; `openUrl.fromParams`;
 `resource` parameters; `node.changesContext`; host variable sources; host
@@ -148,9 +146,9 @@ covers Docker, Git, Projects, Workflows and Workspace; GitHub, GitLab,
 Jira and Notifications pass it (unit test
 `the_privileged_kinds_gate_is_closed`). There is no flag, key or
 configuration that opens it: the gate is the compiled constant
-`privileged_policy::PRIVILEGED_GATE_OPEN` (set to `true` by the opening
-change, which keeps it closed in effect until the review's outcome is
-`approved`)
+`privileged_policy::PRIVILEGED_GATE_OPEN` (`true` since the opening
+change, with the review recorded as `approved`; without an approved,
+complete review it would stay closed)
 (`crates/deckpilot-plugin-registry/src/privileged_policy.rs`), shared by
 the release tools and the agent. What an opened gate would admit is
 fixed in advance, exactly, by the reviewed privileged policy
@@ -258,14 +256,16 @@ process allow-list), `a_privileged_artifact_entry_needs_the_open_gate_and_the_re
 (`tests/publisher.rs`), and the agent's
 `the_opening_path_needs_the_review_two_keys_and_exactly_the_policy`.
 
-**Opening the gate** is a separate, draft change that only sets
-`PRIVILEGED_GATE_OPEN = true` (and `PRIVILEGED_GATE_OPEN = True` in the
-plugin repository's `tools/check-official.py`) and fills in `review`; it
-stays closed in effect until the independent reviewer records the
-outcome `approved` there and in the Sign-off of
-[publisher-review-request.md](publisher-review-request.md), and the
-owner merges it. A plugin is then released and staged one at a time, as
-in [Activating a plugin](#activating-a-plugin).
+**Opening the gate** was a separate change (knittingcode/deckpilot#388)
+that set `PRIVILEGED_GATE_OPEN = true` (and, in the plugin repository,
+`PRIVILEGED_GATE_OPEN = True` in `tools/check-official.py` once its pin
+names that change) and recorded the approved review in `review` and in
+the Sign-off of [publisher-review-request.md](publisher-review-request.md)
+(owner decision 2026-11-21; report:
+[reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-privileged-gate-review.md)).
+Nothing is released by it: a plugin is then released and staged one at a
+time, by its own reviewed change, as in
+[Activating a plugin](#activating-a-plugin).
 
 ## The agent: installing and updating official plugins
 
