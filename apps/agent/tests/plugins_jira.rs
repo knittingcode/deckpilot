@@ -51,8 +51,6 @@ use serde_json::{Value, json};
 
 const PLUGIN: parity::Plugin = parity::Plugin {
     id: "deckpilot.jira",
-    dir: "jira",
-    package: "deckpilot-jira",
 };
 const ID: &str = PLUGIN.id;
 const GRANTS: &[&str] = &[

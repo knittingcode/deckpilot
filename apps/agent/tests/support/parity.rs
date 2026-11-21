@@ -1,7 +1,8 @@
 //! What the regression tests of the first-party plugins that replaced the
 //! removed built-in modules share (`plugins_github.rs`, `plugins_gitlab.rs`,
-//! `plugins_jira.rs`, and `plugins_cutover_servers.rs`): the plugin built
-//! to wasm and staged as an installed application ships it, a real agent
+//! `plugins_jira.rs`, and `plugins_cutover_servers.rs`): the plugin's
+//! verified release artifact staged as an installed application ships it
+//! (`support/official.rs`), a real agent
 //! process with the real sandboxed host, canned answers for the plugin's
 //! HTTP, the expected outcome of each scenario, and the check of a
 //! plugin's action definitions against the frozen contracts of the
@@ -32,21 +33,24 @@ use deckpilot_plugin_manifest::PluginId;
 use deckpilot_storage::DatabaseKey;
 use serde_json::{Value, json};
 
-use crate::support::{self, TempDir};
+use crate::support::{self, TempDir, official};
 
 /// The `Date` on every answer (a plugin's only clock).
 pub const DATE: &str = "Mon, 16 Nov 2026 10:00:00 GMT";
 const STARTUP: Duration = Duration::from_secs(30);
 
-/// A first-party plugin under test.
+/// A first-party plugin under test, bundled from its release artifact.
 #[derive(Debug, Clone, Copy)]
 pub struct Plugin {
     /// `deckpilot.gitlab`.
     pub id: &'static str,
-    /// Its directory under `plugins/first-party`.
-    pub dir: &'static str,
-    /// Its crate (`deckpilot-gitlab`).
-    pub package: &'static str,
+}
+
+impl Plugin {
+    /// `gitlab` of `deckpilot.gitlab`.
+    pub fn name(&self) -> &'static str {
+        self.id.strip_prefix("deckpilot.").unwrap()
+    }
 }
 
 pub fn repo() -> PathBuf {
@@ -77,53 +81,41 @@ pub struct Artifacts {
     pub module: PathBuf,
 }
 
-/// The host and the plugin's module, built from `plugins/runtime` (or
-/// taken from `DECKPILOT_E2E_PLUGIN_HOST` and `DECKPILOT_E2E_WASM_DIR`),
-/// once per plugin and test binary.
+/// The host, built from `plugins/runtime` (or taken from
+/// `DECKPILOT_E2E_PLUGIN_HOST`) once per test binary, and the plugin's
+/// released module.
 pub fn artifacts(plugin: &Plugin) -> &'static Artifacts {
     static ARTIFACTS: Mutex<BTreeMap<&'static str, &'static Artifacts>> =
         Mutex::new(BTreeMap::new());
+    static HOST: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     let mut built = ARTIFACTS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    built.entry(plugin.package).or_insert_with(|| {
-        let wasm = format!("{}.wasm", plugin.package.replace('-', "_"));
-        let wasm_dir = std::env::var_os("DECKPILOT_E2E_WASM_DIR")
-            .map(PathBuf::from)
-            .filter(|dir| dir.join(&wasm).is_file())
-            .unwrap_or_else(|| {
-                cargo_in_runtime(&[
-                    "build",
-                    "--locked",
-                    "-p",
-                    plugin.package,
-                    "--target",
-                    "wasm32-unknown-unknown",
-                    "--profile",
-                    "guest",
-                ]);
-                runtime().join("target/wasm32-unknown-unknown/guest")
-            });
-        let host = std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
-            || {
-                cargo_in_runtime(&[
-                    "build",
-                    "--locked",
-                    "-p",
-                    "deckpilot-plugin-host",
-                    "--bin",
-                    "deckpilot-plugin-host",
-                ]);
-                runtime().join(format!(
-                    "target/debug/deckpilot-plugin-host{}",
-                    std::env::consts::EXE_SUFFIX
-                ))
-            },
-            PathBuf::from,
-        );
+    built.entry(plugin.id).or_insert_with(|| {
+        let host = HOST
+            .get_or_init(|| {
+                std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
+                    || {
+                        cargo_in_runtime(&[
+                            "build",
+                            "--locked",
+                            "-p",
+                            "deckpilot-plugin-host",
+                            "--bin",
+                            "deckpilot-plugin-host",
+                        ]);
+                        runtime().join(format!(
+                            "target/debug/deckpilot-plugin-host{}",
+                            std::env::consts::EXE_SUFFIX
+                        ))
+                    },
+                    PathBuf::from,
+                )
+            })
+            .clone();
         Box::leak(Box::new(Artifacts {
             host,
-            module: wasm_dir.join(wasm),
+            module: official::module(plugin.id),
         }))
     })
 }
@@ -499,7 +491,7 @@ impl Env {
     /// only the migration engine installs a `migration`-class plugin) and
     /// the canned `routes` of its HTTP.
     pub fn new(plugin: Plugin, routes: &[Value]) -> Self {
-        let dir = TempDir::new(&format!("plugins-{}", plugin.dir));
+        let dir = TempDir::new(&format!("plugins-{}", plugin.name()));
         let paths = AgentPaths::in_dir(dir.path().join("data"));
         paths.create_dirs().unwrap();
         let key = support::create_database(&paths);
@@ -548,16 +540,12 @@ impl Env {
             .collect()
     }
 
-    /// `bundled/<id>/` as `plugins/first-party/build.sh` stages it, and
-    /// the pins the agent "was compiled with".
+    /// `bundled/<id>/` as `plugins/first-party/build.sh` stages it (the
+    /// verified release artifact), and the pins the agent "was compiled
+    /// with".
     fn stage(&self) {
-        let source = repo().join("plugins/first-party").join(self.plugin.dir);
         let dir = self.bundled().join(self.plugin.id);
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        for file in ["manifest.json", "LICENSE", "assets/icon-128.png"] {
-            std::fs::copy(source.join(file), dir.join(file)).unwrap();
-        }
-        std::fs::copy(&artifacts(&self.plugin).module, dir.join("plugin.wasm")).unwrap();
+        official::copy_into(self.plugin.id, &dir);
         let manifest: Value =
             serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
         let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();

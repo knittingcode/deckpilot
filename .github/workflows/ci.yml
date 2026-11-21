@@ -163,7 +163,8 @@ jobs:
   # The acceptance gate of the extraction (WP-T1, docs/marketplace/
   # module-migration.md §11): the core with every optional plugin switched
   # off, disabled and uninstalled, through the real agent, the real plugin
-  # host and every first-party plugin built to wasm. Not a required check.
+  # host and every first-party plugin as the release bundles it (its signed
+  # release artifact, verified with the pinned keys). Not a required check.
   core-without-plugins:
     name: Core without optional plugins
     runs-on: ubuntu-latest
@@ -193,15 +194,19 @@ jobs:
             plugins/runtime -> target
           save-if: false
       # Built first so that compile time stays out of the test's timeouts
-      # (the test builds them itself when they are missing).
-      - name: Build the plugin host and every first-party plugin
+      # (the test builds it itself when it is missing).
+      - name: Build the plugin host
         working-directory: plugins/runtime
+        run: cargo build --locked -p deckpilot-plugin-host --bin deckpilot-plugin-host
+      # Every first-party plugin from its signed release artifact
+      # (plugins/first-party/artifacts.json), verified with the pinned
+      # publisher keys (never --keys) and unpacked, as a release bundles it.
+      - name: Stage the first-party plugins from their release artifacts
         run: |
-          cargo build --locked -p deckpilot-plugin-host --bin deckpilot-plugin-host
-          cargo build --locked --target wasm32-unknown-unknown --profile guest \
-            -p deckpilot-docker -p deckpilot-git -p deckpilot-github -p deckpilot-gitlab \
-            -p deckpilot-jira -p deckpilot-notifications -p deckpilot-projects \
-            -p deckpilot-workflows -p deckpilot-workspace
+          cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckpilot-registry
+          plugins/first-party/build.sh --out "$RUNNER_TEMP/official" --artifacts-dir "$RUNNER_TEMP/official-artifacts" \
+            --registry-tool target/debug/deckpilot-registry
+          echo "DECKPILOT_E2E_OFFICIAL_PLUGINS=$RUNNER_TEMP/official/bundled" >> "$GITHUB_ENV"
       - name: The core without optional plugins
         run: cargo test -p deckpilot-agent --features plugins,test-hooks --test core_without_plugins --locked -- --nocapture
 

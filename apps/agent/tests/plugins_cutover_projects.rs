@@ -1,8 +1,8 @@
 //! The Projects cut-over of the extraction (WP-C1,
 //! `docs/marketplace/module-migration.md` §11 D4, §7 X13) end to end,
 //! through the real agent, the real sandboxed host and
-//! `plugins/first-party/projects` built to wasm and bundled as the release
-//! bundles it (class `migration`), on a configuration that uses the
+//! the verified `deckpilot.projects` release artifact bundled as the
+//! release bundles it (class `migration`), on a configuration that uses the
 //! built-in: a profile with projects and stored `projects.*` keys. The
 //! migration waits for `projectContext:select` with the legacy keys
 //! unavailable; after the user's consent the same stored
@@ -31,8 +31,6 @@ use first_party::{Agent, Env, FirstParty, SETTLE};
 
 const PROJECTS: FirstParty = FirstParty {
     id: "deckpilot.projects",
-    dir: "projects",
-    krate: "deckpilot-projects",
     released: "migration",
 };
 

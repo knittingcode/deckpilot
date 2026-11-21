@@ -1326,12 +1326,92 @@ fn two_key_ids() -> Vec<String> {
     vec!["0123456789ABCDEF".into(), "FEDCBA9876543210".into()]
 }
 
+/// The releases the application bundles (2026-11-21): each rebuilt from
+/// its tag and found byte-identical to the published package (sha256,
+/// size), signed by both production keys.
+const LOCKED: [(&str, &str, &str, u64); 9] = [
+    (
+        "deckpilot.docker",
+        "0.1.1",
+        "b7af1960ae3ed22914f469c26f95d99b689a5c300fc36c629348d4236fe0252d",
+        137_743,
+    ),
+    (
+        "deckpilot.git",
+        "0.1.1",
+        "9c2c07a83738ff3d30b9c90d549600c29c8fcd7f2e4503f5567d5a79bf5a36ff",
+        127_172,
+    ),
+    (
+        "deckpilot.github",
+        "0.2.1",
+        "d9a4c2a177cab9419b6dd5fad1a4a81208e2a35edc41c93dba4d1d653bb379aa",
+        121_276,
+    ),
+    (
+        "deckpilot.gitlab",
+        "0.1.2",
+        "01697488f8f545fc1cbfdc9cab0a3bd39674ed71dc41003babc20a71a68affc1",
+        126_291,
+    ),
+    (
+        "deckpilot.jira",
+        "0.1.2",
+        "4fd3c9e9177c1438a64db0aaf59a1c0ffb2b1c4c1b4fd8c2ffcfa7f4b6d91cc6",
+        117_639,
+    ),
+    (
+        "deckpilot.notifications",
+        "0.1.2",
+        "d11a8fb60862bd2d5163055a1174bc590e3e8af6f763f10a7292b925c88c74e5",
+        94_143,
+    ),
+    (
+        "deckpilot.projects",
+        "0.1.1",
+        "05ddf8331b3ea60d6a3aa95292c299261f7cacdc24590f7f17104c8d0753900d",
+        110_926,
+    ),
+    (
+        "deckpilot.workflows",
+        "0.1.1",
+        "a73ecc5fb21a367b9c1ef4b3ed534002585f75a6c0cff7b56364a027530336db",
+        80_779,
+    ),
+    (
+        "deckpilot.workspace",
+        "0.1.1",
+        "068cf6048880e9d3bf39c013320ce1abd3987e810d0175d13622ed2b462dd7fc",
+        112_182,
+    ),
+];
+
 #[test]
-fn the_artifact_lock_parses_and_locks_nothing_yet() {
+fn the_artifact_lock_parses_and_locks_the_nine_releases() {
     use deckpilot_plugin_registry::publisher::ArtifactLock;
     let lock = ArtifactLock::from_json(ARTIFACTS.as_bytes()).unwrap();
-    // No plugin is consumed from a release artifact yet.
-    assert_eq!(lock.plugins, Vec::new());
+    let locked: Vec<(String, String, String, u64)> = lock
+        .plugins
+        .iter()
+        .map(|a| {
+            (
+                a.id.to_string(),
+                a.version.to_string(),
+                a.sha256.to_string(),
+                a.size,
+            )
+        })
+        .collect();
+    let expected: Vec<(String, String, String, u64)> = LOCKED
+        .iter()
+        .map(|(id, v, sha, size)| ((*id).into(), (*v).into(), (*sha).into(), *size))
+        .collect();
+    assert_eq!(locked, expected);
+    let production: Vec<String> = vec!["BDCDC80985EB60B5".into(), "8C3C4E42700FA702".into()];
+    for artifact in &lock.plugins {
+        assert_eq!(artifact.url, artifact.package_url(), "{}", artifact.id);
+        assert_eq!(artifact.key_ids, production, "{}", artifact.id);
+    }
     assert_eq!(lock.revoked, Vec::new());
 
     let entry = lock_entry("deckpilot.github", "0.2.1", &two_key_ids());

@@ -2521,20 +2521,24 @@ mod extraction {
             &std::fs::read(source("bundled.json").with_file_name("bundled.json")).unwrap(),
         )
         .unwrap();
-        for module in MODULES {
-            assert!(
-                released["plugins"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!({"path": module, "class": "migration"})),
-                "{module}"
-            );
-        }
-        assert!(
+        let class = |id: String| {
             released["plugins"]
                 .as_array()
                 .unwrap()
-                .contains(&json!({"path": "workflows", "class": "default"}))
+                .iter()
+                .find(|p| p["id"] == id.as_str())
+                .map(|p| (p["class"].clone(), p["source"].clone()))
+        };
+        for module in MODULES {
+            assert_eq!(
+                class(format!("deckpilot.{module}")),
+                Some((json!("migration"), json!("artifact"))),
+                "{module}"
+            );
+        }
+        assert_eq!(
+            class("deckpilot.workflows".to_owned()),
+            Some((json!("default"), json!("artifact")))
         );
     }
 }

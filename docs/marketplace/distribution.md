@@ -167,10 +167,10 @@ Without a pinned publisher key every such package is refused.
   artifact as a bundled plugin. The five that use plugin API 1.9's
   privileged kinds (Docker, Git, Projects, Workflows, Workspace) are
   distributed **only** that way, never through the registry, and only at
-  exactly the version and privileges the reviewed privileged policy lists,
-  once the independent review has opened the gate
+  exactly the version and privileges the reviewed privileged policy lists
   ([publisher-signature.md](publisher-signature.md#privileged-plugins-the-reviewed-privileged-policy));
-  until then they are built from source here.
+  the independent review opened the gate for that policy on 2026-11-21,
+  and every bundled plugin has come from its signed release since.
 - Its workflows sign only in its own environments, with its own keys:
   `publish.yml` signs the index and the timestamp in `registry-release`
   (release tags `*--v*`), and `refresh-timestamp.yml` re-signs the

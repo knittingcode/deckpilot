@@ -34,7 +34,7 @@ pipeline does not package plugins at all (see "Packaging" below).
 | --- | --- |
 | `bundled.json` | The plugins a release bundles: built here from source, `{"path": "<dir>", "class": "default" \| "migration"}`, or taken from a signed release artifact, `{"id": "deckpilot.<name>", "version": "X.Y.Z", "class": ..., "source": "artifact"}` (see "Plugins from release artifacts"); never both |
 | `released-pins.json` | The pins of the published releases, per platform: the id, version and the size and sha256 of every file of each bundled plugin (see "Versions") |
-| `artifacts.json` | The signed release artifacts from `knittingcode/deckpilot-plugins` a build is to bundle instead of building from source here (`{"id", "version", "url", "sha256", "size", "keyIds"}` each), and the releases no build may use ([publisher-signature.md](../../docs/marketplace/publisher-signature.md)). Empty: every plugin is still built from source |
+| `artifacts.json` | The signed release artifacts from `knittingcode/deckpilot-plugins` a build bundles instead of building from source here (`{"id", "version", "url", "sha256", "size", "keyIds"}` each), and the releases no build may use ([publisher-signature.md](../../docs/marketplace/publisher-signature.md)). All nine bundled plugins come from here (see "Plugins from release artifacts") |
 | `artifacts.sh` | The release-artifact half of `build.sh` (sourced by it): fetch, check, verify and unpack each artifact entry |
 | `test-build.sh` | Tests of `build.sh`'s artifact path with throwaway keys made in the test (*Plugins in the agent* workflow) |
 | `docker/` | `deckpilot.docker`, class `migration` (plugin API 1.9): the replacement of the former built-in `docker` module over `tool.run` and resource handles; [docker/README.md](docker/README.md) lists the differences; checked by its unit tests and `apps/agent/tests/plugins_docker.rs` |
@@ -203,10 +203,10 @@ and the required *Rust* checks
 plugin that is both a source and an artifact, a lock and `bundled.json`
 that disagree on an id or version, and an artifact entry for a plugin with
 plugin API 1.9's privileged kinds (Docker, Git, Projects, Workflows,
-Workspace: the gate is closed, they stay source builds; once a reviewed
-change opens it, only at exactly the version the reviewed privileged
-policy lists, and `artifacts.sh` then requires `release verify`'s
-`privileged: reviewed: …` line). Details:
+Workspace) at any version but exactly the one the reviewed privileged
+policy lists (the gate is open for exactly that policy since 2026-11-21);
+`artifacts.sh` then requires `release verify`'s `privileged: reviewed: …`
+line. Details:
 [publisher-signature.md](../../docs/marketplace/publisher-signature.md#wave-b-consuming-an-artifact).
 
 **Tests** (`test-build.sh`) use throwaway keys generated in the test,
@@ -220,30 +220,46 @@ cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckp
 plugins/first-party/test-build.sh target/first-party-artifacts-test target/debug/deckpilot-registry
 ```
 
-### Activation checklist, per plugin
+### The switch (2026-11-21)
 
-For each of `github` (0.2.1), `gitlab` (0.1.2), `jira` (0.1.2) and
-`notifications` (0.1.2), once its signed release exists (none does yet;
-the production publisher keys are pinned with threshold 2 in
-`crates/deckpilot-plugin-registry/publisher/first-party.json` since
-2026-11-21):
+All nine bundled plugins come from their signed releases (`bundled.json`
+lists each with `"source": "artifact"`, `artifacts.json` locks each with
+both production key ids, `BDCDC80985EB60B5` and `8C3C4E42700FA702`):
 
-1. Add its `artifacts.json` entry: `id`, `version`, `url`
-   (`https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.<name>--v<version>/deckpilot.<name>-<version>.dpplugin`),
-   `sha256` and `size` of the released package, and `keyIds` (the two
-   `KEYID`s of its signature files). Check it locally with
-   `deckpilot-registry release verify` against the pinned keys.
-2. In the same pull request flip its `bundled.json` entry to
-   `{"id": "deckpilot.<name>", "version": "<version>", "class": "<same class>", "source": "artifact"}`.
-   Keep `plugins/first-party/<name>/`.
-3. At the application release, record the bundle's pins in
-   `released-pins.json` as usual (`check-released-pins.sh --record`):
-   the artifact's version and files become the floor.
-4. In a later pull request, remove `plugins/first-party/<name>/` (its
-   workspace member and `Cargo.lock` entry too) and adjust the tests and CI
-   that build it from source (the agent's `plugins_<name>.rs`,
-   `plugins_cutover*.rs` and `core_without_plugins.rs`, the module contract
-   tests, the *Core without optional plugins* build in `ci.yml`,
-   `tools/ci/test-check-packages.sh`).
+| Plugin | Version (source build it replaces) | Class | Privileged |
+| --- | --- | --- | --- |
+| `deckpilot.docker` | 0.1.1 (0.1.0) | `migration` | reviewed policy |
+| `deckpilot.git` | 0.1.1 (0.1.0) | `migration` | reviewed policy |
+| `deckpilot.github` | 0.2.1 (0.2.0) | `migration` | none |
+| `deckpilot.gitlab` | 0.1.2 (0.1.1) | `migration` | none |
+| `deckpilot.jira` | 0.1.2 (0.1.1) | `migration` | none |
+| `deckpilot.notifications` | 0.1.2 (0.1.1) | `default` | none |
+| `deckpilot.projects` | 0.1.1 (0.1.0) | `migration` | reviewed policy |
+| `deckpilot.workflows` | 0.1.1 (0.1.0) | `default` | reviewed policy |
+| `deckpilot.workspace` | 0.1.1 (0.1.0) | `migration` | reviewed policy |
 
-One plugin at a time; all four sources stay here until then.
+Each release was rebuilt from its tag (`deckpilot.<name>--v<version>`, all
+at deckpilot-plugins `f86ea926`) with `tools/official.sh fresh-build` on
+Linux x86-64, the release runners' platform, and the package matched the
+published asset byte for byte (sha256 and size). A build on macOS gives
+the same files but `plugin.wasm` (the host platform changes the module, as
+`released-pins.json` records per platform); the package's sha256 and size
+are those of the published Linux build, which is what `artifacts.json`
+locks.
+
+The agent tests run these files too (`apps/agent/tests/support/official.rs`:
+`build.sh` verifies and unpacks them, CI stages them once per job in
+`DECKPILOT_E2E_OFFICIAL_PLUGINS`), and the upgrade from the copies v0.10.0
+and v0.11.0 built from source is tested for a migration-class plugin
+(`plugins_cutover.rs`, `plugins_cutover_git.rs`: a cut-over copy moves to
+the released version with the user's settings, credentials, grants and
+keys, and never backwards) and a default-class one
+(`plugins_notifications.rs`).
+
+At the application release, record the bundle's pins in
+`released-pins.json` as usual (`check-released-pins.sh --record`, per
+platform): the artifacts' versions and files become the floor.
+
+Then the sources here (`plugins/first-party/<name>/`, their workspace
+members and `Cargo.lock` entries) are removed in a separate pull request,
+with the tests and CI that still build them.

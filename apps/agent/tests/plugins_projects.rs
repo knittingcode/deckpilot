@@ -46,8 +46,6 @@ use serde_json::json;
 
 const PLUGIN: FirstParty = FirstParty {
     id: "deckpilot.projects",
-    dir: "projects",
-    krate: "deckpilot-projects",
     released: "migration",
 };
 /// The host's switch rate (X6): a second switch within 500 ms is

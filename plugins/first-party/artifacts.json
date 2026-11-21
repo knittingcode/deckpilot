@@ -1,6 +1,79 @@
 {
-  "$comment": "First-party release artifacts (signed .dpplugin packages from knittingcode/deckpilot-plugins) that a release build stages as bundled plugins instead of building them from source here (docs/marketplace/publisher-signature.md). Each entry is the claim (id, version, sha256, size) the publisher signature is verified against; `revoked` lists releases no build may use. Empty until the publisher key is provisioned and the first plugin moves (Wave B).",
+  "$comment": "First-party release artifacts (signed .dpplugin packages from knittingcode/deckpilot-plugins, official/) that a release build stages as bundled plugins (docs/marketplace/publisher-signature.md). Each entry is the reviewed claim (id, version, exact release url, sha256, size, keyIds: both pinned publisher keys) the publisher signatures are verified against; `revoked` lists releases no build may use. Every bundled plugin comes from here since the nine official plugins moved (Wave B, Wave C).",
   "artifactsVersion": 1,
-  "plugins": [],
+  "plugins": [
+    {
+      "id": "deckpilot.docker",
+      "version": "0.1.1",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.docker--v0.1.1/deckpilot.docker-0.1.1.dpplugin",
+      "sha256": "b7af1960ae3ed22914f469c26f95d99b689a5c300fc36c629348d4236fe0252d",
+      "size": 137743,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.git",
+      "version": "0.1.1",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.git--v0.1.1/deckpilot.git-0.1.1.dpplugin",
+      "sha256": "9c2c07a83738ff3d30b9c90d549600c29c8fcd7f2e4503f5567d5a79bf5a36ff",
+      "size": 127172,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.github",
+      "version": "0.2.1",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.github--v0.2.1/deckpilot.github-0.2.1.dpplugin",
+      "sha256": "d9a4c2a177cab9419b6dd5fad1a4a81208e2a35edc41c93dba4d1d653bb379aa",
+      "size": 121276,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.gitlab",
+      "version": "0.1.2",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.gitlab--v0.1.2/deckpilot.gitlab-0.1.2.dpplugin",
+      "sha256": "01697488f8f545fc1cbfdc9cab0a3bd39674ed71dc41003babc20a71a68affc1",
+      "size": 126291,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.jira",
+      "version": "0.1.2",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.jira--v0.1.2/deckpilot.jira-0.1.2.dpplugin",
+      "sha256": "4fd3c9e9177c1438a64db0aaf59a1c0ffb2b1c4c1b4fd8c2ffcfa7f4b6d91cc6",
+      "size": 117639,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.notifications",
+      "version": "0.1.2",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.notifications--v0.1.2/deckpilot.notifications-0.1.2.dpplugin",
+      "sha256": "d11a8fb60862bd2d5163055a1174bc590e3e8af6f763f10a7292b925c88c74e5",
+      "size": 94143,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.projects",
+      "version": "0.1.1",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.projects--v0.1.1/deckpilot.projects-0.1.1.dpplugin",
+      "sha256": "05ddf8331b3ea60d6a3aa95292c299261f7cacdc24590f7f17104c8d0753900d",
+      "size": 110926,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.workflows",
+      "version": "0.1.1",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.workflows--v0.1.1/deckpilot.workflows-0.1.1.dpplugin",
+      "sha256": "a73ecc5fb21a367b9c1ef4b3ed534002585f75a6c0cff7b56364a027530336db",
+      "size": 80779,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    },
+    {
+      "id": "deckpilot.workspace",
+      "version": "0.1.1",
+      "url": "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.workspace--v0.1.1/deckpilot.workspace-0.1.1.dpplugin",
+      "sha256": "068cf6048880e9d3bf39c013320ce1abd3987e810d0175d13622ed2b462dd7fc",
+      "size": 112182,
+      "keyIds": ["BDCDC80985EB60B5", "8C3C4E42700FA702"]
+    }
+  ],
   "revoked": []
 }

@@ -1,16 +1,14 @@
 # First-party publisher signature
 
-Status: **implemented; production keys pinned on 2026-11-21** (Wave A of
-moving the bundled plugins to `knittingcode/deckpilot-plugins`). The two
-production publisher keys are pinned with threshold 2
-([Provisioning](#provisioning-2026-11-21)); they reach users with the next
-application release. Nothing has been signed with them for a release yet
-and the artifact lock is empty, so nothing changes in any build: every
-release bundle is still built from `plugins/first-party/` and trusted by
-the pins compiled into the agent ([module-migration.md §4.4](module-migration.md#44-who-signs-bundled-plugins)).
-The application build can already take a bundled plugin from its signed
-release artifact instead ([Wave B](#wave-b-consuming-an-artifact)); no
-plugin is switched to it yet.
+Status: **implemented; production keys pinned on 2026-11-21; all nine
+bundled plugins taken from their signed releases since 2026-11-21.** The
+two production publisher keys are pinned with threshold 2
+([Provisioning](#provisioning-2026-11-21)). Every bundled plugin is now a
+release of `knittingcode/deckpilot-plugins` signed by both keys, locked in
+`plugins/first-party/artifacts.json` and verified by the application build
+([Wave B](#wave-b-consuming-an-artifact)); the bundle is still trusted by
+the pins compiled into the agent
+([module-migration.md §4.4](module-migration.md#44-who-signs-bundled-plugins)).
 The privileged-kinds gate is open for exactly the reviewed privileged policy ([Privileged plugins](#privileged-plugins-the-reviewed-privileged-policy)).
 Security review request: [publisher-review-request.md](publisher-review-request.md).
 
@@ -572,11 +570,13 @@ another domain, and the message is not a package.
 
 ## Wave B: consuming an artifact
 
-Status: **implemented, inactive.** `plugins/first-party/build.sh` can
-stage a bundled plugin from its signed release artifact instead of
-building it here; no plugin is marked so yet (`artifacts.json` is empty,
-every `bundled.json` entry is a source entry), so every release bundle is
-still built from `plugins/first-party/`.
+Status: **implemented, active for all nine bundled plugins (2026-11-21).**
+`plugins/first-party/build.sh` stages every bundled plugin from its signed
+release artifact: each `bundled.json` entry is an artifact entry and
+`artifacts.json` locks each release (both production key ids). Each
+release was rebuilt from its tag on the release runners' platform and
+matched the published package byte for byte before it was locked
+(`plugins/first-party/README.md`, "The switch").
 
 ### What the build does
 

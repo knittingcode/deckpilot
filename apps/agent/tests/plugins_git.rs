@@ -41,8 +41,6 @@ use first_party::{Env, FirstParty};
 
 const PLUGIN: FirstParty = FirstParty {
     id: "deckpilot.git",
-    dir: "git",
-    krate: "deckpilot-git",
     released: "migration",
 };
 const OID: &str = "1234567890abcdef1234567890abcdef12345678";
