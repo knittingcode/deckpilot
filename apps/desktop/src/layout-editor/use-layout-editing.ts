@@ -248,9 +248,14 @@ export function useLayoutEditing(
         commands.newFolder(over)
         return
       }
-      // An action type and a Multi Action are placed by the editor, which
-      // creates the action or the workflow.
-      if (source.type === "actionType" || source.type === "newMultiAction") return
+      // An action type, a Multi Action and a gesture preset are placed by
+      // the editor, which creates the actions or the workflow.
+      if (
+        source.type === "actionType" ||
+        source.type === "newMultiAction" ||
+        source.type === "gesturePreset"
+      )
+        return
       const next = dropOnControl(
         model,
         draft,

@@ -1134,5 +1134,22 @@
     "place": "Where",
     "inset": "Inset from the edge",
     "autoShort": "auto"
+  },
+  "gesturePreset": {
+    "multi": "Several gestures",
+    "drag": "Drag {{name}} onto a control, or onto one of its gestures",
+    "applied": "{{name}} put on {{control}}",
+    "skipped": "Left out, {{control}} cannot take them: {{gestures}}.",
+    "failed": "{{name}} was not put on {{control}}",
+    "noGesture": "{{name}} has nothing for the {{gesture}}",
+    "noGestureDetail": "Drop it on another gesture, or on the key to assign all of its gestures.",
+    "unknownAction": "One of its actions is not available here.",
+    "moduleOff": "The {{module}} module is turned off.",
+    "noControl": "{{control}} does not exist on this device.",
+    "unsupported": "{{control}} cannot take its {{gestures}}. {{reason}}",
+    "nothing": "None of its gestures fits {{control}}.",
+    "releaseWithGestures": "A release cannot go next to a double click or long press.",
+    "releaseInTheWay": "{{control}} has a Release action, which cannot stay next to a double click or long press. Remove it first.",
+    "list": "{{items}} and {{last}}"
   }
 }

@@ -1182,5 +1182,22 @@
     "place": "Miejsce",
     "inset": "Odstęp od krawędzi",
     "autoShort": "auto"
+  },
+  "gesturePreset": {
+    "multi": "Kilka gestów",
+    "drag": "Przeciągnij {{name}} na element sterujący albo na jeden z jego gestów",
+    "applied": "Umieszczono „{{name}}” w miejscu „{{control}}”",
+    "skipped": "Pominięto, „{{control}}” ich nie obsługuje: {{gestures}}.",
+    "failed": "Nie umieszczono „{{name}}” w miejscu „{{control}}”",
+    "noGesture": "„{{name}}” nie ma nic dla gestu „{{gesture}}”",
+    "noGestureDetail": "Upuść na inny gest albo na klawisz, aby przypisać wszystkie jego gesty.",
+    "unknownAction": "Jedna z jego akcji nie jest tu dostępna.",
+    "moduleOff": "Moduł {{module}} jest wyłączony.",
+    "noControl": "Na tym urządzeniu nie ma elementu „{{control}}”.",
+    "unsupported": "„{{control}}” nie obsługuje gestów: {{gestures}}. {{reason}}",
+    "nothing": "Żaden z jego gestów nie pasuje do „{{control}}”.",
+    "releaseWithGestures": "Zwolnienie nie może być obok dwukrotnego kliknięcia ani długiego naciśnięcia.",
+    "releaseInTheWay": "„{{control}}” ma akcję zwolnienia, która nie może zostać obok dwukrotnego kliknięcia ani długiego naciśnięcia. Najpierw ją usuń.",
+    "list": "{{items}} i {{last}}"
   }
 }

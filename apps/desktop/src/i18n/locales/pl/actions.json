@@ -427,5 +427,16 @@
       "interrupted": "Uruchomienie anulowano lub skończył się czas, gdy aplikacja miała czas na zakończenie. Niczego nie wymuszono; może nadal działać.",
       "elevated": "DeckPilot działa jako root lub administrator, więc nie zamyka aplikacji. Uruchom DeckPilota na swoim koncie."
     }
+  },
+  "gesturePresets": {
+    "deck_brightness-control": {
+      "name": "Sterowanie jasnością",
+      "description": "Pojedyncze kliknięcie: ciemniej o 10%. Dwukrotne kliknięcie: pełna jasność. Długie naciśnięcie: połowa jasności.",
+      "gestures": {
+        "click": "Zmniejsz jasność o 10%",
+        "doubleClick": "Ustaw jasność na 100%",
+        "longPress": "Ustaw jasność na 50%"
+      }
+    }
   }
 }

@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Folder,
   FolderPlus,
+  Layers,
   ListOrdered,
   ListPlus,
   Loader2,
@@ -29,6 +30,7 @@ import {
   type CatalogGroup,
 } from "./catalog"
 import type { ActionPreset, DragSource } from "./editing"
+import { gesturePresetDragId } from "./gesture-presets"
 import type { TargetGroup, TargetOption } from "./targets"
 import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
 
@@ -382,6 +384,92 @@ function PresetItem({ entry, incompatible }: { entry: PresetEntry; incompatible?
   )
 }
 
+/**
+ * A gesture preset in the library: one compact entry for several gestures
+ * of a control (`layout-editor/gesture-presets.ts`). Its texts are in the
+ * window's language already; it never shows an action id.
+ */
+export interface LibraryGesturePreset {
+  /** `GesturePreset.id`. */
+  id: string
+  label: string
+  /** Each gesture and what it does, one per line: the tooltip. */
+  summary: string
+  /** The catalog group it is listed in, e.g. "Device". */
+  category: string
+  icon?: string | null
+  /** Why it cannot be placed now (a plugin it needs is off, say). */
+  unavailable?: string
+  /** Why it cannot go on the selected control. */
+  incompatible?: string
+}
+
+function GesturePresetItem({ entry }: { entry: LibraryGesturePreset }) {
+  const { t } = useTranslation()
+  const source: DragSource = {
+    type: "gesturePreset",
+    preset: entry.id,
+    name: entry.label,
+    icon: entry.icon ?? null,
+  }
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: gesturePresetDragId(entry.id),
+    data: source,
+    disabled: entry.unavailable !== undefined || entry.incompatible !== undefined,
+  })
+  const icon = entry.icon ? <ActionIcon name={entry.icon} /> : <Layers aria-hidden />
+  // The subtle mark of a multi-gesture entry; the tooltip says what each does.
+  const mark = (
+    <Layers
+      data-slot="gesture-preset-mark"
+      className="size-3.5 shrink-0 text-muted-foreground"
+      role="img"
+      aria-label={t("editor:gesturePreset.multi")}
+    />
+  )
+  if (entry.unavailable !== undefined) {
+    return (
+      <li
+        className={DISABLED_ENTRY}
+        aria-label={t("editor:library.unavailable", {
+          name: entry.label,
+          reason: entry.unavailable,
+        })}
+        aria-disabled
+        data-compatibility="unavailable"
+        data-gesture-preset={entry.id}
+      >
+        <span className="flex h-6 min-w-0 items-center gap-2">
+          <EntryIcon>{icon}</EntryIcon>
+          <span className="min-w-0 flex-1 truncate" title={entry.summary}>
+            {entry.label}
+          </span>
+          {mark}
+        </span>
+        <span className="pl-8 text-xs">{entry.unavailable}</span>
+      </li>
+    )
+  }
+  if (entry.incompatible !== undefined) {
+    return <IncompatibleEntry label={entry.label} reason={entry.incompatible} icon={icon} />
+  }
+  return (
+    <li
+      ref={setNodeRef}
+      className={cn(ENTRY, isDragging && "opacity-60")}
+      {...attributes}
+      {...listeners}
+      aria-label={t("editor:gesturePreset.drag", { name: entry.label })}
+      title={entry.summary}
+      data-gesture-preset={entry.id}
+    >
+      <EntryIcon>{icon}</EntryIcon>
+      <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+      {mark}
+    </li>
+  )
+}
+
 /** A group of the library that can be folded away. */
 function Section({
   label,
@@ -434,6 +522,7 @@ export function LibraryPanel({
   groups,
   catalog = [],
   presets = [],
+  gesturePresets = [],
   multiAction = false,
   variant = "card",
   compatibility,
@@ -444,6 +533,8 @@ export function LibraryPanel({
   catalog?: CatalogGroup[]
   /** Ready-made actions listed with the catalog's group of their category. */
   presets?: PresetEntry[]
+  /** Gesture presets, listed with the catalog's group of their category too. */
+  gesturePresets?: LibraryGesturePreset[]
   /** Offers "Multi Action", which puts a new step workflow on a key. */
   multiAction?: boolean
   /**
@@ -488,7 +579,19 @@ export function LibraryPanel({
   )
   const presetsOf = (category: string) =>
     shownPresets.filter((p) => actionCategoryId(p.category) === actionCategoryId(category))
-  for (const category of new Set(shownPresets.map((p) => p.category))) {
+  const shownGesturePresets = gesturePresets.filter(
+    (p) =>
+      matches(`${p.label} ${p.summary} ${p.category} ${actionCategoryLabel(p.category)}`, needle) &&
+      !(hiding && p.incompatible !== undefined),
+  )
+  const gesturePresetsOf = (category: string) =>
+    shownGesturePresets.filter((p) => actionCategoryId(p.category) === actionCategoryId(category))
+  const entriesOf = (category: string) =>
+    presetsOf(category).length + gesturePresetsOf(category).length
+  for (const category of new Set([
+    ...shownPresets.map((p) => p.category),
+    ...shownGesturePresets.map((p) => p.category),
+  ])) {
     if (!types.some((group) => actionCategoryId(group.label) === actionCategoryId(category)))
       types.push({ label: category, entries: [] })
   }
@@ -523,7 +626,7 @@ export function LibraryPanel({
   const navigationCount =
     (navigation?.options.length ?? 0) +
     (folder ? 1 : 0) +
-    (navigationTypes ? navigationTypes.entries.length + presetsOf(navigationTypes.label).length : 0)
+    (navigationTypes ? navigationTypes.entries.length + entriesOf(navigationTypes.label) : 0)
   const shownDisplays = {
     options: (displays?.options ?? []).filter((o) => matches(o.label, needle)),
     catalog: (displays?.catalog ?? []).filter((e) =>
@@ -542,6 +645,9 @@ export function LibraryPanel({
       ))}
       {presetsOf(group.label).map((entry) => (
         <PresetItem key={entry.key} entry={entry} incompatible={whyNot(entry.type)} />
+      ))}
+      {gesturePresetsOf(group.label).map((entry) => (
+        <GesturePresetItem key={entry.id} entry={entry} />
       ))}
     </>
   )
@@ -616,7 +722,7 @@ export function LibraryPanel({
             <Section
               key={id}
               label={actionCategoryLabel(group.label)}
-              count={group.entries.length + presetsOf(group.label).length}
+              count={group.entries.length + entriesOf(group.label)}
               open={isOpen(id)}
               onToggle={() => {
                 toggle(id)

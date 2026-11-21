@@ -84,7 +84,11 @@ export interface GestureEditorProps {
    * target to assign, creating an action for an action type if needed;
    * `null`: it cannot be put on a gesture.
    */
-  resolveDrop?: (dragged: unknown) => Promise<BindingTarget | null> | BindingTarget | null
+  resolveDrop?: (
+    dragged: unknown,
+    /** The gesture it was dropped on (a gesture preset assigns only that one's action). */
+    gesture: Gesture | "release",
+  ) => Promise<BindingTarget | null> | BindingTarget | null
   /**
    * Opens the steps of a step workflow (a Multi Action) a gesture runs;
    * without it, no "Edit steps" is offered.
@@ -147,7 +151,7 @@ function SlotDrops({
       const gesture =
         event.over?.id === releaseSlotId(control) ? "release" : slotGesture(control, event.over?.id)
       if (!gesture) return
-      void Promise.resolve(resolve(event.active.data.current)).then((target) => {
+      void Promise.resolve(resolve(event.active.data.current, gesture)).then((target) => {
         if (target) onDrop(gesture, target)
       })
     },
