@@ -15,6 +15,8 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-21
+
 ### Security
 
 - Official plugins (`deckpilot.*`) from a plugin registry are installed or
