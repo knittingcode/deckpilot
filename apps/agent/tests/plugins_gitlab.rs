@@ -48,8 +48,6 @@ use serde_json::{Value, json};
 
 const PLUGIN: parity::Plugin = parity::Plugin {
     id: "deckpilot.gitlab",
-    dir: "gitlab",
-    package: "deckpilot-gitlab",
 };
 const ID: &str = PLUGIN.id;
 const GRANTS: &[&str] = &[

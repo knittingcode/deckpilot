@@ -9,6 +9,7 @@
 pub mod agent_log;
 pub mod fakes;
 pub mod http;
+pub mod official;
 pub mod watchdog;
 
 use std::path::{Path, PathBuf};

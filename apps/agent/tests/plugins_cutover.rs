@@ -13,7 +13,7 @@
 //!   (legacy ids). The agent has no `github` built-in: the migration reads
 //!   that row through the frozen descriptors;
 //! * the shipped alias block (`ACTION_ALIASES`) and migration plan, and
-//!   `plugins/first-party/github` built to wasm and bundled as the
+//!   the verified `deckpilot.github` release artifact bundled as the
 //!   release bundles it (class `migration`, pinned with
 //!   `DECKPILOT_TEST_BUNDLED_PINS`);
 //! * GitHub never answers: the plugin's requests get canned answers
@@ -72,10 +72,6 @@ fn runtime() -> PathBuf {
     repo().join("plugins/runtime")
 }
 
-fn source() -> PathBuf {
-    repo().join("plugins/first-party/github")
-}
-
 fn cargo_in_runtime(args: &[&str]) {
     let status = Command::new(option_env!("CARGO").unwrap_or("cargo"))
         .current_dir(runtime())
@@ -93,30 +89,13 @@ fn cargo_in_runtime(args: &[&str]) {
 
 struct Artifacts {
     host: PathBuf,
-    module: PathBuf,
 }
 
-/// The host and the plugin's module, built from `plugins/runtime` (or
-/// taken from `DECKPILOT_E2E_PLUGIN_HOST` and `DECKPILOT_E2E_WASM_DIR`).
+/// The host, built from `plugins/runtime` (or taken from
+/// `DECKPILOT_E2E_PLUGIN_HOST`).
 fn artifacts() -> &'static Artifacts {
     static ARTIFACTS: OnceLock<Artifacts> = OnceLock::new();
     ARTIFACTS.get_or_init(|| {
-        let wasm_dir = std::env::var_os("DECKPILOT_E2E_WASM_DIR")
-            .map(PathBuf::from)
-            .filter(|dir| dir.join("deckpilot_github.wasm").is_file())
-            .unwrap_or_else(|| {
-                cargo_in_runtime(&[
-                    "build",
-                    "--locked",
-                    "-p",
-                    "deckpilot-github",
-                    "--target",
-                    "wasm32-unknown-unknown",
-                    "--profile",
-                    "guest",
-                ]);
-                runtime().join("target/wasm32-unknown-unknown/guest")
-            });
         let host = std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
             || {
                 cargo_in_runtime(&[
@@ -134,10 +113,7 @@ fn artifacts() -> &'static Artifacts {
             },
             PathBuf::from,
         );
-        Artifacts {
-            host,
-            module: wasm_dir.join("deckpilot_github.wasm"),
-        }
+        Artifacts { host }
     })
 }
 
@@ -358,30 +334,31 @@ impl Env {
     }
 
     /// `bundled/deckpilot.github/` as `plugins/first-party/build.sh` stages
-    /// it for a release (class `migration`, `bundled.json`), and the pins
+    /// its release artifact for a release (class `migration`, `bundled.json`), and the pins
     /// the agent "was compiled with".
     fn stage(&self) {
+        self.stage_version(None);
+    }
+
+    /// The same as an app that bundles `version` instead (only its
+    /// manifest says so: the copy an earlier release installed, whose
+    /// files that release's agent pinned).
+    fn stage_version(&self, version: Option<&str>) {
         let dir = self.bundled().join(PLUGIN);
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        for file in ["manifest.json", "LICENSE", "assets/icon-128.png"] {
-            std::fs::copy(source().join(file), dir.join(file)).unwrap();
-        }
-        std::fs::copy(&artifacts().module, dir.join("plugin.wasm")).unwrap();
-        let manifest: Value =
+        support::official::copy_into(PLUGIN, &dir);
+        let mut manifest: Value =
             serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+        if let Some(version) = version {
+            manifest["version"] = json!(version);
+            std::fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_vec_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+        }
         let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();
-        let released: Value = serde_json::from_slice(
-            &std::fs::read(repo().join("plugins/first-party/bundled.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            released["plugins"]
-                .as_array()
-                .unwrap()
-                .contains(&json!({"path": "github", "class": "migration"})),
-            "the release bundles deckpilot.github as a migration-class plugin: {released}"
-        );
+        support::official::assert_released(PLUGIN, "migration");
         let pins = Pins::compute(
             &self.bundled(),
             &[(
@@ -1071,6 +1048,126 @@ async fn a_0_9_github_user_moves_to_the_plugin_after_consent() {
 
     // Nothing of the user's was deleted or rewritten.
     assert_eq!(env.legacy(), before);
+}
+
+/// The version v0.10.0 and v0.11.0 bundled (built from source there).
+const SHIPPED: &str = "0.2.0";
+
+/// An installation of v0.10.0 or v0.11.0, cut over to the bundled
+/// `deckpilot.github` 0.2.0, upgrades to an app that bundles the signed
+/// release artifact: the installed copy moves to the released version,
+/// and the user's settings, imported token, grants and key binding stay
+/// exactly as they were, with nothing asked again; offline (GitHub never
+/// answers but the canned routes). An older app on the same data never
+/// moves it back (rollback protection), and the released app serves again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)] // one upgrade, step by step
+async fn a_cut_over_installation_upgrades_to_the_released_artifact() {
+    let env = Env::new("plugins-cutover-artifact", API);
+    env.stage_version(Some(SHIPPED));
+    let id = PluginId::parse(PLUGIN).unwrap();
+    let released = support::official::locked_version(PLUGIN);
+    assert!(
+        semver::Version::parse(&released).unwrap() > semver::Version::parse(SHIPPED).unwrap(),
+        "the release artifact {released} is newer than the shipped {SHIPPED}"
+    );
+
+    // 1. v0.11.0: the migration cut over to 0.2.0 with the user's consent;
+    // the user changes a setting.
+    let agent = env.start(Start::default()).await;
+    agent
+        .wait_listed(ipc::MigrationPhase::AwaitingConsent)
+        .await;
+    let done = agent
+        .decide(&["credentials:token", "network:user-origin:apiUrl"], &[])
+        .await;
+    assert_eq!(done.phase, ipc::MigrationPhase::CutOver, "{done:?}");
+    agent
+        .ok(Request::SetPluginSettings {
+            plugin: PLUGIN.into(),
+            values: [("timeoutSeconds".to_owned(), json!(25))].into(),
+        })
+        .await;
+    let device = agent.device().await;
+    env.press_until_served(&agent, &device)
+        .await
+        .assert_plugin(SEARCH);
+    agent.stop().await;
+    let snapshot = |env: &Env| {
+        let store = env.plugin_store();
+        let grants: Vec<(String, String)> = store
+            .grants(&id)
+            .unwrap()
+            .into_iter()
+            .map(|g| (g.key.to_string(), g.decided_by))
+            .collect();
+        let credentials: Vec<String> = store
+            .credentials(&id)
+            .unwrap()
+            .into_iter()
+            .map(|c| format!("{c:?}"))
+            .collect();
+        (grants, credentials, store.settings(&id).unwrap())
+    };
+    let before = snapshot(&env);
+    assert_eq!(before.1.len(), 1, "the imported token");
+    assert_eq!(before.2["timeoutSeconds"], json!(25));
+    let installed = |env: &Env| {
+        env.plugin_store()
+            .plugin(&id)
+            .unwrap()
+            .unwrap()
+            .active()
+            .unwrap()
+            .version
+            .to_string()
+    };
+    assert_eq!(installed(&env), SHIPPED);
+    let legacy = env.legacy();
+
+    // 2. The app update bundles the release artifact.
+    env.stage();
+    let agent = env.start(Start::default()).await;
+    let device = agent.device().await;
+    env.press_until_served(&agent, &device)
+        .await
+        .assert_plugin(SEARCH);
+    env.run_checks(&agent).await.assert_plugin(CHECKS);
+    assert_eq!(installed(&env), released, "{}", agent.log());
+    assert_eq!(agent.plugin_state().await, Some(PluginState::Enabled));
+    assert_eq!(agent.plugin_origin().await, Some(PluginOrigin::Bundled));
+    let info = agent.listed().await;
+    assert_eq!(info.phase, ipc::MigrationPhase::CutOver, "{info:?}");
+    assert_eq!(info.route, MigrationRoute::Plugin, "{info:?}");
+    assert_eq!(info.consent, [], "nothing asked again: {info:?}");
+    agent.stop().await;
+    assert_eq!(snapshot(&env), before, "settings, token and grants kept");
+    assert_eq!(env.legacy(), legacy, "the key binding and the profile kept");
+
+    // 3. An older app on the same data: the released copy stays.
+    env.stage_version(Some(SHIPPED));
+    let agent = env.start(Start::default()).await;
+    agent.ok(Request::GetStatus).await;
+    assert_eq!(
+        installed(&env),
+        released,
+        "never backwards\n{}",
+        agent.log()
+    );
+    agent.stop().await;
+    assert_eq!(snapshot(&env), before);
+
+    // 4. The released app again: served, nothing changed.
+    env.stage();
+    let agent = env.start(Start::default()).await;
+    let device = agent.device().await;
+    env.press_until_served(&agent, &device)
+        .await
+        .assert_plugin(SEARCH);
+    agent.stop().await;
+    assert_eq!(installed(&env), released);
+    assert_eq!(snapshot(&env), before);
+    assert_eq!(env.legacy(), legacy);
 }
 
 /// A GitHub Enterprise user is asked for the token **and the server**

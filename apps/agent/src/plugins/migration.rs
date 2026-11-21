@@ -1127,8 +1127,11 @@ impl Engine<'_> {
         if let Some(record) = &record {
             match record.phase {
                 MigrationPhase::CutOver => {
-                    if start && let Err(stop) = self.reconcile(m, record) {
-                        self.stopped(m, stop);
+                    if start {
+                        self.refresh_cut_over(m);
+                        if let Err(stop) = self.reconcile(m, record) {
+                            self.stopped(m, stop);
+                        }
                     }
                     return;
                 }
@@ -1138,6 +1141,46 @@ impl Engine<'_> {
         }
         if let Err(stop) = self.steps(m) {
             self.stopped(m, stop);
+        }
+    }
+
+    /// An app update that bundles a newer version of a cut-over plugin:
+    /// its installed bundled copy is updated, as seeding updates a
+    /// `default`-class one ([`bundled::refresh`]: never backwards, never
+    /// over a copy from another source or the user's tombstone, grants
+    /// kept, anything new beyond the low tier staged for the user's
+    /// consent). Without it the older copy, which this agent no longer
+    /// pins, would never load again. A failure leaves the migration cut
+    /// over: the copy is refused at load with the reason, as before.
+    fn refresh_cut_over(&mut self, m: &LegacyModule) {
+        let Some(pin) = self.pin(m) else {
+            return;
+        };
+        let store = self.manager.store();
+        if !matches!(store.tombstone(&m.plugin), Ok(None)) {
+            return;
+        }
+        let Ok(Some(record)) = store.plugin(&m.plugin) else {
+            return;
+        };
+        if record.source != InstallSource::Bundled {
+            return;
+        }
+        match bundled::refresh(self.manager, self.bundle, &pin, &record) {
+            Seeded::Updated => {
+                info!(module = %m.module, plugin = %m.plugin, version = %pin.version,
+                    "the cut-over plugin is updated to the bundled version");
+                self.touched.insert(m.plugin.clone());
+            }
+            Seeded::Broken(why) | Seeded::Failed(why) => {
+                warn!(module = %m.module, plugin = %m.plugin, version = %pin.version, %why,
+                    "the cut-over plugin cannot be updated to the bundled version");
+            }
+            Seeded::UpdateAwaitingConsent => {
+                info!(module = %m.module, plugin = %m.plugin, version = %pin.version,
+                    "the bundled update of the cut-over plugin waits for the user's consent");
+            }
+            _ => {}
         }
     }
 

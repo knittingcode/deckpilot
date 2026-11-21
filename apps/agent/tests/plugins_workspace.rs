@@ -38,8 +38,6 @@ use serde_json::json;
 
 const PLUGIN: FirstParty = FirstParty {
     id: "deckpilot.workspace",
-    dir: "workspace",
-    krate: "deckpilot-workspace",
     released: "migration",
 };
 const EDITOR: &str = "/usr/local/bin/code";

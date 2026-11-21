@@ -28,9 +28,11 @@
 //!
 //! The artifacts come from the environment (see `docs/marketplace/e2e.md`):
 //! `DECKPILOT_E2E_AGENT_BIN` (an agent built with `plugins,test-hooks`),
-//! `DECKPILOT_E2E_PLUGIN_HOST` and `DECKPILOT_E2E_WASM_DIR` (the sample's
-//! `hello_weather.wasm`, and the bundled default plugins'
-//! `deckpilot_notifications.wasm` and `deckpilot_workflows.wasm`).
+//! `DECKPILOT_E2E_PLUGIN_HOST`, `DECKPILOT_E2E_WASM_DIR` (the sample's
+//! `hello_weather.wasm`) and `DECKPILOT_E2E_OFFICIAL_PLUGINS` (the bundled
+//! default plugins, `deckpilot.notifications` and `deckpilot.workflows`,
+//! as `plugins/first-party/build.sh` verified and unpacked their release
+//! artifacts).
 
 #![allow(dead_code)]
 
@@ -503,12 +505,25 @@ pub struct Bundled {
 /// class `default`, staged as `plugins/first-party/build.sh` stages them:
 /// what a fresh install seeds and enables before the user opens the app
 /// (today `deckpilot.notifications` and `deckpilot.workflows`, which owns
-/// the Workflows screens; `module-migration.md` §11 D6). Their modules
-/// come from `DECKPILOT_E2E_WASM_DIR` (`<crate>.wasm`, built with the
-/// `guest` profile).
+/// the Workflows screens; `module-migration.md` §11 D6). Their files are
+/// the verified release artifacts in `DECKPILOT_E2E_OFFICIAL_PLUGINS`
+/// (the `bundled/` directory `build.sh --out DIR` wrote: every artifact
+/// checked with the pinned publisher keys and unpacked), copied as they
+/// are.
 fn stage_bundled(root: &Path) -> Bundled {
+    fn copy(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                copy(&entry.path(), &to.join(entry.file_name()));
+            } else {
+                std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+            }
+        }
+    }
     let first_party = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../plugins/first-party");
-    let wasm_dir = required_path("DECKPILOT_E2E_WASM_DIR");
+    let official = required_path("DECKPILOT_E2E_OFFICIAL_PLUGINS");
     let release: Value =
         serde_json::from_slice(&std::fs::read(first_party.join("bundled.json")).unwrap()).unwrap();
     let dir = root.join("resources/bundled");
@@ -517,36 +532,25 @@ fn stage_bundled(root: &Path) -> Bundled {
         if entry["class"] != "default" {
             continue;
         }
-        let source = first_party.join(entry["path"].as_str().unwrap());
-        let manifest: Value =
-            serde_json::from_slice(&std::fs::read(source.join("manifest.json")).unwrap()).unwrap();
-        let id = manifest["id"].as_str().unwrap().to_owned();
-        let target = dir.join(&id);
-        std::fs::create_dir_all(target.join("assets")).unwrap();
-        std::fs::create_dir_all(target.join("locales")).unwrap();
-        let mut files = vec!["manifest.json".to_owned(), "LICENSE".to_owned()];
-        files.extend(
-            manifest["icons"]
-                .as_object()
-                .into_iter()
-                .flatten()
-                .map(|(_, v)| v.as_str().unwrap().to_owned()),
+        let id = entry["id"].as_str().unwrap().to_owned();
+        let source = official.join(&id);
+        let manifest: Value = serde_json::from_slice(
+            &std::fs::read(source.join("manifest.json")).unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e} (stage it with plugins/first-party/build.sh)",
+                    source.display()
+                )
+            }),
+        )
+        .unwrap();
+        assert_eq!(manifest["id"], entry["id"], "{}", source.display());
+        assert_eq!(
+            manifest["version"],
+            entry["version"],
+            "{}",
+            source.display()
         );
-        files.extend(
-            manifest["locales"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|tag| format!("locales/{}.json", tag.as_str().unwrap())),
-        );
-        for file in files {
-            std::fs::copy(source.join(&file), target.join(&file)).unwrap();
-        }
-        let krate = crate_name(&source.join("Cargo.toml"));
-        let wasm = wasm_dir.join(format!("{}.wasm", krate.replace('-', "_")));
-        std::fs::copy(&wasm, target.join("plugin.wasm")).unwrap_or_else(|e| {
-            panic!("{}: {e} (build it with the guest profile)", wasm.display())
-        });
+        copy(&source, &dir.join(&id));
         let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();
         pinned.push((
             PluginId::parse(&id).unwrap(),
@@ -562,18 +566,6 @@ fn stage_bundled(root: &Path) -> Bundled {
         dir,
         pins: pins_file,
     }
-}
-
-/// The `name` of a plugin's `Cargo.toml` `[package]` (its first `name =`
-/// line; first-party crates keep it there).
-fn crate_name(path: &Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap();
-    text.lines()
-        .find_map(|line| {
-            let value = line.trim().strip_prefix("name")?.trim().strip_prefix('=')?;
-            Some(value.trim().trim_matches('"').to_owned())
-        })
-        .unwrap_or_else(|| panic!("{} names no crate", path.display()))
 }
 
 /// Canned answers for the only host the sample talks to.

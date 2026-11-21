@@ -1,8 +1,8 @@
 //! The Workspace cut-over of the extraction (WP-C1,
 //! `docs/marketplace/module-migration.md` §11 D4, §7 X13) end to end,
 //! through the real agent, the real sandboxed host and
-//! `plugins/first-party/workspace` built to wasm and bundled as the
-//! release bundles it (class `migration`), on a configuration with stored
+//! the verified `deckpilot.workspace` release artifact bundled as
+//! the release bundles it (class `migration`), on a configuration with stored
 //! `workspace.*` keys. The migration waits for `resources:open` with the
 //! legacy keys unavailable; after the user's consent the stored
 //! `workspace.open-urls` key opens its page through the plugin
@@ -30,8 +30,6 @@ use first_party::{Agent, Env, FirstParty, SETTLE};
 
 const WORKSPACE: FirstParty = FirstParty {
     id: "deckpilot.workspace",
-    dir: "workspace",
-    krate: "deckpilot-workspace",
     released: "migration",
 };
 

@@ -21,8 +21,6 @@ use first_party::{Env, FirstParty};
 
 const PLUGIN: FirstParty = FirstParty {
     id: "deckpilot.workflows",
-    dir: "workflows",
-    krate: "deckpilot-workflows",
     released: "default",
 };
 

@@ -128,8 +128,15 @@ jobs:
         run: |
           cargo build --locked -p deckpilot-plugin-host --bin deckpilot-plugin-host
           cargo build --locked -p hello-weather --target wasm32-unknown-unknown --profile guest
-          # The default-class first-party plugins a fresh install seeds.
-          cargo build --locked -p deckpilot-notifications -p deckpilot-workflows --target wasm32-unknown-unknown --profile guest
+      # The default-class first-party plugins a fresh install seeds: their
+      # signed release artifacts, verified with the pinned publisher keys
+      # (never --keys) and unpacked, as a release bundles them.
+      - name: Stage the bundled plugins from their release artifacts
+        run: |
+          exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
+          cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckpilot-registry
+          plugins/first-party/build.sh --out "$RUNNER_TEMP/official" --artifacts-dir "$RUNNER_TEMP/official-artifacts" \
+            --registry-tool "target/debug/deckpilot-registry$exe"
       # Copied out of target/: building the tests below replaces
       # target/debug/deckpilot-desktop with a build that expects the dev
       # server.
@@ -142,14 +149,13 @@ jobs:
           mkdir -p "$E2E/bin" "$E2E/wasm" "$E2E/artifacts"
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           cp "target/debug/deckpilot-agent$exe" "$E2E/bin/"
-          for wasm in hello_weather deckpilot_notifications deckpilot_workflows; do
-            cp "plugins/runtime/target/wasm32-unknown-unknown/guest/$wasm.wasm" "$E2E/wasm/"
-          done
+          cp plugins/runtime/target/wasm32-unknown-unknown/guest/hello_weather.wasm "$E2E/wasm/"
           {
             echo "DECKPILOT_E2E_AGENT_BIN=$E2E/bin/deckpilot-agent$exe"
             echo "DECKPILOT_E2E_PLUGIN_HOST=$(native "$PWD")/plugins/runtime/target/debug/deckpilot-plugin-host$exe"
             echo "DECKPILOT_E2E_WASM_DIR=$E2E/wasm"
             echo "DECKPILOT_E2E_ARTIFACTS=$E2E/artifacts"
+            echo "DECKPILOT_E2E_OFFICIAL_PLUGINS=$(native "$RUNNER_TEMP")/official/bundled"
           } >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
