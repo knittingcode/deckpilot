@@ -20,18 +20,11 @@ members = [
     "../examples/hello-weather",
     "../examples/hello-world",
     "../examples/developer-tools",
-    # First-party plugins bundled with the application, and the test
-    # fixture of the bundling tests (plugins/first-party/README.md).
-    "../first-party/docker",
-    "../first-party/git",
-    "../first-party/github",
-    "../first-party/gitlab",
-    "../first-party/jira",
-    "../first-party/notifications",
-    "../first-party/projects",
+    # The library the official plugins share (built and released in
+    # knittingcode/deckpilot-plugins, which depends on it at a pinned commit),
+    # and the test fixtures of the bundling tests
+    # (plugins/first-party/README.md).
     "../first-party/support",
-    "../first-party/workflows",
-    "../first-party/workspace",
     "../first-party/test-fixtures/example-default",
     "../first-party/test-fixtures/legacy-fixture",
 ]
@@ -50,16 +43,7 @@ default-members = [
     "../examples/hello-weather",
     "../examples/hello-world",
     "../examples/developer-tools",
-    "../first-party/docker",
-    "../first-party/git",
-    "../first-party/github",
-    "../first-party/gitlab",
-    "../first-party/jira",
-    "../first-party/notifications",
-    "../first-party/projects",
     "../first-party/support",
-    "../first-party/workflows",
-    "../first-party/workspace",
     "../first-party/test-fixtures/example-default",
     "../first-party/test-fixtures/legacy-fixture",
 ]

@@ -672,50 +672,33 @@ anything else.
 
 ### Activating a plugin
 
-Only GitHub, GitLab, Jira and Notifications can move while the gate is
-closed (their sources are in `knittingcode/deckpilot-plugins`
-`official/`: github 0.2.1, gitlab 0.1.2, jira 0.1.2, notifications 0.1.2,
-each a patch above what DeckPilot 0.10.0 shipped). Prerequisite for all:
-the production publisher keys pinned in `publisher/first-party.json` with
-threshold 2 (a separate, reviewed change). Then, for each `<name>`, once
-the signed release `deckpilot.<name>--v<version>` exists with its package
-and two `<package>.<KEYID>.minisig` files (none does yet):
+**Done for all nine (2026-11-21).** Each release was rebuilt from its tag
+and matched the published package, locked in `artifacts.json` with both
+key ids and listed as an artifact in `bundled.json`
+(knittingcode/deckpilot#391); the source copies in `plugins/first-party/`
+were then removed, keeping each release's files but its module as its
+contract in `plugins/first-party/contracts/`. A **new release** of a
+bundled plugin moves the same way:
 
-1. **Lock it** (one pull request here): add to `artifacts.json`
+1. **Lock it** (one pull request here): its `artifacts.json` entry
    `{"id": "deckpilot.<name>", "version": "<version>", "url":
    "https://github.com/knittingcode/deckpilot-plugins/releases/download/deckpilot.<name>--v<version>/deckpilot.<name>-<version>.dpplugin",
-   "sha256": "<hex>", "size": <bytes>, "keyIds": ["<KEYID A>", "<KEYID B>"]}`,
-   taking sha256 and size from the downloaded package (and the release's
-   own record), and the key ids from the two signature file names; check
-   them with `deckpilot-registry release verify` against the pinned keys
-   locally. In the same pull request replace the entry
-   `{"path": "<name>", "class": "<class>"}` of `bundled.json` with
-   `{"id": "deckpilot.<name>", "version": "<version>", "class": "<class>",
-   "source": "artifact"}` (the same class). Keep `plugins/first-party/<name>/`.
-   CI: the *Rust* checks (lock and list agree, keys pinned), the
-   *Plugins in the agent* bundle dry run (which now downloads and verifies
-   the release) and *Packaging*.
+   "sha256": "<hex>", "size": <bytes>, "keyIds": ["<KEYID A>", "<KEYID B>"]}`
+   (sha256 and size of the downloaded package, which a rebuild from the
+   tag on the release platform must reproduce; the key ids from the two
+   signature file names), its `bundled.json` version, and its contract
+   (`plugins/first-party/contracts/deckpilot.<name>/`: the release's files
+   but `plugin.wasm`, as `build.sh` unpacked them). Check it locally with
+   `build.sh` (`release verify` against the pinned keys). CI: the *Rust*
+   checks (lock and list agree, keys pinned), the *Plugins in the agent*
+   tests and bundle dry run (which download and verify the release and
+   compare the contract) and *Packaging*.
 2. **Release it.** At the next application release, release preparation
    records the bundle's pins in `released-pins.json` as for every release
    (`check-released-pins.sh --record`, [docs/releasing.md](../releasing.md)):
    the artifact's version and files become the floor, so no later build
    can go below them or change them under that version. For an offline
    release build, pre-stage the cache with `build.sh --fetch-only`.
-3. **Remove the copy** (a later pull request, after that release): delete
-   `plugins/first-party/<name>/`, its member in `plugins/runtime/Cargo.toml`
-   and `Cargo.lock`, and adjust what builds or reads it from source:
-   the agent's end-to-end tests that compile it
-   (`apps/agent/tests/plugins_<name>.rs`, `plugins_cutover.rs`, `plugins_cutover_servers.rs`,
-   `core_without_plugins.rs`), the contract tests
-   (`crates/deckpilot-modules/tests/contracts.rs`), the *Core without
-   optional plugins* plugin build (`.github/workflows/ci.yml`),
-   `tools/ci/test-check-packages.sh` (stand-ins from the source manifest)
-   and the docs naming the directory; the `PRIVILEGED` check keeps
-   covering the remaining sources.
-
-Do the four one at a time (proposed order: notifications, then github,
-gitlab, jira), each with its own lock entry; the privileged five stay
-source entries until the gate's review.
 
 **A privileged plugin**, once the gate is open (the reviewed draft
 merged and a DeckPilot release made with it, which the plugin

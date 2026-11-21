@@ -13,6 +13,11 @@
 //! the artifacts unless `target/official-plugins/cache` has them; builds
 //! `deckpilot-registry` unless `DECKPILOT_E2E_REGISTRY_TOOL` names one), and
 //! later runs reuse it.
+//!
+//! Each release's files but its module are also committed, as its contract
+//! (`plugins/first-party/contracts/<id>/`), for the tests that need them at
+//! compile time (the module contracts, the privileged policy): [`dir`]
+//! checks they are exactly what the release unpacked.
 #![allow(dead_code)] // Each test binary uses part of it.
 
 use std::path::{Path, PathBuf};
@@ -144,7 +149,9 @@ fn stage() -> PathBuf {
 }
 
 /// `bundled/<id>/`: the verified files of the release `artifacts.json`
-/// locks for `id`.
+/// locks for `id`. They must be exactly its contract,
+/// `plugins/first-party/contracts/<id>/` (every file but the module, which
+/// the compile-time contract and policy tests read), besides `plugin.wasm`.
 pub fn dir(id: &str) -> PathBuf {
     let dir = bundle().join(id);
     let manifest = json(&dir.join("manifest.json"));
@@ -155,7 +162,42 @@ pub fn dir(id: &str) -> PathBuf {
         "{} is not the locked release of {id}: stage it again",
         dir.display()
     );
+    let contract = repo().join("plugins/first-party/contracts").join(id);
+    let mut released = files(&dir);
+    released.retain(|(name, _)| name != "plugin.wasm");
+    assert!(
+        released == files(&contract),
+        "{} differs from the release {} unpacked: update the contract with the release",
+        contract.display(),
+        dir.display()
+    );
     dir
+}
+
+/// Every file under `root`: its path relative to `root` (with `/`) and
+/// its bytes, sorted.
+fn files(root: &Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else {
+                let name = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                out.push((name, std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
 }
 
 /// The manifest of `id`'s locked release.

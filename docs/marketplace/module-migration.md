@@ -14,6 +14,15 @@ the new host capabilities are in
 Where this document says that one of those modules "stays built-in" or
 "stays core" (§1, §3.3, §5.7, G12, G13, G15), §11 governs.
 
+**Sources moved (2026-11-21).** The nine bundled plugins are built,
+released and signed in `knittingcode/deckpilot-plugins` (`official/<name>`),
+and the application bundles those signed releases
+([publisher-signature.md](publisher-signature.md#wave-b-consuming-an-artifact));
+their sources are no longer in this repository. Where this document says
+`plugins/first-party/<name>`, that is where the plugin was built at the
+time; the files each release ships but its module are recorded in
+`plugins/first-party/contracts/deckpilot.<name>/`.
+
 **Status: WP-C5 and WP-C6 are done (P34, P35).** The `github`, `gitlab`,
 `jira`, `git`, `docker`, `workspace` and `projects` built-ins are removed
 from the workspace, `crates/deckpilot-modules` and the app. Wherever this
@@ -765,7 +774,7 @@ the agent and the host against the built-in on the same canned answers,
 with identical results. What differs, all on failure paths, limits or the
 editor (save-time checks, two messages, `retryAfterSeconds`, transport
 error codes, the `Date`-based time limit, the agent's rates for plugins),
-is listed in [`plugins/first-party/github/README.md`](../../plugins/first-party/github/README.md).
+is listed in [`official/github/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/github/README.md) of knittingcode/deckpilot-plugins.
 Lists use pages of 50 (two for more than 50 pull requests, ten for the
 built-in's 500 checks).
 
@@ -857,7 +866,7 @@ plan come with its cut-over.
   built-in's 500 jobs or uncounted merge requests), and pages of 10 when
   an answer is over the 512 KiB a plugin gets. The differences, all on
   failure paths, limits or the editor, are listed in
-  [`plugins/first-party/gitlab/README.md`](../../plugins/first-party/gitlab/README.md).
+  [`official/gitlab/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/gitlab/README.md) of knittingcode/deckpilot-plugins.
 - `plugins/first-party/support` holds what the plugins for a user-entered
   server share (URLs without the `url` crate, the `Date`-based time limit).
 
@@ -883,7 +892,7 @@ built-in `jira` module; no variables on either side. Built and pinned,
 - One difference is new: the built-in checks that a Cloud credential is
   `email:api-token` before it sends anything; a plugin never sees its
   secret, so Jira's 401 says so instead. All differences:
-  [`plugins/first-party/jira/README.md`](../../plugins/first-party/jira/README.md).
+  [`official/jira/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/jira/README.md) of knittingcode/deckpilot-plugins.
 
 *As built (P11), the GitLab and Jira cut-overs.* In builds with the
 `plugins` feature only (plugins on unless turned off, §5.10); release
@@ -977,7 +986,7 @@ compares 14 scenarios with the built-in through the real agent and host,
 and covers the first launch, tombstones across restarts and an app update,
 and an alpha.3 upgrade with an older build on the same data. The
 differences are listed in
-[`plugins/first-party/notifications/README.md`](../../plugins/first-party/notifications/README.md).
+[`official/notifications/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/notifications/README.md) of knittingcode/deckpilot-plugins.
 
 ## 7. SDK gaps
 

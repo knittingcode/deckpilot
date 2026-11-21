@@ -1309,7 +1309,8 @@ fn plugin_variables_have_a_root_of_their_own() {
 
 /// First-party plugins that replace a built-in module
 /// (`docs/marketplace/module-migration.md` §5.3): each plugin's manifest
-/// (`plugins/first-party/<name>/manifest.json`), converted to action types
+/// (`plugins/first-party/contracts/deckpilot.<name>/manifest.json`, the
+/// manifest of the release the application bundles), converted to action types
 /// the way the agent registers plugin actions, against the built-in's
 /// definitions while the built-in is still compiled in.
 mod first_party {
@@ -1440,7 +1441,8 @@ mod first_party {
         }
     }
 
-    const GITHUB_MANIFEST: &str = include_str!("../../../plugins/first-party/github/manifest.json");
+    const GITHUB_MANIFEST: &str =
+        include_str!("../../../plugins/first-party/contracts/deckpilot.github/manifest.json");
 
     fn manifest(text: &str) -> Manifest {
         let manifest = Manifest::from_json(text).expect("the manifest parses");
@@ -1941,7 +1943,8 @@ mod first_party {
         server_alias("gitlab", "deckpilot.gitlab", legacy, target, credential)
     }
 
-    const GITLAB_MANIFEST: &str = include_str!("../../../plugins/first-party/gitlab/manifest.json");
+    const GITLAB_MANIFEST: &str =
+        include_str!("../../../plugins/first-party/contracts/deckpilot.gitlab/manifest.json");
 
     /// `deckpilot.gitlab` reproduces every action of the built-in `gitlab`
     /// module. Its settings mirror the module's but for the credential
@@ -2032,7 +2035,8 @@ mod first_party {
         server_alias("jira", "deckpilot.jira", legacy, target, credential)
     }
 
-    const JIRA_MANIFEST: &str = include_str!("../../../plugins/first-party/jira/manifest.json");
+    const JIRA_MANIFEST: &str =
+        include_str!("../../../plugins/first-party/contracts/deckpilot.jira/manifest.json");
 
     /// `deckpilot.jira` reproduces every action of the built-in `jira`
     /// module. Its settings mirror the module's but for the credential
@@ -2051,8 +2055,9 @@ mod first_party {
         entered_server(&manifest, jira::SITE_URL, "credential", &[]);
     }
 
-    const NOTIFICATIONS_MANIFEST: &str =
-        include_str!("../../../plugins/first-party/notifications/manifest.json");
+    const NOTIFICATIONS_MANIFEST: &str = include_str!(
+        "../../../plugins/first-party/contracts/deckpilot.notifications/manifest.json"
+    );
 
     /// `deckpilot.notifications` (P10, the first plugin of the default
     /// set) reproduces both actions of the built-in `notifications`
@@ -2162,12 +2167,14 @@ mod first_party {
         );
     }
 
-    const GIT_MANIFEST: &str = include_str!("../../../plugins/first-party/git/manifest.json");
-    const DOCKER_MANIFEST: &str = include_str!("../../../plugins/first-party/docker/manifest.json");
+    const GIT_MANIFEST: &str =
+        include_str!("../../../plugins/first-party/contracts/deckpilot.git/manifest.json");
+    const DOCKER_MANIFEST: &str =
+        include_str!("../../../plugins/first-party/contracts/deckpilot.docker/manifest.json");
     const WORKSPACE_MANIFEST: &str =
-        include_str!("../../../plugins/first-party/workspace/manifest.json");
+        include_str!("../../../plugins/first-party/contracts/deckpilot.workspace/manifest.json");
     const PROJECTS_MANIFEST: &str =
-        include_str!("../../../plugins/first-party/projects/manifest.json");
+        include_str!("../../../plugins/first-party/contracts/deckpilot.projects/manifest.json");
 
     /// What the extraction's cut-over (WP-C1) checks of a module and its
     /// plugin, from the shipped block of `ACTION_ALIASES`: every built-in

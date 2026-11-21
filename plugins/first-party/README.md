@@ -1,10 +1,12 @@
 # First-party plugins
 
-DeckPilot's own plugins (`deckpilot.*`), built by the application's
-release build and shipped **inside the installers** as app components
-(`docs/marketplace/module-migration.md` §4). They are also submitted to
-`knittingcode/deckpilot-plugins` by pinned commit for registry updates;
-that is a separate step, not part of this directory.
+DeckPilot's own plugins (`deckpilot.*`), shipped **inside the installers**
+as app components (`docs/marketplace/module-migration.md` §4). Their
+sources live in `knittingcode/deckpilot-plugins` (`official/<name>`),
+which builds, packages, signs and releases them; the application's release
+build takes those signed releases (`artifacts.json`), verifies them with
+the pinned publisher keys and bundles them. Only the bundling, the locks,
+the releases' contracts and the test fixtures are here.
 
 Experimental, like all of the plugin marketplace. The plugins of
 `bundled.json` are bundled. The `migration`-class ones are the only
@@ -12,16 +14,16 @@ implementation of the former built-in `github`, `gitlab`, `jira`, `git`,
 `docker`, `workspace` and `projects` modules (removed in WP-C5 and WP-C6):
 their legacy action ids are unavailable with the reason until the plugin
 serves. Among them `deckpilot.github` (class `migration`,
-[github/README.md](github/README.md)), to which a plugin-enabled agent
+[README](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/github/README.md)), to which a plugin-enabled agent
 routes the legacy `github.*` action types once a computer's migration is
 cut over
 (`docs/marketplace/module-migration.md` §6 and §9, P9),
-`deckpilot.gitlab` (class `migration`, [gitlab/README.md](gitlab/README.md))
-and `deckpilot.jira` (class `migration`, [jira/README.md](jira/README.md)),
+`deckpilot.gitlab` (class `migration`, [README](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/gitlab/README.md))
+and `deckpilot.jira` (class `migration`, [README](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/jira/README.md)),
 routed the same way through the alias blocks `gitlab.*` and `jira.*`, for
 GitLab.com or the server the user had entered and allows (P11), and
 `deckpilot.notifications` (class `default`, the first of the default set,
-[notifications/README.md](notifications/README.md)), seeded on every
+[README](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/notifications/README.md)), seeded on every
 computer and routed through the alias block `notifications.*` (P10), and
 `deckpilot.workflows` (class `default`), which owns the Workflows screens.
 Git, Docker, Workspace and Projects (plugin API 1.9) are routed since
@@ -32,21 +34,22 @@ pipeline does not package plugins at all (see "Packaging" below).
 
 | Path | What |
 | --- | --- |
-| `bundled.json` | The plugins a release bundles: built here from source, `{"path": "<dir>", "class": "default" \| "migration"}`, or taken from a signed release artifact, `{"id": "deckpilot.<name>", "version": "X.Y.Z", "class": ..., "source": "artifact"}` (see "Plugins from release artifacts"); never both |
+| `bundled.json` | The plugins a release bundles: taken from a signed release artifact, `{"id": "deckpilot.<name>", "version": "X.Y.Z", "class": "default" \| "migration", "source": "artifact"}` (see "Plugins from release artifacts"), or built here from source, `{"path": "<dir>", "class": ...}` (only the test fixtures are); never both |
 | `released-pins.json` | The pins of the published releases, per platform: the id, version and the size and sha256 of every file of each bundled plugin (see "Versions") |
-| `artifacts.json` | The signed release artifacts from `knittingcode/deckpilot-plugins` a build bundles instead of building from source here (`{"id", "version", "url", "sha256", "size", "keyIds"}` each), and the releases no build may use ([publisher-signature.md](../../docs/marketplace/publisher-signature.md)). All nine bundled plugins come from here (see "Plugins from release artifacts") |
+| `artifacts.json` | The signed release artifacts from `knittingcode/deckpilot-plugins` a build bundles (`{"id", "version", "url", "sha256", "size", "keyIds"}` each), and the releases no build may use ([publisher-signature.md](../../docs/marketplace/publisher-signature.md)). All nine bundled plugins come from here |
 | `artifacts.sh` | The release-artifact half of `build.sh` (sourced by it): fetch, check, verify and unpack each artifact entry |
+| `contracts/` | `deckpilot.<name>/`: every file the locked release of each bundled plugin ships but its module (`manifest.json`, `LICENSE`, `assets/`, `locales/`), byte for byte, for the tests that need them at compile time: the module contracts (`crates/deckpilot-modules/tests/contracts.rs`), the reviewed privileged policy and the publisher tests. The agent's end-to-end tests (`apps/agent/tests/support/official.rs`) and the *Plugins in the agent* dry run check them against the verified release; a new release updates its contract in the same pull request as its `artifacts.json` entry |
 | `test-build.sh` | Tests of `build.sh`'s artifact path with throwaway keys made in the test (*Plugins in the agent* workflow) |
-| `docker/` | `deckpilot.docker`, class `migration` (plugin API 1.9): the replacement of the former built-in `docker` module over `tool.run` and resource handles; [docker/README.md](docker/README.md) lists the differences; checked by its unit tests and `apps/agent/tests/plugins_docker.rs` |
-| `git/` | `deckpilot.git`, class `migration` (plugin API 1.9): the replacement of the former built-in `git` module over `tool.run` and resource handles; [git/README.md](git/README.md) lists the differences; checked by its unit tests and `apps/agent/tests/plugins_git.rs` |
-| `github/` | `deckpilot.github`, class `migration`: the replacement of the former built-in `github` module, checked against its frozen contract (`crates/deckpilot-modules/legacy/`) by `crates/deckpilot-modules/tests/contracts.rs` and `apps/agent/tests/plugins_github.rs` |
-| `gitlab/` | `deckpilot.gitlab`, class `migration`: the replacement of the former built-in `gitlab` module, for GitLab.com or a self-managed GitLab the user enters and allows; checked against its frozen contract by `crates/deckpilot-modules/tests/contracts.rs` and `apps/agent/tests/plugins_gitlab.rs` |
-| `jira/` | `deckpilot.jira`, class `migration`: the replacement of the former built-in `jira` module, for the Jira Cloud site or Data Center the user enters and allows (it has no host of its own); checked against its frozen contract by `crates/deckpilot-modules/tests/contracts.rs` and `apps/agent/tests/plugins_jira.rs` |
-| `support/` | `deckpilot-first-party-support`: a library the plugins for a user-entered server (`gitlab`, `jira`, `github` for GitHub Enterprise Server) share (URLs without a URL parser, the time limit counted with `Date` headers, text helpers). Compiled into each plugin's module; never bundled by itself |
-| `notifications/` | `deckpilot.notifications`, class `default`: the replacement of the built-in `notifications` module, checked against it by `crates/deckpilot-modules/tests/contracts.rs` and `apps/agent/tests/plugins_notifications.rs` |
-| `<name>/` | One plugin: `Cargo.toml` (a member of the `plugins/runtime` workspace), `src/`, `manifest.json` (id `deckpilot.<name>`), `LICENSE`, its icons (and plugin API 1.8 visual assets, PNG or JPEG) in `assets/` and its translations in `locales/<tag>.json` (plugin API 1.6) |
-| `build.sh` | Builds the listed source plugins to wasm (`wasm32-unknown-unknown`, `guest` profile, reproducible on one platform), stages the listed release artifacts after verifying them, and pins them all |
+| `support/` | `deckpilot-first-party-support`: a library the plugins for a user-entered server (`gitlab`, `jira`, `github` for GitHub Enterprise Server) share (URLs without a URL parser, the time limit counted with `Date` headers, text helpers). `knittingcode/deckpilot-plugins` depends on it at its pinned DeckPilot commit; never bundled by itself |
+| `build.sh` | Stages the listed release artifacts after verifying them (and builds the listed source plugins, the test fixtures, to wasm: `wasm32-unknown-unknown`, `guest` profile, reproducible on one platform), and pins them all |
 | `test-fixtures/` | **Test fixtures, never shipped**: `example-default` (`deckpilot.example-default`, class `default`, one action, one low-tier permission), `legacy-fixture` (`deckpilot.legacy-fixture`, class `migration`: the replacement of the agent's fixture legacy module in the module migration tests, with a low-, a medium- and a high-tier permission) and their own `bundled.json`, used only with `build.sh --test-fixtures` |
+
+The plugins' own tests, the differences from the built-ins they replaced
+(each plugin's README) and their sources are in
+[`official/`](https://github.com/knittingcode/deckpilot-plugins/tree/main/official)
+of `knittingcode/deckpilot-plugins`; here the agent tests them as bundled
+(`apps/agent/tests/plugins_<name>.rs`, `plugins_cutover*.rs`,
+`core_without_plugins.rs`).
 
 ## What the build produces
 
@@ -105,13 +108,15 @@ bundled plugin is trusted by the **pins compiled into the agent**
 
 A released version of a bundled plugin never changes. An installation
 replaces its installed copy only with a **higher** bundled version
-(`apps/agent/src/plugins/bundled.rs`), and checks the installed copy
+(`apps/agent/src/plugins/bundled.rs`, and for a cut-over migration-class
+plugin the migration engine), and checks the installed copy
 against the pins compiled into the agent at every load: a plugin rebuilt
 with other files under a version an earlier release shipped (a changed
 SDK or support crate is enough) is **broken** on every installation
 upgraded from that release. So every change to a bundled plugin's files
-gets a new version, in `manifest.json`, `Cargo.toml`, the plugin's entry in
-`plugins/runtime/Cargo.lock` and the plugin's README ("Versions"): a patch
+gets a new version, released from `knittingcode/deckpilot-plugins` (its
+`manifest.json`, `Cargo.toml`, `Cargo.lock` and README there) and locked
+here (`artifacts.json`, `bundled.json`, `contracts/`): a patch
 version for a rebuild or a fix, a minor version for new actions,
 settings, permissions or a higher plugin API (0.2.0 of `deckpilot.github`
 for GitHub Enterprise).
@@ -180,7 +185,7 @@ releases them, each release `deckpilot.<name>--v<version>` with the package
 `deckpilot.<name>-<version>.dpplugin` and two signature files
 `<package>.<KEYID>.minisig` by the first-party publisher keys. A
 `bundled.json` entry with `"source": "artifact"` makes `build.sh` bundle
-that release instead of building `plugins/first-party/<name>/`:
+that release:
 
 1. the entry of `artifacts.json` with the same id and version is the
    reviewed claim: `url` (exactly the immutable release URL, never
@@ -260,6 +265,7 @@ At the application release, record the bundle's pins in
 `released-pins.json` as usual (`check-released-pins.sh --record`, per
 platform): the artifacts' versions and files become the floor.
 
-Then the sources here (`plugins/first-party/<name>/`, their workspace
-members and `Cargo.lock` entries) are removed in a separate pull request,
-with the tests and CI that still build them.
+The sources here (`plugins/first-party/<name>/`, their workspace members
+and `Cargo.lock` entries) were removed afterwards, with the tests and CI
+that built them; the files each release ships but its module stayed as its
+contract (`contracts/`).

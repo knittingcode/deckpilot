@@ -3,8 +3,8 @@
 //! through the real agent, the real sandboxed plugin host, real storage and
 //! IPC, each test in its own data directory (feature `plugins`):
 //!
-//! * the plugin (`plugins/first-party/notifications`) is built to wasm with
-//!   the `guest` profile and bundled as `plugins/first-party/build.sh`
+//! * the plugin (its signed release artifact, verified and unpacked;
+//!   `support/official.rs`) is bundled as `plugins/first-party/build.sh`
 //!   stages it for a release (class `default`, pinned with
 //!   `DECKPILOT_TEST_BUNDLED_PINS`);
 //! * native notifications go to a file (`DECKPILOT_TEST_NOTIFICATIONS`,
@@ -20,7 +20,8 @@
 //!   with a notifier that decides as the agent's does) in the same
 //!   conditions: the same status, message, outputs, error code and native
 //!   notification. The differences are listed in [`DIFFERENT_REASONS`] and
-//!   in `plugins/first-party/notifications/README.md`;
+//!   in the plugin's README (`official/notifications/README.md` of
+//!   knittingcode/deckpilot-plugins);
 //! * [`a_fresh_install_gets_the_plugin_on_first_launch`]: seeded, enabled
 //!   with its one low-tier permission only, cut over, its actions and the
 //!   legacy ids running in the plugin at the first start;

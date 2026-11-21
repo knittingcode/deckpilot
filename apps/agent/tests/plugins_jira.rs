@@ -3,8 +3,9 @@
 //! P11), as a regression test of every action on known Jira answers
 //! (feature `plugins`):
 //!
-//! * the plugin (`plugins/first-party/jira`) is built to wasm with the
-//!   `guest` profile and bundled as an installed application ships it;
+//! * the plugin (its signed release artifact, verified and unpacked by
+//!   `plugins/first-party/build.sh`; `support/official.rs`) is bundled as
+//!   an installed application ships it;
 //!   the real agent seeds it, the user consents to its permissions, enters
 //!   the site, allows exactly that server and stores the credential, and
 //!   every action runs in the real sandboxed host, invoked over IPC like
