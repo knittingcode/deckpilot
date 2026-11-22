@@ -15,6 +15,22 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Fixed
+
+- Installing first-party community plugins (Memory, Pomodoro, Markets,
+  Break Reminder, Air Quality) from the Marketplace failed in 0.11.0: the
+  DeckPilot publisher signatures meant for the nine official plugins were
+  required of every `deckpilot.*` plugin. They are required again only of
+  the official plugins (Docker, Git, GitHub, GitLab, Jira, Notifications,
+  Projects, Workflows, Workspace); community plugins are checked as in
+  0.10.0 (the signed registry, its authorization of the `deckpilot`
+  publisher, the package's digest) and never get the privileges reserved
+  for the official ones. When the Marketplace cannot plan an install, it
+  now says why in a dialog instead of seeming to do nothing. A community
+  plugin that 0.11.0 stopped (quarantined) is released at the next
+  registry refresh but stays turned off: turn it on again on the Plugins
+  page (Marketplace › Installed).
+
 ## [0.11.0] - 2026-11-21
 
 ### Security

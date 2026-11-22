@@ -228,7 +228,9 @@ impl Env {
     }
 
     fn official_compiled(&self, keys: PublisherKeys, compiled: Compiled) -> Official {
-        Official::with(&self.state(), Ok(keys), Ok(compiled))
+        // The fixture stands in for an official plugin (as the running
+        // bundle's pins make it one).
+        Official::with(&self.state(), Ok(keys), Ok(compiled)).with_official_ids([id()])
     }
 
     /// The bundle at `version` with `permissions`, pinned to its files.
@@ -2195,4 +2197,155 @@ fn an_unchanged_reviewed_artifact_keeps_every_grant() {
     let record = manager.store().plugin(&pid(WORKFLOWS)).unwrap().unwrap();
     assert_eq!(record.active().unwrap().version, v("0.1.1"));
     assert_eq!(record.state, PluginState::Enabled);
+}
+
+// ------------------------------------- official vs. community (0.11.0 fix)
+
+const COMMUNITY: [&str; 5] = [
+    "deckpilot.memory",
+    "deckpilot.pomodoro",
+    "deckpilot.markets",
+    "deckpilot.break-reminder",
+    "deckpilot.air-quality",
+];
+
+/// Only the official ids are governed by the publisher verification; the
+/// prefix alone never makes a plugin official.
+#[test]
+fn only_the_official_ids_need_the_publisher_signatures() {
+    let env = Env::new();
+    let official = Official::open(&env.state());
+    for nine in deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS {
+        assert!(
+            official.is_official(&PluginId::parse(nine).unwrap()),
+            "{nine}"
+        );
+    }
+    assert_eq!(deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS.len(), 9);
+    // Every plugin of this build's artifact lock is official.
+    for artifact in Compiled::this_build().unwrap().locked.keys() {
+        assert!(official.is_official(artifact), "{artifact}");
+    }
+    for community in COMMUNITY {
+        assert!(
+            !official.is_official(&PluginId::parse(community).unwrap()),
+            "{community}"
+        );
+    }
+    // The fixture is official only once the bundle pins it.
+    assert!(!official.is_official(&id()));
+    assert!(
+        Official::open(&env.state())
+            .with_official_ids([id()])
+            .is_official(&id())
+    );
+}
+
+/// A first-party community plugin installed from a registry (no publisher
+/// signatures, no record in the floors) is never withheld at start, enable
+/// or rollback: the official revocation rules are not its rules.
+#[test]
+fn a_community_registry_copy_is_not_withheld() {
+    let env = Env::new();
+    let community = PluginId::parse("deckpilot.memory").unwrap();
+    let files = files("1.0.0", &notifications(), "", |m| {
+        m["id"] = json!("deckpilot.memory");
+    });
+    let package = package_of(&files);
+    let mut expected = expected_for(&package, "1.0.0");
+    expected.id = community.clone();
+    let verified = verify_package(&package, &expected, &Limits::default()).unwrap();
+    let mut manager = env.open();
+    manager
+        .install(
+            &verified,
+            &registry_source(),
+            &Consent::of(
+                GrantSet::from_manifest(verified.manifest())
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                "user",
+            ),
+        )
+        .unwrap();
+    let records = manager.store().plugins().unwrap();
+    // No record of it at all, and still not withheld.
+    let official = env.official();
+    assert!(official.revoked_installed(&records).is_empty());
+    std::fs::create_dir_all(env.state()).unwrap();
+    std::fs::write(env.state().join(FLOORS_FILE), b"garbage").unwrap();
+    assert!(env.official().revoked_installed(&records).is_empty());
+}
+
+/// A first-party community plugin declaring a privileged construct is
+/// refused from a registry: by the first-party reader rules, and by the
+/// store whatever a caller passes it.
+#[test]
+fn a_community_plugin_with_privileged_constructs_is_refused() {
+    for community in ["deckpilot.memory", "deckpilot.github-x"] {
+        community_with_privileged_constructs_is_refused(community);
+    }
+}
+
+/// A near miss of an official id is a community plugin: never official,
+/// so no publisher rules apply, and no bundled privilege either.
+#[test]
+fn a_near_miss_of_an_official_id_is_a_community_plugin() {
+    let env = Env::new();
+    let official = Official::open(&env.state());
+    for near in [
+        "deckpilot.github-x",
+        "deckpilot.githubs",
+        "deckpilot.git-hub",
+        "deckpilot.workflow",
+        "deckpilot.notification",
+    ] {
+        let id = PluginId::parse(near).unwrap();
+        assert!(!official.is_official(&id), "{near}");
+        assert!(
+            !deckpilot_plugin_bundled::is_bundled_id(&id, &deckpilot_plugin_bundled::Pins::empty()),
+            "{near}"
+        );
+    }
+}
+
+fn community_with_privileged_constructs_is_refused(community: &str) {
+    let files = files(
+        "1.0.0",
+        &json!([{ "kind": "hostViews", "justification": "Test fixture: privileged." }]),
+        "",
+        |m| {
+            m["id"] = json!(community);
+            m["engines"]["pluginApi"] = json!("^1.9");
+            m["contributes"]["statusItems"] = json!(["activeProject"]);
+        },
+    );
+    let package = raw_package(&files);
+    let mut expected = expected_for(&package, "1.0.0");
+    expected.id = PluginId::parse(community).unwrap();
+    let refused = verify_package(&package, &expected, &Limits::default()).unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("only for DeckPilot's own plugins"),
+        "{refused}"
+    );
+    // The store's own backstop (a package read with the bundled rules).
+    let bundled = deckpilot_plugin_package::verify_bundled_files(
+        files.clone(),
+        &ExpectedFiles {
+            id: expected.id.clone(),
+            version: v("1.0.0"),
+            files: digests(&files),
+        },
+        &Limits::default(),
+    )
+    .unwrap();
+    let env = Env::new();
+    let mut manager = env.open();
+    assert!(matches!(
+        manager.install(&bundled, &registry_source(), &Consent::of(vec![], "user")),
+        Err(deckpilot_plugin_store::StoreError::SourceNotAllowed { .. })
+    ));
 }

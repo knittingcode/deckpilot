@@ -2,7 +2,10 @@
 //! release artifacts (`docs/marketplace/publisher-signature.md`, "The agent:
 //! installing and updating official plugins").
 //!
-//! A `deckpilot.*` package from a registry is installed or updated only if,
+//! An **official** package (`Official::is_official`: the nine plugins
+//! DeckPilot ships, the compiled lock's, the bundle's; first-party community
+//! `deckpilot.*` plugins are not official and follow the registry's rules
+//! alone) from a registry is installed or updated only if,
 //! on top of everything the registry chain already checked (root-signed key
 //! set authorizing the `deckpilot` namespace, verified publisher record,
 //! pinned size and sha256), it is a **first-party release**: a threshold of
@@ -511,6 +514,9 @@ pub(super) struct Official {
     gate: PrivilegedGate<'static>,
     /// [`MAX_AUDIT_BYTES`], smaller in tests.
     max_audit_bytes: u64,
+    /// The official plugin ids: the only ids this module governs
+    /// ([`Official::is_official`]).
+    governed_ids: BTreeSet<PluginId>,
 }
 
 impl Official {
@@ -537,7 +543,18 @@ impl Official {
         if let Some(problem) = &floors_newer {
             warn!(%problem, "official installs are refused until a newer DeckPilot runs again");
         }
+        let governed_ids = deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS
+            .iter()
+            .filter_map(|id| PluginId::parse(id).ok())
+            .chain(
+                compiled
+                    .as_ref()
+                    .map(|c| c.locked.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            )
+            .collect();
         Self {
+            governed_ids,
             keys,
             compiled,
             dir: dir.to_path_buf(),
@@ -546,6 +563,26 @@ impl Official {
             gate: compiled_gate(),
             max_audit_bytes: MAX_AUDIT_BYTES,
         }
+    }
+
+    /// Adds `ids` to the official ids (the ids the running bundle pins).
+    pub fn with_official_ids(mut self, ids: impl IntoIterator<Item = PluginId>) -> Self {
+        self.governed_ids.extend(ids);
+        self
+    }
+
+    /// Whether `id` is an **official** plugin: one of the nine plugins
+    /// DeckPilot ships ([`deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS`]),
+    /// a plugin of the compiled artifact lock, or one the running bundle
+    /// pins. Only these need the publisher signatures, floors and
+    /// revocations of this module. Every other `deckpilot.*` id (the
+    /// first-party community plugins: Memory, Pomodoro, …) follows the
+    /// registry's rules alone: the signed index, the key set's
+    /// authorization of the `deckpilot` namespace and the pinned package,
+    /// checked with the first-party rules, which never grant the privileged
+    /// kinds. Never derived from the `deckpilot.` prefix.
+    pub fn is_official(&self, id: &PluginId) -> bool {
+        self.governed_ids.contains(id)
     }
 
     /// With another gate (tests of the opening path only).
@@ -962,7 +999,7 @@ impl Official {
         let mut out = BTreeMap::new();
         for record in records {
             if !matches!(record.source, InstallSource::Registry { .. })
-                || !deckpilot_plugin_store::is_first_party(&record.id)
+                || !self.is_official(&record.id)
             {
                 continue;
             }

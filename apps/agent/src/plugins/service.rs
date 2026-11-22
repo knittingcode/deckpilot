@@ -465,6 +465,8 @@ impl PluginService {
         // bundled first-party plugins, checked against the pins compiled
         // into the agent.
         let bundle = Bundle::locate(settings);
+        let official = Official::open(&data_dir.join(official::STATE_DIR))
+            .with_official_ids(bundle.pins.plugins.iter().map(|pin| pin.id.clone()));
         bundled::seed(&mut manager, &bundle);
         let data = PluginData::open(
             &manager.layout().database(),
@@ -506,7 +508,7 @@ impl PluginService {
             values,
             health: HealthLog::default(),
             bundle,
-            official: Official::open(&data_dir.join(official::STATE_DIR)),
+            official,
             snapshot: None,
             builtins: BTreeMap::new(),
             plan_cache: None,
@@ -1232,7 +1234,9 @@ impl PluginService {
         // An official plugin: a first-party release signed by the
         // publisher keys compiled into this agent, on top of the registry's
         // pins (`official.rs`). Nothing is installed before it verified.
-        if deckpilot_plugin_store::is_first_party(id) {
+        // Other `deckpilot.*` ids (first-party community plugins) follow the
+        // registry's rules alone (`Official::is_official`).
+        if self.official.is_official(id) {
             let signatures = match self.official_signatures(registry, &target.url) {
                 Ok(signatures) => signatures,
                 Err(why) => {
@@ -1312,14 +1316,19 @@ impl PluginService {
         id: &PluginId,
         version: &Version,
     ) -> Result<deckpilot_plugin_registry::InstallTarget, IpcError> {
-        // An official plugin (`deckpilot.*`, the bundled ones included)
-        // comes from a registry only as a first-party release signed by the
-        // publisher keys compiled into this agent (`official.rs`, the two
-        // production keys, threshold 2); when this agent cannot verify one
-        // (no key pinned, an invalid lock, unreadable floors) it is refused
-        // before any download and a bundled one comes only from the
-        // application bundle.
-        if deckpilot_plugin_store::is_first_party(id)
+        // An official plugin (the nine DeckPilot ships, the lock's, the
+        // bundle's; never derived from the `deckpilot.` prefix) comes from
+        // a registry only as a first-party release signed by the publisher
+        // keys compiled into this agent (`official.rs`, the two production
+        // keys, threshold 2); when this agent cannot verify one (no key
+        // pinned, an invalid lock, unreadable floors) it is refused before
+        // any download and a bundled one comes only from the application
+        // bundle. A first-party community plugin (`deckpilot.memory`, …)
+        // needs what any `deckpilot.*` registry package needs: the
+        // root-signed key set authorizing `deckpilot`, the verified
+        // publisher record and the pinned package (`resolve_install`), read
+        // with the first-party rules (no privileged kinds).
+        if self.official.is_official(id)
             && let Err(why) = self.official.ready()
         {
             self.official.refused_before_verification(
