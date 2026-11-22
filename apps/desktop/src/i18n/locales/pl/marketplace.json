@@ -328,5 +328,8 @@
   "page": {
     "title": "Marketplace",
     "description": "Podpisane wtyczki społeczności ze zweryfikowanego rejestru"
+  },
+  "installRefused": {
+    "title": "Nie można zainstalować: {{name}} {{version}}"
   }
 }

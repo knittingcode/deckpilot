@@ -9,7 +9,7 @@ import { availablePlugins, createFakePluginClient, readyRuntime } from "@/test/p
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
-import { PluginClientContext } from "./api"
+import { PluginClientContext, PluginError } from "./api"
 import { PluginsSettings } from "./marketplace"
 import type { AvailablePlugin, ManifestPermission } from "./types"
 
@@ -227,5 +227,35 @@ describe("plugin dependencies", () => {
       await screen.findByRole("dialog", { name: "Install Hello Weather 1.1.0?" }),
     ).toBeInTheDocument()
     expect(client.planInstall).not.toHaveBeenCalled()
+  })
+
+  // DeckPilot 0.11.0: the agent refused a plan, the toast went unnoticed
+  // and the Install button seemed to do nothing.
+  it("shows a refusal while planning the install as a dialog, never nothing", async () => {
+    const { user, client } = render()
+    client.planInstall.mockRejectedValueOnce(
+      new PluginError(
+        "invalidPackage",
+        "acme.dash is not a verified DeckPilot release; nothing was installed",
+      ),
+    )
+    await openDetails(user, "Project Dash")
+    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Project Dash 1.0.0 cannot be installed",
+    })
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "acme.dash is not a verified DeckPilot release; nothing was installed",
+    )
+    expect(
+      screen.queryByRole("dialog", { name: "Install Project Dash 1.0.0?" }),
+    ).not.toBeInTheDocument()
+    expect(client.installPlan).not.toHaveBeenCalled()
+    await user.keyboard("{Escape}")
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("alertdialog", { name: "Project Dash 1.0.0 cannot be installed" }),
+      ).not.toBeInTheDocument()
+    })
   })
 })
