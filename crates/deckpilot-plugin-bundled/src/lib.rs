@@ -111,10 +111,15 @@ pub const FIRST_PARTY_PUBLISHER: &str = deckpilot_plugin_manifest::FIRST_PARTY_P
 /// The ids of the first-party plugins the application bundles
 /// (`plugins/first-party/bundled.json`, checked by this crate's tests).
 ///
-/// They come only from the bundle, verified against [`EMBEDDED_PINS`]: a
-/// registry never serves them, even one whose key set authorizes the
-/// `deckpilot` namespace, so the pinned-digest trust stays their only
-/// source. Fixed in the code, not read from the pins, because every build
+/// They are the **official** plugins. They come from the bundle, verified
+/// against [`EMBEDDED_PINS`], or from a registry whose key set authorizes
+/// the `deckpilot` namespace **only** as a release signed by a threshold of
+/// the first-party publisher keys compiled into the agent (two valid
+/// signatures by the production keys; the agent's `official.rs`). An
+/// unsigned or singly signed registry copy is refused, and the privileged
+/// kinds still come only with the bundled copy. Other `deckpilot.*` ids are
+/// community plugins and follow the registry's rules alone. Fixed in the
+/// code, not read from the pins, because every build
 /// without `DECKPILOT_BUNDLED_PINS` pins nothing and would refuse nothing;
 /// [`is_bundled_id`] also covers whatever the pins of a build name.
 pub const BUNDLED_PLUGIN_IDS: &[&str] = &[

@@ -2283,19 +2283,47 @@ fn a_community_registry_copy_is_not_withheld() {
 /// store whatever a caller passes it.
 #[test]
 fn a_community_plugin_with_privileged_constructs_is_refused() {
+    for community in ["deckpilot.memory", "deckpilot.github-x"] {
+        community_with_privileged_constructs_is_refused(community);
+    }
+}
+
+/// A near miss of an official id is a community plugin: never official,
+/// so no publisher rules apply, and no bundled privilege either.
+#[test]
+fn a_near_miss_of_an_official_id_is_a_community_plugin() {
+    let env = Env::new();
+    let official = Official::open(&env.state());
+    for near in [
+        "deckpilot.github-x",
+        "deckpilot.githubs",
+        "deckpilot.git-hub",
+        "deckpilot.workflow",
+        "deckpilot.notification",
+    ] {
+        let id = PluginId::parse(near).unwrap();
+        assert!(!official.is_official(&id), "{near}");
+        assert!(
+            !deckpilot_plugin_bundled::is_bundled_id(&id, &deckpilot_plugin_bundled::Pins::empty()),
+            "{near}"
+        );
+    }
+}
+
+fn community_with_privileged_constructs_is_refused(community: &str) {
     let files = files(
         "1.0.0",
         &json!([{ "kind": "hostViews", "justification": "Test fixture: privileged." }]),
         "",
         |m| {
-            m["id"] = json!("deckpilot.memory");
+            m["id"] = json!(community);
             m["engines"]["pluginApi"] = json!("^1.9");
             m["contributes"]["statusItems"] = json!(["activeProject"]);
         },
     );
     let package = raw_package(&files);
     let mut expected = expected_for(&package, "1.0.0");
-    expected.id = PluginId::parse("deckpilot.memory").unwrap();
+    expected.id = PluginId::parse(community).unwrap();
     let refused = verify_package(&package, &expected, &Limits::default()).unwrap_err();
     assert!(
         refused

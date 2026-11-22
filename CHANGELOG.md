@@ -26,7 +26,10 @@ released either. 0.6.0 is the first version intended for publication.
   0.10.0 (the signed registry, its authorization of the `deckpilot`
   publisher, the package's digest) and never get the privileges reserved
   for the official ones. When the Marketplace cannot plan an install, it
-  now says why in a dialog instead of seeming to do nothing.
+  now says why in a dialog instead of seeming to do nothing. A community
+  plugin that 0.11.0 stopped (quarantined) is released at the next
+  registry refresh but stays turned off: turn it on again on the Plugins
+  page (Marketplace › Installed).
 
 ## [0.11.0] - 2026-11-21
 

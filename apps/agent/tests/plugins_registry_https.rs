@@ -1128,16 +1128,24 @@ async fn first_party_plugins_need_the_root_authorization_and_a_verified_publishe
     // Signed by a second pinned key: installed, from the registry, with
     // the first-party rules.
     registry.sign_release(BUNDLED, "1.0.0", "publisher-b.key");
+    let before_final = server.log().len();
     let Response::Plugin { plugin } = agent.install(BUNDLED, "1.0.0").await.unwrap() else {
         panic!("installed")
     };
     assert_eq!(plugin.summary.version, "1.0.0");
-    // One signature file fetched per pinned key id and attempt, from the
-    // same base as the package; the old single name is never asked for.
+    // Exactly one signature file fetched per pinned key id in the
+    // successful attempt, from the same base as the package; C's is missing
+    // (404), which the threshold of 2 tolerates. The old single name is
+    // never asked for.
     let log = server.log();
+    let last_attempt = &log[before_final..];
     for key in ["publisher.key", "publisher-b.key", "publisher-c.key"] {
         let path = registry.signature_path(BUNDLED, "1.0.0", key);
-        assert!(log.contains(&path), "{path}: {log:?}");
+        assert_eq!(
+            last_attempt.iter().filter(|p| **p == path).count(),
+            1,
+            "{path}: {last_attempt:?}"
+        );
     }
     assert!(
         !log.contains(&format!("{bundled_release}.minisig")),
