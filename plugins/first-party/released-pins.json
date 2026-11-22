@@ -585,6 +585,251 @@
           }
         }
       ]
+    },
+    {
+      "release": "0.12.0",
+      "platform": "macos",
+      "source": "plugins/first-party/build.sh at the release commit (signed release artifacts of artifacts.json)",
+      "plugins": [
+        {
+          "id": "deckpilot.docker",
+          "version": "0.1.1",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "4f9545efb6fe2535409c8fec9aa609c1b9a8cc0fed2c816b2ed9ce604894268a",
+              "size": 448
+            },
+            "locales/en.json": {
+              "sha256": "80963c7f16488ebf1abe1d5aeb09567e97b2b681a32c414cdbca9127b8032ca4",
+              "size": 7383
+            },
+            "locales/pl.json": {
+              "sha256": "6be1313c83d7a56c7a0ca9bb5226bebedb0c7481a2e7722febee836c3bf3c9d5",
+              "size": 7571
+            },
+            "manifest.json": {
+              "sha256": "51e739be7aa9553da0b51c07e64e41bf6ff83bbe96831d0a4d3faf9f35eb46d0",
+              "size": 25778
+            },
+            "plugin.wasm": {
+              "sha256": "117c37af7d05c93b4bd4629a73c85f60322c0bd849e20c4814a4a6cb88f06aaf",
+              "size": 367609
+            }
+          }
+        },
+        {
+          "id": "deckpilot.git",
+          "version": "0.1.1",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "2315be2c007e7a0b8bafb358574b44ddb610a27317a3f2559721e0d57ad6991c",
+              "size": 553
+            },
+            "locales/en.json": {
+              "sha256": "58b3f9933cf3b6d725e9ad42191f3047e6c6da2c551a8cbc52097a760fd21c83",
+              "size": 5555
+            },
+            "locales/pl.json": {
+              "sha256": "c827774a320de1b469811714354ffc09d59eeabbc05bdc40a001a0d63e49b69d",
+              "size": 5985
+            },
+            "manifest.json": {
+              "sha256": "9a603f62cd0a4b8ce065c5e0c56144ccf608bd1c3869a43c3d3f6fb124270952",
+              "size": 20275
+            },
+            "plugin.wasm": {
+              "sha256": "0ff0036ca2385f8a9c99b538090754f797e7424c568c3dc144d29d794e43df26",
+              "size": 347020
+            }
+          }
+        },
+        {
+          "id": "deckpilot.github",
+          "version": "0.2.1",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "71bbc3b30bb606f478b660eb467179c6edf7fe07a89247108a1a5637406f2182",
+              "size": 604
+            },
+            "manifest.json": {
+              "sha256": "03e2bbe27ffc159884f1f1369d35c262c171a0a19006bb1ca2286463b15041e4",
+              "size": 14241
+            },
+            "plugin.wasm": {
+              "sha256": "810ad4f9a928f9c338d0a192f73a58d00b44df83f4ae33ac54cc13b577bc81fb",
+              "size": 320969
+            }
+          }
+        },
+        {
+          "id": "deckpilot.gitlab",
+          "version": "0.1.2",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "9d2933996589db073f93ad5b9a65451b1c071437b7bb180a727272a21366d158",
+              "size": 4189
+            },
+            "manifest.json": {
+              "sha256": "a6e1b906170e3ecc298bb17246dce3ddc6767ef033e83a57b7c2ff1ed6ce00d2",
+              "size": 14607
+            },
+            "plugin.wasm": {
+              "sha256": "b50e09cc7ec93f743c4695f86343f0b313bbe94d7b1532cdbefd75ef02b92943",
+              "size": 322656
+            }
+          }
+        },
+        {
+          "id": "deckpilot.jira",
+          "version": "0.1.2",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "d3c3d4aa2340c7d6761c521e7570dfaec03df2369efb38cf47280cb056295b04",
+              "size": 4144
+            },
+            "manifest.json": {
+              "sha256": "49d95432b337252a99cabe00916f41f7208b9aef2d722826064f9418dfa39b76",
+              "size": 10459
+            },
+            "plugin.wasm": {
+              "sha256": "64fce9a54088d0fe1c3fa746c1cd9fbb9d63733f03f2bcad559500778eccdd49",
+              "size": 303275
+            }
+          }
+        },
+        {
+          "id": "deckpilot.notifications",
+          "version": "0.1.2",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "ff054792b14c9564df6641ec69a06e3e839594d3c6174d99ffa060082dcc2262",
+              "size": 673
+            },
+            "manifest.json": {
+              "sha256": "e39017529ec1c8fc9a30c3e6ebfcef74044a32142d713f205082c713da8b52a5",
+              "size": 7036
+            },
+            "plugin.wasm": {
+              "sha256": "42ae258afa6d3556d3cd2d0d7a382c620a6e425ec423b77422a513196a323b82",
+              "size": 254058
+            }
+          }
+        },
+        {
+          "id": "deckpilot.projects",
+          "version": "0.1.1",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "49851aec475d0695ac607234688f0e2cc5724f65d1cd3bc992e4aa4ab49955ab",
+              "size": 302
+            },
+            "locales/en.json": {
+              "sha256": "f6dcf24f7d52109e20cd128f8be51525d5841c870da791f5e7e75a105882e5d7",
+              "size": 4148
+            },
+            "locales/pl.json": {
+              "sha256": "e3561e158a4d9361500cc9d0c370bd9c3adb60d0d7c331ebb0c094e18f8cf7c8",
+              "size": 4042
+            },
+            "manifest.json": {
+              "sha256": "6e480f09caa3e9fea385c004d82ad54ada37f2c52e7ba6464f474351fba1df53",
+              "size": 17241
+            },
+            "plugin.wasm": {
+              "sha256": "335bdf1bd85801db85a55aed7115760251af04024476577ae9bb687826cf168f",
+              "size": 295427
+            }
+          }
+        },
+        {
+          "id": "deckpilot.workflows",
+          "version": "0.1.1",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "794af2522e9a3cf425b4d2c0b25a68d6f230400e36b9ac0ae3135132b4d06b2a",
+              "size": 446
+            },
+            "locales/en.json": {
+              "sha256": "5e0e6c5d47382f21953253aac4a9deee53ba370ca70aeaed6199e21ef2f7d580",
+              "size": 387
+            },
+            "locales/pl.json": {
+              "sha256": "14eadef9d00967b2b98d22de69de0e86f20fff0bfcbe99cbbf5501e98ba21bb4",
+              "size": 437
+            },
+            "manifest.json": {
+              "sha256": "2dffd32e3d9731b2bea3b3dc2421a3a240655fb08af23b0625dfad7a1291f79a",
+              "size": 1272
+            },
+            "plugin.wasm": {
+              "sha256": "01a71be35b20075ff476a6c4f83b60dfe8b5fc24dce7f6a167e8ac5f61bc77d2",
+              "size": 215583
+            }
+          }
+        },
+        {
+          "id": "deckpilot.workspace",
+          "version": "0.1.1",
+          "files": {
+            "LICENSE": {
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "size": 11358
+            },
+            "assets/icon-128.png": {
+              "sha256": "59aa58d6fd992f8526110b2cabf0557794c4e6300c167fe6dff48a9587f81411",
+              "size": 412
+            },
+            "locales/en.json": {
+              "sha256": "cbc20d2d69079086d27f642c0791b5c5cd1e57d6dfc0d218dc0257913acb047d",
+              "size": 5001
+            },
+            "locales/pl.json": {
+              "sha256": "2f91213333910519af8a0ac30af709293815aba49418de2d2185af9d929fa2fe",
+              "size": 5184
+            },
+            "manifest.json": {
+              "sha256": "d722832751bbabd091101c519a807bc9a4d4e5249b08f648d8515924a3433a64",
+              "size": 10230
+            },
+            "plugin.wasm": {
+              "sha256": "81af09cc97507094e6849683b536b548fee5fb578fd447f428efd30f87ab2c44",
+              "size": 296905
+            }
+          }
+        }
+      ]
     }
   ]
 }

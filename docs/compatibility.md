@@ -15,6 +15,7 @@ page says what happens then and how it is tested.
 | Release 0.9.0 | 0.9.0 | 11 | 10 |
 | Release 0.10.0 | 0.10.0 | 16 | 13 |
 | Release 0.11.0 | 0.11.0 | 16 | 13 |
+| Release 0.12.0 | 0.12.0 | 16 | 13 |
 | Current main | see `Cargo.toml` | 16 | 13 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
@@ -38,6 +39,13 @@ first-party publisher keys that official plugins from a registry must be
 signed with ([publisher-signature.md](marketplace/publisher-signature.md));
 the agent keeps its floors in `<data>/plugin-official/floors.json`, which
 an older agent does not read.
+
+0.12.0 changes neither the protocol nor a schema either: plugin API 1.9,
+plugin store schema 6. Its nine bundled plugins are new versions, taken
+from their signed releases in `knittingcode/deckpilot-plugins` (GitHub
+0.2.1; GitLab, Jira and Notifications 0.1.2; the others 0.1.1), with the
+same permissions as in 0.11.0. A 0.11.0 or 0.10.0 installation replaces
+its bundled copies with them when 0.12.0 starts.
 
 Current main speaks protocol 16: the Device Editor's live preview
 ([editor-navigation-and-simulation.md](editor-navigation-and-simulation.md#3-live-preview-and-navigation-sync)).
