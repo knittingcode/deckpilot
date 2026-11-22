@@ -50,6 +50,8 @@ tauri.workspace = true
 tauri-plugin-dialog = "2"
 # The Tauri updater of GitHub builds (feature `self-update`).
 tauri-plugin-updater = { version = "2", optional = true }
+# The export's exclusive staging file (commands/portability.rs).
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
