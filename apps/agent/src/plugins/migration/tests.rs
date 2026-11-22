@@ -1794,7 +1794,8 @@ fn the_gitlab_and_jira_plans_take_a_server_the_user_entered() {
 
 /// The modules extracted on 2026-11-20 (`git`, `docker`, `workspace`,
 /// `projects`) against their shipped plans, aliases and the real
-/// manifests of `plugins/first-party/<module>` (a minimal ABI module stands
+/// files of their releases (`plugins/first-party/contracts/deckpilot.<module>`:
+/// the manifest, license, icons and locales; a minimal ABI module stands
 /// in for each `plugin.wasm`; `tests/plugins_cutover.rs` runs the real
 /// Git plugin end to end).
 mod extraction {
@@ -1807,10 +1808,13 @@ mod extraction {
         PluginId::parse(&format!("deckpilot.{module}")).unwrap()
     }
 
+    /// What the release of `deckpilot.<module>` ships but its module
+    /// (`plugins/first-party/contracts/`, checked against the verified
+    /// release artifact by the agent's end-to-end tests).
     fn source(module: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../plugins/first-party")
-            .join(module)
+            .join("../../plugins/first-party/contracts")
+            .join(format!("deckpilot.{module}"))
     }
 
     /// A configuration store and the application resources.
@@ -2518,7 +2522,11 @@ mod extraction {
             assert!(plan_for(module).unwrap().extraction.is_none(), "{module}");
         }
         let released: Value = serde_json::from_slice(
-            &std::fs::read(source("bundled.json").with_file_name("bundled.json")).unwrap(),
+            &std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../plugins/first-party/bundled.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let class = |id: String| {

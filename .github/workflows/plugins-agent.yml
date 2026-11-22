@@ -241,14 +241,17 @@ jobs:
           # other files. check-bundled-plugins.sh below checks it again.
           tools/release-pipeline/check-released-pins.sh "$RUNNER_TEMP/bundle-release/bundled/pins.json"
           jq -c '[.plugins[] | {id, class}] | sort_by(.id)' "$RUNNER_TEMP/bundle-release/bundled/pins.json" | tr -d '\r' > "$RUNNER_TEMP/release-set.json"
-          # What bundled.json lists (each source directory's manifest id is
-          # `deckpilot.<directory>`, checked here too; a release artifact
-          # names its id), as the built pins must say.
-          for path in $(jq -r '.plugins[] | select((.source // "source") == "source") | .path' plugins/first-party/bundled.json | tr -d '\r'); do
-            id=$(jq -r .id "plugins/first-party/$path/manifest.json" | tr -d '\r')
-            [ "$id" = "deckpilot.$path" ] || { echo "plugins/first-party/$path has id $id"; exit 1; }
+          # What bundled.json lists (every entry a release artifact naming
+          # its id), as the built pins must say.
+          jq -e 'all(.plugins[]; .source == "artifact")' plugins/first-party/bundled.json > /dev/null
+          jq -c '[.plugins[] | {id, class}] | sort_by(.id)' plugins/first-party/bundled.json | tr -d '\r' | diff - "$RUNNER_TEMP/release-set.json"
+          # The committed contracts are exactly the releases' files but the
+          # module (apps/agent/tests/support/official.rs checks it too).
+          for dir in "$RUNNER_TEMP"/bundle-release/bundled/deckpilot.*; do
+            id=$(basename "$dir")
+            diff -r -x plugin.wasm "$dir" "plugins/first-party/contracts/$id"
           done
-          jq -c '[.plugins[] | {id: (.id // ("deckpilot." + .path)), class}] | sort_by(.id)' plugins/first-party/bundled.json | tr -d '\r' | diff - "$RUNNER_TEMP/release-set.json"
+          [ "$(ls plugins/first-party/contracts | wc -l | tr -d ' ')" = "$(jq '.plugins | length' plugins/first-party/bundled.json | tr -d '\r')" ]
           for run in a b; do
             plugins/first-party/build.sh --test-fixtures --out "$RUNNER_TEMP/bundle-$run" --target-dir "$RUNNER_TEMP/first-party-$run" "${artifacts[@]}"
           done

@@ -1530,9 +1530,10 @@ fn floors_of_a_newer_agent_are_read_but_never_rewritten() {
 // The gate is closed in this build. These tests open it in the test only,
 // with the compiled privileged policy and an approved test review, and use
 // the real manifests of deckpilot.workflows and deckpilot.git
-// (plugins/first-party/<name>) with throwaway keys.
+// (their releases' files but the module, plugins/first-party/contracts/)
+// with throwaway keys.
 
-const FIRST_PARTY: &str = "../../plugins/first-party";
+const FIRST_PARTY: &str = "../../plugins/first-party/contracts";
 
 fn pid(text: &str) -> PluginId {
     PluginId::parse(text).unwrap()
@@ -1543,7 +1544,7 @@ fn pid(text: &str) -> PluginId {
 fn real_files(name: &str, version: &str, edit: impl FnOnce(&mut Value)) -> Files {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(FIRST_PARTY)
-        .join(name);
+        .join(format!("deckpilot.{name}"));
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
     manifest["version"] = version.into();

@@ -193,7 +193,7 @@ Capabilities: read profile (for the workflow's name), show notifications.
 **A plugin by default (builds with plugins only).** In a build with the
 experimental plugin marketplace enabled, notifications come from the
 bundled first-party plugin `deckpilot.notifications`
-([its README](../plugins/first-party/notifications/README.md),
+([its README](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/notifications/README.md),
 [module-migration.md](marketplace/module-migration.md) §4). It is part of
 the default set: installed and enabled at the first start, offline, with
 its one permission (show notifications), on a new computer and on an
@@ -257,12 +257,12 @@ their only implementation:
 
 | Former module | Plugin | Documentation |
 | ------------- | ------ | ------------- |
-| `git` | `deckpilot.git` | [plugins/first-party/git/README.md](../plugins/first-party/git/README.md) |
-| `docker` | `deckpilot.docker` | [plugins/first-party/docker/README.md](../plugins/first-party/docker/README.md) |
-| `workspace` | `deckpilot.workspace` | its manifest (`plugins/first-party/workspace/manifest.json`) |
-| `github` | `deckpilot.github` | [plugins/first-party/github/README.md](../plugins/first-party/github/README.md) |
-| `gitlab` | `deckpilot.gitlab` | [plugins/first-party/gitlab/README.md](../plugins/first-party/gitlab/README.md) |
-| `jira` | `deckpilot.jira` | [plugins/first-party/jira/README.md](../plugins/first-party/jira/README.md) |
+| `git` | `deckpilot.git` | [`official/git/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/git/README.md) of knittingcode/deckpilot-plugins |
+| `docker` | `deckpilot.docker` | [`official/docker/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/docker/README.md) of knittingcode/deckpilot-plugins |
+| `workspace` | `deckpilot.workspace` | its manifest (`plugins/first-party/contracts/deckpilot.workspace/manifest.json`) |
+| `github` | `deckpilot.github` | [`official/github/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/github/README.md) of knittingcode/deckpilot-plugins |
+| `gitlab` | `deckpilot.gitlab` | [`official/gitlab/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/gitlab/README.md) of knittingcode/deckpilot-plugins |
+| `jira` | `deckpilot.jira` | [`official/jira/README.md`](https://github.com/knittingcode/deckpilot-plugins/blob/main/official/jira/README.md) of knittingcode/deckpilot-plugins |
 
 **Your keys and workflows.** Nothing you saved is rewritten. Keys, workflow
 nodes and actions keep their `git.*`, `docker.*`, `workspace.*`,

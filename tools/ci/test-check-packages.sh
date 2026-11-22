@@ -94,18 +94,19 @@ host() {
 
 # The bundled first-party plugins as plugins/first-party/build.sh stages
 # them, for the release set of plugins/first-party/bundled.json: the real
-# manifests and licenses, stand-in modules, and pins.json. The stand-in
-# agents were "compiled" with these pins ($work/compiled-pins.json).
+# manifests and licenses of the releases (plugins/first-party/contracts/),
+# stand-in modules, and pins.json. The stand-in agents were "compiled" with
+# these pins ($work/compiled-pins.json).
 sha() { if command -v sha256sum > /dev/null; then sha256sum < "$1" | cut -d' ' -f1; else shasum -a 256 < "$1" | cut -d' ' -f1; fi; }
 bundled_source="$work/bundled-source"
 rm -rf "$bundled_source" && mkdir -p "$bundled_source"
 pins='[]'
-while IFS= read -r path; do
-  manifest="$root/plugins/first-party/$path/manifest.json"
-  pid=$(jq -r .id "$manifest")
+while IFS= read -r pid; do
+  manifest="$root/plugins/first-party/contracts/$pid/manifest.json"
+  [ "$(jq -r .id "$manifest")" = "$pid" ] || { echo "test-check-packages.sh: $manifest is not $pid" >&2; exit 1; }
   mkdir -p "$bundled_source/$pid"
   cp "$manifest" "$bundled_source/$pid/manifest.json"
-  cp "$root/plugins/first-party/$path/LICENSE" "$bundled_source/$pid/LICENSE"
+  cp "$root/plugins/first-party/contracts/$pid/LICENSE" "$bundled_source/$pid/LICENSE"
   printf '\0asm\1\0\0\0stand-in %s' "$pid" > "$bundled_source/$pid/plugin.wasm"
   files='{}'
   for file in LICENSE manifest.json plugin.wasm; do
@@ -114,7 +115,7 @@ while IFS= read -r path; do
   done
   pins=$(jq --arg id "$pid" --arg v "$(jq -r .version "$manifest")" --argjson f "$files" \
     '. + [{id: $id, version: $v, class: "default", files: $f}]' <<< "$pins")
-done < <(jq -r '.plugins[] | .path // (.id | ltrimstr("deckpilot."))' "$root/plugins/first-party/bundled.json")
+done < <(jq -r '.plugins[] | .id // ("deckpilot." + .path)' "$root/plugins/first-party/bundled.json" | tr -d '\r')
 jq -S -n --argjson p "$pins" '{pinsVersion: 1, plugins: ($p | sort_by(.id))}' > "$bundled_source/pins.json"
 cp "$bundled_source/pins.json" "$work/compiled-pins.json"
 # bundled <dir>: the bundled plugins at <dir> (the resources' bundled/).

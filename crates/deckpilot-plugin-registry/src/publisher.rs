@@ -1293,11 +1293,15 @@ mod tests {
     #[test]
     fn the_privileged_kinds_gate_is_closed() {
         let closed = [
-            include_str!("../../../plugins/first-party/docker/manifest.json"),
-            include_str!("../../../plugins/first-party/git/manifest.json"),
-            include_str!("../../../plugins/first-party/projects/manifest.json"),
-            include_str!("../../../plugins/first-party/workflows/manifest.json"),
-            include_str!("../../../plugins/first-party/workspace/manifest.json"),
+            include_str!("../../../plugins/first-party/contracts/deckpilot.docker/manifest.json"),
+            include_str!("../../../plugins/first-party/contracts/deckpilot.git/manifest.json"),
+            include_str!("../../../plugins/first-party/contracts/deckpilot.projects/manifest.json"),
+            include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.workflows/manifest.json"
+            ),
+            include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.workspace/manifest.json"
+            ),
         ];
         for manifest in closed {
             let error = check_gate(manifest.as_bytes()).unwrap_err();
@@ -1307,17 +1311,20 @@ mod tests {
             );
             assert!(error.to_string().contains("publisher-review-request.md"));
         }
-        let git = include_str!("../../../plugins/first-party/git/manifest.json");
+        let git =
+            include_str!("../../../plugins/first-party/contracts/deckpilot.git/manifest.json");
         let error = check_gate(git.as_bytes()).unwrap_err().to_string();
         assert!(
             error.contains("permissions["),
             "names the tools permission: {error}"
         );
         for open in [
-            include_str!("../../../plugins/first-party/github/manifest.json"),
-            include_str!("../../../plugins/first-party/gitlab/manifest.json"),
-            include_str!("../../../plugins/first-party/jira/manifest.json"),
-            include_str!("../../../plugins/first-party/notifications/manifest.json"),
+            include_str!("../../../plugins/first-party/contracts/deckpilot.github/manifest.json"),
+            include_str!("../../../plugins/first-party/contracts/deckpilot.gitlab/manifest.json"),
+            include_str!("../../../plugins/first-party/contracts/deckpilot.jira/manifest.json"),
+            include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.notifications/manifest.json"
+            ),
         ] {
             check_gate(open.as_bytes()).unwrap();
             Manifest::from_slice(open.as_bytes())

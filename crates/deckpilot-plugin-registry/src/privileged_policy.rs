@@ -586,11 +586,21 @@ mod tests {
     /// version: the source the policy was reviewed against.
     fn source(name: &str) -> &'static str {
         match name {
-            "docker" => include_str!("../../../plugins/first-party/docker/manifest.json"),
-            "git" => include_str!("../../../plugins/first-party/git/manifest.json"),
-            "projects" => include_str!("../../../plugins/first-party/projects/manifest.json"),
-            "workflows" => include_str!("../../../plugins/first-party/workflows/manifest.json"),
-            "workspace" => include_str!("../../../plugins/first-party/workspace/manifest.json"),
+            "docker" => include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.docker/manifest.json"
+            ),
+            "git" => {
+                include_str!("../../../plugins/first-party/contracts/deckpilot.git/manifest.json")
+            }
+            "projects" => include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.projects/manifest.json"
+            ),
+            "workflows" => include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.workflows/manifest.json"
+            ),
+            "workspace" => include_str!(
+                "../../../plugins/first-party/contracts/deckpilot.workspace/manifest.json"
+            ),
             _ => unreachable!(),
         }
     }
@@ -878,7 +888,8 @@ mod tests {
                 "{error}"
             );
         }
-        let github = include_str!("../../../plugins/first-party/github/manifest.json");
+        let github =
+            include_str!("../../../plugins/first-party/contracts/deckpilot.github/manifest.json");
         let manifest = Manifest::from_slice(github.as_bytes()).unwrap();
         assert_eq!(
             check(

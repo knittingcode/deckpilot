@@ -1540,6 +1540,29 @@ fn first_party_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/first-party")
 }
 
+/// A `plugins/first-party` for the tests of a source entry: every official
+/// plugin's source directory (`<name>/manifest.json`) as it was before the
+/// sources moved to knittingcode/deckpilot-plugins, from the frozen release
+/// files (`contracts/`), next to those.
+fn source_tree() -> tempfile::TempDir {
+    let tree = tempfile::tempdir().unwrap();
+    let contracts = first_party_dir().join("contracts");
+    for entry in std::fs::read_dir(&contracts).unwrap() {
+        let entry = entry.unwrap();
+        let id = entry.file_name().into_string().unwrap();
+        let name = id.strip_prefix("deckpilot.").unwrap();
+        let manifest = std::fs::read(entry.path().join("manifest.json")).unwrap();
+        for dir in [
+            tree.path().join(name),
+            tree.path().join("contracts").join(&id),
+        ] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("manifest.json"), &manifest).unwrap();
+        }
+    }
+    tree
+}
+
 /// A `bundled.json` source entry: its directory's manifest id, never also
 /// locked as an artifact.
 fn check_source_entry(
@@ -1601,8 +1624,8 @@ fn check_artifact_entry(
             locked.version
         ));
     }
-    let name = id.strip_prefix("deckpilot.").unwrap_or(id);
-    let gated = match std::fs::read(first_party.join(name).join("manifest.json")) {
+    // The release's manifest as the contract records it.
+    let gated = match std::fs::read(first_party.join("contracts").join(id).join("manifest.json")) {
         Ok(manifest) => is_privileged(&manifest).map_err(|e| format!("{id}: {e}"))?,
         Err(_) => false,
     };
@@ -1723,7 +1746,7 @@ fn the_privileged_list_is_the_gate_s() {
     use deckpilot_plugin_registry::publisher::is_privileged;
     let mut gated = std::collections::BTreeSet::new();
     let mut seen = std::collections::BTreeSet::new();
-    for entry in std::fs::read_dir(first_party_dir()).unwrap() {
+    for entry in std::fs::read_dir(first_party_dir().join("contracts")).unwrap() {
         let dir = entry.unwrap().path();
         let Ok(manifest) = std::fs::read(dir.join("manifest.json")) else {
             continue;
@@ -1783,6 +1806,7 @@ fn bundled_json_and_the_lock_must_agree() {
     let artifact = |id: &str, version: &str| serde_json::json!({ "id": id, "version": version, "class": "default", "source": "artifact" });
     let source = |path: &str| serde_json::json!({ "path": path, "class": "migration" });
     let both = [a.key_id(), b.key_id()];
+    let tree = source_tree();
     let check =
         |plugins: Vec<serde_json::Value>, lock: Vec<serde_json::Value>, keys: &PublisherKeys| {
             let lock =
@@ -1791,7 +1815,7 @@ fn bundled_json_and_the_lock_must_agree() {
                 &serde_json::json!({ "plugins": plugins }),
                 &lock,
                 keys,
-                &first_party_dir(),
+                tree.path(),
                 PrivilegedGate::Closed,
             )
         };

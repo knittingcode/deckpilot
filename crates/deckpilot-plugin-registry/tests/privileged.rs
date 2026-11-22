@@ -39,8 +39,10 @@ use tempfile::TempDir;
 
 const CLOSED_MESSAGE: &str = "only for DeckPilot's own plugins shipped inside the app";
 
+/// What each official plugin's release ships but its module
+/// (`plugins/first-party/contracts/deckpilot.<name>`).
 fn first_party() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/first-party")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/first-party/contracts")
 }
 
 /// The compiled policy with an approved review (the review is the test's).
@@ -67,7 +69,7 @@ fn host() -> HostEnvironment {
     }
 }
 
-/// A copy of `plugins/first-party/<name>` at `version` as the plugin
+/// A copy of the release files of `deckpilot.<name>` at `version` as the plugin
 /// repository would package it, with `edit` applied to the manifest, and a
 /// stand-in module.
 struct PluginDir {
@@ -77,7 +79,7 @@ struct PluginDir {
 impl PluginDir {
     fn new(name: &str, version: &str, edit: impl FnOnce(&mut Value)) -> Self {
         let dir = TempDir::new().unwrap();
-        let source = first_party().join(name);
+        let source = first_party().join(format!("deckpilot.{name}"));
         let mut manifest: Value =
             serde_json::from_slice(&std::fs::read(source.join("manifest.json")).unwrap()).unwrap();
         manifest["version"] = version.into();
