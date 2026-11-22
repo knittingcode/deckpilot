@@ -99,6 +99,8 @@ pub async fn save_layout(
         if !issues.is_empty() {
             return Err(refusal(&issues));
         }
+        // Reported, never refused (`docs/action-contexts.md`).
+        let context_issues = layout.context_issues_for_save(stored, &registry, profile);
         match profile
             .layouts
             .iter_mut()
@@ -115,6 +117,7 @@ pub async fn save_layout(
         Ok(SavedLayout {
             layout,
             incompatible: kept.iter().map(ToString::to_string).collect(),
+            context_issues,
         })
     })
     .await
@@ -195,6 +198,14 @@ pub struct SavedLayout {
     layout: DeviceLayout,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     incompatible: Vec<String>,
+    /// Bindings whose action is not meant for their context (a key's
+    /// press or a gesture, `deckpilot_core::contexts`), each marked
+    /// `stored` when it was saved before. Reported only: the layout is
+    /// saved and they run as before. Left out when empty, so an app that
+    /// does not know them reads the answer as before; not in
+    /// `incompatible`, whose bindings do not run.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    context_issues: Vec<deckpilot_core::ContextIssue>,
 }
 
 /// What saving `layout` over `stored` (the saved version of the same
@@ -1085,22 +1096,99 @@ mod tests {
 
     #[test]
     fn saved_layouts_serialize_as_before() {
-        let (profile, _) = stored();
+        let (profile, registry) = stored();
         let layout = profile.layouts[0].clone();
         let plain = serde_json::to_value(&layout).unwrap();
         let saved = serde_json::to_value(SavedLayout {
             layout: layout.clone(),
             incompatible: Vec::new(),
+            context_issues: Vec::new(),
         })
         .unwrap();
         assert_eq!(saved, plain);
+        let context_issues = layout.context_issues_for_save(None, &registry, &profile);
         let reported = serde_json::to_value(SavedLayout {
             layout,
             incompatible: vec!["why".into()],
+            context_issues,
         })
         .unwrap();
         assert_eq!(reported["incompatible"], serde_json::json!(["why"]));
         assert_eq!(reported["id"], plain["id"]);
+        assert_eq!(
+            reported["contextIssues"][0]["reason"],
+            serde_json::json!({
+                "type": "contextUnsupported",
+                "context": "key",
+                "supported": ["sequence", "workflow"],
+            })
+        );
+        assert_eq!(reported["contextIssues"][0]["stored"], false);
+    }
+
+    /// Log is meant for steps and nodes (`docs/action-contexts.md`): on a
+    /// key it is reported, stored or new, and never refused; it keeps
+    /// running there.
+    #[test]
+    fn a_binding_outside_its_contexts_is_reported_and_never_refused() {
+        let (profile, registry) = stored();
+        let catalog = ModelCatalog::builtin();
+        let saved = &profile.layouts[0];
+        let log = saved.pages[0].bindings[1].target.clone();
+        let mut edited = saved.clone();
+        // A new Log on a key, and one on a long press.
+        edited.pages[0].bindings.extend([
+            ControlBinding::new(ControlId::Key { index: 1 }, Trigger::Press, log.clone()),
+            ControlBinding::new(ControlId::Key { index: 2 }, Trigger::LongPress, log),
+        ]);
+        let (refused, _) = check_for_save(&edited, Some(saved), &catalog, &registry, &profile);
+        assert!(refused.is_empty(), "{refused:?}");
+        let issues = edited.context_issues_for_save(Some(saved), &registry, &profile);
+        let found: Vec<_> = issues
+            .iter()
+            .map(|issue| (issue.to_string(), issue.stored))
+            .collect();
+        let not_meant = |place: &str| {
+            format!(
+                "the action is not meant to run {place}; it runs as a Multi Action step and as a \
+                 workflow node"
+            )
+        };
+        assert_eq!(
+            found,
+            [
+                // The encoder binding is a key's input too (and refused
+                // for its controls, as before, when new).
+                (
+                    format!(
+                        "page `Home`: encoder 0 (RotateClockwise): {}",
+                        not_meant("on a key's press")
+                    ),
+                    true
+                ),
+                (
+                    format!(
+                        "page `Home`: key 0 (Press): {}",
+                        not_meant("on a key's press")
+                    ),
+                    true
+                ),
+                (
+                    format!(
+                        "page `Home`: key 1 (Press): {}",
+                        not_meant("on a key's press")
+                    ),
+                    false
+                ),
+                (
+                    format!(
+                        "page `Home`: key 2 (LongPress): {}",
+                        not_meant("on a double click or long press")
+                    ),
+                    false
+                ),
+            ]
+        );
     }
 }
 

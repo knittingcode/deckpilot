@@ -283,7 +283,12 @@ fn inside_a_folder_turning_the_page_leaves_it() {
     // Nothing of the folders is left on the stack: Back has nowhere to go.
     assert!(matches!(
         runtime
-            .dispatch(&deck, BindingTarget::Back, crate::RunOrigin::Key)
+            .dispatch(
+                &deck,
+                BindingTarget::Back,
+                crate::RunOrigin::Key,
+                ActionContext::Key,
+            )
             .unwrap(),
         RuntimeOutcome::Navigated { page, .. } if page == pages.three
     ));
@@ -348,7 +353,12 @@ fn a_folder_that_closes_returns_after_its_keys_ran_something() {
     assert_eq!(runtime.current_page(&deck), Some(pages.inner));
     // A key that is not bound does nothing.
     runtime
-        .dispatch(&deck, BindingTarget::Back, crate::RunOrigin::Key)
+        .dispatch(
+            &deck,
+            BindingTarget::Back,
+            crate::RunOrigin::Key,
+            ActionContext::Key,
+        )
         .unwrap();
     assert_eq!(runtime.current_page(&deck), Some(pages.folder));
     assert!(matches!(

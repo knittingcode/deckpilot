@@ -302,6 +302,10 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         .transpose()?;
     let title = action.title.as_ref().map(action_title);
     Ok(ActionType {
+        // A manifest cannot declare contexts yet (planned for plugin API
+        // 1.11, after 1.10; `docs/action-contexts.md`): every plugin
+        // action keeps the legacy default, all five contexts.
+        contexts: None,
         editor_navigation,
         title,
         id,

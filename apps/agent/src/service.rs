@@ -967,11 +967,13 @@ impl Agent {
             } if self.security == SecurityState::Unlocked && self.runtime.runs_detached(action) => {
                 // Answered when the action finished on its own thread.
                 self.last_activity = self.now_seconds();
+                // From the app: no context, never checked.
                 self.run_detached(
                     action,
                     None,
                     None,
                     deckpilot_core::RunOrigin::App,
+                    None,
                     Some(reply),
                 );
                 Flow::Continue
@@ -1580,7 +1582,8 @@ impl Agent {
                 .with_variables(self.variables.clone())
                 .with_live_state(self.variables.clone())
                 .with_variable_registry(Arc::new(self.modules.variables().clone()))
-                .with_projects(self.active_projects.clone()),
+                .with_projects(self.active_projects.clone())
+                .with_context_warnings(Arc::new(ContextLog)),
         );
         // Actions, their modules or bindings may have changed: running
         // state calls are cancelled and cached states dropped, and pending
@@ -1679,11 +1682,12 @@ impl Agent {
         overrides: Option<deckpilot_core::ActionParameters>,
         device: Option<DeviceId>,
         origin: deckpilot_core::RunOrigin,
+        context: Option<deckpilot_core::ActionContext>,
         reply: Option<oneshot::Sender<Result<Response, IpcError>>>,
     ) {
         let run = match self
             .runtime
-            .detached_action(action, overrides, device, origin)
+            .detached_action(action, overrides, device, origin, context)
         {
             Ok(run) => run,
             Err(error) => {
@@ -2213,6 +2217,25 @@ fn security_state(path: &std::path::Path) -> Result<SecurityState, StorageError>
 /// app waits a few seconds for a reload after a save, and nothing else is
 /// answered while one runs.
 const SLOW_RELOAD: Duration = Duration::from_millis(500);
+
+/// The agent's log of runs outside their action's contexts
+/// (`deckpilot_core::contexts`, decision D1: warn, do not refuse). The
+/// engine reports the first run of each binding, step or node since the
+/// configuration was loaded; it ran.
+struct ContextLog;
+
+impl deckpilot_core::ContextWarnings for ContextLog {
+    fn warn(&self, warning: &deckpilot_core::ContextWarning) {
+        warn!(
+            action = %warning.name,
+            action_type = %warning.action_type,
+            workflow = ?warning.workflow,
+            device = ?warning.device.as_ref().map(ToString::to_string),
+            reason = %warning.reason,
+            "an action ran where it is not meant to run; it still runs (contexts are advisory)"
+        );
+    }
+}
 
 /// How long each stage of a configuration reload took, so a slow one says
 /// where the time went (the database, the plugin worker, rendering).

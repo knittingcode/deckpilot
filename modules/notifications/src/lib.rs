@@ -262,6 +262,12 @@ fn show_definition() -> ActionType {
         requires_project: false,
         deprecated: false,
         controls: Some(deckpilot_core::ActionControls::keys()),
+        contexts: Some(deckpilot_core::ActionContexts::of([
+            deckpilot_core::ActionContext::Key,
+            deckpilot_core::ActionContext::Gesture,
+            deckpilot_core::ActionContext::Sequence,
+            deckpilot_core::ActionContext::Workflow,
+        ])),
         node: node("bell", Vec::new()),
     }
 }
@@ -305,6 +311,10 @@ fn summary_definition() -> ActionType {
         requires_project: false,
         deprecated: false,
         controls: Some(deckpilot_core::ActionControls::keys()),
+        // Only a graph run has a summary.
+        contexts: Some(deckpilot_core::ActionContexts::of([
+            deckpilot_core::ActionContext::Workflow,
+        ])),
         node: node(
             "list-checks",
             vec![OutputSpec::new("summary", "Summary", ValueKind::Text)],

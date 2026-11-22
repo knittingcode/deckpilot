@@ -133,6 +133,11 @@ impl LogMessage {
             requires_project: false,
             deprecated: false,
             controls: Some(deckpilot_core::ActionControls::keys()),
+            // Its message reaches the run's history only: a step or a node.
+            contexts: Some(deckpilot_core::ActionContexts::of([
+                deckpilot_core::ActionContext::Sequence,
+                deckpilot_core::ActionContext::Workflow,
+            ])),
             // Only produces a message from its inputs: safe to repeat.
             node: deckpilot_core::graph::NodeSpec {
                 icon: Some("message-square".into()),
@@ -211,8 +216,16 @@ impl Wait {
                 default: Some(deckpilot_core::ParameterValue::Integer(5)),
             }],
             requires_project: false,
-            deprecated: false,
+            // Replaced by Delay (`general.delay`), which does the same in
+            // milliseconds. Saved Waits, their steps, nodes and keys keep
+            // working unchanged; it is only not offered for new ones.
+            deprecated: true,
             controls: Some(deckpilot_core::ActionControls::keys()),
+            // Deprecated for Delay; a key would block on it, uncancellable.
+            contexts: Some(deckpilot_core::ActionContexts::of([
+                deckpilot_core::ActionContext::Sequence,
+                deckpilot_core::ActionContext::Workflow,
+            ])),
             node: deckpilot_core::graph::NodeSpec {
                 version: 1,
                 icon: Some("timer".into()),
@@ -312,6 +325,12 @@ impl Delay {
             requires_project: false,
             deprecated: false,
             controls: Some(deckpilot_core::ActionControls::keys()),
+            // The delay row of a Multi Action, or a node; never a key's press,
+            // which would block on it, uncancellable.
+            contexts: Some(deckpilot_core::ActionContexts::of([
+                deckpilot_core::ActionContext::Sequence,
+                deckpilot_core::ActionContext::Workflow,
+            ])),
             node: deckpilot_core::graph::NodeSpec {
                 version: 1,
                 icon: Some("timer".into()),

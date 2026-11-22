@@ -1000,8 +1000,26 @@ impl ModuleRegistry {
                 target: alias.target_id(),
                 plugin: alias.plugin_id(),
                 outcome: self.resolve_alias(alias),
+                context_issues: self.alias_context_issues(alias),
             })
             .collect()
+    }
+
+    /// [`crate::alias::context_incompatibilities`] of an alias whose
+    /// built-in is compiled in and whose plugin provides the target; empty
+    /// otherwise.
+    fn alias_context_issues(&self, alias: &ActionAlias) -> Vec<String> {
+        let target = alias.target_id();
+        let provided = self
+            .modules
+            .get(&alias.plugin_id())
+            .and_then(|entry| entry.action_types.iter().find(|t| t.id == target));
+        match (self.builtin_type(alias), provided) {
+            (Some(builtin), Some(provided)) => {
+                crate::alias::context_incompatibilities(builtin, provided)
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Whether instances of `action_type` can currently run. A legacy type
@@ -1152,6 +1170,7 @@ fn normalize_config(
     config: &ActionParameters,
 ) -> Result<ActionParameters, ModuleError> {
     let schema = ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new(format!("{}.config", manifest.id)).expect("module ids are valid"),

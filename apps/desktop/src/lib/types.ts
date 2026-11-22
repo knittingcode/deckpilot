@@ -1,5 +1,7 @@
 // TypeScript mirrors of the serialized Rust types (camelCase serde names).
 
+import type { ActionContext, ContextIncompatibility } from "./action-context"
+
 export type Os = "linux" | "macOs" | "windows" | "other"
 
 export type ResourceKind =
@@ -82,6 +84,12 @@ export interface ActionType {
    * click, double click and long press.
    */
   controls?: ActionControls
+  /**
+   * Where the type can run: a key's press, a Multi Action step, a workflow
+   * node, a key's display, a gesture (`lib/action-context.ts`). Omitted:
+   * everywhere, as before contexts existed.
+   */
+  contexts?: ActionContext[]
 }
 
 /** An input a control can produce, as actions declare them. */
@@ -119,6 +127,22 @@ export type IncompatibilityReason =
       supported: InputCapability[]
     }
   | { type: "inputUnsupportedByControl"; kind: ControlId["kind"]; input: InputCapability }
+
+/**
+ * A use of an action outside its type's contexts, as `save_layout` and
+ * `save_workflow` report it (`ContextIssue` of deckpilot-core). Reported
+ * only: the save went through and the use still runs. `stored`: the same
+ * use was saved before.
+ */
+export interface ContextIssue {
+  site:
+    | { kind: "binding"; page: string; pageName: string; control: ControlId; trigger: Trigger }
+    | { kind: "step"; index: number }
+    | { kind: "node"; node: string }
+  action: string
+  reason: ContextIncompatibility
+  stored: boolean
+}
 
 export interface ActionInstance {
   id: string

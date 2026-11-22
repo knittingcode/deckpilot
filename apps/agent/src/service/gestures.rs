@@ -334,8 +334,9 @@ impl Agent {
                 action,
                 overrides,
                 device,
+                context,
             }) => {
-                self.run_detached(action, Some(overrides), Some(device), origin, None);
+                self.run_detached(action, Some(overrides), Some(device), origin, context, None);
                 return;
             }
             Ok(RuntimeOutcome::WorkflowRequested { workflow }) => {

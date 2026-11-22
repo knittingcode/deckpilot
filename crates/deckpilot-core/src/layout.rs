@@ -860,6 +860,80 @@ impl DeviceLayout {
                 .collect(),
         )
     }
+
+    /// The action bindings whose action's type does not declare the
+    /// binding's context ([`crate::contexts`]: `gesture` for a double click
+    /// or long press, `key` for any other trigger, which a display-only
+    /// type also satisfies). Bindings whose action is missing or whose type
+    /// is unavailable (a missing or disabled plugin) get no verdict: the
+    /// unavailable path covers them. Independent of the device: contexts
+    /// do not depend on controls.
+    pub fn context_incompatible_bindings(
+        &self,
+        registry: &ActionRegistry,
+        profile: &Profile,
+    ) -> Vec<IncompatibleBinding> {
+        let mut found = Vec::new();
+        for page in &self.pages {
+            for binding in &page.bindings {
+                let Some(action) = binding.target.action_id() else {
+                    continue;
+                };
+                if let Some(reason) = binding_context_incompatibility(binding, registry, profile) {
+                    found.push(IncompatibleBinding {
+                        page: page.id,
+                        page_name: page.name.clone(),
+                        control: binding.control,
+                        trigger: binding.trigger,
+                        action,
+                        reason,
+                    });
+                }
+            }
+        }
+        found
+    }
+
+    /// [`DeviceLayout::context_incompatible_bindings`] of this (edited)
+    /// layout for saving it over `stored` (`None`: a new layout), each
+    /// marked `stored` when the same binding (page, control, trigger and
+    /// action) is in `stored`. Reported only: saving refuses none of them.
+    pub fn context_issues_for_save(
+        &self,
+        stored: Option<&DeviceLayout>,
+        registry: &ActionRegistry,
+        profile: &Profile,
+    ) -> Vec<crate::ContextIssue> {
+        self.context_incompatible_bindings(registry, profile)
+            .into_iter()
+            .map(|found| {
+                let stored = stored.is_some_and(|stored| stored.has_binding(&found));
+                crate::ContextIssue {
+                    site: crate::ContextSite::Binding {
+                        page: found.page,
+                        page_name: found.page_name,
+                        control: found.control,
+                        trigger: found.trigger,
+                    },
+                    action: found.action,
+                    reason: found.reason,
+                    stored,
+                }
+            })
+            .collect()
+    }
+
+    /// Whether this layout has `found`'s binding: same page, control,
+    /// trigger and action.
+    fn has_binding(&self, found: &IncompatibleBinding) -> bool {
+        self.page(found.page).is_some_and(|page| {
+            page.bindings.iter().any(|binding| {
+                binding.control == found.control
+                    && binding.trigger == found.trigger
+                    && binding.target.action_id() == Some(found.action)
+            })
+        })
+    }
 }
 
 /// An action binding whose action cannot run where it is bound
@@ -906,6 +980,27 @@ pub fn binding_incompatibility(
         crate::Compatibility::Compatible => None,
         crate::Compatibility::Incompatible(reason) => Some(reason),
     }
+}
+
+/// Why `binding` runs its action in a context the action's type does not
+/// declare ([`crate::context_compatibility`]); `None` when it may, when it
+/// runs no action, or when there is no verdict (the action is missing or
+/// its type unavailable). Reported only, never used to refuse a binding:
+/// [`binding_incompatibility`] (controls) is what the runtime refuses.
+pub fn binding_context_incompatibility(
+    binding: &ControlBinding,
+    registry: &ActionRegistry,
+    profile: &Profile,
+) -> Option<IncompatibilityReason> {
+    let action = binding.target.action_id()?;
+    let instance = profile.action(action)?;
+    let definition = registry.definition(&instance.action_type)?;
+    crate::context_compatibility(
+        definition,
+        crate::ActionContext::of_trigger(binding.trigger),
+    )
+    .reason()
+    .cloned()
 }
 
 /// Whether the gesture binding at `index` is the first of its control on

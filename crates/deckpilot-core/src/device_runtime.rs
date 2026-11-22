@@ -21,11 +21,11 @@ use crate::gesture::{BoundGestures, Gesture, GestureTimings};
 use crate::i18n::SystemText;
 use crate::stateful::StatefulBinding;
 use crate::{
-    ActionInstanceId, ActionParameters, ActionRegistry, ActionResult, ActiveProjectContext,
-    BindingTarget, ControlBinding, CycleDirection, DeviceLayout, Engine, EngineError, FaceStyle,
-    FolderExit, FolderTimers, KeyFace, LayoutId, MachineConfig, PageId, PageLabel, Profile,
-    ProfileId, Project, ProjectId, Trigger, WorkflowId, WorkflowReport, render_label,
-    render_page_label,
+    ActionContext, ActionInstanceId, ActionParameters, ActionRegistry, ActionResult,
+    ActiveProjectContext, BindingTarget, ControlBinding, CycleDirection, DeviceLayout, Engine,
+    EngineError, FaceStyle, FolderExit, FolderTimers, KeyFace, LayoutId, MachineConfig, PageId,
+    PageLabel, Profile, ProfileId, Project, ProjectId, Trigger, WorkflowId, WorkflowReport,
+    render_label, render_page_label,
 };
 
 /// The clock Auto Exit countdowns ([`crate::FolderTimers`]) are measured
@@ -112,6 +112,10 @@ pub enum RuntimeOutcome {
         overrides: ActionParameters,
         /// The device whose control asked.
         device: DeviceId,
+        /// Where it runs ([`crate::contexts`]): `key` or `gesture`, by the
+        /// binding's trigger. Hand it to [`Runtime::detached_action`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<ActionContext>,
     },
     /// A control is bound to this workflow. Workflows can run for a long
     /// time, so the runtime does not run them itself: the caller starts
@@ -511,7 +515,12 @@ impl Runtime {
             Some(BindingTarget::Stateful(binding)) => {
                 Ok(RuntimeOutcome::StatefulRequested { binding, gesture })
             }
-            Some(target) => self.dispatch(device, target, origin),
+            Some(target) => self.dispatch(
+                device,
+                target,
+                origin,
+                ActionContext::of_trigger(Trigger::from(gesture)),
+            ),
         }
     }
 
@@ -707,13 +716,15 @@ impl Runtime {
     /// thread: the engine, and copies of the profile, the machine and the
     /// project context as they are now. `overrides` and `device` are a
     /// key binding's, as for a press; `origin` says what started it (a
-    /// key, a gesture, the app).
+    /// key, a gesture, the app), and `context` where it runs (that of
+    /// [`RuntimeOutcome::ActionRequested`]; `None` from the app).
     pub fn detached_action(
         &self,
         action: ActionInstanceId,
         overrides: Option<ActionParameters>,
         device: Option<DeviceId>,
         origin: crate::RunOrigin,
+        context: Option<ActionContext>,
     ) -> Result<DetachedAction, EngineError> {
         let session = self.session.as_ref().ok_or(EngineError::NoActiveProfile)?;
         if session.profile.action(action).is_none() {
@@ -726,12 +737,15 @@ impl Runtime {
             projects: session.projects.clone(),
             action,
             overrides: overrides.filter(|o| !o.is_empty()),
-            invocation: device
-                .map_or_else(
-                    crate::resolution::Invocation::default,
-                    crate::resolution::Invocation::from_device,
-                )
-                .with_origin(origin),
+            invocation: crate::resolution::Invocation {
+                context,
+                ..device
+                    .map_or_else(
+                        crate::resolution::Invocation::default,
+                        crate::resolution::Invocation::from_device,
+                    )
+                    .with_origin(origin)
+            },
         })
     }
 
@@ -1405,9 +1419,10 @@ impl Runtime {
                         target = Some(BindingTarget::Back);
                     }
                 }
+                // A raw input (press, release, rotation, touch) is a key's.
                 match target {
                     None => ignored("control is not bound"),
-                    Some(target) => self.dispatch(device, target, origin),
+                    Some(target) => self.dispatch(device, target, origin, ActionContext::Key),
                 }
             }
         }
@@ -1441,7 +1456,9 @@ impl Runtime {
             )
         };
         Some(match input {
-            deckpilot_device::ControlInput::Press => self.dispatch(device, target, origin),
+            deckpilot_device::ControlInput::Press => {
+                self.dispatch(device, target, origin, ActionContext::Key)
+            }
             _ => Ok(RuntimeOutcome::Ignored {
                 reason: refusal.into(),
             }),
@@ -1453,12 +1470,13 @@ impl Runtime {
         device: &DeviceId,
         target: BindingTarget,
         origin: crate::RunOrigin,
+        context: ActionContext,
     ) -> Result<RuntimeOutcome, EngineError> {
         // A folder that closes by itself returns once one of its keys ran
         // an action or started a workflow, whatever came of it.
         let closes = self.closes_after_use(device);
         let shown = self.current_page(device);
-        let outcome = self.dispatch_target(device, target, origin)?;
+        let outcome = self.dispatch_target(device, target, origin, context)?;
         if closes
             && self.current_page(device) == shown
             && matches!(
@@ -1475,8 +1493,10 @@ impl Runtime {
     }
 
     /// Runs `target` for `device` as a key bound to it would, without
-    /// closing a folder after it: what a Random Action picked. The pick ran
-    /// from a key of the page, which already closed it if it closes.
+    /// closing a folder after it: what a Random Action picked (or a Multi
+    /// Action Switch's state). The pick ran from a key of the page, which
+    /// already closed it if it closes. It runs in the `key` context,
+    /// whatever gesture ran the Random Action.
     ///
     /// # Errors
     ///
@@ -1488,7 +1508,7 @@ impl Runtime {
         target: BindingTarget,
         origin: crate::RunOrigin,
     ) -> Result<RuntimeOutcome, EngineError> {
-        let outcome = self.dispatch_target(device, target, origin);
+        let outcome = self.dispatch_target(device, target, origin, ActionContext::Key);
         self.follow_folders(device, false);
         outcome
     }
@@ -1498,6 +1518,7 @@ impl Runtime {
         device: &DeviceId,
         target: BindingTarget,
         origin: crate::RunOrigin,
+        context: ActionContext,
     ) -> Result<RuntimeOutcome, EngineError> {
         match target {
             BindingTarget::Action { action, overrides } => {
@@ -1506,6 +1527,7 @@ impl Runtime {
                         action,
                         overrides,
                         device: device.clone(),
+                        context: Some(context),
                     });
                 }
                 // The key's device is part of the context its references
@@ -1518,7 +1540,9 @@ impl Runtime {
                     &mut session.projects,
                     action,
                     Some(&overrides),
-                    &crate::resolution::Invocation::from_device(device.clone()).with_origin(origin),
+                    &crate::resolution::Invocation::from_device(device.clone())
+                        .with_origin(origin)
+                        .with_context(context),
                 )?;
                 self.apply_page_request(device, &mut result);
                 Ok(RuntimeOutcome::Action { action, result })
@@ -1886,6 +1910,9 @@ pub use working::{EditorTarget, NavigationError, NavigationState};
 mod compat_tests;
 
 #[cfg(test)]
+mod context_tests;
+
+#[cfg(test)]
 mod working_tests;
 
 #[cfg(test)]
@@ -2094,13 +2121,21 @@ mod tests {
             action,
             overrides,
             device: from,
+            context,
         } = outcome
         else {
             panic!("expected a request, got {outcome:?}");
         };
         assert_eq!((action, from.clone()), (later_id, device()));
+        assert_eq!(context, Some(ActionContext::Key));
         let run = runtime
-            .detached_action(action, Some(overrides), Some(from), crate::RunOrigin::Key)
+            .detached_action(
+                action,
+                Some(overrides),
+                Some(from),
+                crate::RunOrigin::Key,
+                context,
+            )
             .unwrap();
         assert_eq!(run.name(), "Later");
         // Runs on another thread, from copies.
@@ -2111,7 +2146,13 @@ mod tests {
         assert!(result.is_success(), "{result:?}");
         assert_eq!(result.message, "later");
         assert!(matches!(
-            runtime.detached_action(ActionInstanceId::new(), None, None, crate::RunOrigin::App),
+            runtime.detached_action(
+                ActionInstanceId::new(),
+                None,
+                None,
+                crate::RunOrigin::App,
+                None
+            ),
             Err(EngineError::UnknownAction(_))
         ));
         // Other keys still run in place.
