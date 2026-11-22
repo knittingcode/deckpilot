@@ -15,6 +15,8 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-22
+
 ### Fixed
 
 - Windows and Linux: the main window's close button closes the window
