@@ -51,6 +51,8 @@ mod registry;
 #[cfg(feature = "plugins")]
 mod service;
 #[cfg(feature = "plugins")]
+mod storefront;
+#[cfg(feature = "plugins")]
 mod tool_settings;
 #[cfg(feature = "plugins")]
 mod tools;
@@ -255,6 +257,9 @@ pub(crate) fn is_plugin_request(request: &Request) -> bool {
             | Request::GetPluginActions { .. }
             | Request::GetPluginIcon { .. }
             | Request::ListAvailablePlugins { .. }
+            | Request::GetStorefront
+            | Request::GetRegistryListing { .. }
+            | Request::GetRegistryMedia { .. }
             | Request::InstallPlugin { .. }
             | Request::EnablePlugin { .. }
             | Request::DisablePlugin { .. }
@@ -340,6 +345,7 @@ pub(crate) fn features() -> Vec<String> {
         deckpilot_ipc::plugins::feature::LOCALE.to_owned(),
         deckpilot_ipc::plugins::feature::RESTORE_BUNDLED.to_owned(),
         deckpilot_ipc::plugins::feature::VISUAL_ASSETS.to_owned(),
+        deckpilot_ipc::plugins::feature::STOREFRONT.to_owned(),
     ]
 }
 

@@ -1679,6 +1679,11 @@ impl PluginService {
                 asset.as_deref(),
             ),
             Request::ListAvailablePlugins { refresh } => self.available(refresh),
+            Request::GetStorefront => self.storefront_answer(),
+            Request::GetRegistryListing { plugin } => self.registry_listing(&plugin_id(&plugin)?),
+            Request::GetRegistryMedia { sha256, offset } => Ok(Response::RegistryMediaChunk {
+                chunk: self.registry()?.storefront_media(&sha256, offset)?,
+            }),
             Request::InstallPlugin { source, consent } => self.install(&source, &consent),
             Request::EnablePlugin { plugin, consent } => {
                 self.enable(&plugin_id(&plugin)?, &consent)
@@ -1876,6 +1881,17 @@ impl PluginService {
                         login: p.login.clone(),
                         verified: p.verified,
                     });
+                let official = self.official.is_official(&entry.id);
+                let icon = registry
+                    .storefront()
+                    .and_then(|s| s.listings.get(&entry.id))
+                    .and_then(|l| l.icon.as_ref())
+                    .map(|icon| ipc::MediaRef {
+                        sha256: icon.sha256.to_string(),
+                        media_type: icon.format.media_type().to_owned(),
+                        width: icon.width,
+                        height: icon.height,
+                    });
                 plugins.push(ipc::AvailablePlugin {
                     id: entry.id.to_string(),
                     name: entry.name.clone(),
@@ -1891,12 +1907,112 @@ impl PluginService {
                     homepage: detail.homepage.clone(),
                     source_repository: detail.source_repository.clone(),
                     deprecated: entry.deprecated.as_ref().map(|d| d.reason.clone()),
+                    icon,
+                    official,
+                    bundled_only: official && bundled_only(&entry.id, &detail),
                 });
             }
         }
         Ok(Response::AvailablePlugins {
             registry: registry.status(),
             plugins,
+        })
+    }
+
+    /// The plugins the storefront may place: in the verified index with a
+    /// published, non-withdrawn version this host can run.
+    fn placeables(registry: &Registry) -> super::storefront::Placeables {
+        let host = host_environment();
+        let mut out = super::storefront::Placeables::new();
+        let Some(index) = registry.client().index() else {
+            return out;
+        };
+        for entry in &index.plugins {
+            let Ok(detail) = registry.detail(&entry.id) else {
+                continue;
+            };
+            let versions: BTreeSet<Version> = detail
+                .versions
+                .iter()
+                .filter(|v| {
+                    let revoked = index
+                        .revocations
+                        .iter()
+                        .any(|r| r.matches(&entry.id, &v.version));
+                    let available = available_version(v, None, host.as_ref());
+                    !revoked && available.withdrawn.is_none() && available.incompatible.is_empty()
+                })
+                .map(|v| v.version.clone())
+                .collect();
+            if versions.is_empty() {
+                continue;
+            }
+            out.insert(
+                entry.id.to_string(),
+                super::storefront::Placeable {
+                    categories: entry.categories.iter().flatten().cloned().collect(),
+                    versions,
+                },
+            );
+        }
+        out
+    }
+
+    /// Work after an answer was sent: the storefront icons a refresh
+    /// queued (bounded), so no refresh waits for them.
+    pub fn after_reply(&mut self) {
+        if let Some(registry) = self.registry.as_mut() {
+            registry.prefetch_storefront_icons();
+        }
+    }
+
+    /// `getStorefront`: the verified storefront for this app, or none.
+    fn storefront_answer(&self) -> Result<Response, IpcError> {
+        let registry = self.registry()?;
+        let Some(current) = registry.storefront() else {
+            return Ok(Response::Storefront { storefront: None });
+        };
+        let platform = host_environment().map_or("", |h| platform_id(h.platform));
+        let now = registry
+            .client()
+            .state()
+            .clock_floor
+            .map_or_else(Utc::now, |floor| floor.max(Utc::now()));
+        let view = super::storefront::view(
+            current.seq(),
+            current.editorial.as_ref(),
+            &Self::placeables(registry),
+            &self.locales.tag(),
+            platform,
+            now,
+        );
+        Ok(Response::Storefront {
+            storefront: Some(Box::new(view)),
+        })
+    }
+
+    /// `getRegistryListing`: a plugin's verified listing, or none.
+    fn registry_listing(&self, id: &PluginId) -> Result<Response, IpcError> {
+        let registry = self.registry()?;
+        let listing = registry
+            .storefront()
+            .and_then(|s| s.listings.get(id))
+            .map(|listing| {
+                let published: BTreeSet<Version> = registry
+                    .detail(id)
+                    .map(|d| d.versions.iter().map(|v| v.version.clone()).collect())
+                    .unwrap_or_default();
+                let platform = host_environment().map_or("", |h| platform_id(h.platform));
+                Box::new(super::storefront::listing_view(
+                    listing,
+                    &published,
+                    &self.locales.tag(),
+                    platform,
+                ))
+            });
+        Ok(Response::RegistryListing {
+            plugin: id.to_string(),
+            listing,
         })
     }
 
@@ -3047,6 +3163,39 @@ fn available_version(
     }
 }
 
+/// Whether an official plugin is bundled-only: one DeckPilot bundles whose
+/// registry versions declare a privileged kind (plugin API 1.9), which the
+/// store accepts only with the bundled copy. Derived here from the verified
+/// detail's permissions, never read from a registry flag.
+fn bundled_only(id: &PluginId, detail: &deckpilot_plugin_registry::PluginDetail) -> bool {
+    declares_privileged_kind(id, detail.versions.iter().map(|v| v.permissions.as_slice()))
+}
+
+fn declares_privileged_kind<'a>(
+    id: &PluginId,
+    mut versions: impl Iterator<Item = &'a [serde_json::Value]>,
+) -> bool {
+    use deckpilot_plugin_manifest::PermissionKind;
+    let privileged: Vec<&str> = [
+        PermissionKind::Tools,
+        PermissionKind::Resources,
+        PermissionKind::ProjectContext,
+        PermissionKind::HostViews,
+    ]
+    .into_iter()
+    .filter(|k| k.is_first_party_only())
+    .map(PermissionKind::as_str)
+    .collect();
+    deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS.contains(&id.as_str())
+        && versions.any(|permissions| {
+            permissions.iter().any(|p| {
+                p.get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| privileged.contains(&kind))
+            })
+        })
+}
+
 /// The platform's id as manifests and the runtime status name it.
 fn platform_id(platform: Platform) -> &'static str {
     match platform {
@@ -3288,6 +3437,35 @@ mod tests {
             ..integrity
         };
         assert!(module_matches_record(&none, module).is_err());
+    }
+
+    #[test]
+    fn bundled_only_is_derived_from_the_id_and_the_declared_kinds() {
+        let tools = vec![serde_json::json!({ "kind": "tools", "tools": [], "justification": "x" })];
+        let network = vec![serde_json::json!({ "kind": "network", "hosts": ["a.example"] })];
+        let git = PluginId::parse("deckpilot.git").unwrap();
+        let github = PluginId::parse("deckpilot.github").unwrap();
+        let community = PluginId::parse("deckpilot.memory").unwrap();
+        let third = PluginId::parse("acme.git").unwrap();
+        assert!(declares_privileged_kind(
+            &git,
+            [network.as_slice(), tools.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(
+            &github,
+            [network.as_slice()].into_iter()
+        ));
+        // A privileged kind outside the bundled ids (refused by the store
+        // anyway) never makes a plugin "bundled-only".
+        assert!(!declares_privileged_kind(
+            &community,
+            [tools.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(
+            &third,
+            [tools.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(&git, std::iter::empty()));
     }
 
     #[test]

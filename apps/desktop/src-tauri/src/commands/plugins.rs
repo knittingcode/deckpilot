@@ -223,6 +223,23 @@ impl AssetReader {
     }
 }
 
+/// A connection to an agent that answers plugin requests and lists
+/// `feature`; `None` when it does not list it (an older agent). Errors as
+/// every plugin command (no agent, locked, plugins unavailable).
+pub(crate) async fn feature_connection(
+    state: &AppState,
+    feature: &str,
+) -> PluginResult<Option<AgentClient>> {
+    let mut connection = connect(state, true).await?;
+    match connection.client.request(Request::GetPluginRuntime).await? {
+        Response::PluginRuntime { status } if status.has_feature(feature) => {
+            Ok(Some(connection.client))
+        }
+        Response::PluginRuntime { .. } => Ok(None),
+        other => Err(PluginError::unexpected(&other)),
+    }
+}
+
 /// Sends one plugin request over a connection of its own. Every request
 /// but `getPluginRuntime` is preceded by `getPluginRuntime` on the same
 /// connection and refused unless the agent reports plugins as available.

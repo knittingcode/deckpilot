@@ -29,6 +29,7 @@ pub(crate) mod reload;
 pub(crate) mod security;
 mod shared_layouts;
 mod shared_variables;
+pub(crate) mod storefront;
 mod system;
 pub(crate) mod unsaved;
 mod variables;
@@ -190,6 +191,9 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         plugins::get_plugin_navigation_icon,
         plugins::get_plugin,
         plugins::list_available_plugins,
+        storefront::get_storefront,
+        storefront::get_registry_listing,
+        storefront::get_registry_media,
         plugins::install_plugin,
         plugins::enable_plugin,
         plugins::disable_plugin,
