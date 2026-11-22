@@ -7,15 +7,21 @@ import { DialogsContext } from "@/components/dialogs/use-dialogs"
 import type { Dialogs } from "@/components/dialogs/dialog-service"
 import { emitBackend, resetBackend } from "@/test/tauri"
 
-import { QUIT_REQUESTED_EVENT, leavesEditor, useUnsavedGuards } from "./unsaved-guards"
+import {
+  CLOSE_REQUESTED_EVENT,
+  QUIT_REQUESTED_EVENT,
+  leavesEditor,
+  useUnsavedGuards,
+} from "./unsaved-guards"
 
 const invoke = vi.hoisted(() =>
   vi.fn<(command: string, args?: unknown) => Promise<null>>(() => Promise.resolve(null)),
 )
 vi.mock("@tauri-apps/api/core", () => ({ invoke }))
 vi.mock("@tauri-apps/api/event", async () => (await import("@/test/tauri")).eventModule)
+const onCloseRequested = vi.hoisted(() => vi.fn(() => Promise.resolve(() => undefined)))
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ onCloseRequested: () => Promise.resolve(() => undefined) }),
+  getCurrentWindow: () => ({ onCloseRequested }),
 }))
 vi.mock("sonner", () => ({ toast: { warning: vi.fn() } }))
 
@@ -39,6 +45,7 @@ function setup(dirty: boolean, discard: boolean) {
 beforeEach(() => {
   resetBackend()
   invoke.mockClear()
+  onCloseRequested.mockClear()
 })
 afterEach(() => {
   cleanup()
@@ -96,6 +103,54 @@ describe("unsaved edits are never discarded without asking", () => {
     })
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("quit_app")
+    })
+  })
+
+  describe("closing the main window (the backend asks only over unsaved edits)", () => {
+    it("leaves the close to the backend: no onCloseRequested listener", () => {
+      // With one, Tauri holds back every close for the page's
+      // window.destroy(), which the main window may not call.
+      setup(false, false)
+      setup(true, false)
+      expect(onCloseRequested).not.toHaveBeenCalled()
+    })
+
+    it("asks over unsaved edits, and stays when cancelled", async () => {
+      const stay = setup(true, false)
+      await waitFor(() => {
+        expect(emitBackend(CLOSE_REQUESTED_EVENT, null)).toBe(1)
+      })
+      await waitFor(() => {
+        expect(stay.destructive).toHaveBeenCalled()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(invoke).not.toHaveBeenCalledWith("close_main_window")
+      expect(stay.setDirty).not.toHaveBeenCalled()
+    })
+
+    it("closes once the edits are discarded", async () => {
+      const discard = setup(true, true)
+      await waitFor(() => {
+        expect(emitBackend(CLOSE_REQUESTED_EVENT, null)).toBe(1)
+      })
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("close_main_window")
+      })
+      expect(discard.destructive).toHaveBeenCalledTimes(1)
+      expect(discard.setDirty).toHaveBeenCalledWith(false)
+    })
+
+    it("closes at once when the edits were saved meanwhile", async () => {
+      const clean = setup(false, false)
+      await waitFor(() => {
+        expect(emitBackend(CLOSE_REQUESTED_EVENT, null)).toBe(1)
+      })
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("close_main_window")
+      })
+      expect(clean.destructive).not.toHaveBeenCalled()
     })
   })
 })

@@ -7,12 +7,10 @@
 
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { getCurrentWindow } from "@tauri-apps/api/window"
 import { type RefObject, useCallback, useContext, useEffect } from "react"
 import { toast } from "sonner"
 
 import { DialogsContext } from "@/components/dialogs/use-dialogs"
-import { IS_MAC } from "@/hooks/use-navigation"
 import { i18n } from "@/i18n"
 import { locationOf } from "@/lib/navigation"
 
@@ -20,6 +18,9 @@ import { unsavedWarning } from "./editor-selection-context"
 
 /** The backend's event asking to confirm quitting (`commands/unsaved.rs`). */
 export const QUIT_REQUESTED_EVENT = "quit-requested"
+
+/** The backend's event asking to confirm closing the main window (`commands/unsaved.rs`). */
+export const CLOSE_REQUESTED_EVENT = "main-close-requested"
 
 /** The page the device editor is. */
 const DESIGNER = "designer"
@@ -79,35 +80,32 @@ export function useUnsavedGuards(
     [confirm, dirtyRef, location, navigate],
   )
 
-  // Closing the main window ends the editor, except on macOS (it hides).
+  // Closing the main window over unsaved edits (Windows, Linux: it ends the
+  // editor; macOS hides it and keeps it). The backend decides
+  // (`lifecycle::on_window_event`): without unsaved edits the window closes
+  // at once, with them it stays and asks here. No `onCloseRequested`
+  // listener: with one Tauri holds back every close for the page's
+  // `window.destroy()`, which this window may not call (0.10.0 to 0.12.0
+  // the close button did nothing).
   useEffect(() => {
-    if (IS_MAC) return
     let stop: (() => void) | undefined
     let stopped = false
-    let window: ReturnType<typeof getCurrentWindow>
-    try {
-      window = getCurrentWindow()
-    } catch {
-      return
-    }
-    window
-      .onCloseRequested(async (event) => {
-        if (!dirtyRef.current) return
-        event.preventDefault()
-        if (await confirm()) void invoke("close_main_window").catch(() => undefined)
+    listen(CLOSE_REQUESTED_EVENT, () => {
+      void confirm().then((ok) => {
+        if (ok) void invoke("close_main_window").catch(() => undefined)
       })
-      .then(
-        (unlisten) => {
-          if (stopped) unlisten()
-          else stop = unlisten
-        },
-        () => undefined,
-      )
+    }).then(
+      (unlisten) => {
+        if (stopped) unlisten()
+        else stop = unlisten
+      },
+      () => undefined,
+    )
     return () => {
       stopped = true
       stop?.()
     }
-  }, [confirm, dirtyRef])
+  }, [confirm])
 
   // ⌘Q (and quitting from the app menu) over unsaved edits.
   useEffect(() => {
