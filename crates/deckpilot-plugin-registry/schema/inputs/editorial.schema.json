@@ -5,10 +5,7 @@
   "description": "Storefront design §3.2. Maintainer-only. Drafts and archived entries stay here; only `published` entries reach the signed document. No external links: banner targets are plugins, collections or categories. `deckpilot-registry storefront check` enforces the rest (unique ids, windows, text and media rules).",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "editorial_version",
-    "sections"
-  ],
+  "required": ["editorial_version", "sections"],
   "properties": {
     "$schema": {
       "type": "string"
@@ -21,9 +18,7 @@
       "maxItems": 12,
       "items": {
         "type": "object",
-        "required": [
-          "kind"
-        ],
+        "required": ["kind"],
         "properties": {
           "kind": {
             "enum": [
@@ -44,31 +39,19 @@
                   "const": "banner_carousel"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "status",
-                "items"
-              ],
+              "required": ["id", "kind", "order", "status", "items"],
               "properties": {
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z0-9-]{1,48}$"
                 },
                 "status": {
-                  "enum": [
-                    "draft",
-                    "published",
-                    "archived"
-                  ]
+                  "enum": ["draft", "published", "archived"]
                 },
                 "kind": {
                   "const": "banner_carousel"
@@ -100,12 +83,7 @@
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "id",
-                      "title",
-                      "artwork",
-                      "target"
-                    ],
+                    "required": ["id", "title", "artwork", "target"],
                     "properties": {
                       "id": {
                         "type": "string",
@@ -120,9 +98,7 @@
                       "artwork": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": [
-                          "file"
-                        ],
+                        "required": ["file"],
                         "properties": {
                           "file": {
                             "$ref": "#/$defs/file/properties/file"
@@ -145,17 +121,10 @@
                       "target": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": [
-                          "type",
-                          "id"
-                        ],
+                        "required": ["type", "id"],
                         "properties": {
                           "type": {
-                            "enum": [
-                              "plugin",
-                              "collection",
-                              "category"
-                            ]
+                            "enum": ["plugin", "collection", "category"]
                           },
                           "id": {
                             "type": "string",
@@ -180,32 +149,19 @@
                   "const": "collection_row"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "status",
-                "title",
-                "plugins"
-              ],
+              "required": ["id", "kind", "order", "status", "title", "plugins"],
               "properties": {
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z0-9-]{1,48}$"
                 },
                 "status": {
-                  "enum": [
-                    "draft",
-                    "published",
-                    "archived"
-                  ]
+                  "enum": ["draft", "published", "archived"]
                 },
                 "kind": {
                   "const": "collection_row"
@@ -231,10 +187,7 @@
                   "$ref": "#/$defs/platforms"
                 },
                 "layout": {
-                  "enum": [
-                    "cards",
-                    "compact"
-                  ]
+                  "enum": ["cards", "compact"]
                 },
                 "title": {
                   "$ref": "#/$defs/text40"
@@ -264,32 +217,19 @@
                   "const": "spotlight"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "status",
-                "plugin",
-                "headline"
-              ],
+              "required": ["id", "kind", "order", "status", "plugin", "headline"],
               "properties": {
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z0-9-]{1,48}$"
                 },
                 "status": {
-                  "enum": [
-                    "draft",
-                    "published",
-                    "archived"
-                  ]
+                  "enum": ["draft", "published", "archived"]
                 },
                 "kind": {
                   "const": "spotlight"
@@ -340,31 +280,19 @@
                   "const": "recently_added"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "status",
-                "limit"
-              ],
+              "required": ["id", "kind", "order", "status", "limit"],
               "properties": {
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z0-9-]{1,48}$"
                 },
                 "status": {
-                  "enum": [
-                    "draft",
-                    "published",
-                    "archived"
-                  ]
+                  "enum": ["draft", "published", "archived"]
                 },
                 "kind": {
                   "const": "recently_added"
@@ -407,31 +335,19 @@
                   "const": "category_highlights"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "status",
-                "categories"
-              ],
+              "required": ["id", "kind", "order", "status", "categories"],
               "properties": {
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z0-9-]{1,48}$"
                 },
                 "status": {
-                  "enum": [
-                    "draft",
-                    "published",
-                    "archived"
-                  ]
+                  "enum": ["draft", "published", "archived"]
                 },
                 "kind": {
                   "const": "category_highlights"
@@ -466,9 +382,7 @@
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "id"
-                    ],
+                    "required": ["id"],
                     "properties": {
                       "id": {
                         "type": "string",
@@ -490,30 +404,19 @@
                   "const": "catalog"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "status"
-              ],
+              "required": ["id", "kind", "order", "status"],
               "properties": {
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z0-9-]{1,48}$"
                 },
                 "status": {
-                  "enum": [
-                    "draft",
-                    "published",
-                    "archived"
-                  ]
+                  "enum": ["draft", "published", "archived"]
                 },
                 "kind": {
                   "const": "catalog"
@@ -553,24 +456,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "order",
-          "title",
-          "plugins",
-          "status"
-        ],
+        "required": ["id", "order", "title", "plugins", "status"],
         "properties": {
           "id": {
             "type": "string",
             "pattern": "^[a-z0-9-]{1,48}$"
           },
           "status": {
-            "enum": [
-              "draft",
-              "published",
-              "archived"
-            ]
+            "enum": ["draft", "published", "archived"]
           },
           "order": {
             "type": "integer"
@@ -600,9 +493,7 @@
   "$defs": {
     "text24": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -615,9 +506,7 @@
     },
     "text40": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -630,9 +519,7 @@
     },
     "text60": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -645,9 +532,7 @@
     },
     "text80": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -660,9 +545,7 @@
     },
     "text120": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -675,9 +558,7 @@
     },
     "text160": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -690,9 +571,7 @@
     },
     "text250": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -705,9 +584,7 @@
     },
     "text300": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -720,9 +597,7 @@
     },
     "text2000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -735,9 +610,7 @@
     },
     "text6000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -753,11 +626,7 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {
-        "enum": [
-          "macos",
-          "windows",
-          "linux"
-        ]
+        "enum": ["macos", "windows", "linux"]
       }
     },
     "url": {
@@ -768,9 +637,7 @@
     "file": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "file"
-      ],
+      "required": ["file"],
       "properties": {
         "file": {
           "type": "string",
@@ -781,9 +648,7 @@
     "art": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "file"
-      ],
+      "required": ["file"],
       "properties": {
         "file": {
           "$ref": "#/$defs/file/properties/file"

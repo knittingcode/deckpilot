@@ -5,10 +5,7 @@
   "description": "Storefront design §3.1. Written by the plugin's author in their own registry directory and reviewed. No placement fields of any kind. Media files are PNG, WebP or JPEG under media/ (no SVG). `deckpilot-registry storefront check` also enforces the rules a schema cannot: text in Unicode NFC without control, bidi or zero-width characters, the safe markdown subset, link hosts, release notes for recorded versions only, and every image's format, dimensions, metadata and full decode.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "listing_version",
-    "id"
-  ],
+  "required": ["listing_version", "id"],
   "properties": {
     "$schema": {
       "type": "string"
@@ -34,10 +31,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "title",
-          "text"
-        ],
+        "required": ["title", "text"],
         "properties": {
           "title": {
             "$ref": "#/$defs/text40"
@@ -57,10 +51,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "file",
-          "alt"
-        ],
+        "required": ["file", "alt"],
         "properties": {
           "alt": {
             "$ref": "#/$defs/text250"
@@ -80,10 +71,7 @@
     "promo_art": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "file",
-        "alt"
-      ],
+      "required": ["file", "alt"],
       "properties": {
         "file": {
           "$ref": "#/$defs/file/properties/file"
@@ -121,9 +109,7 @@
   "$defs": {
     "text24": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -136,9 +122,7 @@
     },
     "text40": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -151,9 +135,7 @@
     },
     "text60": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -166,9 +148,7 @@
     },
     "text80": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -181,9 +161,7 @@
     },
     "text120": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -196,9 +174,7 @@
     },
     "text160": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -211,9 +187,7 @@
     },
     "text250": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -226,9 +200,7 @@
     },
     "text300": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -241,9 +213,7 @@
     },
     "text2000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -256,9 +226,7 @@
     },
     "text6000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^(en|pl)$"
@@ -274,11 +242,7 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {
-        "enum": [
-          "macos",
-          "windows",
-          "linux"
-        ]
+        "enum": ["macos", "windows", "linux"]
       }
     },
     "url": {
@@ -289,9 +253,7 @@
     "file": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "file"
-      ],
+      "required": ["file"],
       "properties": {
         "file": {
           "type": "string",
@@ -302,9 +264,7 @@
     "art": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "file"
-      ],
+      "required": ["file"],
       "properties": {
         "file": {
           "$ref": "#/$defs/file/properties/file"

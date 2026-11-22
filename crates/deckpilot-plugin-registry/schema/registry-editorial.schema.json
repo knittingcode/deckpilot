@@ -5,11 +5,7 @@
   "description": "Storefront design §3.3. Built by CI from editorial/editorial.json: published entries only, without `status`, media resolved to sha256 references. Pinned by storefront/<seq>.json. At most 128 KiB. Clients ignore unknown fields and skip sections of an unknown kind.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "_type",
-    "editorial_version",
-    "sections"
-  ],
+  "required": ["_type", "editorial_version", "sections"],
   "properties": {
     "_type": {
       "const": "deckpilot-registry-editorial"
@@ -22,9 +18,7 @@
       "maxItems": 12,
       "items": {
         "type": "object",
-        "required": [
-          "kind"
-        ],
+        "required": ["kind"],
         "properties": {
           "kind": {
             "type": "string"
@@ -38,19 +32,12 @@
                   "const": "banner_carousel"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "items"
-              ],
+              "required": ["id", "kind", "order", "items"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -86,12 +73,7 @@
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "id",
-                      "title",
-                      "artwork",
-                      "target"
-                    ],
+                    "required": ["id", "title", "artwork", "target"],
                     "properties": {
                       "id": {
                         "type": "string",
@@ -106,9 +88,7 @@
                       "artwork": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": [
-                          "asset"
-                        ],
+                        "required": ["asset"],
                         "properties": {
                           "asset": {
                             "$ref": "#/$defs/asset"
@@ -131,17 +111,10 @@
                       "target": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": [
-                          "type",
-                          "id"
-                        ],
+                        "required": ["type", "id"],
                         "properties": {
                           "type": {
-                            "enum": [
-                              "plugin",
-                              "collection",
-                              "category"
-                            ]
+                            "enum": ["plugin", "collection", "category"]
                           },
                           "id": {
                             "type": "string",
@@ -166,20 +139,12 @@
                   "const": "collection_row"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "title",
-                "plugins"
-              ],
+              "required": ["id", "kind", "order", "title", "plugins"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -209,10 +174,7 @@
                   "$ref": "#/$defs/platforms"
                 },
                 "layout": {
-                  "enum": [
-                    "cards",
-                    "compact"
-                  ]
+                  "enum": ["cards", "compact"]
                 },
                 "title": {
                   "$ref": "#/$defs/text40"
@@ -242,20 +204,12 @@
                   "const": "spotlight"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "plugin",
-                "headline"
-              ],
+              "required": ["id", "kind", "order", "plugin", "headline"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -310,19 +264,12 @@
                   "const": "recently_added"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "limit"
-              ],
+              "required": ["id", "kind", "order", "limit"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -369,19 +316,12 @@
                   "const": "category_highlights"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order",
-                "categories"
-              ],
+              "required": ["id", "kind", "order", "categories"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -420,9 +360,7 @@
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "id"
-                    ],
+                    "required": ["id"],
                     "properties": {
                       "id": {
                         "type": "string",
@@ -444,18 +382,12 @@
                   "const": "catalog"
                 }
               },
-              "required": [
-                "kind"
-              ]
+              "required": ["kind"]
             },
             "then": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "id",
-                "kind",
-                "order"
-              ],
+              "required": ["id", "kind", "order"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -499,12 +431,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "order",
-          "title",
-          "plugins"
-        ],
+        "required": ["id", "order", "title", "plugins"],
         "properties": {
           "id": {
             "type": "string",
@@ -538,9 +465,7 @@
   "$defs": {
     "text24": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -553,9 +478,7 @@
     },
     "text40": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -568,9 +491,7 @@
     },
     "text60": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -583,9 +504,7 @@
     },
     "text80": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -598,9 +517,7 @@
     },
     "text120": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -613,9 +530,7 @@
     },
     "text160": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -628,9 +543,7 @@
     },
     "text250": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -643,9 +556,7 @@
     },
     "text300": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -658,9 +569,7 @@
     },
     "text2000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -673,9 +582,7 @@
     },
     "text6000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -691,11 +598,7 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {
-        "enum": [
-          "macos",
-          "windows",
-          "linux"
-        ]
+        "enum": ["macos", "windows", "linux"]
       }
     },
     "url": {
@@ -706,13 +609,7 @@
     "asset": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "sha256",
-        "length",
-        "format",
-        "width",
-        "height"
-      ],
+      "required": ["sha256", "length", "format", "width", "height"],
       "properties": {
         "sha256": {
           "type": "string",
@@ -724,11 +621,7 @@
           "maximum": 1048576
         },
         "format": {
-          "enum": [
-            "png",
-            "webp",
-            "jpg"
-          ]
+          "enum": ["png", "webp", "jpg"]
         },
         "width": {
           "type": "integer",
@@ -745,9 +638,7 @@
     "art": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "asset"
-      ],
+      "required": ["asset"],
       "properties": {
         "asset": {
           "$ref": "#/$defs/asset"

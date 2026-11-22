@@ -45,11 +45,7 @@
     "index": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "path",
-        "sha256",
-        "length"
-      ],
+      "required": ["path", "sha256", "length"],
       "properties": {
         "path": {
           "type": "string",
@@ -71,10 +67,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "ref"
-        ],
+        "required": ["id", "ref"],
         "properties": {
           "id": {
             "type": "string",
@@ -85,11 +78,7 @@
           "ref": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "path",
-              "sha256",
-              "length"
-            ],
+            "required": ["path", "sha256", "length"],
             "properties": {
               "path": {
                 "type": "string",
@@ -112,11 +101,7 @@
     "editorial": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "path",
-        "sha256",
-        "length"
-      ],
+      "required": ["path", "sha256", "length"],
       "properties": {
         "path": {
           "type": "string",

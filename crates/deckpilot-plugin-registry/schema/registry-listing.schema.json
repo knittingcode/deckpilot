@@ -5,11 +5,7 @@
   "description": "Storefront design §3.3. Built by CI from registry/plugins/<id>/listing.json, content-addressed and pinned by storefront/<seq>.json (not signed itself). Media files are referenced by sha256 and served at media/<sha256>.<format>. At most 64 KiB. Clients ignore unknown fields.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "_type",
-    "listing_version",
-    "id"
-  ],
+  "required": ["_type", "listing_version", "id"],
   "properties": {
     "_type": {
       "const": "deckpilot-registry-listing"
@@ -35,10 +31,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "title",
-          "text"
-        ],
+        "required": ["title", "text"],
         "properties": {
           "title": {
             "$ref": "#/$defs/text40"
@@ -58,10 +51,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "asset",
-          "alt"
-        ],
+        "required": ["asset", "alt"],
         "properties": {
           "alt": {
             "$ref": "#/$defs/text250"
@@ -81,10 +71,7 @@
     "promo_art": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "asset",
-        "alt"
-      ],
+      "required": ["asset", "alt"],
       "properties": {
         "asset": {
           "$ref": "#/$defs/asset"
@@ -122,9 +109,7 @@
   "$defs": {
     "text24": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -137,9 +122,7 @@
     },
     "text40": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -152,9 +135,7 @@
     },
     "text60": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -167,9 +148,7 @@
     },
     "text80": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -182,9 +161,7 @@
     },
     "text120": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -197,9 +174,7 @@
     },
     "text160": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -212,9 +187,7 @@
     },
     "text250": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -227,9 +200,7 @@
     },
     "text300": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -242,9 +213,7 @@
     },
     "text2000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -257,9 +226,7 @@
     },
     "text6000": {
       "type": "object",
-      "required": [
-        "en"
-      ],
+      "required": ["en"],
       "minProperties": 1,
       "propertyNames": {
         "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
@@ -275,11 +242,7 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {
-        "enum": [
-          "macos",
-          "windows",
-          "linux"
-        ]
+        "enum": ["macos", "windows", "linux"]
       }
     },
     "url": {
@@ -290,13 +253,7 @@
     "asset": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "sha256",
-        "length",
-        "format",
-        "width",
-        "height"
-      ],
+      "required": ["sha256", "length", "format", "width", "height"],
       "properties": {
         "sha256": {
           "type": "string",
@@ -308,11 +265,7 @@
           "maximum": 1048576
         },
         "format": {
-          "enum": [
-            "png",
-            "webp",
-            "jpg"
-          ]
+          "enum": ["png", "webp", "jpg"]
         },
         "width": {
           "type": "integer",
@@ -329,9 +282,7 @@
     "art": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "asset"
-      ],
+      "required": ["asset"],
       "properties": {
         "asset": {
           "$ref": "#/$defs/asset"
