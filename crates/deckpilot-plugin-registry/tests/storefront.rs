@@ -2717,3 +2717,54 @@ fn linked_sources_are_refused() {
             .contains("not a regular file")
     );
 }
+
+/// Every invisible or format code point storefront text refuses, written
+/// out here (not taken from the crate) so the set cannot shrink unnoticed;
+/// the same set as the registry repository's submission checker.
+#[test]
+fn every_invisible_and_format_code_point_is_refused() {
+    let ranges: &[(u32, u32, &str)] = &[
+        (0x00AD, 0x00AD, "soft hyphen"),
+        (0x034F, 0x034F, "combining grapheme joiner"),
+        (0x061C, 0x061C, "Arabic letter mark"),
+        (0x115F, 0x1160, "Hangul choseong and jungseong fillers"),
+        (0x17B4, 0x17B5, "Khmer inherent vowels"),
+        (0x180E, 0x180E, "Mongolian vowel separator"),
+        (0x200B, 0x200D, "zero-width space, non-joiner, joiner"),
+        (0x200E, 0x200F, "LRM, RLM"),
+        (0x2028, 0x2029, "line and paragraph separators"),
+        (0x202A, 0x202E, "bidi embeddings and overrides"),
+        (0x2060, 0x2064, "word joiner and invisible operators"),
+        (0x2066, 0x2069, "bidi isolates"),
+        (0x206A, 0x206F, "deprecated format characters"),
+        (0x3164, 0x3164, "Hangul filler"),
+        (0xFE00, 0xFE0F, "variation selectors"),
+        (0xFEFF, 0xFEFF, "zero-width no-break space"),
+        (0xFFA0, 0xFFA0, "halfwidth Hangul filler"),
+        (0xFFF9, 0xFFFB, "interlinear annotation"),
+        (0x1BCA0, 0x1BCA3, "shorthand format controls"),
+        (0x1D173, 0x1D17A, "musical symbol formatting"),
+        (0xE0000, 0xE007F, "tag characters"),
+        (0xE0100, 0xE01EF, "variation selectors supplement"),
+    ];
+    let mut checked = 0;
+    for &(first, last, what) in ranges {
+        for code in first..=last {
+            let Some(c) = char::from_u32(code) else {
+                continue;
+            };
+            checked += 1;
+            for strictness in [Strictness::Client, Strictness::Publish] {
+                for multiline in [false, true] {
+                    let text = format!("a{c}b");
+                    assert!(
+                        check_text("t", &text, 1, 10, multiline, strictness).is_err(),
+                        "U+{code:04X} ({what})"
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 437);
+    assert!(check_text("t", "żółć 🙂", 1, 10, false, Strictness::Publish).is_ok());
+}

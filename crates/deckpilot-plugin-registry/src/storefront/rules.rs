@@ -44,23 +44,71 @@ pub fn is_language_tag(tag: &str) -> bool {
 }
 
 /// Characters refused in any storefront text: controls (except `\n` where
-/// line breaks are allowed), bidi overrides and isolates, directional
-/// marks, and zero-width characters.
+/// line breaks are allowed), bidi controls and marks, line and paragraph
+/// separators, and invisible or format characters that can hide or
+/// disguise text: zero-width characters, the soft hyphen, the combining
+/// grapheme joiner, Hangul fillers, variation selectors, tag characters,
+/// deprecated format characters, interlinear annotation characters,
+/// invisible Khmer vowels, shorthand format controls and musical symbol
+/// formatting characters. Kept equal to the checker of the registry
+/// repository (`tools/check-submission.py`).
 fn refused_char(c: char, multiline: bool) -> Option<&'static str> {
     match c {
         '\n' if multiline => None,
-        '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' => {
-            Some("a bidirectional control")
-        }
-        '\u{061C}' => Some("a bidirectional control"),
+        '\u{202A}'..='\u{202E}'
+        | '\u{2066}'..='\u{2069}'
+        | '\u{200E}'
+        | '\u{200F}'
+        | '\u{061C}' => Some("a bidirectional control"),
         '\u{2028}' | '\u{2029}' => Some("a line or paragraph separator"),
-        '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{180E}' => {
-            Some("a zero-width character")
-        }
+        '\u{200B}'..='\u{200D}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{FEFF}'
+        | '\u{180E}'
+        | '\u{00AD}'
+        | '\u{034F}'
+        | '\u{115F}'
+        | '\u{1160}'
+        | '\u{3164}'
+        | '\u{FFA0}'
+        | '\u{17B4}'
+        | '\u{17B5}' => Some("a zero-width or invisible character"),
+        '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}' => Some("a variation selector"),
+        '\u{E0000}'..='\u{E007F}' => Some("a tag character"),
+        '\u{206A}'..='\u{206F}'
+        | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{1BCA0}'..='\u{1BCA3}'
+        | '\u{1D173}'..='\u{1D17A}' => Some("an invisible format character"),
         c if c.is_control() => Some("a control character"),
         _ => None,
     }
 }
+
+/// Every code point [`refused_char`] refuses besides controls, for tests
+/// and for parity with the registry repository's checker.
+pub const REFUSED_RANGES: &[(u32, u32)] = &[
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180E, 0x180E),
+    (0x200B, 0x200F),
+    (0x2028, 0x2029),
+    (0x202A, 0x202E),
+    (0x2060, 0x2064),
+    (0x2066, 0x2069),
+    (0x206A, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF9, 0xFFFB),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE007F),
+    (0xE0100, 0xE01EF),
+];
 
 #[cfg(feature = "publish")]
 fn is_nfc(text: &str) -> bool {
@@ -374,6 +422,49 @@ mod tests {
         for bad in ["", "EN", "e", "english", "en_", "en-", "en--US", "en US"] {
             assert!(!is_language_tag(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn every_listed_code_point_is_refused() {
+        let mut count = 0;
+        for &(first, last) in REFUSED_RANGES {
+            for code in first..=last {
+                let Some(c) = char::from_u32(code) else {
+                    continue;
+                };
+                count += 1;
+                for multiline in [false, true] {
+                    assert!(refused_char(c, multiline).is_some(), "U+{code:04X}");
+                    let text = format!("a{c}b");
+                    assert!(
+                        check_text("t", &text, 1, 10, multiline, Strictness::Client).is_err(),
+                        "U+{code:04X}"
+                    );
+                }
+            }
+        }
+        // 1 + 1 + 1 + 2 + 2 + 1 + 5 + 2 + 5 + 5 + 4 + 6 + 1 + 16 + 1 + 1 + 3
+        // + 4 + 8 + 128 + 240
+        assert_eq!(count, 437);
+        // Neighbours and ordinary text stay allowed.
+        for c in [
+            'a',
+            'ż',
+            'é',
+            '\u{2065}',
+            '\u{2070}',
+            '\u{FE10}',
+            '\u{1D172}',
+            '\u{1D17B}',
+            '\u{E0080}',
+            '\u{1F600}',
+            '\u{17B6}',
+            ' ',
+        ] {
+            assert_eq!(refused_char(c, false), None, "U+{:04X}", c as u32);
+        }
+        assert_eq!(refused_char('\n', true), None);
+        assert!(refused_char('\n', false).is_some());
     }
 
     #[test]
