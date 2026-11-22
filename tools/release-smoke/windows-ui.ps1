@@ -693,15 +693,28 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
       $modelName = Ui-Name $model
       $menuShot = Ui-Shot 'device-menu'
       [void](Ui-Invoke $model)
-      # A new profile has no layout for the model: the editor offers "New
-      # layout" (layout-designer.tsx); create one as a user would.
+      # A new profile has no layout for the model: create one as a user would
+      # (pages/layout-designer.tsx). Up to 0.9.x the empty state has its own
+      # "New layout" button; from 0.10.0 (#373) it points to "New layout..." in
+      # the toolbar's layout menu (layout-editor/layout-management.tsx), whose
+      # trigger is "Choose a layout" while the model has none.
       $layout = 'a layout was there'
-      $ready = Ui-Until "the device canvas or 'New layout'" {
+      $ready = Ui-Until "the device canvas or 'No layout for ...'" {
         if (Ui-All $main { (Ui-Name $_) -like '* controls' -and (Ui-Type $_) -ne 'Button' } | Select-Object -First 1) { return 'canvas' }
         if (Ui-All $main { (Ui-Name $_) -like 'No layout for *' } | Select-Object -First 1) { return 'empty' }
       } $script:UiLong
       if ($ready -eq 'empty') {
-        [void](Ui-Invoke (Ui-Button $main 'New layout'))
+        $own = Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'New layout' } | Select-Object -First 1
+        if ($own) {
+          [void](Ui-Invoke $own)
+          $opened = "the empty state's New layout"
+        } else {
+          $trigger = Ui-Find $main "the layout menu ('Choose a layout')" { (Ui-Type $_) -eq 'Button' -and ((Ui-Name $_) -eq 'Choose a layout' -or (Ui-Name $_) -like 'Layout:*') -and $_.Current.IsEnabled }
+          [void](Ui-Click $main $trigger)
+          $item = Ui-Find $main "menu item 'New layout...'" { (Ui-Type $_) -eq 'MenuItem' -and (Ui-Name $_) -like 'New layout*' -and $_.Current.IsEnabled }
+          $opened = "the toolbar's '$(Ui-Name $trigger)' menu > '$(Ui-Name $item)'"
+          [void](Ui-Invoke $item)
+        }
         [void](Ui-Find $main "the dialog 'New layout for ...'" { (Ui-Name $_) -like 'New layout for *' })
         $field = Ui-Find $main "the layout's Name field" { (Ui-Type $_) -eq 'Edit' -and (Ui-Name $_) -eq 'Name' }
         # Typed, so that the page's input handlers see it.
@@ -711,17 +724,25 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
         [System.Windows.Forms.SendKeys]::SendWait($script:LayoutName)
         Start-Sleep -Milliseconds 500
         [void](Ui-Invoke (Ui-Button $main 'Create'))
-        $layout = "created layout '$($script:LayoutName)' with New layout > Create"
+        $layout = "created layout '$($script:LayoutName)' with $opened > Create"
       }
       $canvas = Ui-Find $main 'the device canvas' { (Ui-Name $_) -like '* controls' -and (Ui-Type $_) -ne 'Button' } $script:UiLong
       $library = Ui-Find $main 'the Action Library' { (Ui-Name $_) -eq 'Action Library' -and (Ui-Type $_) -ne 'Button' }
       # Up to 0.8.1 the library collapses and resizes; later it is fixed.
       $libraryControls = @(Ui-Texts $main | Where-Object { $_ -in 'Collapse the library', 'Resize the library', 'Show the library', 'Close the library' } | Sort-Object -Unique)
       $libraryKind = if ($libraryControls) { "with $($libraryControls -join ', ')" } else { 'fixed (no collapse or resize control)' }
-      [void](Ui-Find $main 'the inspector' { (Ui-Name $_) -like 'Select a key, dial or touch zone*' })
+      # Nothing selected: up to 0.9.x the inspector shows "Select a key, dial
+      # or touch zone..."; from 0.10.0 it is an empty region "Inspector" that
+      # becomes "Key 1 settings" (layout-editor/inspector.tsx).
+      $inspector = Ui-Find $main 'the inspector' { (Ui-Name $_) -like 'Select a key, dial or touch zone*' -or ((Ui-Name $_) -eq 'Inspector' -and (Ui-Type $_) -notin 'Button', 'MenuItem', 'ToolTip') }
+      $oldInspector = (Ui-Name $inspector) -like 'Select a key, dial or touch zone*'
       $key = Ui-Find $main "'Key 1'" { (Ui-Name $_) -eq 'Key 1' -and (Ui-Type $_) -ne 'Text' }
       $how = Ui-Click $main $key
-      [void](Ui-Until "the inspector of Key 1" { -not (Ui-All $main { (Ui-Name $_) -like 'Select a key, dial or touch zone*' } | Select-Object -First 1) })
+      if ($oldInspector) {
+        [void](Ui-Until "the inspector of Key 1" { -not (Ui-All $main { (Ui-Name $_) -like 'Select a key, dial or touch zone*' } | Select-Object -First 1) })
+      } else {
+        [void](Ui-Find $main "the inspector of Key 1 ('Key 1 settings')" { (Ui-Name $_) -eq 'Key 1 settings' })
+      }
       $device = Ui-Find $main 'the device selector' { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -like 'Device:*' }
       $state.editorRect = Ui-Rect $main
       "profile selector '$(Ui-Name $profile)'; device menu: $($modelNames -join ' | '); chose '$modelName' -> '$(Ui-Name $device)'; $layout; canvas '$(Ui-Name $canvas)'; library '$(Ui-Name $library)' ($(Ui-Type $library), $libraryKind); Key 1 selected ($how), the inspector shows it; $menuShot; $(Ui-Shot 'editor')"

@@ -28,9 +28,6 @@ TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 REPOSITORY="${REPOSITORY:-knittingcode/deckpilot}"
 # shellcheck disable=SC2034 # used by the scripts that source this file
 APP_IDENTIFIER="io.github.knittingcode.deckpilot"
-# The first-party plugins every release bundles
-# (plugins/first-party/bundled.json).
-BUNDLED_IDS="deckpilot.github deckpilot.gitlab deckpilot.jira deckpilot.notifications"
 # The production registry's root role (public keys only).
 ROOTS_URL="https://raw.githubusercontent.com/knittingcode/deckpilot-plugins/main/keys/roots.json"
 
@@ -102,21 +99,68 @@ check_updater_key() {
   fi
 }
 
+# release_file <path>: a file of the source tree at the tested tag ($TAG),
+# fetched once.
+release_file() {
+  local path="$1" file
+  [ -n "${TAG:-}" ] || return 1
+  file="$SMOKE_OUT/.release-$TAG-$(printf '%s' "$path" | tr '/' '_')"
+  if [ ! -s "$file" ]; then
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$file" \
+      "https://raw.githubusercontent.com/$REPOSITORY/refs/tags/$TAG/$path" \
+      || gh api -H 'Accept: application/vnd.github.raw' "repos/$REPOSITORY/contents/$path?ref=$TAG" > "$file" \
+      || { rm -f "$file"; return 1; }
+  fi
+  cat "$file"
+}
+
+# expected_bundled: the first-party plugins the release at $TAG bundles, by
+# its own plugins/first-party/bundled.json, one per line: "id@version" where
+# the entry names both (0.12.0 on, the plugins are built elsewhere), else
+# "id" from the manifest of the entry's source directory (`path`, up to
+# 0.11.0).
+expected_bundled() {
+  local list entries entry id
+  list=$(release_file plugins/first-party/bundled.json) || return 1
+  entries=$(jq -r '.plugins[] | if .id then "\(.id)@\(.version // "")" else "path:\(.path)" end' <<< "$list" | tr -d '\r') || return 1
+  [ -n "$entries" ] || return 1
+  while IFS= read -r entry; do
+    case "$entry" in
+      path:*)
+        id=$(release_file "plugins/first-party/${entry#path:}/manifest.json" | jq -r '.id // empty' | tr -d '\r')
+        [ -n "$id" ] || return 1
+        echo "$id" ;;
+      *@) echo "${entry%@}" ;;
+      *) echo "$entry" ;;
+    esac
+  done <<< "$entries"
+}
+
 # check_bundled <step> <bundled dir> <agent> [--without-running]: the
 # release's own check (tools/release-pipeline/check-bundled-plugins.sh):
 # pins.json, exactly the pinned files with their digests, and the pins
-# compiled into the agent; plus the expected set of plugins.
+# compiled into the agent; plus the set of plugins (and their versions,
+# where it names them) that plugins/first-party/bundled.json of the tested
+# tag lists.
 check_bundled() {
-  local step="$1" dir="$2" agent="$3" mode="${4-}" out ids
+  local step="$1" dir="$2" agent="$3" mode="${4-}" out ids expected
   if [ ! -f "$dir/pins.json" ]; then record "$step" fail "$dir/pins.json is missing"; return; fi
+  expected=$(expected_bundled) || {
+    record "$step" error "cannot read plugins/first-party/bundled.json (or a listed plugin's manifest.json) of ${TAG:-an unset TAG} in $REPOSITORY"
+    return
+  }
   ids=$(jq -r '.plugins[] | "\(.id)@\(.version)"' "$dir/pins.json" | tr -d '\r' | LC_ALL=C sort | tr '\n' ' ')
   local got want
   got=$(jq -r '.plugins[].id' "$dir/pins.json" | tr -d '\r' | LC_ALL=C sort | tr '\n' ' ')
-  want=$(printf '%s\n' "$BUNDLED_IDS" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ')
-  if [ "$got" != "$want" ]; then record "$step" fail "bundled plugins are '$got', expected '$want'"; return; fi
+  want=$(printf '%s\n' "$expected" | sed 's/@.*//' | LC_ALL=C sort | tr '\n' ' ')
+  if [ "$got" != "$want" ]; then record "$step" fail "bundled plugins are '$got', $TAG's plugins/first-party/bundled.json lists '$want'"; return; fi
+  if ! grep -q -v '@' <<< "$expected"; then
+    want=$(printf '%s\n' "$expected" | LC_ALL=C sort | tr '\n' ' ')
+    if [ "$ids" != "$want" ]; then record "$step" fail "bundled plugin versions are '$ids', $TAG's plugins/first-party/bundled.json lists '$want'"; return; fi
+  fi
   # shellcheck disable=SC2086 # $mode is empty or one flag
   if out=$("$SMOKE_ROOT/tools/release-pipeline/check-bundled-plugins.sh" "$dir" "$agent" $mode 2>&1); then
-    record "$step" pass "$ids; $(printf '%s' "$out" | tail -n1)"
+    record "$step" pass "$ids(as $TAG's bundled.json lists); $(printf '%s' "$out" | tail -n1)"
   else
     record "$step" fail "$(printf '%s' "$out" | tail -n3)"
   fi
