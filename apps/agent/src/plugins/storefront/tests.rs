@@ -407,8 +407,9 @@ impl Agent {
     fn refresh(&mut self, source: &HttpsSource, hour: i64) -> Refresh {
         let refresh = self.client.refresh(source, at(hour)).unwrap();
         self.storefronts.sync(&mut self.client, source, &refresh);
+        let seq = self.seq();
         self.storefronts
-            .prefetch(source, MAX_PREFETCH, PREFETCH_BUDGET);
+            .prefetch(source, seq, MAX_PREFETCH, PREFETCH_BUDGET);
         refresh
     }
 
@@ -1156,8 +1157,21 @@ fn export_compatibility_site() {
         serde_json::to_vec_pretty(&envelope).unwrap(),
     )
     .unwrap();
-    std::fs::remove_file(site.site().join("storefront/1.json.minisig")).unwrap();
-    site.run(&["storefront", "sign", "--key", &site.key("index.key")]);
+    // `storefront sign` signs only what `build` writes; a later CI's
+    // section kind is signed by hand.
+    let key = deckpilot_plugin_registry::publish::SigningKey::load(
+        Path::new(&site.key("index.key")),
+        None,
+    )
+    .unwrap();
+    let envelope_bytes = std::fs::read(site.site().join("storefront/1.json")).unwrap();
+    let signature = key
+        .sign(
+            &envelope_bytes,
+            &deckpilot_plugin_registry::sig::storefront_comment(1, 1),
+        )
+        .unwrap();
+    std::fs::write(site.site().join("storefront/1.json.minisig"), signature).unwrap();
     site.run(&["verify-site", "--require-storefront", "--require-packages"]);
     let copy = |from: &Path, to: &Path| {
         fn walk(from: &Path, to: &Path) {
@@ -1231,7 +1245,7 @@ fn a_refresh_never_waits_for_images() {
     let started = std::time::Instant::now();
     agent
         .storefronts
-        .prefetch(&slow, MAX_PREFETCH, std::time::Duration::ZERO);
+        .prefetch(&slow, Some(1), MAX_PREFETCH, std::time::Duration::ZERO);
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
     assert_eq!(agent.storefronts.queued(), 0);
     assert_eq!(agent.cached_media(), Vec::<String>::new());
@@ -1239,7 +1253,9 @@ fn a_refresh_never_waits_for_images() {
     let refresh = other.client.refresh(&slow, at(1)).unwrap();
     other.storefronts.sync(&mut other.client, &slow, &refresh);
     assert_eq!(other.storefronts.queued(), 1);
-    other.storefronts.prefetch(&slow, 0, PREFETCH_BUDGET);
+    other
+        .storefronts
+        .prefetch(&slow, Some(1), 0, PREFETCH_BUDGET);
     assert_eq!(other.storefronts.queued(), 0);
     assert_eq!(other.cached_media(), Vec::<String>::new());
     // Within both bounds it is fetched ahead.
@@ -1248,7 +1264,7 @@ fn a_refresh_never_waits_for_images() {
     third.storefronts.sync(&mut third.client, &slow, &refresh);
     third
         .storefronts
-        .prefetch(&slow, MAX_PREFETCH, PREFETCH_BUDGET);
+        .prefetch(&slow, Some(1), MAX_PREFETCH, PREFETCH_BUDGET);
     assert_eq!(third.cached_media(), vec![site.icon().sha256.to_string()]);
     // On demand it is fetched all the same.
     let icon = site.icon().sha256.to_string();
@@ -1280,4 +1296,71 @@ fn only_the_storefront_of_the_verified_seq_is_served() {
         .media_chunk(&source, agent.seq(), &icon, 0)
         .unwrap_err();
     assert_eq!(error.reason.as_deref(), Some(reason::UNKNOWN_MEDIA));
+}
+
+#[test]
+fn a_leftover_prefetch_queue_fetches_nothing_for_another_seq() {
+    let site = Site::new("leftover");
+    let server = HttpsServer::start(&site.work());
+    let source = source(&server);
+    let mut agent = Agent::new(&site);
+    let refresh = agent.client.refresh(&source, at(1)).unwrap();
+    agent.storefronts.sync(&mut agent.client, &source, &refresh);
+    assert_eq!(agent.storefronts.queued(), 1);
+    // The verified seq moved on (no sync yet): the queue is for seq 1 and
+    // fetches nothing.
+    agent
+        .storefronts
+        .prefetch(&source, Some(2), MAX_PREFETCH, PREFETCH_BUDGET);
+    assert_eq!(agent.storefronts.queued(), 0);
+    assert_eq!(agent.cached_media(), Vec::<String>::new());
+    assert_eq!(fetches(&server, "/site/v1/media/"), 0);
+    // A storefront that goes (refused at the next seq) drops the queue.
+    let mut fresh = Agent::open(&site, site.scratch.0.join("fresh-state"));
+    let first = fresh.client.refresh(&source, at(1)).unwrap();
+    fresh.storefronts.sync(&mut fresh.client, &source, &first);
+    assert_eq!(fresh.storefronts.queued(), 1);
+    site.add("acme.beta", "0.2.0");
+    site.publish(2);
+    let index_signature = std::fs::read(site.site().join("index/2.json.minisig")).unwrap();
+    std::fs::write(
+        site.site().join("storefront/2.json.minisig"),
+        index_signature,
+    )
+    .unwrap();
+    let second = fresh.client.refresh(&source, at(3)).unwrap();
+    assert_eq!(second, Refresh::Updated { seq: 2 });
+    fresh.storefronts.sync(&mut fresh.client, &source, &second);
+    assert!(fresh.storefronts.current().is_none());
+    assert_eq!(fresh.storefronts.queued(), 0);
+}
+
+#[test]
+fn each_prefetch_fetch_has_its_own_short_timeout() {
+    let site = Site::new("prefetch-timeout");
+    let server = HttpsServer::start(&site.work());
+    let source = source(&server);
+    let mut agent = Agent::new(&site);
+    let refresh = agent.client.refresh(&source, at(1)).unwrap();
+    agent.storefronts.sync(&mut agent.client, &source, &refresh);
+    let icon = site.icon();
+    server.route(
+        &format!("/site/v1/{}", media_path(&icon)),
+        Route::Delayed(std::time::Duration::from_secs(4)),
+    );
+    // The prefetch gives up after its own timeout, well before the image
+    // would arrive; the budget (5 s) alone would not have stopped it.
+    let timed = source.with_timeout(std::time::Duration::from_secs(1));
+    let started = std::time::Instant::now();
+    let seq = agent.seq();
+    agent
+        .storefronts
+        .prefetch(&timed, seq, MAX_PREFETCH, PREFETCH_BUDGET);
+    let elapsed = started.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(3), "{elapsed:?}");
+    assert_eq!(agent.cached_media(), Vec::<String>::new());
+    // On demand, with the document timeout, the slow image still arrives.
+    let bytes = agent.media(&source, &icon.sha256.to_string()).unwrap();
+    assert_eq!(sha256(&bytes), icon.sha256);
+    assert!(PREFETCH_FETCH_TIMEOUT < std::time::Duration::from_secs(30));
 }

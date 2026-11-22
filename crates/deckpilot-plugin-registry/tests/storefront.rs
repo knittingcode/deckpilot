@@ -2562,11 +2562,124 @@ fn a_site_storefront_with_an_unknown_section_kind_verifies() {
     let envelope = serde_json::to_vec_pretty(&storefront).unwrap();
     std::fs::write(fx.site().join("storefront/1.json"), &envelope).unwrap();
     std::fs::remove_file(fx.site().join("storefront/1.json.minisig")).unwrap();
-    fx.run(&["storefront", "sign", "--key", &fx.key("index.key")]);
+    // Our own tool never signs content its rules did not check …
+    let error = fx.fails(&["storefront", "sign", "--key", &fx.key("index.key")]);
+    assert!(
+        error.contains("not exactly what `storefront build` writes"),
+        "{error}"
+    );
+    assert!(!fx.site().join("storefront/1.json.minisig").exists());
+    // … so a later CI's document is signed by hand here.
+    sign_by_hand(&fx, &envelope);
     let out = fx.verify(&["--require-storefront"], t0()).unwrap();
     assert!(
         out.contains("3 section(s) (1 of an unknown kind skipped)"),
         "{out}"
+    );
+}
+
+fn sign_by_hand(fx: &Fixture, envelope: &[u8]) {
+    let key = publish::SigningKey::load(Path::new(&fx.key("index.key")), None).unwrap();
+    let signature = key.sign(envelope, &storefront_comment(1, 1)).unwrap();
+    std::fs::write(fx.site().join("storefront/1.json.minisig"), signature).unwrap();
+}
+
+/// `storefront sign` signs pinned documents only if they are byte for byte
+/// what `build` writes for their typed content.
+#[test]
+fn sign_refuses_documents_that_build_would_not_write() {
+    // Each case: a mutation of one pinned document, re-addressed in the
+    // envelope (so lengths and hashes match).
+    type Mutate = fn(&mut Value);
+    let cases: [(&str, bool, Mutate); 4] = [
+        ("an unknown listing field", true, |v| {
+            v["featured"] = json!(true);
+        }),
+        ("an unknown asset field in a listing", true, |v| {
+            v["icon"]["url"] = json!("https://evil.example/x.png");
+        }),
+        ("an unknown editorial field", false, |v| {
+            v["promoted"] = json!(["acme.alpha"]);
+        }),
+        ("an unknown section kind", false, |v| {
+            v["sections"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "id": "x", "kind": "hologram", "order": 0 }));
+        }),
+    ];
+    for (name, listing, mutate) in cases {
+        let fx = base_fixture();
+        with_sources(&fx);
+        fx.build_and_sign_index(t0());
+        fx.run(&["storefront", "build", "--now", &time(t0())]);
+        let mut storefront: Value =
+            serde_json::from_slice(&fx.read_site("storefront/1.json")).unwrap();
+        let reference = if listing {
+            storefront["listings"][0]["ref"].clone()
+        } else {
+            storefront["editorial"].clone()
+        };
+        let path = reference["path"].as_str().unwrap().to_owned();
+        let mut doc: Value = serde_json::from_slice(&fx.read_site(&path)).unwrap();
+        mutate(&mut doc);
+        let bytes = serde_json::to_vec_pretty(&doc).unwrap();
+        let digest = sha256(&bytes);
+        let new_path = if listing {
+            format!("storefront/listings/acme.alpha/{digest}.json")
+        } else {
+            format!("storefront/editorial/{digest}.json")
+        };
+        std::fs::write(fx.site().join(&new_path), &bytes).unwrap();
+        let new_ref =
+            json!({ "path": new_path, "sha256": digest.to_string(), "length": bytes.len() });
+        if listing {
+            storefront["listings"][0]["ref"] = new_ref;
+        } else {
+            storefront["editorial"] = new_ref;
+        }
+        std::fs::write(
+            fx.site().join("storefront/1.json"),
+            serde_json::to_vec_pretty(&storefront).unwrap(),
+        )
+        .unwrap();
+        let error = fx.fails(&["storefront", "sign", "--key", &fx.key("index.key")]);
+        assert!(
+            error.contains("not exactly what `storefront build` writes")
+                || error.contains("unknown field"),
+            "{name}: {error}"
+        );
+        assert!(
+            !fx.site().join("storefront/1.json.minisig").exists(),
+            "{name}"
+        );
+    }
+    // A re-serialized but reformatted (same content) document is refused too.
+    let fx = base_fixture();
+    with_sources(&fx);
+    fx.build_and_sign_index(t0());
+    fx.run(&["storefront", "build", "--now", &time(t0())]);
+    let mut storefront: Value = serde_json::from_slice(&fx.read_site("storefront/1.json")).unwrap();
+    let path = storefront["listings"][0]["ref"]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let compact =
+        serde_json::to_vec(&serde_json::from_slice::<Value>(&fx.read_site(&path)).unwrap())
+            .unwrap();
+    let digest = sha256(&compact);
+    let new_path = format!("storefront/listings/acme.alpha/{digest}.json");
+    std::fs::write(fx.site().join(&new_path), &compact).unwrap();
+    storefront["listings"][0]["ref"] =
+        json!({ "path": new_path, "sha256": digest.to_string(), "length": compact.len() });
+    std::fs::write(
+        fx.site().join("storefront/1.json"),
+        serde_json::to_vec_pretty(&storefront).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        fx.fails(&["storefront", "sign", "--key", &fx.key("index.key")])
+            .contains("not exactly")
     );
 }
 
@@ -2658,10 +2771,14 @@ fn sign_checks_the_pinned_documents_and_images_on_disk() {
         .as_str()
         .unwrap()
         .to_owned();
-    let mut listing: Value = serde_json::from_slice(&fx.read_site(&path)).unwrap();
-    listing["icon"]["width"] = json!(512);
-    listing["icon"]["height"] = json!(512);
-    let bytes = serde_json::to_vec_pretty(&listing).unwrap();
+    // Written exactly as `build` would write such a listing, so only the
+    // image check can catch it.
+    let mut listing: ListingDoc = serde_json::from_slice(&fx.read_site(&path)).unwrap();
+    let icon = listing.icon.as_mut().unwrap();
+    icon.width = 512;
+    icon.height = 512;
+    let mut bytes = serde_json::to_vec_pretty(&listing).unwrap();
+    bytes.push(b'\n');
     let digest = sha256(&bytes);
     let new_path = format!("storefront/listings/acme.alpha/{digest}.json");
     std::fs::write(fx.site().join(&new_path), &bytes).unwrap();

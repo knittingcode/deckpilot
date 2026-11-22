@@ -309,11 +309,21 @@ impl Registry {
     /// Fetches the icons a new storefront places, within the prefetch
     /// bounds; called once an answer was sent.
     pub fn prefetch_storefront_icons(&mut self) {
-        self.storefront.prefetch(
-            self.source.documents(),
+        let seq = self.verified_seq();
+        let timeout = super::storefront::PREFETCH_FETCH_TIMEOUT;
+        let (max, budget) = (
             super::storefront::MAX_PREFETCH,
             super::storefront::PREFETCH_BUDGET,
         );
+        match &self.source {
+            // Each fetch bounded by its own short timeout, so one slow
+            // image cannot hold the plugin worker for long.
+            Source::Https(https) => {
+                let timed = https.with_timeout(timeout);
+                self.storefront.prefetch(&timed, seq, max, budget);
+            }
+            Source::Directory { site, .. } => self.storefront.prefetch(site, seq, max, budget),
+        }
     }
 
     /// Re-reads the registry and verifies it (key sets, timestamp, index).

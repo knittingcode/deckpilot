@@ -36,6 +36,8 @@ pub enum Route {
     CutOff { sent: usize },
     /// These bytes instead of the file.
     Body(Vec<u8>),
+    /// The file, after waiting this long.
+    Delayed(std::time::Duration),
 }
 
 #[derive(Debug, Default)]
@@ -170,6 +172,12 @@ fn serve(
             answer.extend_from_slice(&body[..sent.min(body.len())]);
         }
         Some(Route::Body(body)) => {
+            answer.extend(head(200, Some(body.len()), &[]));
+            answer.extend(body);
+        }
+        Some(Route::Delayed(delay)) => {
+            std::thread::sleep(delay);
+            let body = file.unwrap_or_default();
             answer.extend(head(200, Some(body.len()), &[]));
             answer.extend(body);
         }

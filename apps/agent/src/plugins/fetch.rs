@@ -509,6 +509,46 @@ async fn read_body(mut response: reqwest::Response, limit: u64) -> Result<Vec<u8
     Ok(body)
 }
 
+/// An [`HttpsSource`] whose document fetches each take at most `timeout`
+/// ([`HttpsSource::with_timeout`]).
+pub(super) struct TimedSource<'a> {
+    source: &'a HttpsSource,
+    timeout: Duration,
+}
+
+impl HttpsSource {
+    /// The same source with another (shorter) timeout per document, for
+    /// background work such as the storefront's icon prefetch.
+    pub(super) fn with_timeout(&self, timeout: Duration) -> TimedSource<'_> {
+        TimedSource {
+            source: self,
+            timeout,
+        }
+    }
+
+    fn document(
+        &self,
+        path: &str,
+        max_bytes: usize,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, FetchError> {
+        let relative = plain_path(path)
+            .ok_or_else(|| FetchError::Refused(format!("`{path}` is not a registry path")))?;
+        let url = self
+            .documents
+            .join(relative)
+            .map_err(|e| FetchError::Refused(format!("{path}: {e}")))?;
+        let limit = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+        self.get(&url, limit, Redirects::SameOrigin, timeout)
+    }
+}
+
+impl RegistrySource for TimedSource<'_> {
+    fn fetch(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
+        self.source.document(path, max_bytes, self.timeout)
+    }
+}
+
 impl RegistrySource for HttpsSource {
     fn fetch(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
         let relative = plain_path(path)

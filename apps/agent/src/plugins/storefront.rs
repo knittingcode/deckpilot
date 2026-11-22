@@ -63,6 +63,9 @@ pub(super) const MAX_PREFETCH: usize = 8;
 /// Longest a prefetch may start new fetches for. It runs after the answer
 /// that triggered the refresh was sent, never on its path.
 pub(super) const PREFETCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+/// Longest one prefetch fetch may take, whole (the app's own requests use
+/// the registry's document timeout).
+pub(super) const PREFETCH_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 const STOREFRONT_DIR: &str = "storefront";
 const MEDIA_DIR: &str = "media";
@@ -94,7 +97,9 @@ pub(super) struct Storefronts {
     /// unreachable registry with nothing cached); `None` when one is
     /// shown or none is published.
     problem: Option<String>,
-    /// Icons to fetch ahead once the current request is answered.
+    /// Icons of the current storefront to fetch ahead once the current
+    /// request is answered; emptied whenever the current storefront
+    /// changes or goes.
     prefetch: Vec<AssetRef>,
 }
 
@@ -168,6 +173,13 @@ impl Storefronts {
         self.current.as_ref()
     }
 
+    /// Replaces the current storefront; the prefetch queue, which belongs
+    /// to the old one, is dropped.
+    fn set_current(&mut self, current: Option<Current>) {
+        self.prefetch.clear();
+        self.current = current;
+    }
+
     /// The current storefront only if it is for `seq` (the verified
     /// timestamp's): what is served.
     pub fn current_for(&self, seq: Option<u64>) -> Option<&Current> {
@@ -188,7 +200,7 @@ impl Storefronts {
     /// offline). Every document is verified again.
     pub fn load_cached(&mut self, client: &mut RegistryClient<FileTrustStore>) {
         let Some(seq) = client.state().timestamp.as_ref().map(|t| t.seq) else {
-            self.current = None;
+            self.set_current(None);
             return;
         };
         if self.current.as_ref().is_some_and(|c| c.seq() == seq) {
@@ -199,13 +211,14 @@ impl Storefronts {
             read(&self.cached(&path)),
             read(&self.cached(&sig_name(&path))),
         ) else {
-            self.current = None;
+            self.set_current(None);
             return;
         };
         match client.verify_storefront(&bytes, &signature) {
             Ok(verified) => {
                 note(&verified);
-                self.current = Some(self.documents(client, verified, None));
+                let current = self.documents(client, verified, None);
+                self.set_current(Some(current));
                 self.problem = None;
             }
             Err(e) => self.refuse(&e),
@@ -218,7 +231,7 @@ impl Storefronts {
         } else {
             warn!(error = %e, "the registry storefront was refused");
         }
-        self.current = None;
+        self.set_current(None);
         self.problem = Some(e.to_string());
     }
 
@@ -262,7 +275,7 @@ impl Storefronts {
                     seq,
                     "no storefront is published for this index: catalog only"
                 );
-                self.current = None;
+                self.set_current(None);
                 self.problem = None;
                 self.prune(None);
                 return;
@@ -277,12 +290,12 @@ impl Storefronts {
             }
             (Fetched::Refused(why), _) | (_, Fetched::Refused(why)) => {
                 warn!(seq, %why, "the registry storefront fetch was refused");
-                self.current = None;
+                self.set_current(None);
                 self.problem = Some(format!("the storefront fetch was refused: {why}"));
                 return;
             }
             (_, Fetched::NotFound) => {
-                self.current = None;
+                self.set_current(None);
                 self.problem = Some("the storefront has no signature".into());
                 return;
             }
@@ -308,8 +321,9 @@ impl Storefronts {
         );
         self.problem = None;
         self.prune(Some(&current));
-        self.prefetch = placed_icons(&current);
-        self.current = Some(current);
+        let queue = placed_icons(&current);
+        self.set_current(Some(current));
+        self.prefetch = queue;
     }
 
     /// The listings and editorial document `verified` pins: from the cache
@@ -411,14 +425,18 @@ impl Storefronts {
     /// `max`, and none started once `budget` has passed. Whatever is left
     /// is fetched when the app asks for it. Called after an answer was
     /// sent, never while a refresh answers.
+    /// Only for the storefront of `seq` (the verified timestamp's): a
+    /// queue left over from another one fetches nothing. `source` bounds
+    /// each fetch (the registry passes one with a short timeout).
     pub fn prefetch(
         &mut self,
         source: &dyn RegistrySource,
+        seq: Option<u64>,
         max: usize,
         budget: std::time::Duration,
     ) {
         let queue = std::mem::take(&mut self.prefetch);
-        let Some(current) = &self.current else {
+        let Some(current) = self.current_for(seq) else {
             return;
         };
         let started = std::time::Instant::now();

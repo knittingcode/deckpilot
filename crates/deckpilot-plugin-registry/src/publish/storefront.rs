@@ -877,6 +877,20 @@ pub fn sign(ws: &Workspace, seq: Option<u64>, key: &SigningKey) -> Result<u64> {
     Ok(seq)
 }
 
+/// A pinned document must be byte for byte what `build` writes for its
+/// typed content: anything the typed parse would drop (an unknown field,
+/// a section of an unknown kind) or reorder is refused, so a signature
+/// never covers content the publishing rules did not check.
+fn exactly_as_built(path: &str, on_disk: &[u8], built: &[u8]) -> Result<()> {
+    if on_disk != built {
+        return fail(format!(
+            "{path} is not exactly what `storefront build` writes for its content (an unknown \
+             field or section kind, or hand edits); build the storefront again"
+        ));
+    }
+    Ok(())
+}
+
 /// The documents and images `storefront` pins, as they are on disk.
 fn check_pinned(ws: &Workspace, storefront: &Storefront) -> Result<()> {
     let site = ws.site();
@@ -906,6 +920,7 @@ fn check_pinned(ws: &Workspace, storefront: &Storefront) -> Result<()> {
         listing
             .validate(Strictness::Publish)
             .map_err(|e| PublishError(format!("{}: {e}", entry.reference.path)))?;
+        exactly_as_built(&entry.reference.path, &bytes, &to_json(&listing)?)?;
         assets.extend(listing.assets().into_iter().map(|(_, a)| *a));
     }
     if let Some(reference) = &storefront.editorial {
@@ -914,6 +929,7 @@ fn check_pinned(ws: &Workspace, storefront: &Storefront) -> Result<()> {
             .map_err(|e| PublishError(format!("{}: {e}", reference.path)))?;
         doc.validate(Strictness::Publish)
             .map_err(|e| PublishError(format!("{}: {e}", reference.path)))?;
+        exactly_as_built(&reference.path, &bytes, &to_json(&doc)?)?;
         assets.extend(doc.assets().into_iter().copied());
     }
     let mut seen = BTreeSet::new();
