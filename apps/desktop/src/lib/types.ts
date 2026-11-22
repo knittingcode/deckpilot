@@ -1578,6 +1578,11 @@ export interface ImportSummary {
   variableValues: number
   /** Values that were not imported, and why. */
   skippedValues: string[]
+  /**
+   * The import was committed, but the app could not reload the imported
+   * module settings; they take effect when it starts next.
+   */
+  reloadFailed?: boolean
 }
 
 // Shared variables and references (deckpilot_core::variables). Contract

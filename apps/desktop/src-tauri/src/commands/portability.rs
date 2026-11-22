@@ -26,18 +26,66 @@ use crate::error::{CommandError, CommandResult};
 use crate::state::{APP_VERSION, AppState};
 
 /// The decrypted export between preview and apply.
+///
+/// A preview stays available until an apply of it commits (issue #403): a
+/// failure before the import's transaction commits (the configuration was
+/// locked, a profile is in a work session, the database is busy) leaves it
+/// in place, so the review screen can submit it again. Only one apply of a
+/// preview runs at a time, and once one has committed, the token is used
+/// up — a repeated submission never applies the same preview twice, even
+/// when refreshing the app after the commit fails.
 #[derive(Debug, Default)]
-pub struct PendingImport(Mutex<Option<(u32, Payload)>>);
+pub struct PendingImport {
+    slot: Mutex<Option<Pending>>,
+    /// Where tests make [`apply_import`] fail.
+    #[cfg(test)]
+    fail_at: Mutex<Option<ApplyStep>>,
+}
+
+#[derive(Debug)]
+struct Pending {
+    token: u32,
+    /// `None` while an apply of this preview runs.
+    payload: Option<Payload>,
+}
+
+/// The steps of [`apply_import`] around its commit, where tests make it
+/// fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApplyStep {
+    /// After planning, before the transaction (nothing written).
+    BeforeCommit,
+    /// After the commit, while the app reloads the module settings.
+    AfterCommit,
+}
 
 impl PendingImport {
-    fn take(&self, token: u32) -> Option<Payload> {
-        let mut pending = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        match pending.take() {
-            Some((stored, payload)) if stored == token => Some(payload),
-            other => {
-                *pending = other;
-                None
-            }
+    fn slot(&self) -> std::sync::MutexGuard<'_, Option<Pending>> {
+        self.slot.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Starts applying the preview of `token`: it is taken out of the slot
+    /// (so a second apply of it is refused) until the returned guard either
+    /// [commits](Applying::committed) or is dropped, which puts it back.
+    fn begin(&self, token: u32) -> CommandResult<Applying<'_>> {
+        let mut slot = self.slot();
+        match slot.as_mut() {
+            Some(pending) if pending.token == token => match pending.payload.take() {
+                Some(payload) => Ok(Applying {
+                    pending: self,
+                    token,
+                    payload: Some(payload),
+                }),
+                None => Err(CommandError::invalid(
+                    "importInProgress",
+                    "this import is already being applied",
+                )),
+            },
+            // Used up by a commit, cancelled, or replaced by a newer preview.
+            _ => Err(CommandError::invalid(
+                "previewAgain",
+                "preview the import again",
+            )),
         }
     }
 
@@ -47,12 +95,72 @@ impl PendingImport {
         let mut bytes = [0u8; 4];
         let _ = deckpilot_storage::crypto::random_bytes(&mut bytes);
         let token = u32::from_le_bytes(bytes);
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some((token, payload));
+        *self.slot() = Some(Pending {
+            token,
+            payload: Some(payload),
+        });
         token
     }
 
     fn clear(&self) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self.slot() = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_at(&self, step: Option<ApplyStep>) {
+        *self.fail_at.lock().unwrap_or_else(PoisonError::into_inner) = step;
+    }
+
+    #[cfg_attr(not(test), allow(clippy::unused_self, clippy::unnecessary_wraps))]
+    fn injected(&self, step: ApplyStep) -> CommandResult<()> {
+        #[cfg(test)]
+        if *self.fail_at.lock().unwrap_or_else(PoisonError::into_inner) == Some(step) {
+            return Err(CommandError::Invalid(format!("injected {step:?} failure")));
+        }
+        let _ = step;
+        Ok(())
+    }
+}
+
+/// A preview while it is being applied.
+struct Applying<'a> {
+    pending: &'a PendingImport,
+    token: u32,
+    /// `None` once committed.
+    payload: Option<Payload>,
+}
+
+impl Applying<'_> {
+    fn payload(&self) -> &Payload {
+        self.payload
+            .as_ref()
+            .expect("a preview being applied has its payload")
+    }
+
+    /// The import's transaction committed: the preview is used up.
+    fn committed(mut self) {
+        self.payload = None;
+        let mut slot = self.pending.slot();
+        if slot.as_ref().is_some_and(|p| p.token == self.token) {
+            *slot = None;
+        }
+    }
+}
+
+impl Drop for Applying<'_> {
+    /// Nothing was committed: the preview can be applied again, unless it
+    /// was cancelled or replaced by a newer one meanwhile.
+    fn drop(&mut self) {
+        let Some(payload) = self.payload.take() else {
+            return;
+        };
+        let mut slot = self.pending.slot();
+        if let Some(pending) = slot.as_mut()
+            && pending.token == self.token
+            && pending.payload.is_none()
+        {
+            pending.payload = Some(payload);
+        }
     }
 }
 
@@ -276,7 +384,23 @@ pub fn preview_import(
 /// Sent to every window after imported data was written.
 pub const CONFIGURATION_CHANGED: &str = "deckpilot://configuration-changed";
 
+/// What [`apply_import`] reports: the import's summary, and whether the app
+/// could not reload the imported module settings afterwards (they are
+/// written and take effect when the app starts next).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppliedImport {
+    #[serde(flatten)]
+    summary: ImportSummary,
+    reload_failed: bool,
+}
+
 /// Applies a previewed import in one transaction.
+///
+/// Errors before the commit keep the preview for another attempt. Once the
+/// transaction committed, the call succeeds: a failure to reload the
+/// module settings is reported in the answer, not as an error the user
+/// could answer by submitting the same import again.
 #[tauri::command]
 pub fn apply_import<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -284,27 +408,42 @@ pub fn apply_import<R: tauri::Runtime>(
     pending: State<'_, PendingImport>,
     token: u32,
     options: ImportOptions,
-) -> CommandResult<ImportSummary> {
-    let content = pending
-        .take(token)
-        .ok_or_else(|| CommandError::invalid("previewAgain", "preview the import again"))?;
-    let summary = {
+) -> CommandResult<AppliedImport> {
+    let applying = pending.begin(token)?;
+    let (summary, reload_failed) = {
         let store = state.store()?;
         let (changes, summary) = {
             let modules = state.modules();
-            import::plan(&content, &options, &store, &modules)?
+            import::plan(applying.payload(), &options, &store, &modules)?
         };
+        pending.injected(ApplyStep::BeforeCommit)?;
         store.apply_changes(&changes)?;
-        let (modules, problems) = deckpilot_modules::configured(&store.module_states()?);
-        for problem in problems {
-            eprintln!("imported module state was not applied: {problem}");
-        }
-        *state.modules() = modules;
-        summary
+        applying.committed();
+        let states = pending
+            .injected(ApplyStep::AfterCommit)
+            .and_then(|()| Ok(store.module_states()?));
+        let reload_failed = match states {
+            Ok(states) => {
+                let (modules, problems) = deckpilot_modules::configured(&states);
+                for problem in problems {
+                    eprintln!("imported module state was not applied: {problem}");
+                }
+                *state.modules() = modules;
+                false
+            }
+            Err(error) => {
+                eprintln!("the imported module settings could not be reloaded: {error}");
+                true
+            }
+        };
+        (summary, reload_failed)
     };
     crate::agent::notify_reload(&state.paths);
     let _ = tauri::Emitter::emit(&app, CONFIGURATION_CHANGED, ());
-    Ok(summary)
+    Ok(AppliedImport {
+        summary,
+        reload_failed,
+    })
 }
 
 #[tauri::command]
@@ -442,5 +581,78 @@ mod tests {
             dir.names(),
             ["backup.deckpilot", "backup.deckpilot.tmp", "backup.json"]
         );
+    }
+
+    /// A synthetic, empty export.
+    fn payload(app_version: &str) -> Payload {
+        serde_json::from_value(serde_json::json!({
+            "version": 3, "exportedAt": 0, "appVersion": app_version, "profiles": []
+        }))
+        .unwrap()
+    }
+
+    fn reason(error: CommandError) -> String {
+        error.code().0
+    }
+
+    #[test]
+    fn a_preview_returns_when_an_apply_fails_before_its_commit() {
+        let pending = PendingImport::default();
+        let token = pending.put(payload("synthetic"));
+        let applying = pending.begin(token).unwrap();
+        assert_eq!(applying.payload().app_version, "synthetic");
+        // While it runs, a second submission is refused, not queued.
+        assert_eq!(
+            reason(pending.begin(token).err().unwrap()),
+            "invalid.importInProgress"
+        );
+        drop(applying);
+        // The retry gets the same preview.
+        let applying = pending.begin(token).unwrap();
+        assert_eq!(applying.payload().app_version, "synthetic");
+        applying.committed();
+        // Used up: every further submission is told to preview again.
+        for _ in 0..2 {
+            assert_eq!(
+                reason(pending.begin(token).err().unwrap()),
+                "invalid.previewAgain"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_apply_never_brings_back_a_cancelled_or_replaced_preview() {
+        let pending = PendingImport::default();
+        let token = pending.put(payload("old"));
+        let applying = pending.begin(token).unwrap();
+        pending.clear();
+        drop(applying);
+        assert!(pending.begin(token).is_err());
+
+        let token = pending.put(payload("old"));
+        let applying = pending.begin(token).unwrap();
+        let newer = pending.put(payload("new"));
+        drop(applying);
+        assert!(pending.begin(token).is_err());
+        assert_eq!(pending.begin(newer).unwrap().payload().app_version, "new");
+
+        // A commit of an older preview leaves a newer one alone.
+        let token = pending.put(payload("old"));
+        let applying = pending.begin(token).unwrap();
+        let newer = pending.put(payload("new"));
+        applying.committed();
+        assert_eq!(pending.begin(newer).unwrap().payload().app_version, "new");
+    }
+
+    #[test]
+    fn an_unknown_token_is_told_to_preview_again() {
+        let pending = PendingImport::default();
+        assert_eq!(
+            reason(pending.begin(1).err().unwrap()),
+            "invalid.previewAgain"
+        );
+        let token = pending.put(payload("synthetic"));
+        assert!(pending.begin(token.wrapping_add(1)).is_err());
+        assert!(pending.begin(token).is_ok());
     }
 }

@@ -27,6 +27,14 @@ released either. 0.6.0 is the first version intended for publication.
   the destination's folder, and then replaces the destination in one step;
   a failed export leaves the previous file and every other file as they
   were, and simultaneous exports no longer interfere with each other.
+- Configuration import: after an import fails before anything is written
+  (for example because the configuration was locked), **Import** on the
+  same review screen tries again; the file no longer has to be opened and
+  decrypted again. An import is applied at most once, however often
+  **Import** is clicked. When a review can no longer be imported, the
+  window goes back to the password step instead of offering an **Import**
+  button that cannot work, and an import that was saved but whose module
+  settings could not be reloaded says so instead of reporting a failure.
 
 ## [0.12.0] - 2026-11-22
 
