@@ -402,9 +402,13 @@ impl Agent {
         }
     }
 
+    /// A refresh, then (as the worker does once the answer is sent) the
+    /// bounded icon prefetch.
     fn refresh(&mut self, source: &HttpsSource, hour: i64) -> Refresh {
         let refresh = self.client.refresh(source, at(hour)).unwrap();
         self.storefronts.sync(&mut self.client, source, &refresh);
+        self.storefronts
+            .prefetch(source, MAX_PREFETCH, PREFETCH_BUDGET);
         refresh
     }
 
@@ -412,7 +416,9 @@ impl Agent {
         let mut out = Vec::new();
         let mut offset = 0;
         loop {
-            let chunk = self.storefronts.media_chunk(source, sha, offset)?;
+            let chunk = self
+                .storefronts
+                .media_chunk(source, self.seq(), sha, offset)?;
             assert_eq!(chunk.sha256, sha);
             assert_eq!(chunk.offset, offset);
             out.extend(STANDARD.decode(&chunk.data).unwrap());
@@ -421,6 +427,10 @@ impl Agent {
                 None => return Ok(out),
             }
         }
+    }
+
+    fn seq(&self) -> Option<u64> {
+        self.client.state().timestamp.as_ref().map(|t| t.seq)
     }
 
     fn cached_media(&self) -> Vec<String> {
@@ -555,7 +565,7 @@ fn only_referenced_well_formed_digests_are_served() {
     let unknown = "0".repeat(64);
     let error = agent
         .storefronts
-        .media_chunk(&source, &unknown, 0)
+        .media_chunk(&source, agent.seq(), &unknown, 0)
         .unwrap_err();
     assert_eq!(error.reason.as_deref(), Some(reason::UNKNOWN_MEDIA));
     for bad in [
@@ -566,12 +576,15 @@ fn only_referenced_well_formed_digests_are_served() {
         format!("{}/", &icon[..63]),
         String::new(),
     ] {
-        let error = agent.storefronts.media_chunk(&source, &bad, 0).unwrap_err();
+        let error = agent
+            .storefronts
+            .media_chunk(&source, agent.seq(), &bad, 0)
+            .unwrap_err();
         assert_eq!(error.code, ErrorCode::InvalidRequest, "{bad}");
     }
     let offset = agent
         .storefronts
-        .media_chunk(&source, &icon, 1 << 30)
+        .media_chunk(&source, agent.seq(), &icon, 1 << 30)
         .unwrap_err();
     assert_eq!(offset.code, ErrorCode::InvalidRequest);
     // Nothing outside the media directory was touched or fetched.
@@ -627,7 +640,21 @@ fn a_header_that_differs_from_the_reference_is_refused() {
     )
     .unwrap();
     std::fs::remove_file(site.site().join("storefront/1.json.minisig")).unwrap();
-    site.run(&["storefront", "sign", "--key", &site.key("index.key")]);
+    // `storefront sign` refuses a listing that lies about its image, so
+    // the envelope is signed by hand, as a compromised pipeline could.
+    let key = deckpilot_plugin_registry::publish::SigningKey::load(
+        Path::new(&site.key("index.key")),
+        None,
+    )
+    .unwrap();
+    let envelope_bytes = std::fs::read(site.site().join("storefront/1.json")).unwrap();
+    let signature = key
+        .sign(
+            &envelope_bytes,
+            &deckpilot_plugin_registry::sig::storefront_comment(1, 1),
+        )
+        .unwrap();
+    std::fs::write(site.site().join("storefront/1.json.minisig"), signature).unwrap();
     let server = HttpsServer::start(&site.work());
     let source = source(&server);
     let mut agent = Agent::new(&site);
@@ -1156,4 +1183,101 @@ fn export_compatibility_site() {
         std::fs::remove_dir_all(out.join("bare/site/v1").join(gone)).unwrap();
     }
     std::fs::copy(site.work().join("roots.json"), out.join("roots.json")).unwrap();
+}
+
+/// A source whose image fetches are slow.
+struct SlowMedia<'a> {
+    inner: &'a HttpsSource,
+    delay: std::time::Duration,
+}
+
+impl RegistrySource for SlowMedia<'_> {
+    fn fetch(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
+        if path.starts_with("media/") {
+            std::thread::sleep(self.delay);
+        }
+        self.inner.fetch(path, max_bytes)
+    }
+}
+
+#[test]
+fn a_refresh_never_waits_for_images() {
+    let site = Site::new("slow");
+    let server = HttpsServer::start(&site.work());
+    let https = source(&server);
+    let slow = SlowMedia {
+        inner: &https,
+        delay: std::time::Duration::from_secs(2),
+    };
+    let mut agent = Agent::new(&site);
+    let started = std::time::Instant::now();
+    let refresh = agent.client.refresh(&slow, at(1)).unwrap();
+    agent.storefronts.sync(&mut agent.client, &slow, &refresh);
+    let elapsed = started.elapsed();
+    assert_eq!(refresh, Refresh::Updated { seq: 1 });
+    assert!(agent.storefronts.current().is_some());
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "the refresh took {elapsed:?}"
+    );
+    assert_eq!(
+        agent.cached_media(),
+        Vec::<String>::new(),
+        "nothing fetched yet"
+    );
+    assert_eq!(agent.storefronts.queued(), 1);
+    // The deferred prefetch is bounded by time (no fetch starts after the
+    // budget) and by count; the queue is gone either way.
+    let started = std::time::Instant::now();
+    agent
+        .storefronts
+        .prefetch(&slow, MAX_PREFETCH, std::time::Duration::ZERO);
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(agent.storefronts.queued(), 0);
+    assert_eq!(agent.cached_media(), Vec::<String>::new());
+    let mut other = Agent::open(&site, site.scratch.0.join("other-state"));
+    let refresh = other.client.refresh(&slow, at(1)).unwrap();
+    other.storefronts.sync(&mut other.client, &slow, &refresh);
+    assert_eq!(other.storefronts.queued(), 1);
+    other.storefronts.prefetch(&slow, 0, PREFETCH_BUDGET);
+    assert_eq!(other.storefronts.queued(), 0);
+    assert_eq!(other.cached_media(), Vec::<String>::new());
+    // Within both bounds it is fetched ahead.
+    let mut third = Agent::open(&site, site.scratch.0.join("third-state"));
+    let refresh = third.client.refresh(&slow, at(1)).unwrap();
+    third.storefronts.sync(&mut third.client, &slow, &refresh);
+    third
+        .storefronts
+        .prefetch(&slow, MAX_PREFETCH, PREFETCH_BUDGET);
+    assert_eq!(third.cached_media(), vec![site.icon().sha256.to_string()]);
+    // On demand it is fetched all the same.
+    let icon = site.icon().sha256.to_string();
+    assert_eq!(
+        sha256(&agent.media(&https, &icon).unwrap()).to_string(),
+        icon
+    );
+}
+
+#[test]
+fn only_the_storefront_of_the_verified_seq_is_served() {
+    let site = Site::new("served-seq");
+    let server = HttpsServer::start(&site.work());
+    let source = source(&server);
+    let mut agent = Agent::new(&site);
+    agent.refresh(&source, 1);
+    let icon = site.icon().sha256.to_string();
+    assert!(agent.storefronts.current_for(agent.seq()).is_some());
+    // A newer index verified without the storefront following it (as if a
+    // sync were skipped): nothing of the old one is served.
+    site.add("acme.beta", "0.2.0");
+    site.publish(2);
+    agent.client.refresh(&source, at(3)).unwrap();
+    assert_eq!(agent.seq(), Some(2));
+    assert!(agent.storefronts.current().is_some());
+    assert!(agent.storefronts.current_for(agent.seq()).is_none());
+    let error = agent
+        .storefronts
+        .media_chunk(&source, agent.seq(), &icon, 0)
+        .unwrap_err();
+    assert_eq!(error.reason.as_deref(), Some(reason::UNKNOWN_MEDIA));
 }

@@ -299,6 +299,9 @@ impl State {
                 // state before the client's next request arrives.
                 self.publish();
                 let _ = reply.send(answer);
+                if let Some(service) = &mut self.service {
+                    service.after_reply();
+                }
             }
             (None, Request::GetPluginRuntime) => {
                 let _ = reply.send(Ok(Response::PluginRuntime {

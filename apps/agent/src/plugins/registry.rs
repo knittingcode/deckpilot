@@ -285,9 +285,15 @@ impl Registry {
         self
     }
 
-    /// The verified storefront of the verified index, if one is shown.
+    /// The verified storefront of the verified index, if one is shown:
+    /// only while its seq is still the verified timestamp's (defence in
+    /// depth; a refresh replaces it anyway).
     pub fn storefront(&self) -> Option<&Current> {
-        self.storefront.current()
+        self.storefront.current_for(self.verified_seq())
+    }
+
+    fn verified_seq(&self) -> Option<u64> {
+        self.client.state().timestamp.as_ref().map(|t| t.seq)
     }
 
     /// One chunk of a storefront image (`getRegistryMedia`).
@@ -297,7 +303,17 @@ impl Registry {
         offset: u64,
     ) -> Result<deckpilot_ipc::plugins::MediaChunk, IpcError> {
         self.storefront
-            .media_chunk(self.source.documents(), sha256, offset)
+            .media_chunk(self.source.documents(), self.verified_seq(), sha256, offset)
+    }
+
+    /// Fetches the icons a new storefront places, within the prefetch
+    /// bounds; called once an answer was sent.
+    pub fn prefetch_storefront_icons(&mut self) {
+        self.storefront.prefetch(
+            self.source.documents(),
+            super::storefront::MAX_PREFETCH,
+            super::storefront::PREFETCH_BUDGET,
+        );
     }
 
     /// Re-reads the registry and verifies it (key sets, timestamp, index).

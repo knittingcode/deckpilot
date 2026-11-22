@@ -1958,6 +1958,14 @@ impl PluginService {
         out
     }
 
+    /// Work after an answer was sent: the storefront icons a refresh
+    /// queued (bounded), so no refresh waits for them.
+    pub fn after_reply(&mut self) {
+        if let Some(registry) = self.registry.as_mut() {
+            registry.prefetch_storefront_icons();
+        }
+    }
+
     /// `getStorefront`: the verified storefront for this app, or none.
     fn storefront_answer(&self) -> Result<Response, IpcError> {
         let registry = self.registry()?;
@@ -3155,7 +3163,6 @@ fn available_version(
     }
 }
 
-/// The platform's id as manifests and the runtime status name it.
 /// Whether an official plugin is bundled-only: one DeckPilot bundles whose
 /// registry versions declare a privileged kind (plugin API 1.9), which the
 /// store accepts only with the bundled copy. Derived here from the verified
@@ -3189,6 +3196,7 @@ fn declares_privileged_kind<'a>(
         })
 }
 
+/// The platform's id as manifests and the runtime status name it.
 fn platform_id(platform: Platform) -> &'static str {
     match platform {
         Platform::Macos => "macos",

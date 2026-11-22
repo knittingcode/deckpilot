@@ -57,8 +57,12 @@ use tracing::{debug, error, info, warn};
 
 /// Most bytes of cached storefront images.
 pub(super) const MEDIA_BUDGET: u64 = 64 * 1024 * 1024;
-/// Most icons prefetched after a new storefront (placed plugins only).
-const MAX_PREFETCH: usize = 48;
+/// Most icons prefetched after a new storefront (placed plugins only);
+/// the others are fetched when the app asks for them.
+pub(super) const MAX_PREFETCH: usize = 8;
+/// Longest a prefetch may start new fetches for. It runs after the answer
+/// that triggered the refresh was sent, never on its path.
+pub(super) const PREFETCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 const STOREFRONT_DIR: &str = "storefront";
 const MEDIA_DIR: &str = "media";
@@ -90,6 +94,8 @@ pub(super) struct Storefronts {
     /// unreachable registry with nothing cached); `None` when one is
     /// shown or none is published.
     problem: Option<String>,
+    /// Icons to fetch ahead once the current request is answered.
+    prefetch: Vec<AssetRef>,
 }
 
 fn sig_name(path: &str) -> String {
@@ -147,6 +153,7 @@ impl Storefronts {
             budget: MEDIA_BUDGET,
             current: None,
             problem: None,
+            prefetch: Vec::new(),
         }
     }
 
@@ -156,8 +163,15 @@ impl Storefronts {
         self
     }
 
+    #[cfg(test)]
     pub fn current(&self) -> Option<&Current> {
         self.current.as_ref()
+    }
+
+    /// The current storefront only if it is for `seq` (the verified
+    /// timestamp's): what is served.
+    pub fn current_for(&self, seq: Option<u64>) -> Option<&Current> {
+        self.current.as_ref().filter(|c| Some(c.seq()) == seq)
     }
 
     /// "editorial unavailable: <reason>" for Diagnostics.
@@ -190,6 +204,7 @@ impl Storefronts {
         };
         match client.verify_storefront(&bytes, &signature) {
             Ok(verified) => {
+                note(&verified);
                 self.current = Some(self.documents(client, verified, None));
                 self.problem = None;
             }
@@ -273,7 +288,10 @@ impl Storefronts {
             }
         };
         let verified = match client.verify_storefront(&bytes, &signature) {
-            Ok(verified) => verified,
+            Ok(verified) => {
+                note(&verified);
+                verified
+            }
             Err(e) => {
                 self.refuse(&e);
                 return;
@@ -290,10 +308,8 @@ impl Storefronts {
         );
         self.problem = None;
         self.prune(Some(&current));
+        self.prefetch = placed_icons(&current);
         self.current = Some(current);
-        if let Some(current) = &self.current {
-            self.prefetch_icons(current, source);
-        }
     }
 
     /// The listings and editorial document `verified` pins: from the cache
@@ -391,37 +407,38 @@ impl Storefronts {
         }
     }
 
-    /// The icons of plugins the editorial places, fetched ahead (best
-    /// effort, one at a time).
-    fn prefetch_icons(&self, current: &Current, source: &dyn RegistrySource) {
-        let Some(editorial) = &current.editorial else {
+    /// Fetches queued icons ahead (best effort, one at a time): at most
+    /// `max`, and none started once `budget` has passed. Whatever is left
+    /// is fetched when the app asks for it. Called after an answer was
+    /// sent, never while a refresh answers.
+    pub fn prefetch(
+        &mut self,
+        source: &dyn RegistrySource,
+        max: usize,
+        budget: std::time::Duration,
+    ) {
+        let queue = std::mem::take(&mut self.prefetch);
+        let Some(current) = &self.current else {
             return;
         };
-        let mut placed: Vec<&PluginId> = Vec::new();
-        for section in &editorial.sections {
-            match &section.body {
-                SectionBody::CollectionRow { plugins, .. } => placed.extend(plugins),
-                SectionBody::Spotlight { plugin, .. } => placed.push(plugin),
-                _ => {}
-            }
-        }
-        for collection in &editorial.collections {
-            placed.extend(&collection.plugins);
-        }
-        let mut seen = BTreeSet::new();
-        for id in placed {
-            if seen.len() >= MAX_PREFETCH {
+        let started = std::time::Instant::now();
+        for icon in queue.iter().take(max) {
+            if started.elapsed() >= budget {
+                debug!(
+                    "the storefront icon prefetch ran out of time; the rest are fetched on demand"
+                );
                 break;
             }
-            let Some(icon) = current.listings.get(id).and_then(|l| l.icon) else {
-                continue;
-            };
-            if seen.insert(icon.sha256)
-                && let Err(e) = self.media_bytes(current, source, &icon)
-            {
-                debug!(plugin = %id, error = %e.message, "a storefront icon could not be prefetched");
+            if let Err(e) = self.media_bytes(current, source, icon) {
+                debug!(media = %icon.sha256, error = %e.message, "a storefront icon could not be prefetched");
             }
         }
+    }
+
+    /// Icons queued for [`Storefronts::prefetch`].
+    #[cfg(test)]
+    pub fn queued(&self) -> usize {
+        self.prefetch.len()
     }
 
     fn media_file(&self, digest: &Sha256Digest) -> PathBuf {
@@ -508,9 +525,12 @@ impl Storefronts {
     }
 
     /// One chunk of the storefront image `sha256` (`getRegistryMedia`).
+    /// `seq` is the verified timestamp's: a storefront of another seq
+    /// serves nothing.
     pub fn media_chunk(
         &self,
         source: &dyn RegistrySource,
+        seq: Option<u64>,
         sha256: &str,
         offset: u64,
     ) -> Result<MediaChunk, IpcError> {
@@ -526,7 +546,7 @@ impl Storefronts {
             .with_reason(reason::UNKNOWN_MEDIA)
         };
         let digest = Sha256Digest::parse(sha256).map_err(|_| unknown())?;
-        let current = self.current.as_ref().ok_or_else(unknown)?;
+        let current = self.current_for(seq).ok_or_else(unknown)?;
         let asset = current.assets.get(&digest).ok_or_else(unknown)?;
         let bytes = self.media_bytes(current, source, asset)?;
         let size = bytes.len() as u64;
@@ -544,6 +564,37 @@ impl Storefronts {
             next: (end < bytes.len()).then_some(end as u64),
         })
     }
+}
+
+fn note(verified: &VerifiedStorefront) {
+    if let Some(notice) = verified.notice() {
+        warn!(%notice, "registry storefront record");
+    }
+}
+
+/// The icons of plugins the editorial places (rows, spotlights,
+/// collections), each once, in placement order.
+fn placed_icons(current: &Current) -> Vec<AssetRef> {
+    let Some(editorial) = &current.editorial else {
+        return Vec::new();
+    };
+    let mut placed: Vec<&PluginId> = Vec::new();
+    for section in &editorial.sections {
+        match &section.body {
+            SectionBody::CollectionRow { plugins, .. } => placed.extend(plugins),
+            SectionBody::Spotlight { plugin, .. } => placed.push(plugin),
+            _ => {}
+        }
+    }
+    for collection in &editorial.collections {
+        placed.extend(&collection.plugins);
+    }
+    let mut seen = BTreeSet::new();
+    placed
+        .into_iter()
+        .filter_map(|id| current.listings.get(id).and_then(|l| l.icon))
+        .filter(|icon| seen.insert(icon.sha256))
+        .collect()
 }
 
 fn touch(path: &Path) {
