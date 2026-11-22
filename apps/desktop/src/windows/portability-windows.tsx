@@ -1,7 +1,7 @@
 import { emitTo } from "@tauri-apps/api/event"
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog"
 import { Download, FileCheck2, TriangleAlert, Upload } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { SensitiveOperations } from "@/components/authentication"
 import { ModalShell } from "@/components/modal-shell"
@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { NAVIGATE_EVENT, api } from "@/lib/api"
+import { errorCode } from "@/lib/backend-error"
 import { failureMessage } from "@/lib/failure"
 import { RESOURCE_KIND_LABELS } from "@/lib/format"
 import { newPasswordReady } from "@/lib/passwords"
@@ -231,8 +232,8 @@ function ExportForm({ profiles }: { profiles: ProfilesView }) {
 
 type ImportStep =
   | { step: "file" }
-  | { step: "password"; path: string }
-  | { step: "preview"; token: number; preview: ImportPreview }
+  | { step: "password"; path: string; expired?: boolean }
+  | { step: "preview"; path: string; token: number; preview: ImportPreview }
   | { step: "done"; summary: ImportSummary; preview: ImportPreview }
 
 export function ImportWindow() {
@@ -256,12 +257,13 @@ export function ImportWindow() {
       return (
         <ImportPassword
           path={state.path}
+          expired={state.expired}
           onClose={cancel}
           onBack={() => {
             setState({ step: "file" })
           }}
           onPreview={(token, preview) => {
-            setState({ step: "preview", token, preview })
+            setState({ step: "preview", path: state.path, token, preview })
           }}
         />
       )
@@ -273,6 +275,9 @@ export function ImportWindow() {
           onClose={cancel}
           onDone={(summary) => {
             setState({ step: "done", summary, preview: state.preview })
+          }}
+          onPreviewAgain={() => {
+            setState({ step: "password", path: state.path, expired: true })
           }}
         />
       )
@@ -316,11 +321,14 @@ function ChooseFile({
 
 function ImportPassword({
   path,
+  expired = false,
   onPreview,
   onBack,
   onClose,
 }: {
   path: string
+  /** The previous review of this file can no longer be imported. */
+  expired?: boolean
   onPreview: (token: number, preview: ImportPreview) => void
   onBack: () => void
   onClose: () => void
@@ -377,6 +385,12 @@ function ImportPassword({
         autoFocus
         invalid={Boolean(error)}
       />
+      {expired && !error && (
+        <Alert>
+          <TriangleAlert />
+          <AlertDescription>{t("settings:portability.import.previewExpired")}</AlertDescription>
+        </Alert>
+      )}
       <p className="text-xs text-muted-foreground">{t("settings:portability.import.nothingYet")}</p>
     </ModalShell>
   )
@@ -392,11 +406,14 @@ function ImportChoices({
   token,
   preview,
   onDone,
+  onPreviewAgain,
   onClose,
 }: {
   token: number
   preview: ImportPreview
   onDone: (summary: ImportSummary) => void
+  /** The preview is used up or gone: decrypt the file again. */
+  onPreviewAgain: () => void
   onClose: () => void
 }) {
   const { t } = useTranslation()
@@ -411,6 +428,9 @@ function ImportChoices({
   const hasSettings = Boolean(preview.settings.updates) || variables.globalValues > 0
   const [appSettings, setAppSettings] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Set synchronously, so a second click before React re-renders the busy
+  // button cannot submit the same preview again.
+  const submitting = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const nothing = selected.length === 0 && !moduleSettings && !appSettings
 
@@ -426,15 +446,23 @@ function ImportChoices({
       error={error}
       onClose={onClose}
       onSubmit={() => {
+        if (submitting.current) return
+        submitting.current = true
         setBusy(true)
         setError(null)
         api
           .applyImport(token, { mode, profiles: selected, conflicts, moduleSettings, appSettings })
-          .then(onDone)
-          .catch((e: unknown) => {
+          .then(onDone, (e: unknown) => {
+            // A failure before the commit keeps the preview: the same
+            // button retries it. A used-up preview cannot be retried.
+            if (errorCode(e) === "invalid.previewAgain") {
+              onPreviewAgain()
+              return
+            }
             setError(failureMessage(t("settings:portability.import.failed"), e))
           })
           .finally(() => {
+            submitting.current = false
             setBusy(false)
           })
       }}
@@ -728,6 +756,12 @@ function ImportDone({
       }
       primary={{ label: t("settings:shared.done"), onClick: onClose }}
     >
+      {summary.reloadFailed && (
+        <Alert>
+          <TriangleAlert />
+          <AlertDescription>{t("settings:portability.done.reloadFailed")}</AlertDescription>
+        </Alert>
+      )}
       {summary.renamed.length > 0 && (
         <p className="text-sm">
           {t("settings:portability.done.renamed", {

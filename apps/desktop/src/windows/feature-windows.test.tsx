@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest"
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -251,6 +251,105 @@ describe("import window", () => {
     expect(screen.getByRole("list", { name: "Values not imported" })).toHaveTextContent(
       "`build.jobs`: `build.jobs` holds integer values, not string",
     )
+  })
+
+  const applied = {
+    imported: [["p2", "Work (imported)"]],
+    removed: [],
+    skipped: [],
+    renamed: ["Work (imported)"],
+    modules: [],
+    settings: [],
+    variables: [],
+    variableValues: 0,
+    skippedValues: [],
+  }
+
+  /** Opens the import window up to the review of `token`. */
+  async function review(user: ReturnType<typeof userEvent.setup>, token = 7) {
+    dialog.open.mockResolvedValue("/tmp/in.deckpilot")
+    api.previewImport.mockResolvedValue({ token, preview })
+    inWindow(<ImportWindow />)
+    await user.click(screen.getByRole("button", { name: "Choose file…" }))
+    await user.type(await screen.findByLabelText("Export password"), "right{Enter}")
+    expect(await screen.findByText("Review the import")).toBeInTheDocument()
+  }
+
+  it("retries the same preview after a failure before the commit (#403)", async () => {
+    const user = userEvent.setup()
+    await review(user)
+    api.applyImport
+      .mockRejectedValueOnce({ code: "locked", message: "the configuration is locked" })
+      .mockResolvedValue(applied)
+    await user.click(screen.getByRole("button", { name: "Import" }))
+    expect(await screen.findByText(/Nothing was imported/)).toHaveTextContent("locked")
+    // Still the review, with a working Import button.
+    expect(screen.getByText("Review the import")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Import" }))
+    expect(await screen.findByText("Import complete")).toBeInTheDocument()
+    expect(api.applyImport).toHaveBeenCalledTimes(2)
+    expect(api.applyImport.mock.calls.map((call: unknown[]) => call[0])).toEqual([7, 7])
+  })
+
+  it("submits a preview once, however fast Import is clicked (#403)", async () => {
+    const user = userEvent.setup()
+    await review(user)
+    let finish: (value: typeof applied) => void = () => undefined
+    api.applyImport.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    const button = screen.getByRole("button", { name: "Import" })
+    act(() => {
+      fireEvent.click(button)
+      fireEvent.click(button)
+      fireEvent.click(button)
+    })
+    expect(api.applyImport).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finish(applied)
+      await Promise.resolve()
+    })
+    expect(await screen.findByText("Import complete")).toBeInTheDocument()
+    expect(api.applyImport).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns to the password step when the preview is used up (#403)", async () => {
+    const user = userEvent.setup()
+    await review(user)
+    api.applyImport.mockRejectedValueOnce({
+      code: "invalid.previewAgain",
+      message: "preview the import again",
+    })
+    await user.click(screen.getByRole("button", { name: "Import" }))
+    // No dead Import button: the file is decrypted again.
+    expect(await screen.findByLabelText("Export password")).toHaveValue("")
+    expect(
+      screen.getByText(
+        "This review can no longer be imported. Enter the export password again to review the file.",
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument()
+    api.previewImport.mockResolvedValue({ token: 9, preview })
+    api.applyImport.mockResolvedValue(applied)
+    await user.type(screen.getByLabelText("Export password"), "right{Enter}")
+    expect(api.previewImport).toHaveBeenLastCalledWith("/tmp/in.deckpilot", "right")
+    await user.click(await screen.findByRole("button", { name: "Import" }))
+    expect(api.applyImport).toHaveBeenLastCalledWith(9, expect.anything())
+    expect(await screen.findByText("Import complete")).toBeInTheDocument()
+  })
+
+  it("reports a committed import whose module settings could not be reloaded (#403)", async () => {
+    const user = userEvent.setup()
+    await review(user)
+    api.applyImport.mockResolvedValue({ ...applied, reloadFailed: true })
+    await user.click(screen.getByRole("button", { name: "Import" }))
+    expect(await screen.findByText("Import complete")).toBeInTheDocument()
+    expect(
+      screen.getByText(/The import was saved, but DeckPilot could not reload/),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument()
   })
 
   it("cancels a previewed import when closed", async () => {

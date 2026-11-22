@@ -59,6 +59,7 @@
     "variablesAgentTooOld": "uruchomiony agent jest zbyt stary, aby obsługiwać zmienne; uruchom agenta ponownie",
     "tooManyPreviews": "jednocześnie można wyświetlić podgląd najwyżej {{max}} odwołań",
     "previewAgain": "ponownie wyświetl podgląd importu",
+    "importInProgress": "ten import jest już w toku",
     "profileNameEmpty": "nazwa profilu nie może być pusta",
     "executionValueOnlyInRun": "wartości wykonania istnieją tylko podczas uruchomienia",
     "moduleDisabled": "moduł {{module}} jest wyłączony",

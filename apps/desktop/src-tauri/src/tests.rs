@@ -4511,3 +4511,101 @@ fn an_export_never_touches_an_unrelated_sibling_file() {
         ]
     );
 }
+
+/// A synthetic export of `h` with one profile, previewed. Returns the
+/// preview's answer and the profile's identifier.
+fn previewed_import(h: &Harness) -> (Value, String) {
+    let profile_id = new_profile(h, "Synthetic");
+    let file = h.paths.data_dir.join("synthetic.deckpilot");
+    let password = generated_export_password();
+    export_to(h, &file, Some(PASSWORD), &password);
+    let preview = h.ok(
+        "preview_import",
+        json!({ "path": file.display().to_string(), "password": password }),
+    );
+    (preview, profile_id)
+}
+
+fn profile_count(h: &Harness) -> usize {
+    h.ok("list_profiles", json!({}))["profiles"]
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+/// Issue #403: a failure before the import's transaction commits keeps the
+/// preview, so the same review screen can submit it again.
+#[test]
+fn an_import_can_be_retried_after_a_failure_before_the_commit() {
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+
+    // The configuration is locked between preview and apply: nothing is
+    // written.
+    h.ok("lock", json!({}));
+    assert!(h.error("apply_import", apply.clone()).contains("locked"));
+    h.unlock();
+    assert_eq!(profile_count(&h), 1);
+
+    // The retry applies the preview the user saw.
+    let summary = h.ok("apply_import", apply.clone());
+    assert_eq!(summary["renamed"][0], "Synthetic (imported)");
+    assert_eq!(profile_count(&h), 2);
+}
+
+/// Issue #403: an injected failure right before the transaction, after the
+/// import was planned, keeps the preview too.
+#[test]
+fn an_import_can_be_retried_after_an_injected_failure_before_the_commit() {
+    use crate::commands::portability::{ApplyStep, PendingImport};
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+    let pending = h.window.state::<PendingImport>();
+
+    pending.fail_at(Some(ApplyStep::BeforeCommit));
+    assert!(h.error("apply_import", apply.clone()).contains("injected"));
+    assert_eq!(profile_count(&h), 1);
+    pending.fail_at(None);
+    let summary = h.ok("apply_import", apply.clone());
+    assert_eq!(summary["reloadFailed"], false);
+    assert_eq!(profile_count(&h), 2);
+}
+
+/// Issue #403: rapid repeated submissions of one preview apply it once.
+#[test]
+fn repeated_submissions_apply_an_import_once() {
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+
+    h.ok("apply_import", apply.clone());
+    for _ in 0..3 {
+        let error = h.call_raw("apply_import", apply.clone()).unwrap_err();
+        assert_eq!(error["code"], "invalid.previewAgain");
+    }
+    assert_eq!(profile_count(&h), 2);
+}
+
+/// Issue #403: after the commit, a failing refresh is reported with the
+/// summary, and the preview is used up all the same.
+#[test]
+fn a_refresh_failure_after_the_commit_never_applies_the_import_twice() {
+    use crate::commands::portability::{ApplyStep, PendingImport};
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+    let pending = h.window.state::<PendingImport>();
+
+    pending.fail_at(Some(ApplyStep::AfterCommit));
+    let summary = h.ok("apply_import", apply.clone());
+    assert_eq!(summary["reloadFailed"], true);
+    assert_eq!(summary["renamed"][0], "Synthetic (imported)");
+    assert_eq!(profile_count(&h), 2);
+
+    pending.fail_at(None);
+    let error = h.call_raw("apply_import", apply.clone()).unwrap_err();
+    assert_eq!(error["code"], "invalid.previewAgain");
+    assert_eq!(profile_count(&h), 2);
+}

@@ -59,6 +59,7 @@
     "variablesAgentTooOld": "not supported: the running agent is too old for variables; restart the agent",
     "tooManyPreviews": "at most {{max}} references can be previewed at once",
     "previewAgain": "preview the import again",
+    "importInProgress": "this import is already being applied",
     "profileNameEmpty": "profile name must not be empty",
     "executionValueOnlyInRun": "execution values exist only during a run",
     "moduleDisabled": "the {{module}} module is disabled",
