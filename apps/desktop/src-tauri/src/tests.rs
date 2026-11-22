@@ -4401,3 +4401,38 @@ fn previews_and_the_catalog_carry_editor_navigation() {
     );
     assert!(in_tools[1].get("navigation").is_none());
 }
+
+/// The storefront commands never fail: without an agent, or with one that
+/// does not serve the storefront (the test agent has no plugins), Discover
+/// gets `null` and shows the catalog only.
+#[test]
+fn storefront_commands_answer_null_without_a_storefront() {
+    let h = Harness::new();
+    let sha = "ab".repeat(32);
+    let calls = [
+        ("get_storefront", json!({})),
+        ("get_registry_listing", json!({ "plugin": "acme.clock" })),
+        ("get_registry_media", json!({ "sha256": sha })),
+        (
+            "get_registry_media",
+            json!({ "sha256": "../../etc/passwd" }),
+        ),
+    ];
+    for (cmd, args) in &calls {
+        assert_eq!(
+            h.ok(cmd, args.clone()),
+            Value::Null,
+            "{cmd} without an agent"
+        );
+    }
+    let (_runtime, _mock) = start_agent(&h.paths);
+    h.unlock();
+    wait_for(&h, |s| s["running"] == true);
+    for (cmd, args) in &calls {
+        assert_eq!(
+            h.ok(cmd, args.clone()),
+            Value::Null,
+            "{cmd} without plugins"
+        );
+    }
+}

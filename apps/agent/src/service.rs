@@ -1286,6 +1286,9 @@ impl Agent {
             | Request::GetPluginActions { .. }
             | Request::GetPluginIcon { .. }
             | Request::ListAvailablePlugins { .. }
+            | Request::GetStorefront
+            | Request::GetRegistryListing { .. }
+            | Request::GetRegistryMedia { .. }
             | Request::InstallPlugin { .. }
             | Request::EnablePlugin { .. }
             | Request::DisablePlugin { .. }

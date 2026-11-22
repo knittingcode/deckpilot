@@ -654,6 +654,26 @@ pub enum Request {
         #[serde(default)]
         refresh: bool,
     },
+    /// Discover's editorial content from the verified storefront of the
+    /// verified index, in the app's language, filtered for this computer;
+    /// answers [`Response::Storefront`]. Since protocol 10, feature
+    /// [`plugins::feature::STOREFRONT`].
+    GetStorefront,
+    /// One plugin's verified storefront listing; answers
+    /// [`Response::RegistryListing`]. Since protocol 10, feature
+    /// [`plugins::feature::STOREFRONT`].
+    GetRegistryListing {
+        plugin: String,
+    },
+    /// One chunk of a storefront image the current verified storefront
+    /// references, from byte `offset` on; answers
+    /// [`Response::RegistryMediaChunk`]. Since protocol 10, feature
+    /// [`plugins::feature::STOREFRONT`].
+    GetRegistryMedia {
+        sha256: String,
+        #[serde(default)]
+        offset: u64,
+    },
     /// Installs a plugin in state `disabled`, granting the permissions in
     /// `consent` (grant keys). Since protocol 10.
     InstallPlugin {
@@ -1025,6 +1045,8 @@ impl Request {
             Self::SetPluginSettings { .. }
             | Self::GetPluginActions { .. }
             | Self::GetPluginIcon { .. }
+            | Self::GetRegistryListing { .. }
+            | Self::GetRegistryMedia { .. }
             | Self::SetPluginCredential { .. }
             | Self::DeletePluginCredential { .. }
             | Self::RetryModuleMigration { .. }
@@ -1299,6 +1321,26 @@ pub enum Response {
     AvailablePlugins {
         registry: plugins::RegistryStatus,
         plugins: Vec<plugins::AvailablePlugin>,
+    },
+    /// Answer to `getStorefront`: absent when there is none to show (none
+    /// published, refused, or not verified yet). Since protocol 10, feature
+    /// [`plugins::feature::STOREFRONT`].
+    Storefront {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        storefront: Option<Box<plugins::StorefrontView>>,
+    },
+    /// Answer to `getRegistryListing`: absent when the plugin has no
+    /// verified listing. Since protocol 10, feature
+    /// [`plugins::feature::STOREFRONT`].
+    RegistryListing {
+        plugin: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        listing: Option<Box<plugins::ListingView>>,
+    },
+    /// Answer to `getRegistryMedia`. Since protocol 10, feature
+    /// [`plugins::feature::STOREFRONT`].
+    RegistryMediaChunk {
+        chunk: plugins::MediaChunk,
     },
     /// Answer to `updatePlugin` and `approvePluginUpdate`. Since protocol
     /// 10.
@@ -1643,6 +1685,9 @@ impl Request {
             | Self::GetPluginActions { .. }
             | Self::GetPluginIcon { .. }
             | Self::ListAvailablePlugins { .. }
+            | Self::GetStorefront
+            | Self::GetRegistryListing { .. }
+            | Self::GetRegistryMedia { .. }
             | Self::InstallPlugin { .. }
             | Self::EnablePlugin { .. }
             | Self::DisablePlugin { .. }
