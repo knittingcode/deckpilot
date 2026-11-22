@@ -1260,6 +1260,7 @@ impl Engine<'_> {
                 None,
             );
         }
+        self.pinned_copy(m, &pin)?;
         self.ensure_backup(m)?;
         self.import_credentials(m)?;
         self.enable(m)?;
@@ -1593,6 +1594,40 @@ impl Engine<'_> {
             info!(module = %m.module, plugin = %m.plugin, %slot, "stored credential imported");
         }
         Ok(())
+    }
+
+    /// Before the plugin is enabled for the module: a bundled copy runs only
+    /// as the version this agent pins. The install step has already
+    /// applied a staged bundled update that declares nothing new; one that
+    /// asks for new permissions waits for the user's approval of them, and
+    /// until then the migration stops here with that reason instead of
+    /// enabling a copy the agent would refuse to load.
+    fn pinned_copy(&self, m: &LegacyModule, pin: &Pin) -> Step<()> {
+        let record = self
+            .manager
+            .store()
+            .plugin(&m.plugin)
+            .map_err(failed)?
+            .ok_or_else(|| failed(format!("{} is not installed", m.plugin)))?;
+        if record.source != InstallSource::Bundled {
+            return Ok(());
+        }
+        let active = record
+            .active()
+            .ok_or_else(|| failed(format!("{} has no active version", m.plugin)))?;
+        if active.version == pin.version {
+            return Ok(());
+        }
+        Err(failed(match record.staged() {
+            Some(staged) => format!(
+                "the bundled update of {} to {} asks for new permissions: approve it on the Plugins page, then retry",
+                m.plugin, staged.version
+            ),
+            None => format!(
+                "this agent bundles {} {}, not the installed {}",
+                m.plugin, pin.version, active.version
+            ),
+        }))
     }
 
     fn enable(&mut self, m: &LegacyModule) -> Step<()> {

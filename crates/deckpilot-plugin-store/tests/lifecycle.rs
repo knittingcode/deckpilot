@@ -12,7 +12,7 @@ use common::{
     Env, ID, Verdicts, base_permissions, built, bundled_package, grants_of, id, key, package,
     package_for, plugin_files, with_notifications, without_background,
 };
-use deckpilot_plugin_manifest::PermissionKind;
+use deckpilot_plugin_manifest::{PermissionKind, PluginId};
 use deckpilot_plugin_package::{Limits, PackageError, verify_package};
 use deckpilot_plugin_store::{
     AuditRetention, Consent, GrantKey, GrantSource, GrantStatus, InstallSource, ManagerOptions,
@@ -1350,4 +1350,171 @@ fn forgetting_declines_grants_nothing() {
         manager.forget_declines(&first_party, by_migration).unwrap(),
         []
     );
+}
+
+// ------------------------------------------- bundled update, same permissions
+
+/// Key, status and who decided, for every stored grant of `plugin`.
+fn grant_rows(manager: &PluginManager, plugin: &PluginId) -> Vec<(String, GrantStatus, String)> {
+    manager
+        .store()
+        .grants(plugin)
+        .unwrap()
+        .into_iter()
+        .map(|g| (g.key.to_string(), g.status, g.decided_by))
+        .collect()
+}
+
+/// A bundled copy the migration engine installed (low tier derived, the
+/// rest waiting for the user's consent) meets a newer bundled version that
+/// declares exactly the same permissions: `update` stages it (the
+/// ungranted keys look like an escalation), and
+/// `apply_bundled_update_unchanged` activates it without granting anything.
+/// What the user had granted carries over; what waited still waits.
+#[test]
+fn a_bundled_update_with_the_same_declared_permissions_applies_without_granting() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = PluginId::parse("deckpilot.github-prs").unwrap();
+    let old = bundled_package(plugin.as_str(), "1.0.0", &with_notifications());
+    let declared = grants_of(&old);
+    let low: Vec<GrantKey> = declared
+        .iter()
+        .filter(|(_, scope)| scope.tier() == Tier::Low)
+        .map(|(key, _)| key.clone())
+        .collect();
+    let other: Vec<GrantKey> = declared
+        .iter()
+        .filter(|(_, scope)| scope.tier() != Tier::Low)
+        .map(|(key, _)| key.clone())
+        .collect();
+    assert!(other.len() >= 2, "{other:?}");
+    manager
+        .install(
+            &old,
+            &InstallSource::Bundled,
+            &Consent::of(low, "bundled:0.11.0"),
+        )
+        .unwrap();
+    // The user granted one of the others; the rest still waits.
+    manager
+        .grant(
+            &plugin,
+            &Consent::of([other[0].clone()], "user:migration:x"),
+        )
+        .unwrap();
+    let before = grant_rows(&manager, &plugin);
+
+    let new = bundled_package(plugin.as_str(), "1.1.0", &with_notifications());
+    assert_eq!(grants_of(&new), declared, "the same declared permissions");
+    let outcome = manager.update(&new, &InstallSource::Bundled).unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::AwaitingConsent { .. }),
+        "{outcome:?}"
+    );
+    let applied = manager.apply_bundled_update_unchanged(&plugin).unwrap();
+    assert_eq!(applied.map(|v| v.to_string()).as_deref(), Some("1.1.0"));
+
+    let record = manager.store().plugin(&plugin).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version.to_string(), "1.1.0");
+    assert_eq!(record.previous().unwrap().version.to_string(), "1.0.0");
+    assert!(record.staged().is_none());
+    assert_eq!(
+        record.state,
+        PluginState::Disabled,
+        "still waits for consent"
+    );
+    assert_eq!(
+        grant_rows(&manager, &plugin),
+        before,
+        "nothing granted, nothing lost"
+    );
+    assert!(matches!(
+        manager.enable(&plugin),
+        Err(StoreError::ConsentRequired { .. })
+    ));
+    // Nothing staged any more: a second call changes nothing.
+    assert_eq!(
+        manager.apply_bundled_update_unchanged(&plugin).unwrap(),
+        None
+    );
+    assert_eq!(manager.check_consistency().unwrap(), vec![]);
+}
+
+/// A bundled update that declares a new permission stays staged: it is
+/// never applied without the user's consent.
+#[test]
+fn a_bundled_update_that_declares_more_stays_staged() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = PluginId::parse("deckpilot.github-prs").unwrap();
+    let old = bundled_package(plugin.as_str(), "1.0.0", &base_permissions());
+    manager
+        .install(
+            &old,
+            &InstallSource::Bundled,
+            &Consent::none("bundled:0.11.0"),
+        )
+        .unwrap();
+    let before = grant_rows(&manager, &plugin);
+    let new = bundled_package(plugin.as_str(), "1.1.0", &with_notifications());
+    let outcome = manager.update(&new, &InstallSource::Bundled).unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::AwaitingConsent { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        manager.apply_bundled_update_unchanged(&plugin).unwrap(),
+        None
+    );
+    let record = manager.store().plugin(&plugin).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version.to_string(), "1.0.0");
+    assert_eq!(record.staged().unwrap().version.to_string(), "1.1.0");
+    assert_eq!(grant_rows(&manager, &plugin), before);
+}
+
+/// Only a copy from the application's bundle: a registry or sideloaded
+/// copy's staged update with the same declared permissions is never
+/// applied by it.
+#[test]
+fn a_registry_or_sideloaded_update_never_applies_without_consent() {
+    for source in [
+        InstallSource::Registry {
+            registry: "https://registry.example".into(),
+        },
+        InstallSource::Sideload,
+    ] {
+        let env = Env::new();
+        let mut manager = env.open();
+        let old = package("1.0.0", &base_permissions());
+        manager
+            .install(&old, &source, &Consent::none("user"))
+            .unwrap();
+        let new = package("1.1.0", &base_permissions());
+        let outcome = manager.update(&new, &source).unwrap();
+        assert!(
+            matches!(outcome, UpdateOutcome::AwaitingConsent { .. }),
+            "{source:?}: {outcome:?}"
+        );
+        assert_eq!(
+            manager.apply_bundled_update_unchanged(&id()).unwrap(),
+            None,
+            "{source:?}"
+        );
+        let record = manager.store().plugin(&id()).unwrap().unwrap();
+        assert_eq!(
+            record.active().unwrap().version.to_string(),
+            "1.0.0",
+            "{source:?}"
+        );
+        assert_eq!(
+            record.staged().unwrap().version.to_string(),
+            "1.1.0",
+            "{source:?}"
+        );
+        assert!(
+            manager.store().grants(&id()).unwrap().is_empty(),
+            "{source:?}"
+        );
+    }
 }

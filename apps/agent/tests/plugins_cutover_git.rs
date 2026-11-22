@@ -559,3 +559,94 @@ async fn a_cut_over_git_installation_upgrades_to_the_released_artifact() {
     assert_eq!(version(&agent, PLUGIN.id).await, "0.1.99");
     agent.stop().await;
 }
+
+/// An installation of v0.10.0 or v0.11.0 (both shipped `deckpilot.git`
+/// 0.1.0 with the same files) whose Git migration still waits for the
+/// user's consent upgrades to the app that bundles the released artifact:
+/// at the start the copy moves to the released version with nothing
+/// granted (the same declared permissions), the key stays unavailable
+/// with the same consent asked, and the user's consent then cuts it over
+/// to the released version; a restart keeps it. Before the fix the update
+/// was staged and the consent failed: "this agent pins no bundled
+/// deckpilot.git 0.1.0".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)] // one upgrade, step by step
+async fn a_git_installation_waiting_for_consent_upgrades_to_the_released_artifact() {
+    let fixture = Fixture::new("plugins-cutover-git-waiting");
+    let (env, status) = (&fixture.env, fixture.status);
+    let released = support::official::locked_version(PLUGIN.id);
+    env.restage(BundleClass::Migration, &shipped);
+
+    // ---- v0.10.0 / v0.11.0: installed, waiting for consent.
+    let agent = env.start().await;
+    wait_for(&agent, "awaiting consent", |m| {
+        m.phase == MigrationPhase::AwaitingConsent
+    })
+    .await;
+    assert_eq!(version(&agent, PLUGIN.id).await, "0.1.0");
+    agent.stop().await;
+    let before = grants(env, PLUGIN.id);
+    assert!(
+        before.iter().all(|(key, _, _)| !key.starts_with("tools:")),
+        "{before:?}"
+    );
+    let profile = fixture.stored();
+
+    // ---- the app update with the release artifacts: still waiting.
+    env.restage(BundleClass::Migration, &|_, _| {});
+    let agent = env.start().await;
+    let info = wait_for(&agent, "still awaiting consent", |m| {
+        m.phase == MigrationPhase::AwaitingConsent
+    })
+    .await;
+    assert_eq!(
+        version(&agent, PLUGIN.id).await,
+        released,
+        "{}",
+        agent.log()
+    );
+    assert!(
+        agent.details().await.pending_update.is_none(),
+        "nothing staged\n{}",
+        agent.log()
+    );
+    assert_eq!(grants(env, PLUGIN.id), before, "nothing granted by itself");
+    let (ok, message) = run(&agent, status).await;
+    assert!(
+        !ok && message.contains("waits for your consent"),
+        "{message}"
+    );
+    let pending: Vec<String> = info
+        .consent
+        .iter()
+        .filter(|item| item.decision == ConsentDecision::Pending)
+        .map(|item| item.key.clone())
+        .collect();
+    assert!(pending.iter().any(|k| k == "tools:git"), "{pending:?}");
+
+    // ---- the user's consent: cut over to the released version.
+    agent
+        .ok(Request::DecideModuleMigration {
+            module: "git".into(),
+            approve: pending,
+            decline: Vec::new(),
+        })
+        .await;
+    wait_for(&agent, "cut over", |m| {
+        m.phase == MigrationPhase::CutOver && m.route == MigrationRoute::Plugin
+    })
+    .await;
+    assert!(run_until_ok(&agent, status).await.starts_with("main"));
+    assert_eq!(version(&agent, PLUGIN.id).await, released);
+    agent.stop().await;
+    assert_eq!(fixture.stored(), profile, "the key binding, unchanged");
+
+    // ---- a restart changes nothing.
+    let agent = env.start().await;
+    wait_for(&agent, "still cut over", |m| {
+        m.phase == MigrationPhase::CutOver && m.route == MigrationRoute::Plugin
+    })
+    .await;
+    assert!(run_until_ok(&agent, status).await.starts_with("main"));
+    agent.stop().await;
+}

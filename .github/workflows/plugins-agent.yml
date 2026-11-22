@@ -201,6 +201,12 @@ jobs:
       # 127.0.0.1 for the built-in.
       - name: GitLab and Jira cut-over end to end
         run: cargo test -p deckpilot-agent --features plugins --test plugins_cutover_servers --locked -- --nocapture
+      # The Git, Projects and Workspace cut-overs through the released
+      # artifacts, and the upgrades of 0.10.0 / 0.11.0 installations to
+      # them: cut over, and still waiting for the user's consent (Git's
+      # fake `git` is a shell script: Unix only).
+      - name: Git, Projects and Workspace cut-over end to end
+        run: cargo test -p deckpilot-agent --features plugins --test plugins_cutover_git --test plugins_cutover_projects --test plugins_cutover_workspace --locked -- --nocapture
       # deckpilot.notifications, the first default-class plugin: parity
       # with the built-in through the real agent, first launch on a fresh
       # data directory, the user's uninstall and disable across restarts
