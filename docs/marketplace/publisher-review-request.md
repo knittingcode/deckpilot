@@ -5,16 +5,39 @@ remediation: [reviews/2026-11-21-privileged-gate-review.md](reviews/2026-11-21-p
 The privileged-kinds gate is open for exactly the reviewed privileged
 policy.
 
+Current state (2026-11-22): all nine official plugins were released on
+2026-11-21 and each is signed by both production keys (threshold 2):
+`deckpilot.github` 0.2.1; `deckpilot.gitlab`, `deckpilot.jira` and
+`deckpilot.notifications` 0.1.2; `deckpilot.workflows`, `deckpilot.git`,
+`deckpilot.docker`, `deckpilot.projects` and `deckpilot.workspace` 0.1.1.
+The production key test passed (`official-test-sign.yml` run
+44954714900 on `deckpilot.publisher-test--v1`). `official-release` uses
+the tag-authority model of the single-maintainer exception (below). The
+dated updates that follow are kept as the record of how it got there.
+
 Update 2026-11-21: on the owner's decision, the two production publisher
 public keys are pinned (threshold 2,
 [publisher-signature.md](publisher-signature.md#provisioning-2026-11-21));
 they ship with the next application release. That does not open the gate
 and needs no sign-off for the closed state: verification stays fail
 closed, the artifact lock is empty, and nothing has been released with
-the keys. Both secret keys are held in one 1Password vault of one
-account. DeckPilot is a single-maintainer project: there is no second
-person to hold key B, and this is an **accepted risk: single maintainer
-(owner decision 2026-11-21)**, listed under K.
+the keys. Both secret keys are held by one person in one 1Password vault
+of one account: not independent custody, an accepted risk of the
+single-maintainer exception (listed under K).
+
+Update 2026-11-21 (release governance): DeckPilot is a single-maintainer
+project. On the owner's decision, official releases run under a
+documented single-maintainer exception to the team-managed default policy
+([publisher-signature.md](publisher-signature.md#release-governance),
+`docs/release-governance.md` in the plugin repository): the owner is the
+sole release approver, and the admin-only release tag authorizes the run
+(tag authority, as for `registry-release`). Threshold 2, the two signing
+jobs, the keyless `verify` and every check are unchanged. This does not
+change the privileged-kinds gate or this review's scope: the gate opened
+only on the approved sign-off below. Live since 2026-11-21: in
+`official-release`, there is no required reviewer, administrators cannot
+bypass it, deployments come only from `deckpilot.*--v*` tags, and the
+reviewer variables are removed.
 
 Update 2026-11-21 (privileged plugins): everything needed to distribute
 the five privileged plugins as signed artifacts is implemented **with the
@@ -112,8 +135,10 @@ pipeline of `knittingcode/deckpilot-plugins` that produces them.
    `DECKPILOT_PUBLISHER_KEY_B_PASSWORD`), each passed to its own
    `release sign --key-env … --password-env …` job (never written to
    disk), and never available to pull-request workflows. Review the environment protection rules
-   and that no workflow in `knittingcode/deckpilot` can sign
-   (`check-release-separation.py`).
+   (tags `deckpilot.*--v*` only, no administrator bypass, authorized by the
+   admin-only tag ruleset or a required reviewer: the plugin repository's
+   `tools/check-environment.sh official-release`) and that no workflow in
+   `knittingcode/deckpilot` can sign (`check-release-separation.py`).
 10. **Release pipeline.** `official.yml` runs untrusted pull-request code
    with no secret and throwaway keys only; `official-release.yml` runs
    only on a release tag, in the protected environment, builds from the
@@ -240,12 +265,14 @@ K. **Known open items** (not blockers for the closed state):
    keys). (The former item "only one `.minisig` per release is fetched" is
    resolved: one `<package>.<KEYID>.minisig` per pinned key, threshold 2
    reachable at run time.)
-   Key custody: both production secret keys are held in one 1Password
-   vault of one account; threshold 2 protects against one leaked secret
-   or signing job, not against that account. There is no independent
-   custody and no second human release reviewer: **accepted risk: single
-   maintainer (owner decision 2026-11-21)**. Release approval follows the
-   protected-tag authority model.
+   Key custody: both production secret keys are held by one person in one
+   1Password vault of one account; threshold 2 protects against one leaked
+   secret or signing job, not against that account. No independent
+   custody: **accepted risk (single maintainer)**, the owner's decision of
+   2026-11-21. Likewise the earlier finding M5 (someone other than the
+   person who pushed the tag approves the signing run): accepted risk
+   (single maintainer). Both end with the transition to team governance
+   ([publisher-signature.md](publisher-signature.md#release-governance)).
    The key test (`release test-sign`, `test-verify`): confirm that a
    test signature never counts for a release (another trusted comment
    domain; `a_key_test_signature_is_never_a_release_signature`) and that

@@ -516,8 +516,9 @@ stolen key or secret cannot sign a release. The intended handling:
    comment line). Keep an offline backup of each encrypted secret key,
    apart from the other.
 2. Store them as secrets of the dedicated environment `official-release`
-   of `knittingcode/deckpilot-plugins` (release tags only, required
-   reviewer), never in a repository, never in `knittingcode/deckpilot`
+   of `knittingcode/deckpilot-plugins` (tags `deckpilot.*--v*` only, no
+   administrator bypass, each run authorized as in
+   [Release governance](#release-governance)), never in a repository, never in `knittingcode/deckpilot`
    (the release separation, [distribution.md](distribution.md), forbids
    plugin signing here and `check-release-separation.py` enforces it):
 
@@ -567,16 +568,19 @@ its hygiene check requires threshold 2 of two distinct keys.
 exactly these ids, threshold 2, publisher `deckpilot`, distinct.
 
 **Custody, honestly stated.** Both secret keys and their passwords are
-currently held in **one 1Password vault of one account**, and stored as
-the environment secrets of `official-release`. Threshold 2 therefore
-protects against a leak of one GitHub secret or one signing job, but not
-against the compromise of that one account. DeckPilot is a
-single-maintainer project, so there is no independent custody: **accepted
-risk: single maintainer (owner decision 2026-11-21).** Two signatures
-prove two keys, not two people.
+held by one person, the owner, in **one 1Password vault of one account**,
+and stored as the environment secrets of `official-release`. This is
+**not independent custody.** Threshold 2 protects against one leaked key
+or secret, one compromised signing job, signature substitution and a
+tampered package, but not against the compromise of that one account (or
+of the owner's GitHub account or token): two signatures prove two keys,
+not two people. The owner accepted this as part of the single-maintainer
+exception ([Release governance](#release-governance)); independent
+custody needs a second maintainer holding key B.
 
 **Key test.** The plugin repository's `official-test-sign.yml` (manual,
-protected by the `official-release` environment) signs a fixed message
+on a `deckpilot.publisher-test--v<n>` tag the owner creates, through the
+`official-release` environment and its `gate`) signs a fixed message
 in a separate domain (`deckpilot-registry release test-sign`, trusted
 comment `deckpilot-publisher-test v1 role:test run:<n> ...`,
 `publisher::test_comment`) with each stored secret, in separate jobs, and
@@ -585,7 +589,68 @@ checks both against the pinned keys with threshold 2
 pinned keys and that their passwords unlock them. `release verify`, the
 agent and the application build refuse such signatures as a release
 (`a_key_test_signature_is_never_a_release_signature`): the comment is
-another domain, and the message is not a package.
+another domain, and the message is not a package. The production key
+test passed on 2026-11-21 (run 44954714900, tag
+`deckpilot.publisher-test--v1`): both stored secrets are the pinned keys.
+
+## Release governance
+
+The full text, the settings and the gate's checks are in the plugin
+repository's [docs/release-governance.md](https://github.com/knittingcode/deckpilot-plugins/blob/main/docs/release-governance.md). In short:
+
+**Approval and signing are different controls.** Human release approval
+decides *who may start or authorize a release* (who creates the tag, who
+approves the `official-release` deployment, which checks must hold before
+a key is used); GitHub and the plugin repository's `gate` job enforce it,
+once, when the release runs. Cryptographic package signing proves *what a
+package is and where it came from*: two pinned keys signed exactly this
+id, version, sha256 and size; every DeckPilot build and the agent check it
+offline against the compiled-in keys (threshold 2), revocations and
+rollback floors. Users rely on the signatures; approval keeps the pipeline
+from signing what it should not.
+
+**Default policy (team-managed), the intended production governance:**
+releases approved by two distinct authorized people; independently
+controlled signing keys; the release initiator never approves their own
+release; all required CI, provenance and signature verification pass.
+GitHub's environment *required reviewers* needs **one** approval from the
+listed reviewers; with *Prevent self-review* that one is someone other
+than the initiator (one initiator plus one approver). GitHub does not
+natively require two approvals, and no check here does yet; the plugin
+repository's gate can require at least N listed reviewers and
+prevent-self-review (`OFFICIAL_RELEASE_REQUIRE_REVIEWERS`,
+`OFFICIAL_RELEASE_REQUIRE_PREVENT_SELF_REVIEW`).
+
+**Current single-maintainer exception** (the owner's decision of
+2026-11-21, until a second trusted maintainer joins): the owner is the
+sole authorized release approver, and releases proceed without a second
+human reviewer; the release tag, which only the administrator can create
+(ruleset *Protect tags*), is the authorization. Both publisher keys stay
+mandatory: every package needs two valid, distinct signatures from two
+separate signing jobs, and this crate's verifier, threshold 2 and pinned
+keys are unchanged. Required CI, package verification, provenance and
+security checks stay enforced. Both signing keys are currently controlled
+by one person and do **not** provide independent custody. This is a
+documented single-maintainer exception, not a reduction of the signature
+threshold. The live settings of `official-release` since 2026-11-21:
+no required reviewer, administrators cannot bypass it, deployments come
+only from `deckpilot.*--v*` tags, and the reviewer variables are removed.
+Under this exception, all nine official plugins were released on
+2026-11-21, each signed by both keys: `deckpilot.github` 0.2.1;
+`deckpilot.gitlab`, `deckpilot.jira` and `deckpilot.notifications`
+0.1.2; `deckpilot.workflows`, `deckpilot.git`, `deckpilot.docker`,
+`deckpilot.projects` and `deckpilot.workspace` 0.1.1.
+
+**Transition to team governance**, once a second trusted maintainer
+joins: (1) establish independent control of the second signing key
+(a new key B made and held by them, pinned here with the old one revoked,
+threshold 2); (2) configure protected release approval by distinct
+authorized maintainers (both listed as required reviewers, prevent
+self-review on); (3) enforce two-person approval with a mechanism that
+actually checks it (the gate's reviewer variables enforce an initiator
+plus a distinct approver; two separate approvals need a check of the
+run's recorded approvals, not implemented today); (4) restore the
+team-managed policy; (5) remove the exception.
 
 ## Wave B: consuming an artifact
 
