@@ -195,3 +195,67 @@ async fn a_projects_user_moves_to_the_plugin_after_consent() {
     wait_active(&agent, ids[1]).await;
     agent.stop().await;
 }
+
+/// The installed version of `deckpilot.projects`, if any.
+async fn version(agent: &Agent) -> Option<String> {
+    match agent.ok(Request::ListPlugins).await {
+        Response::Plugins { plugins } => plugins
+            .into_iter()
+            .find(|p| p.id == PROJECTS.id)
+            .map(|p| p.version),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+/// An installation of v0.10.0 or v0.11.0 (both shipped
+/// `deckpilot.projects` 0.1.0 with the same files) whose Projects
+/// migration still waits for `projectContext:select` upgrades to the app
+/// that bundles the released artifact: the copy moves to the released
+/// version at the start, nothing granted, still waiting; the user's
+/// consent then cuts it over and the stored key runs through it. Before
+/// the fix the consent failed the health check ("this agent pins no
+/// bundled deckpilot.projects 0.1.0").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_projects_installation_waiting_for_consent_upgrades_to_the_released_artifact() {
+    let mut profile = Profile::new("Work");
+    profile
+        .projects
+        .push(Project::new(ProjectKey::new("SHOP").unwrap(), "Shop"));
+    let ids: Vec<ProjectId> = profile.projects.iter().map(|p| p.id).collect();
+    let current = legacy(&mut profile, "projects.current", &[]);
+    let env = Env::new(
+        "plugins-cutover-projects-waiting",
+        PROJECTS,
+        BundleClass::Migration,
+        Some((&profile, Some(ids[0]))),
+        None,
+    );
+    let released = support::official::locked_version(PROJECTS.id);
+    env.restage(BundleClass::Migration, &|_, manifest| {
+        manifest["version"] = "0.1.0".into();
+    });
+    let agent = env.start().await;
+    wait_for(&agent, "projects", |m| {
+        m.phase == MigrationPhase::AwaitingConsent
+    })
+    .await;
+    assert_eq!(version(&agent).await.as_deref(), Some("0.1.0"));
+    agent.stop().await;
+
+    env.restage(BundleClass::Migration, &|_, _| {});
+    let agent = env.start().await;
+    wait_for(&agent, "projects", |m| {
+        m.phase == MigrationPhase::AwaitingConsent
+    })
+    .await;
+    assert_eq!(
+        version(&agent).await,
+        Some(released.clone()),
+        "{}",
+        agent.log()
+    );
+    consent(&agent, "projects", "projectContext:select", current).await;
+    assert_eq!(ran(&agent, current).await, "SHOP (Shop)");
+    assert_eq!(version(&agent).await, Some(released));
+    agent.stop().await;
+}

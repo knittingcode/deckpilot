@@ -30,6 +30,15 @@ released either. 0.6.0 is the first version intended for publication.
   plugin that 0.11.0 stopped (quarantined) is released at the next
   registry refresh but stays turned off: turn it on again on the Plugins
   page (Marketplace › Installed).
+- A newer bundled version of Git, Docker or Projects that declares the
+  same permissions now replaces the installed copy at the start even while
+  its move from the built-in still waits for your consent; nothing is
+  granted by it, and the same consent is still asked. Before, the newer
+  version waited for an approval nobody was asked for, and giving the
+  consent then failed ("this agent pins no bundled deckpilot.git 0.1.0"),
+  leaving those keys unavailable. A bundled version that asks for new
+  permissions still waits for your approval: the move then says so instead
+  of enabling the older copy.
 
 ## [0.11.0] - 2026-11-21
 

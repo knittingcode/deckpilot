@@ -274,8 +274,33 @@ pub(super) fn refresh(
             }
         };
     }
-    if record.staged().is_some() {
-        return Seeded::Skipped("an update waits for the user's approval".into());
+    if let Some(staged) = record.staged() {
+        // A staged copy of exactly the pinned version, declaring what the
+        // active one declares, needs no consent: it applies (an agent that
+        // staged it before this rule, or a start interrupted after the
+        // update). Its files are checked against the pin first.
+        if staged.version != pin.version {
+            return Seeded::Skipped("an update waits for the user's approval".into());
+        }
+        let dir = manager.layout().resolve(&staged.install_dir);
+        if let Err(e) = deckpilot_plugin_bundled::verify_installed(&dir, pin) {
+            // Files that are not the pinned ones would fail every start:
+            // the staged copy is dropped and the pinned one staged again
+            // from the bundle below.
+            warn!(plugin = %pin.id, version = %pin.version, error = %e,
+                "the staged bundled copy differs from the pins; it is replaced");
+            if let Err(e) = manager.decline_update(&pin.id) {
+                return Seeded::Failed(format!(
+                    "the staged bundled copy differs from the pins and cannot be dropped: {e}"
+                ));
+            }
+        } else {
+            return match manager.apply_bundled_update_unchanged(&pin.id) {
+                Ok(Some(_)) => Seeded::Updated,
+                Ok(None) => Seeded::Skipped("an update waits for the user's approval".into()),
+                Err(e) => Seeded::Failed(e.to_string()),
+            };
+        }
     }
     let package = match verified(bundle, pin) {
         Ok(package) => package,
@@ -289,7 +314,16 @@ pub(super) fn refresh(
             let low = diff.added.iter().all(|g| g.tier == Tier::Low)
                 && diff.broadened.iter().all(|b| b.tier == Tier::Low);
             if !low {
-                return Seeded::UpdateAwaitingConsent;
+                // Unless the new version declares exactly what the active
+                // one declares: the "escalation" is then only what still
+                // waits for the user's consent (a copy the migration
+                // engine installed), and the update applies without
+                // granting anything.
+                return match manager.apply_bundled_update_unchanged(&pin.id) {
+                    Ok(Some(_)) => Seeded::Updated,
+                    Ok(None) => Seeded::UpdateAwaitingConsent,
+                    Err(e) => Seeded::Failed(format!("the update was staged, not applied: {e}")),
+                };
             }
             let keys = diff.escalations();
             match manager.approve_update(&pin.id, &Consent::of(keys, decided_by())) {

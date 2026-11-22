@@ -1115,6 +1115,96 @@ impl PluginManager {
         Ok(staged.version)
     }
 
+    /// Activates the staged update of a plugin installed **from the
+    /// application's bundle** when the staged version declares exactly the
+    /// permissions of the active one (keys, scopes and optional ones,
+    /// declared against declared, not against what is granted). Nothing is
+    /// granted: the stored grants carry over, intersected with what the new
+    /// version declares, and a permission still waiting for the user's
+    /// consent keeps waiting for it.
+    ///
+    /// [`update`](Self::update) compares an update with the *granted*
+    /// permissions, so a bundled copy installed by the migration engine and
+    /// still waiting for its high-tier consent would otherwise stage every
+    /// new bundled version, keeping an active version the agent no longer
+    /// pins. `None` (nothing changed) for any other source, without a staged
+    /// or an active version, when the declared permissions differ (an
+    /// escalation stays staged for the user), and for an enabled plugin that
+    /// would lack a required grant.
+    pub fn apply_bundled_update_unchanged(&mut self, id: &PluginId) -> Result<Option<Version>> {
+        let plugin = self.plugin(id)?;
+        if plugin.source != InstallSource::Bundled {
+            return Ok(None);
+        }
+        let (Some(active), Some(staged)) = (plugin.active(), plugin.staged()) else {
+            return Ok(None);
+        };
+        if active.grants() != staged.grants() {
+            return Ok(None);
+        }
+        let staged = staged.clone();
+        let dir = self.layout.resolve(&staged.install_dir);
+        if let Err(problem) = verify_installed(&dir, &staged.integrity) {
+            self.decline_update(id)?;
+            return Err(StoreError::Integrity {
+                id: id.clone(),
+                version: staged.version.to_string(),
+                problem: problem.to_string(),
+            });
+        }
+        let retired = self.tx(|tx, ctx| {
+            ensure_idle(tx, id)?;
+            let plugin =
+                store::load_plugin(tx, id)?.ok_or_else(|| StoreError::NotInstalled(id.clone()))?;
+            // The same checks again, inside the transaction.
+            let unchanged = plugin.source == InstallSource::Bundled
+                && plugin.staged().is_some_and(|s| s.version == staged.version)
+                && plugin
+                    .active()
+                    .is_some_and(|a| a.grants() == staged.grants());
+            if !unchanged {
+                return Ok(None);
+            }
+            let candidate = staged.grants();
+            let diff = PermissionDiff::compute(&store::load_grants(tx, id)?, &candidate);
+            let ungranted = diff
+                .escalations()
+                .into_iter()
+                .any(|key| !candidate.is_optional(&key));
+            if ungranted && plugin.state == PluginState::Enabled {
+                return Ok(None);
+            }
+            store::transition(tx, id, plugin.state, PluginState::Updating, None, ctx.now)?;
+            let retired = activate_without_consent(
+                tx,
+                ctx,
+                id,
+                plugin.state,
+                &staged.version,
+                &diff,
+                &candidate,
+            )?;
+            ctx.audit(
+                tx,
+                id,
+                event(
+                    Some(&staged.version.to_string()),
+                    "update",
+                    None,
+                    "applied",
+                    Some("bundled update with the same declared permissions; nothing granted"),
+                ),
+            )?;
+            Ok(Some(retired))
+        })?;
+        let Some(retired) = retired else {
+            return Ok(None);
+        };
+        self.crash(Operation::ApproveUpdate, Failpoint::Committed)?;
+        self.retire(&retired)?;
+        Ok(Some(staged.version))
+    }
+
     /// Drops the staged update; the running version stays.
     pub fn decline_update(&mut self, id: &PluginId) -> Result<()> {
         let dir = self.tx(|tx, ctx| {
@@ -1806,6 +1896,37 @@ fn activate(
         });
     }
     apply_grant_changes(tx, ctx, id, version, diff, candidate, consent)?;
+    switch_versions(tx, ctx, id, prior, version)
+}
+
+/// [`activate`] for a bundled update that declares exactly what the
+/// active version declares ([`PluginManager::apply_bundled_update_unchanged`]):
+/// no consent, so nothing is granted; covered, narrowed and removed keys
+/// are written as for any update, and a permission that is not granted
+/// stays so (the plugin keeps waiting for the user's consent).
+fn activate_without_consent(
+    tx: &Connection,
+    ctx: Ctx,
+    id: &PluginId,
+    prior: PluginState,
+    version: &Version,
+    diff: &PermissionDiff,
+    candidate: &GrantSet,
+) -> Result<Vec<String>> {
+    apply_grant_changes(tx, ctx, id, version, diff, candidate, None)?;
+    switch_versions(tx, ctx, id, prior, version)
+}
+
+/// The version side of an activation: the old active becomes previous,
+/// the older previous is retired (its directory returned), `version`
+/// becomes active and the plugin leaves `Updating` for its prior state.
+fn switch_versions(
+    tx: &Connection,
+    ctx: Ctx,
+    id: &PluginId,
+    prior: PluginState,
+    version: &Version,
+) -> Result<Vec<String>> {
     let plugin = store::load_plugin(tx, id)?.ok_or_else(|| StoreError::NotInstalled(id.clone()))?;
     let mut retired = Vec::new();
     if let Some(previous) = plugin.previous() {
