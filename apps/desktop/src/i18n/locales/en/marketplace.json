@@ -310,5 +310,8 @@
   "page": {
     "title": "Marketplace",
     "description": "Signed community plugins from the verified registry"
+  },
+  "installRefused": {
+    "title": "{{name}} {{version}} cannot be installed"
   }
 }

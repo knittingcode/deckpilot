@@ -269,7 +269,7 @@ time, by its own reviewed change, as in
 
 Status: **implemented; the production keys are pinned, the other
 authorities are not.** An agent built with the pinned keys passes
-`Official::ready`, but accepts a registry-delivered `deckpilot.*` package
+`Official::ready`, but accepts a registry-delivered **official** package
 only when both production keys signed that release
 (`this_build_pins_the_production_keys_and_counts_no_other`); a key set
 without keys is still refused before any download. Registry delivery
@@ -278,8 +278,25 @@ exist yet, so in practice nothing is delivered. Nothing changes for the
 bundled copies: they are seeded offline from the application bundle and
 trusted by the compiled pins exactly as before.
 
+**Which ids.** Exactly the **official** ids (`Official::is_official`): the
+nine plugins DeckPilot ships (`deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS`:
+Docker, Git, GitHub, GitLab, Jira, Notifications, Projects, Workflows,
+Workspace), every plugin of the compiled artifact lock and every plugin the
+running bundle pins. Never derived from the `deckpilot.` prefix. Every other
+`deckpilot.*` id is a **first-party community plugin** (Memory, Pomodoro,
+Markets, Break Reminder, Air Quality, …), released without publisher
+signatures, and follows the registry's rules alone, as before 0.11.0: the
+signed index, the root-signed key set's authorization of the `deckpilot`
+namespace, the verified `deckpilot` publisher record and the pinned package
+(sha256, size, manifest hash, permissions), read with the first-party rules,
+which refuse every privileged kind; the store refuses privileged constructs
+from every non-bundled source as well (`check_privileged_source`). None of
+the floors, records, revocations or audit lines below apply to it. DeckPilot
+0.11.0 required the publisher signatures of every `deckpilot.*` id and so
+refused the community plugins; fixed in the next release.
+
 `apps/agent/src/plugins/official.rs` (`Official`), called from
-`PluginService::fetch` for every `deckpilot.*` id (install, update and
+`PluginService::fetch` for every official id (install, update and
 dependency installs alike):
 
 1. **Before any download** (`PluginService::pins`): the keys must be valid
@@ -424,7 +441,9 @@ exactly this path. No unsigned, third-party, file or development path
 accepts a `deckpilot.*` id: the store refuses sideloaded and dev
 installs of them (`InstallSource::allows`), the third-party reader rules
 refuse the reserved publisher, and `PluginService::fetch` runs the
-publisher verification for every registry download of a `deckpilot.*` id.
+publisher verification for every registry download of an official id (a
+community plugin can never take an official id: those ids need both
+signatures whatever the registry says).
 
 The plugins that declare privileged kinds (Docker, Git, Projects,
 Workflows, Workspace) never make this transition: they reach users only

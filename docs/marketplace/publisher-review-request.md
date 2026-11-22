@@ -137,8 +137,12 @@ calls in `apps/agent/src/plugins/service.rs` (`pins`, `fetch`, `update`,
 The reviewer must not be the author; check each item against the code,
 not this list, and record failures as findings.
 
-A. **Every `deckpilot.*` registry download is publisher-verified.**
-   1. `is_first_party` gates `Official::verify` in `PluginService::fetch`,
+A. **Every registry download of an official id is publisher-verified.**
+   0. `Official::is_official` (the nine `BUNDLED_PLUGIN_IDS`, the compiled
+      lock's ids, the running bundle's pins; never the `deckpilot.` prefix)
+      decides; first-party community `deckpilot.*` plugins follow the
+      registry's rules alone and never get privileged kinds.
+   1. `is_official` gates `Official::verify` in `PluginService::fetch`,
       and every path that installs or updates from a registry goes through
       `fetch` (`install_steps`, `update`, `dependencies.rs`
       `verify_downloads`). Search for other callers of
