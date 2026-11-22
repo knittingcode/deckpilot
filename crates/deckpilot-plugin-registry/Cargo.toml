@@ -27,12 +27,22 @@ thiserror.workspace = true
 # tool. The verifier library never signs anything.
 minisign = { version = "0.10", optional = true }
 zeroize = { workspace = true, optional = true }
+# Feature `publish` only: `storefront check|build` decode every storefront
+# image in full (CI), and check that text is in Unicode NFC. The client
+# library (the agent) only walks image headers (`media.rs`) and never
+# decodes pixels.
+image = { workspace = true, optional = true, features = ["png", "jpeg", "webp"] }
+unicode-normalization = { version = "0.1", optional = true }
+# Feature `publish` only: `storefront check` validates the author and
+# owner sources against the bundled input schemas (no HTTP or file
+# reference resolution).
+jsonschema = { version = "0.61", default-features = false, optional = true }
 
 [features]
 # The registry publishing tool (`deckpilot-registry` binary and the
 # `publish` module). Off by default, so the client library keeps its
 # dependency footprint.
-publish = ["dep:minisign", "dep:zeroize"]
+publish = ["dep:minisign", "dep:zeroize", "dep:image", "dep:unicode-normalization", "dep:jsonschema"]
 # Lets a configured roots.json take precedence over roots embedded at build
 # time (DECKPILOT_REGISTRY_ROOT_PUBKEYS) in an optimized build, as debug
 # builds always do (`roots::choose`). Enabled by the agent's `test-hooks`;
@@ -82,6 +92,8 @@ jsonschema = { version = "0.61", default-features = false }
 # verifier must refuse even when it is signed).
 flate2.workspace = true
 tar.workspace = true
+# Encodes real PNG, JPEG and WebP fixtures for tests/storefront.rs.
+image = { workspace = true, features = ["png", "jpeg", "webp"] }
 
 [lints]
 workspace = true
@@ -89,6 +101,13 @@ workspace = true
 # The first-party publisher signature and `release sign|verify`.
 [[test]]
 name = "publisher"
+required-features = ["publish"]
+
+# The storefront: media headers, documents, client verification, the
+# `storefront build|sign|check` commands and `verify-site
+# --require-storefront`.
+[[test]]
+name = "storefront"
 required-features = ["publish"]
 
 # The privileged-kinds gate and the reviewed privileged policy: every

@@ -7,12 +7,19 @@
 //! <dir>/registry/plugins/<id>/plugin.json  listing and detail metadata
 //! <dir>/registry/plugins/<id>/versions/<version>.json   version history
 //! <dir>/registry/revocations.json          cumulative revocations
+//! <dir>/registry/plugins/<id>/listing.json  storefront listing (author source)
+//! <dir>/registry/plugins/<id>/media/        its images (PNG, WebP, JPEG)
+//! <dir>/editorial/editorial.json           storefront placements (maintainers)
+//! <dir>/editorial/media/                   their images
 //! <dir>/releases/<id>--v<version>/<id>-<version>.dpplugin   release assets
 //! <dir>/site/v1/                           the Pages tree, served as is:
 //!     keys/<n>.json, keys/<n>.json.minisig
 //!     index/<seq>.json, index/<seq>.json.minisig
 //!     plugins/<id>/<sha256>.json
 //!     timestamp.json, timestamp.json.minisig
+//!     storefront/<seq>.json, storefront/<seq>.json.minisig
+//!     storefront/listings/<id>/<sha256>.json, storefront/editorial/<sha256>.json
+//!     media/<sha256>.<png|webp|jpg>
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -72,6 +79,45 @@ impl Workspace {
 
     pub fn version_path(&self, id: &PluginId, version: &Version) -> PathBuf {
         self.versions_dir(id).join(format!("{version}.json"))
+    }
+
+    pub fn listing_source_path(&self, id: &PluginId) -> PathBuf {
+        self.plugins_dir().join(id.as_str()).join("listing.json")
+    }
+
+    pub fn editorial_dir(&self) -> PathBuf {
+        self.root.join("editorial")
+    }
+
+    pub fn editorial_source_path(&self) -> PathBuf {
+        self.editorial_dir().join("editorial.json")
+    }
+
+    pub fn storefront_path(&self, seq: u64) -> PathBuf {
+        self.site().join("storefront").join(format!("{seq}.json"))
+    }
+
+    /// Every `storefront/<seq>.json` present, ascending.
+    pub fn storefront_seqs(&self) -> Result<Vec<u64>> {
+        let dir = self.site().join("storefront");
+        let mut seqs = Vec::new();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(seqs),
+            Err(e) => return fail(format!("{}: {e}", dir.display())),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|e| PublishError(format!("{}: {e}", dir.display())))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if let Some(number) = name.strip_suffix(".json")
+                && let Some(seq) = canonical_u64(number)
+            {
+                seqs.push(seq);
+            }
+        }
+        seqs.sort_unstable();
+        Ok(seqs)
     }
 
     pub fn revocations_path(&self) -> PathBuf {

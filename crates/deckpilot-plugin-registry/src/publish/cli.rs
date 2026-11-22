@@ -60,6 +60,24 @@ DECKPILOT_REGISTRY_KEY_PASSWORD; never printed.
   sign-index --key FILE [--seq N]
   timestamp --key FILE [--expires-in 7d]             (at most 14d)
   verify-site [--roots FILE] [--state DIR] [--min-remaining 3d] [--require-packages]
+              [--require-storefront]
+      --require-storefront also verifies storefront/<seq>.json of the verified seq as a
+      client does, every listing and editorial document it pins, and every image (the
+      client's header checks, then a full decode); a missing storefront fails.
+
+The storefront (editorial placements and listings; storefront design):
+  storefront check
+      Checks registry/plugins/<id>/listing.json and editorial/editorial.json against
+      the input schemas and every text, link, markdown and image rule (each image is
+      also decoded in full), and the ids and versions they name against registry/.
+  storefront build [--seq N]
+      For the signed index/<N>.json (default: the newest): writes the listing and
+      editorial documents (published entries only) and media/<sha256>.<ext>, then the
+      unsigned storefront/<N>.json bound to that index; prunes storefronts of indexes
+      no longer on the site.
+  storefront sign --key FILE [--seq N]
+      Signs storefront/<N>.json with an INDEX key and the trusted comment
+      `deckpilot-registry v1 role:storefront seq:<N> keys:<kv>`.
 
 First-party release artifacts (the publisher signature, crate::publisher):
   release sign --package FILE.dpplugin --id ID --version V (--key FILE | --key-env NAME)
@@ -351,7 +369,12 @@ fn action_of(text: &str) -> Result<RevocationAction> {
 #[allow(clippy::too_many_lines)] // one arm per command
 pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
     let (command, rest) = match args {
-        [group, sub, rest @ ..] if group == "keys" || group == "keyset" || group == "release" => {
+        [group, sub, rest @ ..]
+            if group == "keys"
+                || group == "keyset"
+                || group == "release"
+                || group == "storefront" =>
+        {
             (format!("{group} {sub}"), rest)
         }
         [command, rest @ ..] => (command.clone(), rest),
@@ -363,6 +386,7 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
         "seq-floor-reset",
         "verified",
         "require-packages",
+        "require-storefront",
         "first-party",
         "no-first-party",
     ];
@@ -607,16 +631,37 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
             let state = opts.path("state")?;
             let min_remaining = opts.duration("min-remaining", TimeDelta::zero())?;
             let require_packages = opts.flag("require-packages");
+            let require_storefront = opts.flag("require-storefront");
             let now = opts.now()?;
             opts.finish()?;
-            let report = verify::run(
-                &ws,
-                roots.as_deref(),
-                state.as_deref(),
-                now,
-                min_remaining,
-                require_packages,
-            )?;
+            let (report, storefront) = if require_storefront {
+                let (report, storefront) = verify::run_with_storefront(
+                    &ws,
+                    roots.as_deref(),
+                    state.as_deref(),
+                    now,
+                    min_remaining,
+                    require_packages,
+                )?;
+                (report, Some(storefront))
+            } else {
+                let report = verify::run(
+                    &ws,
+                    roots.as_deref(),
+                    state.as_deref(),
+                    now,
+                    min_remaining,
+                    require_packages,
+                )?;
+                (report, None)
+            };
+            let storefront = storefront.map_or_else(String::new, |s| {
+                format!(
+                    "\nstorefront accepted by the client: seq {}, sha256 {}, {} listing(s), \
+                     {} section(s) ({} of an unknown kind skipped), {} image(s) verified",
+                    s.seq, s.sha256, s.listings, s.sections, s.skipped_sections, s.media
+                )
+            });
             format!(
                 "site accepted by the client: key set {}, seq {} ({}), expires {}, {} plugin(s), \
                  {} installable version(s), {} package(s) verified, {} revocation(s)",
@@ -628,7 +673,58 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
                 report.installable_versions,
                 report.packages_verified,
                 report.revocations
-            )
+            ) + &storefront
+        }
+        "storefront check" => {
+            opts.finish()?;
+            let report = super::storefront::check(&ws)?;
+            let mut message = format!(
+                "storefront sources pass: {} listing(s), {} published section(s), {} \
+                 collection(s), {} image(s) ({} bytes), every image decoded",
+                report.listings,
+                report.sections,
+                report.collections,
+                report.images,
+                report.media_bytes
+            );
+            for note in &report.notes {
+                message.push('\n');
+                message.push_str(note);
+            }
+            message
+        }
+        "storefront build" => {
+            let seq = opts.parsed("seq")?;
+            let now = opts.now()?;
+            opts.finish()?;
+            let report = super::storefront::build(&ws, seq, now)?;
+            let mut message = format!(
+                "wrote site/v1/storefront/{}.json: {} listing(s), editorial {}, {} image(s); \
+                 sign it with `storefront sign`",
+                report.seq,
+                report.listings,
+                if report.editorial { "yes" } else { "none" },
+                report.media
+            );
+            for id in &report.skipped {
+                message.push_str("\nskipped the listing of ");
+                message.push_str(id.as_str());
+                message.push_str(": not in index/");
+                message.push_str(&report.seq.to_string());
+                message.push_str(".json");
+            }
+            for note in &report.notes {
+                message.push('\n');
+                message.push_str(note);
+            }
+            message
+        }
+        "storefront sign" => {
+            let seq = opts.parsed("seq")?;
+            let key = signing_key(&opts, io)?;
+            opts.finish()?;
+            let seq = super::storefront::sign(&ws, seq, &key)?;
+            format!("signed site/v1/storefront/{seq}.json (index key, role:storefront)")
         }
         "release sign" => {
             let package = std::fs::read(opts.required("package")?)
