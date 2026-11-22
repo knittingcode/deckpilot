@@ -6,7 +6,7 @@ use std::io;
 use thiserror::Error;
 use tokio::io::BufReader;
 
-use crate::framing::{FrameError, read_message, write_message};
+use crate::framing::{FrameError, FrameReader, write_message};
 use crate::live_preview::LivePreviewEvent;
 use crate::{
     AgentEvent, AgentPaths, Capability, ClientKind, ClientMessage, ErrorCode, IpcError,
@@ -91,7 +91,8 @@ fn handshake_error(error: ClientError) -> ClientError {
 /// A connection to the agent.
 #[derive(Debug)]
 pub struct AgentClient {
-    reader: BufReader<SharedStream>,
+    /// Cancel safe: waiting for a message may be given up at any time.
+    reader: FrameReader<BufReader<SharedStream>>,
     writer: SharedStream,
     next_id: u64,
     agent_version: String,
@@ -184,7 +185,7 @@ impl AgentClient {
         })?;
         let stream = SharedStream::new(stream);
         let mut connection = Self {
-            reader: BufReader::new(stream.clone()),
+            reader: FrameReader::new(BufReader::new(stream.clone())),
             writer: stream,
             next_id: 1,
             agent_version: String::new(),
@@ -266,9 +267,7 @@ impl AgentClient {
     }
 
     async fn receive(&mut self) -> Result<ServerMessage, ClientError> {
-        read_message(&mut self.reader)
-            .await?
-            .ok_or(ClientError::Closed)
+        self.reader.read_message().await?.ok_or(ClientError::Closed)
     }
 
     /// Sends a request and waits for its response. Events that arrive in the
@@ -505,10 +504,13 @@ impl AgentClient {
             let _ = sender.send(Ok(message));
         }
         let writer = self.writer.clone();
-        let mut reader = std::mem::replace(&mut self.reader, BufReader::new(writer.clone()));
+        let mut reader = std::mem::replace(
+            &mut self.reader,
+            FrameReader::new(BufReader::new(writer.clone())),
+        );
         let task = tokio::spawn(async move {
             loop {
-                let message = match read_message::<_, ServerMessage>(&mut reader).await {
+                let message = match reader.read_message::<ServerMessage>().await {
                     Ok(Some(message)) => Ok(message),
                     Ok(None) => Err(ClientError::Closed),
                     Err(error) => Err(error.into()),

@@ -2421,6 +2421,32 @@ pub async fn shutdown_signal() {
 }
 
 #[cfg(test)]
+impl AgentHandle {
+    /// A handle without an agent behind it: the requests sent to it arrive
+    /// on the returned receiver, and the test emits its events.
+    pub(crate) fn detached() -> (Self, mpsc::UnboundedReceiver<Command>) {
+        let (commands, received) = mpsc::unbounded_channel();
+        let (_, work_session) = work_session::WorkSessions::new(SystemTime::UNIX_EPOCH);
+        let handle = Self {
+            commands,
+            events: broadcast::channel(16).0,
+            plugin_events: broadcast::channel(16).0,
+            key_states: broadcast::channel(16).0,
+            live_preview: broadcast::channel(16).0,
+            plugin_dialogs: Arc::default(),
+            desktop_clients: Arc::new(AtomicUsize::new(0)),
+            work_session,
+        };
+        (handle, received)
+    }
+
+    /// Sends `event` to the connections that subscribed.
+    pub(crate) fn emit_for_test(&self, event: AgentEvent) {
+        let _ = self.events.send(event);
+    }
+}
+
+#[cfg(test)]
 mod reload_stage_tests {
     use super::*;
 
