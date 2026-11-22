@@ -6,7 +6,8 @@
 //!
 //! * **Exact trusted comments.** Every registry comment starts with
 //!   `deckpilot-registry v1 role:` and names its role, sequence and key set
-//!   (see [`keys_comment`], [`index_comment`], [`timestamp_comment`]). A
+//!   (see [`keys_comment`], [`index_comment`], [`timestamp_comment`],
+//!   [`storefront_comment`]). A
 //!   signature counts only if its comment is byte-for-byte the one expected
 //!   for that document, so a signature made for another role, another seq,
 //!   another key set or by the Tauri updater (`timestamp:…\tfile:…\tversion:…`)
@@ -56,6 +57,22 @@ pub fn index_comment(seq: u64, keys_version: u64) -> String {
 /// `deckpilot-registry v1 role:timestamp seq:<seq> keys:<keys_version>`.
 pub fn timestamp_comment(seq: u64, keys_version: u64) -> String {
     format!("{COMMENT_PREFIX}timestamp seq:{seq} keys:{keys_version}")
+}
+
+/// `deckpilot-registry v1 role:storefront seq:<seq> keys:<keys_version>`.
+///
+/// The storefront (storefront design §5) is signed by the **index** role
+/// with this comment. Comments are exact, so an index signature never
+/// passes as a storefront signature, nor the reverse, although the key is
+/// the same. Clients before the storefront never fetch `storefront/`.
+pub fn storefront_comment(seq: u64, keys_version: u64) -> String {
+    format!("{COMMENT_PREFIX}storefront seq:{seq} keys:{keys_version}")
+}
+
+/// Whether `comment` names the storefront role (whatever its seq and key
+/// set; the exact comment is required afterwards).
+pub(crate) fn is_storefront_comment(comment: &str) -> bool {
+    comment.starts_with(&format!("{COMMENT_PREFIX}storefront "))
 }
 
 /// Reads `seq` and `keys_version` from a timestamp comment. Only the
@@ -273,5 +290,15 @@ mod tests {
             index_comment(5, 2),
             "deckpilot-registry v1 role:index seq:5 keys:2"
         );
+        assert_eq!(
+            storefront_comment(5, 2),
+            "deckpilot-registry v1 role:storefront seq:5 keys:2"
+        );
+        assert_ne!(storefront_comment(5, 2), index_comment(5, 2));
+        assert!(is_storefront_comment(&storefront_comment(1, 1)));
+        assert!(!is_storefront_comment(&index_comment(1, 1)));
+        assert!(!is_storefront_comment(
+            "deckpilot-registry v1 role:storefront-keys version:1"
+        ));
     }
 }

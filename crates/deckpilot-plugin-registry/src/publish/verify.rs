@@ -8,6 +8,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use deckpilot_plugin_package::{Limits, verify_package};
 
 use super::layout::{SiteSource, Workspace, read, read_optional};
+use super::storefront::StorefrontReport;
 use super::{PublishError, Result, fail};
 use crate::model::{RevocationAction, Role};
 use crate::{
@@ -36,7 +37,6 @@ pub struct SiteReport {
 /// * every version a client would install (`resolve_install`), and, when
 ///   its release asset is in `releases`, the package itself with
 ///   `verify_package` against the pins.
-#[allow(clippy::too_many_lines)] // one pass over every document
 pub fn verify_site<S: TrustStore>(
     ws: &Workspace,
     roots: Role,
@@ -45,6 +45,47 @@ pub fn verify_site<S: TrustStore>(
     min_remaining: TimeDelta,
     require_packages: bool,
 ) -> Result<SiteReport> {
+    verify_site_inner(
+        ws,
+        roots,
+        store,
+        now,
+        min_remaining,
+        require_packages,
+        false,
+    )
+    .map(|(report, _)| report)
+}
+
+/// [`verify_site`], then the storefront of the verified seq as a client
+/// verifies it (`--require-storefront`): the signed envelope, every listing
+/// and the editorial document it pins, and every image they reference
+/// (the client's header walk, then a full decode). A missing storefront
+/// fails.
+pub fn verify_site_with_storefront<S: TrustStore>(
+    ws: &Workspace,
+    roots: Role,
+    store: S,
+    now: DateTime<Utc>,
+    min_remaining: TimeDelta,
+    require_packages: bool,
+) -> Result<(SiteReport, StorefrontReport)> {
+    let (report, storefront) =
+        verify_site_inner(ws, roots, store, now, min_remaining, require_packages, true)?;
+    let storefront = storefront.ok_or_else(|| PublishError("no storefront was checked".into()))?;
+    Ok((report, storefront))
+}
+
+#[allow(clippy::too_many_lines)] // one pass over every document
+fn verify_site_inner<S: TrustStore>(
+    ws: &Workspace,
+    roots: Role,
+    store: S,
+    now: DateTime<Utc>,
+    min_remaining: TimeDelta,
+    require_packages: bool,
+    require_storefront: bool,
+) -> Result<(SiteReport, Option<StorefrontReport>)> {
     let site = ws.site();
     let source = SiteSource::new(&site);
     let mut client = RegistryClient::open(roots, store, Policy::default())
@@ -144,7 +185,15 @@ pub fn verify_site<S: TrustStore>(
             }
         }
     }
-    Ok(SiteReport {
+    let storefront = if require_storefront {
+        Some(super::storefront::verify_site_storefront(
+            &mut client,
+            &source,
+        )?)
+    } else {
+        None
+    };
+    let report = SiteReport {
         keys_version: client.keys_version(),
         seq: index.seq,
         updated,
@@ -153,7 +202,8 @@ pub fn verify_site<S: TrustStore>(
         installable_versions: installable,
         packages_verified: packages,
         revocations: index.revocations.len(),
-    })
+    };
+    Ok((report, storefront))
 }
 
 /// `verify-site` from the command line: roots from `roots` (or
@@ -180,6 +230,39 @@ pub(crate) fn run(
             require_packages,
         ),
         None => verify_site(
+            ws,
+            roots,
+            MemoryTrustStore::default(),
+            now,
+            min_remaining,
+            require_packages,
+        ),
+    }
+}
+
+/// `verify-site --require-storefront` from the command line.
+pub(crate) fn run_with_storefront(
+    ws: &Workspace,
+    roots: Option<&Path>,
+    state_dir: Option<&Path>,
+    now: DateTime<Utc>,
+    min_remaining: TimeDelta,
+    require_packages: bool,
+) -> Result<(SiteReport, StorefrontReport)> {
+    let roots: Role = match roots {
+        Some(path) => super::layout::read_json(path)?,
+        None => super::keyset::roots(ws)?,
+    };
+    match state_dir {
+        Some(dir) => verify_site_with_storefront(
+            ws,
+            roots,
+            FileTrustStore::new(dir),
+            now,
+            min_remaining,
+            require_packages,
+        ),
+        None => verify_site_with_storefront(
             ws,
             roots,
             MemoryTrustStore::default(),

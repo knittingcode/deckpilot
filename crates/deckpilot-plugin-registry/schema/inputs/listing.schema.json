@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knittingcode.github.io/deckpilot-plugins/v1/schemas/inputs/listing.schema.json",
+  "title": "DeckPilot storefront: registry/plugins/<id>/listing.json (author source)",
+  "description": "Storefront design §3.1. Written by the plugin's author in their own registry directory and reviewed. No placement fields of any kind. Media files are PNG, WebP or JPEG under media/ (no SVG). `deckpilot-registry storefront check` also enforces the rules a schema cannot: text in Unicode NFC without control, bidi or zero-width characters, the safe markdown subset, link hosts, release notes for recorded versions only, and every image's format, dimensions, metadata and full decode.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "listing_version",
+    "id"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "listing_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 57,
+      "pattern": "^[a-z][a-z0-9]*(-[a-z][a-z0-9]*)*\\.[a-z][a-z0-9]*(-[a-z][a-z0-9]*)*$"
+    },
+    "promo": {
+      "$ref": "#/$defs/text80"
+    },
+    "description_md": {
+      "$ref": "#/$defs/text6000"
+    },
+    "highlights": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "text"
+        ],
+        "properties": {
+          "title": {
+            "$ref": "#/$defs/text40"
+          },
+          "text": {
+            "$ref": "#/$defs/text160"
+          }
+        }
+      }
+    },
+    "icon": {
+      "$ref": "#/$defs/file"
+    },
+    "screenshots": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "alt"
+        ],
+        "properties": {
+          "alt": {
+            "$ref": "#/$defs/text250"
+          },
+          "caption": {
+            "$ref": "#/$defs/text120"
+          },
+          "platforms": {
+            "$ref": "#/$defs/platforms"
+          },
+          "file": {
+            "$ref": "#/$defs/file/properties/file"
+          }
+        }
+      }
+    },
+    "promo_art": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "alt"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/file/properties/file"
+        },
+        "alt": {
+          "$ref": "#/$defs/text250"
+        }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "documentation": {
+          "$ref": "#/$defs/url"
+        },
+        "support": {
+          "$ref": "#/$defs/url"
+        },
+        "changelog": {
+          "$ref": "#/$defs/url"
+        }
+      }
+    },
+    "release_notes": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/text2000"
+      }
+    }
+  },
+  "$defs": {
+    "text24": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 24
+      }
+    },
+    "text40": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      }
+    },
+    "text60": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 60
+      }
+    },
+    "text80": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
+    "text120": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    },
+    "text160": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "text250": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 250
+      }
+    },
+    "text300": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "text2000": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "text6000": {
+      "type": "object",
+      "required": [
+        "en"
+      ],
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(en|pl)$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 6000
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "macos",
+          "windows",
+          "linux"
+        ]
+      }
+    },
+    "url": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^https://[a-z0-9.-]+(?:[/?#][\\x21-\\x7e]*)?$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "pattern": "^media/[a-z0-9-]{1,48}\\.(png|webp|jpg)$"
+        }
+      }
+    },
+    "art": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/file/properties/file"
+        },
+        "alt": {
+          "$ref": "#/$defs/text250"
+        },
+        "decorative": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
