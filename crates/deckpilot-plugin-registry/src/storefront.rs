@@ -1028,6 +1028,9 @@ fn too_large(document: &str, limit: usize) -> StorefrontError {
 pub struct VerifiedStorefront {
     storefront: Storefront,
     sha256: Sha256Digest,
+    /// Something the caller should log (warn): an unreadable stored
+    /// record that was replaced.
+    notice: Option<String>,
 }
 
 impl VerifiedStorefront {
@@ -1042,6 +1045,12 @@ impl VerifiedStorefront {
     /// The sha256 of the envelope bytes.
     pub fn sha256(&self) -> &Sha256Digest {
         &self.sha256
+    }
+
+    /// A warning for the caller's log, if verification had to replace an
+    /// unreadable stored storefront record.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 }
 
@@ -1068,7 +1077,9 @@ impl<S: TrustStore> RegistryClient<S> {
     /// 7. listed ids are unique and in the verified index, and every
     ///    reference is content-addressed;
     /// 8. equivocation: a different storefront recorded for the same seq is
-    ///    refused (and the error should be logged at error level).
+    ///    refused (and the error should be logged at error level). A
+    ///    stored record that does not parse is treated as absent and
+    ///    replaced ([`VerifiedStorefront::notice`]).
     ///
     /// Then the storefront is recorded (seq and sha256) beside the trust
     /// state. Nothing else in the state changes, so a refused storefront
@@ -1163,7 +1174,21 @@ impl<S: TrustStore> RegistryClient<S> {
             seq,
             sha256: digest,
         };
-        match self.store().load_storefront_record()? {
+        // A record that does not parse (corrupt, or written by a newer
+        // build in another format) is treated as absent and replaced:
+        // refusing on it would leave Discover catalog-only for good. A
+        // record that parses is always checked.
+        let (stored, notice) = match self.store().load_storefront_record() {
+            Ok(stored) => (stored, None),
+            Err(StoreError::Corrupt(why)) => (
+                None,
+                Some(format!(
+                    "the stored storefront record could not be read ({why}); it is replaced"
+                )),
+            ),
+            Err(e) => return Err(e.into()),
+        };
+        match stored {
             Some(stored) if stored.seq == seq && stored.sha256 != digest => {
                 return Err(StorefrontError::Equivocation { seq });
             }
@@ -1173,6 +1198,7 @@ impl<S: TrustStore> RegistryClient<S> {
         Ok(VerifiedStorefront {
             storefront,
             sha256: digest,
+            notice,
         })
     }
 

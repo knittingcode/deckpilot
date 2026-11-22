@@ -52,7 +52,11 @@ fn refused_char(c: char, multiline: bool) -> Option<&'static str> {
         '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' => {
             Some("a bidirectional control")
         }
-        '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}' => Some("a zero-width character"),
+        '\u{061C}' => Some("a bidirectional control"),
+        '\u{2028}' | '\u{2029}' => Some("a line or paragraph separator"),
+        '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{180E}' => {
+            Some("a zero-width character")
+        }
         c if c.is_control() => Some("a control character"),
         _ => None,
     }
@@ -198,6 +202,15 @@ pub fn check_url(field: &str, url: &str, first_party: bool) -> Result<(), String
             .is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()))
     {
         return refuse("names an IP address");
+    }
+    // No dot segments, plain or percent-encoded: `/a/../b` could leave the
+    // allowed path prefix once a browser normalizes it.
+    let path_only = path.split(['?', '#']).next().unwrap_or_default();
+    if path_only.split('/').any(|segment| {
+        let decoded = segment.to_ascii_lowercase().replace("%2e", ".");
+        decoded == "." || decoded == ".."
+    }) {
+        return refuse("has a dot segment in its path");
     }
     if first_party {
         let allowed = match host {

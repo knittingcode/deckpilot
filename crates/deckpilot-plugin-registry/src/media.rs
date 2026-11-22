@@ -13,7 +13,9 @@
 //!   flag);
 //! * no metadata (PNG `tEXt`/`zTXt`/`iTXt`/`eXIf`, JPEG APP1 (Exif, XMP),
 //!   APP13 (IPTC) and comments, WebP `EXIF`/`XMP ` or their VP8X flags);
-//!   an ICC profile of at most [`MAX_ICC_BYTES`] is allowed;
+//!   an ICC profile is allowed: at most [`MAX_ICC_BYTES`] uncompressed
+//!   (JPEG, WebP) or [`MAX_PNG_ICCP_BYTES`] compressed (PNG `iCCP`, whose
+//!   zlib data this walk does not inflate; see that constant);
 //! * PNG: an allow-list of chunks, every CRC checked, nothing after `IEND`;
 //! * JPEG: baseline or progressive, 8-bit, 1 or 3 components, exactly one
 //!   frame header whose dimensions are authoritative, nothing after `EOI`;
@@ -40,6 +42,12 @@ pub const MAX_MEDIA_BYTES: usize = 1024 * 1024;
 pub const MAX_MEDIA_PIXELS: u64 = 8_388_608;
 /// Largest embedded ICC profile.
 pub const MAX_ICC_BYTES: usize = 64 * 1024;
+/// Largest PNG `iCCP` chunk. Its profile is zlib-compressed and this walk
+/// never inflates it, so the bound on the profile itself is only what the
+/// webview's decoder allows; keeping the compressed chunk small (16 KiB,
+/// plenty for a real profile) bounds that work. The publishing tool
+/// decodes every image in full in CI.
+pub const MAX_PNG_ICCP_BYTES: usize = 16 * 1024;
 
 /// A storefront image format. Serialized as the file extension the site
 /// uses (`v1/media/<sha256>.<format>`).
@@ -304,6 +312,9 @@ fn inspect_png(bytes: &[u8]) -> Result<RasterInfo, MediaError> {
                 header = Some((width, height, color));
             }
             b"PLTE" => {
+                if matches!(header, Some((_, _, 0 | 4))) {
+                    return Err(bad("PLTE in a grayscale image"));
+                }
                 if seen_plte || seen_idat {
                     return Err(bad("PLTE is misplaced"));
                 }
@@ -316,12 +327,13 @@ fn inspect_png(bytes: &[u8]) -> Result<RasterInfo, MediaError> {
                 if seen_idat || seen_plte {
                     return Err(bad("iCCP is misplaced"));
                 }
-                if length > MAX_ICC_BYTES {
+                if length > MAX_PNG_ICCP_BYTES {
                     return Err(MediaError::Metadata(format!(
-                        "an ICC profile of {length} bytes, more than {MAX_ICC_BYTES}"
+                        "an iCCP chunk of {length} bytes, more than {MAX_PNG_ICCP_BYTES}"
                     )));
                 }
             }
+            b"tRNS" if seen_idat => return Err(bad("tRNS follows the image data")),
             b"IDAT" => {
                 if idat_done {
                     return Err(bad("IDAT chunks are not consecutive"));
@@ -371,6 +383,7 @@ fn inspect_jpeg(bytes: &[u8]) -> Result<RasterInfo, MediaError> {
     let mut frame: Option<(u32, u32)> = None;
     let mut icc = 0usize;
     let mut scans = 0usize;
+    let mut seen_app0 = false;
     loop {
         // A marker: 0xFF, optional 0xFF fill bytes, then the code.
         if bytes.get(at) != Some(&0xFF) {
@@ -451,8 +464,29 @@ fn inspect_jpeg(bytes: &[u8]) -> Result<RasterInfo, MediaError> {
                     )));
                 }
             }
-            // APP0 (JFIF) and APP14 (Adobe colour transform).
-            0xE0 | 0xEE => {}
+            // APP0: exactly a plain JFIF header without a thumbnail (no
+            // JFXX, no trailing bytes).
+            0xE0 => {
+                if seen_app0
+                    || !data.starts_with(b"JFIF\0")
+                    || data.len() != 14
+                    || data[12] != 0
+                    || data[13] != 0
+                {
+                    return Err(MediaError::Metadata(
+                        "a JPEG APP0 segment that is not a plain JFIF header".into(),
+                    ));
+                }
+                seen_app0 = true;
+            }
+            // APP14: the fixed 12-byte Adobe colour transform segment.
+            0xEE => {
+                if !data.starts_with(b"Adobe") || data.len() != 12 {
+                    return Err(MediaError::Metadata(
+                        "a JPEG APP14 segment that is not an Adobe colour transform".into(),
+                    ));
+                }
+            }
             0xE3..=0xEF => {
                 return Err(MediaError::Metadata(format!(
                     "a JPEG APP{} segment",
@@ -485,10 +519,10 @@ fn inspect_jpeg(bytes: &[u8]) -> Result<RasterInfo, MediaError> {
                     }
                 }
             }
-            0xF0..=0xFD | 0x02..=0xBF => {
+            // JPG (0xC8), DHP (0xDE), EXP (0xDF), reserved and anything else.
+            _ => {
                 return Err(MediaError::Unsupported(format!("JPEG marker 0x{code:02X}")));
             }
-            _ => {}
         }
     }
     if at != bytes.len() {

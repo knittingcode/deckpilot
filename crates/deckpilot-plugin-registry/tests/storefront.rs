@@ -343,6 +343,75 @@ fn bit_depth_and_components_are_limited() {
 }
 
 #[test]
+fn rare_jpeg_markers_and_segments_are_refused() {
+    // JPG, DHP and EXP markers.
+    for marker in [0xC8, 0xDE, 0xDF] {
+        let jpeg = jpeg_headers(0xC0, 8, 1280, 800, 3, &[jpeg_segment(marker, b"xx")]);
+        assert!(
+            matches!(refused(&jpeg), MediaError::Unsupported(_)),
+            "{marker:X}"
+        );
+    }
+    // APP0 must be a plain JFIF header: no JFXX, thumbnail or extra bytes.
+    let jfxx = jpeg_segment(0xE0, b"JFXX\0\x10thumbnail");
+    let thumb = jpeg_segment(0xE0, b"JFIF\0\x01\x01\0\0\x01\0\x01\x01\x01\xff\xff\xff");
+    let extra = jpeg_segment(0xE0, b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0trailing");
+    for segment in [jfxx, thumb, extra] {
+        let jpeg = jpeg_headers(0xC0, 8, 1280, 800, 3, &[segment]);
+        assert!(matches!(refused(&jpeg), MediaError::Metadata(_)));
+    }
+    // APP14: only the fixed 12-byte Adobe segment.
+    let adobe = jpeg_segment(0xEE, b"Adobe\0\x64\0\0\0\0\x01");
+    assert!(media::inspect(&jpeg_headers(0xC0, 8, 1280, 800, 3, &[adobe])).is_ok());
+    let long = jpeg_segment(0xEE, b"Adobe\0\x64\0\0\0\0\x01hidden data");
+    assert!(matches!(
+        refused(&jpeg_headers(0xC0, 8, 1280, 800, 3, &[long])),
+        MediaError::Metadata(_)
+    ));
+    let other = jpeg_segment(0xEE, b"Notes\0\x64\0\0\0\0\x01");
+    assert!(matches!(
+        refused(&jpeg_headers(0xC0, 8, 1280, 800, 3, &[other])),
+        MediaError::Metadata(_)
+    ));
+    // A real encoder's JPEG still passes.
+    assert!(media::inspect(&real_jpeg(1280, 720)).is_ok());
+}
+
+#[test]
+fn png_chunk_order_and_colour_rules() {
+    // tRNS after the image data.
+    let mut late = b"\x89PNG\r\n\x1a\n".to_vec();
+    late.extend(ihdr(512, 512, 8, 2));
+    late.extend(chunk(b"IDAT", b"x"));
+    late.extend(chunk(b"tRNS", &[0, 0, 0, 0, 0, 0]));
+    late.extend(chunk(b"IEND", b""));
+    assert!(matches!(refused(&late), MediaError::Malformed { .. }));
+    // PLTE in grayscale (colour types 0 and 4).
+    for color in [0, 4] {
+        let mut gray = b"\x89PNG\r\n\x1a\n".to_vec();
+        gray.extend(ihdr(512, 512, 8, color));
+        gray.extend(chunk(b"PLTE", &[0; 3]));
+        gray.extend(chunk(b"IDAT", b"x"));
+        gray.extend(chunk(b"IEND", b""));
+        assert!(
+            matches!(refused(&gray), MediaError::Malformed { .. }),
+            "{color}"
+        );
+    }
+    // A compressed iCCP above 16 KiB.
+    let icc = png_headers(512, 512, &[chunk(b"iCCP", &vec![b'x'; 16 * 1024 + 1])]);
+    assert!(matches!(refused(&icc), MediaError::Metadata(_)));
+    assert!(
+        media::inspect(&png_headers(
+            512,
+            512,
+            &[chunk(b"iCCP", &vec![b'x'; 16 * 1024])]
+        ))
+        .is_ok()
+    );
+}
+
+#[test]
 fn malformed_containers_are_refused() {
     let good = png_headers(512, 512, &[]);
     // Bad CRC.
@@ -555,6 +624,25 @@ fn listing_text_rules() {
         );
     }
     assert!(listing_refused("/promo", json!({ "en": "zero\u{200B}width" })).contains("zero-width"));
+    assert!(
+        listing_refused("/promo", json!({ "en": "mongolian\u{180E}space" })).contains("zero-width")
+    );
+    assert!(
+        listing_refused("/promo", json!({ "en": "arabic\u{061C}mark" })).contains("bidirectional")
+    );
+    for separator in ['\u{2028}', '\u{2029}'] {
+        let mut value = listing_value("deckpilot.weather");
+        set(
+            &mut value,
+            "/description_md",
+            json!({ "en": format!("a{separator}b") }),
+        );
+        assert!(
+            listing_check(&value, Strictness::Client)
+                .unwrap_err()
+                .contains("separator")
+        );
+    }
     // Decomposed é (e + U+0301) is not NFC.
     assert!(listing_refused("/promo", json!({ "en": "Cafe\u{301}" })).contains("NFC"));
     assert!(
@@ -705,6 +793,20 @@ fn url_rules() {
     assert!(ok("https://acme.example/", true).is_err());
     assert!(ok("https://github.com/someone-else/repo", true).is_err());
     assert!(ok("https://github.com.evil.example/knittingcode/", true).is_err());
+    // Dot segments, plain or encoded, could leave the allowed prefix.
+    for url in [
+        "https://github.com/knittingcode/../evil/repo",
+        "https://github.com/knittingcode/./x",
+        "https://github.com/knittingcode/%2e%2e/evil",
+        "https://github.com/knittingcode/%2E%2e/evil",
+        "https://github.com/knittingcode/.%2e/evil",
+        "https://github.com/knittingcode/..?x=1",
+    ] {
+        let error = ok(url, true).expect_err(url);
+        assert!(error.contains("dot segment"), "{url}: {error}");
+        assert!(ok(url, false).is_err(), "{url}");
+    }
+    assert!(ok("https://github.com/knittingcode/a..b/.well", true).is_ok());
 }
 
 #[test]
@@ -1487,16 +1589,64 @@ fn the_trust_state_is_unchanged_and_tolerates_no_storefront_record() {
     client
         .verify_storefront(&published.envelope, published.signature.as_bytes())
         .unwrap();
-    // A corrupt record refuses the storefront only.
-    std::fs::write(dir.path().join(FileTrustStore::STOREFRONT_FILE), b"{").unwrap();
-    let mut client = file_client(&registry, dir.path());
-    assert!(matches!(
-        client.verify_storefront(&published.envelope, published.signature.as_bytes()),
-        Err(StorefrontError::Store(StoreError::Corrupt(_)))
-    ));
     assert_eq!(
         client.refresh(&registry.site, t0()),
         Ok(Refresh::Unchanged { seq: 1 })
+    );
+}
+
+/// An unreadable record (corrupt, or a newer build's format) is treated as
+/// absent and replaced, never a permanent refusal; a readable one is
+/// always enforced.
+#[test]
+fn an_unreadable_storefront_record_is_replaced_not_fatal() {
+    let dir = TempDir::new().unwrap();
+    let mut registry = Registry::new();
+    registry.publish(t0(), &[plugin("acme.clock", &["1.0.0"])], &[]);
+    let published = publish_storefront(&registry, 1);
+    let record_file = dir.path().join(FileTrustStore::STOREFRONT_FILE);
+    let good_sha = sha256(&published.envelope).to_string();
+    for (name, bytes) in [
+        ("corrupt", b"{".to_vec()),
+        ("empty", Vec::new()),
+        (
+            "unknown field",
+            format!(r#"{{"seq":1,"sha256":"{good_sha}","origin":"future"}}"#).into_bytes(),
+        ),
+        (
+            "unknown field, another sha",
+            format!(r#"{{"seq":1,"sha256":"{}","v":2}}"#, "0".repeat(64)).into_bytes(),
+        ),
+    ] {
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let mut client = file_client(&registry, dir.path());
+        client.refresh(&registry.site, t0()).unwrap();
+        std::fs::write(&record_file, &bytes).unwrap();
+        let verified = client
+            .verify_storefront(&published.envelope, published.signature.as_bytes())
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(
+            verified.notice().is_some_and(|n| n.contains("replaced")),
+            "{name}"
+        );
+        // Replaced with the current one, which is enforced from now on.
+        let record: Value = serde_json::from_slice(&std::fs::read(&record_file).unwrap()).unwrap();
+        assert_eq!(record, json!({ "seq": 1, "sha256": good_sha }), "{name}");
+        let again = client
+            .verify_storefront(&published.envelope, published.signature.as_bytes())
+            .unwrap();
+        assert_eq!(again.notice(), None, "{name}");
+    }
+    // A valid record with another sha at the same seq: still equivocation.
+    std::fs::write(
+        &record_file,
+        format!(r#"{{"seq":1,"sha256":"{}"}}"#, "0".repeat(64)),
+    )
+    .unwrap();
+    let mut client = file_client(&registry, dir.path());
+    assert_eq!(
+        client.verify_storefront(&published.envelope, published.signature.as_bytes()),
+        Err(StorefrontError::Equivocation { seq: 1 })
     );
 }
 
@@ -2469,4 +2619,101 @@ fn collect(base: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
             out.insert(rel, std::fs::read(entry.path()).unwrap());
         }
     }
+}
+
+#[test]
+fn sign_checks_the_pinned_documents_and_images_on_disk() {
+    let build = || {
+        let fx = base_fixture();
+        with_sources(&fx);
+        fx.build_and_sign_index(t0());
+        fx.run(&["storefront", "build", "--now", &time(t0())]);
+        fx
+    };
+    let envelope = |fx: &Fixture| -> Storefront {
+        serde_json::from_slice(&fx.read_site("storefront/1.json")).unwrap()
+    };
+    // A pinned listing changed after the build.
+    let fx = build();
+    let listing = envelope(&fx).listings[0].reference.path.clone();
+    let mut bytes = fx.read_site(&listing);
+    bytes.push(b'\n');
+    std::fs::write(fx.site().join(&listing), bytes).unwrap();
+    let error = fx.fails(&["storefront", "sign", "--key", &fx.key("index.key")]);
+    assert!(error.contains("does not match the storefront"), "{error}");
+    assert!(!fx.site().join("storefront/1.json.minisig").exists());
+    // A pinned image replaced.
+    let fx = build();
+    let doc: ListingDoc =
+        serde_json::from_slice(&fx.read_site(&envelope(&fx).listings[0].reference.path)).unwrap();
+    let icon = media_path(doc.icon.as_ref().unwrap());
+    std::fs::write(fx.site().join(&icon), real_png(300, 300)).unwrap();
+    let error = fx.fails(&["storefront", "sign", "--key", &fx.key("index.key")]);
+    assert!(error.contains(&icon), "{error}");
+    // A consistent envelope pinning a listing whose reference lies about
+    // the image (re-addressed by hand): refused too.
+    let fx = build();
+    let mut storefront: Value = serde_json::from_slice(&fx.read_site("storefront/1.json")).unwrap();
+    let path = storefront["listings"][0]["ref"]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut listing: Value = serde_json::from_slice(&fx.read_site(&path)).unwrap();
+    listing["icon"]["width"] = json!(512);
+    listing["icon"]["height"] = json!(512);
+    let bytes = serde_json::to_vec_pretty(&listing).unwrap();
+    let digest = sha256(&bytes);
+    let new_path = format!("storefront/listings/acme.alpha/{digest}.json");
+    std::fs::write(fx.site().join(&new_path), &bytes).unwrap();
+    storefront["listings"][0]["ref"] =
+        json!({ "path": new_path, "sha256": digest.to_string(), "length": bytes.len() });
+    std::fs::write(
+        fx.site().join("storefront/1.json"),
+        serde_json::to_vec_pretty(&storefront).unwrap(),
+    )
+    .unwrap();
+    let error = fx.fails(&["storefront", "sign", "--key", &fx.key("index.key")]);
+    assert!(error.contains("pinned"), "{error}");
+    // Untouched: signs.
+    let fx = build();
+    fx.run(&["storefront", "sign", "--key", &fx.key("index.key")]);
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_sources_are_refused() {
+    use std::os::unix::fs::symlink;
+    // A media/ directory that is a link.
+    let fx = base_fixture();
+    with_sources(&fx);
+    let media = fx.dir().join("registry/plugins/acme.alpha/media");
+    let elsewhere = fx.dir().join("elsewhere-media");
+    std::fs::rename(&media, &elsewhere).unwrap();
+    symlink(&elsewhere, &media).unwrap();
+    assert!(
+        fx.fails(&["storefront", "check"])
+            .contains("not a plain directory")
+    );
+    // A listing.json that is a link.
+    let fx = base_fixture();
+    with_sources(&fx);
+    let listing = fx.dir().join("registry/plugins/acme.alpha/listing.json");
+    let target = fx.dir().join("listing-elsewhere.json");
+    std::fs::rename(&listing, &target).unwrap();
+    symlink(&target, &listing).unwrap();
+    assert!(
+        fx.fails(&["storefront", "check"])
+            .contains("not a regular file")
+    );
+    // An editorial.json that is a link.
+    let fx = base_fixture();
+    with_sources(&fx);
+    let editorial = fx.dir().join("editorial/editorial.json");
+    let target = fx.dir().join("editorial-elsewhere.json");
+    std::fs::rename(&editorial, &target).unwrap();
+    symlink(&target, &editorial).unwrap();
+    assert!(
+        fx.fails(&["storefront", "check"])
+            .contains("not a regular file")
+    );
 }

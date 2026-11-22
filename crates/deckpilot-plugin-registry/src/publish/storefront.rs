@@ -136,7 +136,17 @@ fn source_image(base: &Path, file: &str) -> std::result::Result<Image, String> {
             "`{file}`: the name must be 1 to 48 of a-z, 0-9 and -"
         ));
     }
-    let path = base.join("media").join(name);
+    let media_dir = base.join("media");
+    match std::fs::symlink_metadata(&media_dir) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        Ok(_) => {
+            return Err(format!(
+                "`{file}`: media/ is not a plain directory (a link?)"
+            ));
+        }
+        Err(e) => return Err(format!("`{file}`: media/: {e}")),
+    }
+    let path = media_dir.join(name);
     let meta = std::fs::symlink_metadata(&path).map_err(|e| format!("`{file}`: {e}"))?;
     if !meta.file_type().is_file() {
         return Err(format!("`{file}` is not a regular file"));
@@ -159,6 +169,16 @@ fn source_image(base: &Path, file: &str) -> std::result::Result<Image, String> {
         },
         bytes,
     })
+}
+
+/// A source file must be a regular file, not a link (absent is fine).
+fn plain_file(path: &Path) -> std::result::Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() => Ok(()),
+        Ok(_) => Err("is not a regular file (a link?)".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Replaces `{"file": …}` at `value[key]` (an object) with the asset
@@ -210,6 +230,10 @@ fn listing_source(
 ) -> Result<Option<Built<ListingDoc>>> {
     let path = ws.listing_source_path(id);
     let file = format!("registry/plugins/{id}/listing.json");
+    if let Err(problem) = plain_file(&path) {
+        problems.push(format!("{file}: {problem}"));
+        return Ok(None);
+    }
     let Some(bytes) = read_optional(&path)? else {
         return Ok(None);
     };
@@ -332,6 +356,10 @@ fn editorial_source(
     problems: &mut Vec<String>,
 ) -> Result<Option<Built<EditorialDoc>>> {
     let file = "editorial/editorial.json";
+    if let Err(problem) = plain_file(&ws.editorial_source_path()) {
+        problems.push(format!("{file}: {problem}"));
+        return Ok(None);
+    }
     let Some(bytes) = read_optional(&ws.editorial_source_path())? else {
         return Ok(None);
     };
@@ -832,6 +860,10 @@ pub fn sign(ws: &Workspace, seq: Option<u64>, key: &SigningKey) -> Result<u64> {
     if signature_path.exists() {
         return fail(format!("{} already exists", signature_path.display()));
     }
+    // What the signature will vouch for is checked again on disk: every
+    // pinned document by length, sha256 and its typed rules, and every
+    // image it pins (header and full decode).
+    check_pinned(ws, &storefront)?;
     let comment = storefront_comment(seq, keyset.version);
     let signature = key.sign(&bytes, &comment)?;
     verify_role(
@@ -843,6 +875,58 @@ pub fn sign(ws: &Workspace, seq: Option<u64>, key: &SigningKey) -> Result<u64> {
     .map_err(|e| PublishError(format!("self-check failed: {e}")))?;
     write(&signature_path, signature.as_bytes())?;
     Ok(seq)
+}
+
+/// The documents and images `storefront` pins, as they are on disk.
+fn check_pinned(ws: &Workspace, storefront: &Storefront) -> Result<()> {
+    let site = ws.site();
+    let pinned = |reference: &FileRef, limit: usize| -> Result<Vec<u8>> {
+        let bytes = read(&site.join(&reference.path))?;
+        if bytes.len() > limit {
+            return fail(format!("{} is larger than {limit} bytes", reference.path));
+        }
+        crate::client::check_ref(&bytes, reference).map_err(|e| {
+            PublishError(format!(
+                "{} does not match the storefront: {e}",
+                reference.path
+            ))
+        })?;
+        Ok(bytes)
+    };
+    let mut assets = Vec::new();
+    for entry in &storefront.listings {
+        let bytes = pinned(&entry.reference, MAX_LISTING_BYTES)?;
+        let listing: ListingDoc = super::layout::parse(&site.join(&entry.reference.path), &bytes)?;
+        if listing.id != entry.id {
+            return fail(format!(
+                "{} is the listing of {}",
+                entry.reference.path, listing.id
+            ));
+        }
+        listing
+            .validate(Strictness::Publish)
+            .map_err(|e| PublishError(format!("{}: {e}", entry.reference.path)))?;
+        assets.extend(listing.assets().into_iter().map(|(_, a)| *a));
+    }
+    if let Some(reference) = &storefront.editorial {
+        let bytes = pinned(reference, MAX_EDITORIAL_BYTES)?;
+        let doc = EditorialDoc::parse(&bytes)
+            .map_err(|e| PublishError(format!("{}: {e}", reference.path)))?;
+        doc.validate(Strictness::Publish)
+            .map_err(|e| PublishError(format!("{}: {e}", reference.path)))?;
+        assets.extend(doc.assets().into_iter().copied());
+    }
+    let mut seen = BTreeSet::new();
+    for asset in assets {
+        if !seen.insert(asset.sha256) {
+            continue;
+        }
+        let path = media_path(&asset);
+        let bytes = read(&site.join(&path))?;
+        let info = verify_media(&asset, &bytes).map_err(|e| PublishError(format!("{path} {e}")))?;
+        decode_fully(&bytes, &info).map_err(|e| PublishError(format!("{path} {e}")))?;
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------- verify-site
