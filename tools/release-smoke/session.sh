@@ -152,6 +152,31 @@ inner() {
   esac
 }
 
+# Linux: the title bar's close button, as a window manager sends it
+# (WM_DELETE_WINDOW; tools/ci/close-window.py, python3-xlib) closes the main
+# window, which as the last one ends the app; the agent keeps running
+# (apps/desktop/src-tauri/src/lifecycle.rs). 0.10.0 to 0.12.0: the button did
+# nothing.
+close_main_window() {
+  local step="$label: close button ends the app, agent keeps running" sent agents
+  if ! sent=$(python3 -I "$SMOKE_ROOT/tools/ci/close-window.py" 0 close 2>&1); then
+    record "$step" error "cannot close the main window: $sent"
+    return
+  fi
+  for _ in $(seq 1 60); do
+    kill -0 "$desktop_pid" 2> /dev/null || break
+    sleep 0.5
+  done
+  agents=$(agent_pids | tr '\n' ' ')
+  if kill -0 "$desktop_pid" 2> /dev/null; then
+    record "$step" fail "$sent; deckpilot-desktop pid $desktop_pid still running 30 s later; window: $(python3 -I "$SMOKE_ROOT/tools/ci/close-window.py" 0 find 2>&1 || echo gone)"
+  elif [ -z "$agents" ]; then
+    record "$step" fail "$sent; the app ended, but so did the agent"
+  else
+    record "$step" pass "$sent; deckpilot-desktop pid $desktop_pid ended with its last window; agent pids $agents keep running"
+  fi
+}
+
 inner_launch() {
   local data="$DECKPILOT_DATA_DIR" alive_desktop=0 alive_agent=0 checks=0 shot agents waited=0 polls=""
   "$exe" > "$SMOKE_OUT/$label-desktop.log" 2>&1 &
@@ -213,6 +238,7 @@ inner_launch() {
   else
     record "$label: screenshot" error "no screenshot could be taken"
   fi
+  if [ "$os" = Linux ]; then close_main_window; fi
   stop_all
   if [ -z "$(agent_pids)" ] && ! kill -0 "$desktop_pid" 2> /dev/null; then
     record "$label: stopped" pass "desktop and agent terminated"
