@@ -1619,6 +1619,10 @@ impl Engine<'_> {
             return Ok(());
         }
         Err(failed(match record.staged() {
+            Some(staged) if staged.version != pin.version => format!(
+                "{} {} waits on the Plugins page, but this agent bundles {}: decline that update, then retry",
+                m.plugin, staged.version, pin.version
+            ),
             Some(staged) => format!(
                 "the bundled update of {} to {} asks for new permissions: approve it on the Plugins page, then retry",
                 m.plugin, staged.version

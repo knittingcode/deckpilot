@@ -2643,6 +2643,79 @@ mod extraction {
         }
     }
 
+    /// A staged copy of the pinned version whose files are not the pinned
+    /// ones (written by something else, or damaged) would fail every
+    /// start: it is dropped, the pinned copy is staged again from the
+    /// bundle and applied, and the consent then cuts over.
+    #[test]
+    fn a_staged_copy_that_differs_from_the_pins_is_replaced() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        // The released version number with other files.
+        let other = env.bundle_edited(&MODULES, &|module, manifest| {
+            if module == "git" {
+                manifest["description"] = "Not the released files.".into();
+            }
+        });
+        let pin = other
+            .pins
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin("git"))
+            .unwrap();
+        let package = bundled::verified(&other, pin).unwrap();
+        manager.update(&package, &InstallSource::Bundled).unwrap();
+        assert_eq!(staged(&manager, "git"), Some(released("git")));
+
+        let bundle = env.bundle();
+        start(&mut manager, &bundle, &snapshot);
+        assert_eq!(active(&manager, "git"), released("git"));
+        assert_eq!(staged(&manager, "git"), None);
+        let record = manager.store().plugin(&plugin("git")).unwrap().unwrap();
+        let dir = manager
+            .layout()
+            .resolve(&record.active().unwrap().install_dir);
+        let pin = bundle
+            .pins
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin("git"))
+            .unwrap();
+        deckpilot_plugin_bundled::verify_installed(&dir, pin).unwrap();
+        consent_to(&mut manager, &bundle, &snapshot, "git");
+        let record = phase(&manager, "git").unwrap();
+        assert_eq!(record.phase, MigrationPhase::CutOver, "{record:?}");
+    }
+
+    /// An optional permission (`tools:docker:modify`, named only by the
+    /// Compose changes) that a later bundled version makes required is a
+    /// different declared set: it stays staged for the user.
+    #[test]
+    fn an_optional_permission_becoming_required_stays_staged() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        let later = env.bundle_edited(&MODULES, &|module, manifest| {
+            if module != "docker" {
+                return;
+            }
+            manifest["version"] = "0.1.99".into();
+            for action in manifest["contributes"]["actions"].as_array_mut().unwrap() {
+                if let Some(action) = action.as_object_mut() {
+                    action.remove("requiresPermissions");
+                }
+            }
+        });
+        start(&mut manager, &later, &snapshot);
+        assert_eq!(active(&manager, "docker"), "0.1.0");
+        assert_eq!(staged(&manager, "docker").as_deref(), Some("0.1.99"));
+        let record = phase(&manager, "docker").unwrap();
+        assert_ne!(record.phase, MigrationPhase::CutOver, "{record:?}");
+    }
+
     /// A later bundled version that asks for a new permission while the
     /// migration waits for consent stays staged, with nothing granted by
     /// itself. The user's consent to the migration then stops it with that

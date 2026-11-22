@@ -279,18 +279,28 @@ pub(super) fn refresh(
         // active one declares, needs no consent: it applies (an agent that
         // staged it before this rule, or a start interrupted after the
         // update). Its files are checked against the pin first.
-        if staged.version == pin.version {
-            let dir = manager.layout().resolve(&staged.install_dir);
-            if let Err(e) = deckpilot_plugin_bundled::verify_installed(&dir, pin) {
-                return Seeded::Failed(format!("the staged bundled copy: {e}"));
-            }
-            match manager.apply_bundled_update_unchanged(&pin.id) {
-                Ok(Some(_)) => return Seeded::Updated,
-                Ok(None) => {}
-                Err(e) => return Seeded::Failed(e.to_string()),
-            }
+        if staged.version != pin.version {
+            return Seeded::Skipped("an update waits for the user's approval".into());
         }
-        return Seeded::Skipped("an update waits for the user's approval".into());
+        let dir = manager.layout().resolve(&staged.install_dir);
+        if let Err(e) = deckpilot_plugin_bundled::verify_installed(&dir, pin) {
+            // Files that are not the pinned ones would fail every start:
+            // the staged copy is dropped and the pinned one staged again
+            // from the bundle below.
+            warn!(plugin = %pin.id, version = %pin.version, error = %e,
+                "the staged bundled copy differs from the pins; it is replaced");
+            if let Err(e) = manager.decline_update(&pin.id) {
+                return Seeded::Failed(format!(
+                    "the staged bundled copy differs from the pins and cannot be dropped: {e}"
+                ));
+            }
+        } else {
+            return match manager.apply_bundled_update_unchanged(&pin.id) {
+                Ok(Some(_)) => Seeded::Updated,
+                Ok(None) => Seeded::Skipped("an update waits for the user's approval".into()),
+                Err(e) => Seeded::Failed(e.to_string()),
+            };
+        }
     }
     let package = match verified(bundle, pin) {
         Ok(package) => package,

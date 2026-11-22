@@ -1518,3 +1518,229 @@ fn a_registry_or_sideloaded_update_never_applies_without_consent() {
         );
     }
 }
+
+/// A bundled copy installed like the migration engine installs it: the low
+/// tier derived, the rest waiting for consent.
+fn bundled_waiting(manager: &mut PluginManager, permissions: &[serde_json::Value]) -> PluginId {
+    let plugin = PluginId::parse("deckpilot.github-prs").unwrap();
+    let old = bundled_package(plugin.as_str(), "1.0.0", permissions);
+    let low: Vec<GrantKey> = grants_of(&old)
+        .iter()
+        .filter(|(_, scope)| scope.tier() == Tier::Low)
+        .map(|(key, _)| key.clone())
+        .collect();
+    manager
+        .install(
+            &old,
+            &InstallSource::Bundled,
+            &Consent::of(low, "bundled:0.11.0"),
+        )
+        .unwrap();
+    plugin
+}
+
+/// Stages `permissions` as the bundled 1.1.0 and asserts the update is
+/// never applied by `apply_bundled_update_unchanged`.
+fn stays_staged(manager: &mut PluginManager, plugin: &PluginId, permissions: &[serde_json::Value]) {
+    let before = grant_rows(manager, plugin);
+    let new = bundled_package(plugin.as_str(), "1.1.0", permissions);
+    let outcome = manager.update(&new, &InstallSource::Bundled).unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::AwaitingConsent { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        manager.apply_bundled_update_unchanged(plugin).unwrap(),
+        None
+    );
+    let record = manager.store().plugin(plugin).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version.to_string(), "1.0.0");
+    assert_eq!(record.staged().unwrap().version.to_string(), "1.1.0");
+    assert_eq!(grant_rows(manager, plugin), before);
+}
+
+/// A broader scope of the same key (GET → GET and POST) stays staged.
+#[test]
+fn a_bundled_update_with_a_broader_scope_stays_staged() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = bundled_waiting(&mut manager, &base_permissions());
+    let mut broader = base_permissions();
+    broader[0]["methods"] = json!(["GET", "POST"]);
+    stays_staged(&mut manager, &plugin, &broader);
+}
+
+/// A narrower declaration (POST dropped, background removed) is not the
+/// same declared set either: it stays staged too (for now; accepting a
+/// subset is a later decision).
+#[test]
+fn a_narrowing_bundled_update_stays_staged() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let mut wider = base_permissions();
+    wider[0]["methods"] = json!(["GET", "POST"]);
+    let plugin = bundled_waiting(&mut manager, &wider);
+    stays_staged(&mut manager, &plugin, &base_permissions());
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = bundled_waiting(&mut manager, &base_permissions());
+    stays_staged(&mut manager, &plugin, &without_background());
+}
+
+/// The same permissions declared in another order are the same declared
+/// set: the update applies and grants nothing.
+#[test]
+fn reordered_declarations_apply_and_grant_nothing() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = bundled_waiting(&mut manager, &with_notifications());
+    let before = grant_rows(&manager, &plugin);
+    let mut reordered = with_notifications();
+    reordered.reverse();
+    let new = bundled_package(plugin.as_str(), "1.1.0", &reordered);
+    manager.update(&new, &InstallSource::Bundled).unwrap();
+    assert_eq!(
+        manager
+            .apply_bundled_update_unchanged(&plugin)
+            .unwrap()
+            .map(|v| v.to_string())
+            .as_deref(),
+        Some("1.1.0")
+    );
+    assert_eq!(grant_rows(&manager, &plugin), before);
+    assert_eq!(state_of(&manager, &plugin), PluginState::Disabled);
+}
+
+/// A permission the user declined (revoked) stays declined across the
+/// apply: nothing is granted back.
+#[test]
+fn a_declined_grant_stays_declined_across_the_apply() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = bundled_waiting(&mut manager, &with_notifications());
+    let notifications = key_of("notifications");
+    manager
+        .revoke(&plugin, &notifications, "user:migration:x")
+        .unwrap();
+    let before = grant_rows(&manager, &plugin);
+    assert!(before.contains(&(
+        "notifications".to_owned(),
+        GrantStatus::Revoked,
+        "user:migration:x".to_owned()
+    )));
+    let new = bundled_package(plugin.as_str(), "1.1.0", &with_notifications());
+    manager.update(&new, &InstallSource::Bundled).unwrap();
+    manager
+        .apply_bundled_update_unchanged(&plugin)
+        .unwrap()
+        .unwrap();
+    assert_eq!(grant_rows(&manager, &plugin), before, "still declined");
+}
+
+/// Staged files changed on disk: an integrity error, the staged copy is
+/// dropped and the old version stays active.
+#[test]
+fn tampered_staged_files_are_refused_and_dropped() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = bundled_waiting(&mut manager, &with_notifications());
+    let new = bundled_package(plugin.as_str(), "1.1.0", &with_notifications());
+    manager.update(&new, &InstallSource::Bundled).unwrap();
+    let record = manager.store().plugin(&plugin).unwrap().unwrap();
+    let dir = manager
+        .layout()
+        .resolve(&record.staged().unwrap().install_dir);
+    let readme = dir.join("README.md");
+    let mut permissions = std::fs::metadata(&readme).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&readme, permissions).unwrap();
+    std::fs::write(&readme, b"tampered").unwrap();
+    let result = manager.apply_bundled_update_unchanged(&plugin);
+    assert!(
+        matches!(result, Err(StoreError::Integrity { .. })),
+        "{result:?}"
+    );
+    let record = manager.store().plugin(&plugin).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version.to_string(), "1.0.0");
+    assert!(record.staged().is_none(), "dropped");
+}
+
+/// A registry update staged over a bundled install makes the copy a
+/// registry one: it is never applied by the bundled rule.
+#[test]
+fn a_registry_update_staged_over_a_bundled_install_never_applies() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = bundled_waiting(&mut manager, &base_permissions());
+    let before = grant_rows(&manager, &plugin);
+    let new = bundled_package(plugin.as_str(), "1.1.0", &base_permissions());
+    let source = InstallSource::Registry {
+        registry: "https://registry.example".into(),
+    };
+    let outcome = manager.update(&new, &source).unwrap();
+    assert!(
+        matches!(outcome, UpdateOutcome::AwaitingConsent { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        manager.apply_bundled_update_unchanged(&plugin).unwrap(),
+        None
+    );
+    let record = manager.store().plugin(&plugin).unwrap().unwrap();
+    assert_eq!(record.active().unwrap().version.to_string(), "1.0.0");
+    assert_eq!(record.staged().unwrap().version.to_string(), "1.1.0");
+    assert_eq!(grant_rows(&manager, &plugin), before);
+}
+
+/// An enabled plugin that would lack a required grant after the apply
+/// (its row was forgotten) is never switched by the bundled rule: the
+/// update stays staged and the plugin keeps running its version.
+#[test]
+fn an_enabled_plugin_missing_a_required_grant_is_not_switched() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let plugin = PluginId::parse("deckpilot.github-prs").unwrap();
+    let old = bundled_package(plugin.as_str(), "1.0.0", &base_permissions());
+    let declared = grants_of(&old);
+    let low: Vec<GrantKey> = declared
+        .iter()
+        .filter(|(_, scope)| scope.tier() == Tier::Low)
+        .map(|(key, _)| key.clone())
+        .collect();
+    let other: Vec<GrantKey> = declared
+        .iter()
+        .filter(|(_, scope)| scope.tier() != Tier::Low)
+        .map(|(key, _)| key.clone())
+        .collect();
+    manager
+        .install(
+            &old,
+            &InstallSource::Bundled,
+            &Consent::of(low, "bundled:0.11.0"),
+        )
+        .unwrap();
+    manager
+        .grant(&plugin, &Consent::of(other.clone(), "user:migration:x"))
+        .unwrap();
+    manager.enable(&plugin).unwrap();
+    // One required grant is declined and then forgotten (Retry): no row.
+    manager
+        .revoke(&plugin, &other[0], "user:migration:x")
+        .unwrap();
+    manager
+        .forget_declines(&plugin, "user:migration:x")
+        .unwrap();
+    assert_eq!(state_of(&manager, &plugin), PluginState::Enabled);
+    assert!(
+        !grant_rows(&manager, &plugin)
+            .iter()
+            .any(|(key, _, _)| *key == other[0].to_string())
+    );
+    stays_staged(&mut manager, &plugin, &base_permissions());
+    assert_eq!(state_of(&manager, &plugin), PluginState::Enabled);
+}
+
+fn state_of(manager: &PluginManager, plugin: &PluginId) -> PluginState {
+    manager.store().plugin(plugin).unwrap().unwrap().state
+}
