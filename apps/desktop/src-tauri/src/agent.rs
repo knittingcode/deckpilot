@@ -561,7 +561,7 @@ async fn forward_plugin_events<R: Runtime>(
         .await?;
     loop {
         // Watched only when the agent has plugin dialogs. A change always
-        // ends this connection: the read it interrupts is not cancel safe.
+        // ends this connection, so that a new one announces them (or not).
         let changed = async {
             match ready.as_mut().filter(|_| dialogs) {
                 Some(ready) => ready.changed().await.is_ok(),

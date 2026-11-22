@@ -35,6 +35,10 @@ released either. 0.6.0 is the first version intended for publication.
   window goes back to the password step instead of offering an **Import**
   button that cannot work, and an import that was saved but whose module
   settings could not be reloaded says so instead of reporting a failure.
+- A request from the app is no longer lost, or answered with a
+  "malformed message" error, when it reaches the agent in pieces while
+  the agent is sending the app status updates, plugin events or the live
+  preview. It now always gets its own answer.
 
 ## [0.12.0] - 2026-11-22
 
