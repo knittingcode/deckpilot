@@ -17,6 +17,18 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [0.13.0] - 2026-11-22
 
+### Added
+
+- Support for a signed Marketplace storefront: the agent can fetch,
+  verify and cache the editorial pages a plugin registry publishes
+  (featured plugins, collections, banners and plugin listings with their
+  icons and artwork), each signed and checked like the registry's
+  catalog, and offline from the cache. **No storefront is published in
+  the official registry yet, so nothing changes in the Marketplace for
+  now**; the editorial Discover page comes in a later release. A
+  storefront that is missing or fails its checks never affects the
+  catalog, plugin installs or updates.
+
 ### Fixed
 
 - Windows and Linux: the main window's close button closes the window
