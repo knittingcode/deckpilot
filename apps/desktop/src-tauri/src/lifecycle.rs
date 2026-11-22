@@ -79,13 +79,25 @@ pub enum MainClose {
     /// Tauri's default: the window is destroyed; the process ends with the
     /// last window (Windows, Linux).
     Destroy,
-    /// macOS: hide it and leave the Dock; the process keeps running.
+    /// macOS: hide it and leave the Dock; the process keeps running (the
+    /// editor and its unsaved edits stay).
     HideToMenuBar,
+    /// Windows, Linux with unsaved layout edits: the window stays and asks
+    /// ([`crate::commands::unsaved::CLOSE_REQUESTED_EVENT`]); discarding
+    /// them destroys it ([`crate::commands::unsaved::close_main_window`]).
+    AskFirst,
 }
 
-pub fn main_close(macos: bool) -> MainClose {
+/// Decided here, in the backend, and not by a `onCloseRequested` listener
+/// of the page: with such a listener Tauri holds back every close and
+/// leaves it to the page's `window.destroy()`, which the main window's
+/// capability does not grant, so the close button did nothing (0.10.0 to
+/// 0.12.0 on Windows and Linux).
+pub fn main_close(macos: bool, unsaved: bool) -> MainClose {
     if macos {
         MainClose::HideToMenuBar
+    } else if unsaved {
+        MainClose::AskFirst
     } else {
         MainClose::Destroy
     }
@@ -174,17 +186,31 @@ pub fn hide_to_menu_bar<R: tauri::Runtime>(window: &tauri::Window<R>) {
 }
 
 /// The app's window events: on macOS the main window's close button and ⌘W
-/// hide it and take the app out of the Dock, and the Dock follows every
+/// hide it and take the app out of the Dock; elsewhere it closes, after
+/// asking while there are unsaved layout edits; and the Dock follows every
 /// window that is destroyed.
 pub fn on_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, event: &tauri::WindowEvent) {
-    use tauri::Manager;
+    use tauri::{Emitter, Manager};
     match event {
         tauri::WindowEvent::CloseRequested { api, .. }
-            if window.label() == crate::windows::MAIN
-                && main_close(MACOS) == MainClose::HideToMenuBar =>
+            if window.label() == crate::windows::MAIN =>
         {
-            api.prevent_close();
-            hide_to_menu_bar(window);
+            let unsaved = window
+                .app_handle()
+                .try_state::<crate::commands::unsaved::UnsavedEdits>()
+                .is_some_and(|edits| edits.get());
+            match main_close(MACOS, unsaved) {
+                MainClose::HideToMenuBar => {
+                    api.prevent_close();
+                    hide_to_menu_bar(window);
+                }
+                MainClose::AskFirst => {
+                    api.prevent_close();
+                    let _ = window.set_focus();
+                    let _ = window.emit(crate::commands::unsaved::CLOSE_REQUESTED_EVENT, ());
+                }
+                MainClose::Destroy => {}
+            }
         }
         tauri::WindowEvent::Destroyed => {
             let app = window.app_handle();
@@ -346,8 +372,15 @@ mod tests {
 
     #[test]
     fn closing_the_main_window_hides_it_to_the_menu_bar_on_macos_only() {
-        assert_eq!(main_close(true), MainClose::HideToMenuBar);
-        assert_eq!(main_close(false), MainClose::Destroy);
+        assert_eq!(main_close(true, false), MainClose::HideToMenuBar);
+        // The hidden window keeps the editor and its unsaved edits.
+        assert_eq!(main_close(true, true), MainClose::HideToMenuBar);
+        assert_eq!(main_close(false, false), MainClose::Destroy);
+    }
+
+    #[test]
+    fn closing_the_main_window_over_unsaved_edits_asks_first_on_windows_and_linux() {
+        assert_eq!(main_close(false, true), MainClose::AskFirst);
     }
 
     #[test]

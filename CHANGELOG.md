@@ -15,6 +15,13 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows and Linux: the main window's close button closes the window
+  again (since 0.10.0 it did nothing). With unsaved layout edits it still
+  asks first. The agent keeps running in the tray as before; macOS is
+  unchanged (closing hides the window to the menu bar).
+
 ## [0.12.0] - 2026-11-22
 
 ### Changed

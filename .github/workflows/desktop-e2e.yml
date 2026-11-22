@@ -87,10 +87,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           tools/ci/install-linux-deps.sh
-          # WebKitWebDriver and a virtual display for the UI test.
+          # WebKitWebDriver and a virtual display for the UI test;
+          # python3-xlib for closing the main window (tools/ci/close-window.py).
           # Ubuntu 26.04 renamed webkit2gtk-driver to webkitgtk-webdriver.
-          timeout 600 sudo apt-get install -y webkitgtk-webdriver xvfb ||
-            timeout 600 sudo apt-get install -y webkit2gtk-driver xvfb
+          timeout 600 sudo apt-get install -y webkitgtk-webdriver xvfb python3-xlib ||
+            timeout 600 sudo apt-get install -y webkit2gtk-driver xvfb python3-xlib
           driver=$(command -v WebKitWebDriver || dpkg -L webkitgtk-webdriver webkit2gtk-driver 2>/dev/null | grep -m1 '/WebKitWebDriver$')
           echo "WebKitWebDriver: $driver"
           test -x "$driver"
@@ -176,6 +177,14 @@ jobs:
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           cp "target/debug/deckpilot-desktop$exe" "$E2E/app/"
           echo "DECKPILOT_E2E_APP=$E2E/app/deckpilot-desktop$exe" >> "$GITHUB_ENV"
+      # The title bar's close button on this build: the main window closes
+      # and ends the app (tests/main_window_close.rs).
+      - name: Closing the main window (Linux)
+        if: matrix.gui && runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1440x900x24" cargo test --locked -p deckpilot-desktop --test main_window_close -- --ignored --nocapture
+      - name: Closing the main window (Windows)
+        if: matrix.gui && runner.os == 'Windows'
+        run: cargo test --locked -p deckpilot-desktop --test main_window_close -- --ignored --nocapture
       - name: Install tauri-driver
         if: matrix.gui
         run: |
