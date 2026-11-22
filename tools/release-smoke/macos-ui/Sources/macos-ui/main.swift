@@ -736,16 +736,32 @@ let axSteps: [(String, () throws -> String)] = [
     let modelNames = models.map(name)
     let menuShot = screenshot("device-menu")
     try press(model)
-    // A new profile has no layout for the model: the editor offers "New
-    // layout" (layout-designer.tsx); create one as a user would.
+    // A new profile has no layout for the model: create one as a user would
+    // (pages/layout-designer.tsx). Up to 0.9.x the empty state has its own
+    // "New layout" button; from 0.10.0 (#373) it points to "New layout…" in
+    // the toolbar's layout menu (layout-editor/layout-management.tsx), whose
+    // trigger is "Choose a layout" while the model has none.
     var layout = "a layout was there"
     let isCanvas: (AXUIElement) -> Bool = { name($0).hasSuffix(" controls") && !isButton($0) }
-    let ready = try until("the device canvas or 'New layout'", long) { () -> String? in
+    let ready = try until("the device canvas or 'No layout for …'", long) { () -> String? in
       if first(mainWindow, isCanvas) != nil { return "canvas" }
       return first(mainWindow, { name($0).hasPrefix("No layout for ") || string($0, kAXValueAttribute).hasPrefix("No layout for ") }) != nil ? "empty" : nil
     }
     if ready == "empty" {
-      try press(try button(mainWindow, "New layout"))
+      var opened = "the empty state's New layout"
+      if let own = first(mainWindow, { isButton($0) && name($0) == "New layout" }) {
+        try press(own)
+      } else {
+        let trigger = try find(mainWindow, "the layout menu ('Choose a layout')") {
+          isButton($0) && (name($0) == "Choose a layout" || name($0).hasPrefix("Layout:")) && enabled($0)
+        }
+        _ = try click(running, trigger)
+        let item = try find(mainWindow, "menu item 'New layout…'") {
+          role($0) == kAXMenuItemRole as String && name($0).hasPrefix("New layout") && enabled($0)
+        }
+        opened = "the toolbar's '\(name(trigger))' menu › '\(name(item))'"
+        try press(item)
+      }
       _ = try find(mainWindow, "the dialog 'New layout for …'") { name($0).hasPrefix("New layout for ") }
       let field = try until("the layout's Name field") { () -> AXUIElement? in
         let fields = all(mainWindow).filter { role($0) == kAXTextFieldRole as String }
@@ -756,17 +772,26 @@ let axSteps: [(String, () throws -> String)] = [
       type(layoutName)
       pause(0.5)
       try press(try button(mainWindow, "Create"))
-      layout = "created layout '\(layoutName)' with New layout › Create"
+      layout = "created layout '\(layoutName)' with \(opened) › Create"
     }
     let canvas = try find(mainWindow, "the device canvas", long, isCanvas)
     let library = try find(mainWindow, "the Action Library") { name($0) == "Action Library" && !isButton($0) }
     // Up to 0.8.1 the library collapses and resizes; later it is fixed.
     let libraryControls = all(mainWindow).map(name).filter { ["Collapse the library", "Resize the library", "Show the library", "Close the library"].contains($0) }
     let libraryKind = libraryControls.isEmpty ? "fixed (no collapse or resize control)" : "with \(Array(Set(libraryControls)).sorted().joined(separator: ", "))"
-    _ = try find(mainWindow, "the inspector") { name($0).hasPrefix("Select a key, dial or touch zone") }
+    // Nothing selected: up to 0.9.x the inspector shows "Select a key, dial
+    // or touch zone…"; from 0.10.0 it is an empty region "Inspector" that
+    // becomes "Key 1 settings" (layout-editor/inspector.tsx).
+    let oldHint: (AXUIElement) -> Bool = { name($0).hasPrefix("Select a key, dial or touch zone") }
+    let inspector = try find(mainWindow, "the inspector") {
+      oldHint($0) || (name($0) == "Inspector" && !isButton($0) && role($0) != kAXMenuItemRole as String)
+    }
+    let oldInspector = oldHint(inspector)
     let key = try find(mainWindow, "'Key 1'") { name($0) == "Key 1" && role($0) != kAXStaticTextRole as String }
     let how = try click(running, key)
-    _ = try until("the inspector of Key 1") { first(mainWindow, { name($0).hasPrefix("Select a key, dial or touch zone") }) == nil ? true : nil }
+    _ = try until("the inspector of Key 1") { () -> Bool? in
+      oldInspector ? (first(mainWindow, oldHint) == nil ? true : nil) : (first(mainWindow, { name($0) == "Key 1 settings" }) != nil ? true : nil)
+    }
     let device = try find(mainWindow, "the device selector") { isButton($0) && name($0).hasPrefix("Device:") }
     mainFrame = frame(mainWindow)
     return "profile selector '\(name(profile))'; device menu: \(modelNames.joined(separator: " | ")); chose '\(modelName)' -> '\(name(device))'; \(layout); canvas '\(name(canvas))'; library '\(name(library))' (\(role(library)) \(subrole(library)), \(libraryKind)); Key 1 selected (\(how)), the inspector shows it; \(menuShot); \(screenshot("editor"))"
