@@ -15,6 +15,39 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-22
+
+### Changed
+
+- The nine official plugins (Docker, Git, GitHub, GitLab, Jira,
+  Notifications, Projects, Workflows and Workspace) now come from their own,
+  independently signed releases in the DeckPilot plugins repository: every
+  copy bundled with the app is a published release signed by **both**
+  DeckPilot publisher keys, checked when the app is built and again by the
+  pins compiled into the app.
+- The bundled plugins are updated to these releases (GitHub 0.2.1; GitLab,
+  Jira and Notifications 0.1.2; Docker, Git, Projects, Workflows and
+  Workspace 0.1.1). Installed copies are replaced by the new version when
+  the app starts, including copies of Git, Docker and Projects whose move
+  from the built-in still waits for your consent; settings, credentials,
+  granted permissions and key bindings stay as they are. Their
+  permissions are unchanged, so no new consent is requested, and keys
+  that were waiting for your consent still wait for the same consent.
+  Plugin API stays 1.9.
+
+### Added
+
+- GitHub, GitLab, Jira and Notifications are also available from the
+  Marketplace, as the same two-key-signed official releases.
+
+### Security
+
+- The privileged plugins (Docker, Git, Projects, Workflows and Workspace,
+  which run processes or reach into projects, files or the app's views)
+  remain bundled-only: they are accepted only as the copies shipped with
+  the app, never from the Marketplace, and only with exactly the
+  permissions an independent security review approved.
+
 ### Fixed
 
 - Installing first-party community plugins (Memory, Pomodoro, Markets,
@@ -30,15 +63,6 @@ released either. 0.6.0 is the first version intended for publication.
   plugin that 0.11.0 stopped (quarantined) is released at the next
   registry refresh but stays turned off: turn it on again on the Plugins
   page (Marketplace › Installed).
-- A newer bundled version of Git, Docker or Projects that declares the
-  same permissions now replaces the installed copy at the start even while
-  its move from the built-in still waits for your consent; nothing is
-  granted by it, and the same consent is still asked. Before, the newer
-  version waited for an approval nobody was asked for, and giving the
-  consent then failed ("this agent pins no bundled deckpilot.git 0.1.0"),
-  leaving those keys unavailable. A bundled version that asks for new
-  permissions still waits for your approval: the move then says so instead
-  of enabling the older copy.
 
 ## [0.11.0] - 2026-11-21
 
