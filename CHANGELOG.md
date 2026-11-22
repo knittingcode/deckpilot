@@ -21,6 +21,12 @@ released either. 0.6.0 is the first version intended for publication.
   again (since 0.10.0 it did nothing). With unsaved layout edits it still
   asks first. The agent keeps running in the tray as before; macOS is
   unchanged (closing hides the window to the menu bar).
+- Configuration export no longer overwrites or deletes an unrelated file
+  next to the chosen destination (one named like `backup.deckpilot.tmp`).
+  The export is staged in a new file of its own, created exclusively in
+  the destination's folder, and then replaces the destination in one step;
+  a failed export leaves the previous file and every other file as they
+  were, and simultaneous exports no longer interfere with each other.
 
 ## [0.12.0] - 2026-11-22
 

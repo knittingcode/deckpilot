@@ -4436,3 +4436,78 @@ fn storefront_commands_answer_null_without_a_storefront() {
         );
     }
 }
+
+/// Exports `h`'s configuration to `path` (authenticating first, as the
+/// export window does).
+fn try_export(h: &Harness, path: &std::path::Path, password: &str) -> Result<Value, String> {
+    h.ok("authenticate", json!({ "password": PASSWORD }));
+    h.call(
+        "export_configuration",
+        json!({ "request": { "path": path.display().to_string(), "password": password, "confirmation": password, "profiles": null, "includeModuleSettings": false } }),
+    )
+    .map_err(|error| error.as_str().unwrap_or_default().to_owned())
+}
+
+/// The names of the files in `dir`, sorted.
+fn file_names(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Issue #402: the export stages its bytes in a file of its own, never in
+/// one that happens to have the name the old staging scheme derived from
+/// the destination (`<name>.deckpilot.tmp`).
+#[test]
+fn an_export_never_touches_an_unrelated_sibling_file() {
+    let h = Harness::new();
+    new_profile(&h, "Synthetic");
+    let dir = h.paths.data_dir.join("exports");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sibling = dir.join("backup.deckpilot.tmp");
+    std::fs::write(&sibling, b"unrelated sibling marker").unwrap();
+    let destination = dir.join("backup.deckpilot");
+    let password = generated_export_password();
+
+    try_export(&h, &destination, &password).unwrap();
+    assert_eq!(
+        std::fs::read(&sibling).unwrap(),
+        b"unrelated sibling marker"
+    );
+    let payload = deckpilot_portability::payload::open(
+        &std::fs::read(&destination).unwrap(),
+        &deckpilot_storage::crypto::Password::new(&password),
+    )
+    .unwrap();
+    assert_eq!(payload.profiles.len(), 1);
+    assert_eq!(
+        file_names(&dir),
+        ["backup.deckpilot", "backup.deckpilot.tmp"]
+    );
+
+    // A replacement that fails (the destination is a directory that holds
+    // a file) keeps the sibling, and leaves no staging file behind.
+    let blocked = dir.join("blocked.deckpilot");
+    std::fs::create_dir_all(&blocked).unwrap();
+    std::fs::write(blocked.join("inside"), b"x").unwrap();
+    let blocked_sibling = dir.join("blocked.deckpilot.tmp");
+    std::fs::write(&blocked_sibling, b"another marker").unwrap();
+    assert!(try_export(&h, &blocked, &password).is_err());
+    assert_eq!(std::fs::read(&blocked_sibling).unwrap(), b"another marker");
+    assert_eq!(
+        std::fs::read(&sibling).unwrap(),
+        b"unrelated sibling marker"
+    );
+    assert_eq!(
+        file_names(&dir),
+        [
+            "backup.deckpilot",
+            "backup.deckpilot.tmp",
+            "blocked.deckpilot",
+            "blocked.deckpilot.tmp"
+        ]
+    );
+}

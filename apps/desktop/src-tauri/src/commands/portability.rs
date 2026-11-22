@@ -5,7 +5,10 @@
 //! the archive key. An import is previewed first; the decrypted content is
 //! kept in memory until the user applies or cancels it.
 
+use std::io::Write as _;
+use std::path::Path;
 use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -123,22 +126,110 @@ pub fn export_configuration(
     };
     let kdf = KdfParams::generate().map_err(StorageError::from)?;
     let bytes = payload::seal(&content, &request.password, kdf)?;
-    let path = std::path::PathBuf::from(&request.path);
-    // Written next to the target and renamed, so that a failure never leaves
-    // a truncated export behind. Only encrypted bytes reach the disk.
-    let temporary = path.with_extension("deckpilot.tmp");
-    let written =
-        std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path));
-    if let Err(error) = written {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(CommandError::Invalid(error.to_string()));
-    }
+    // Only encrypted bytes reach the disk.
+    write_export(Path::new(&request.path), &bytes)
+        .map_err(|error| CommandError::Invalid(error.to_string()))?;
     Ok(ExportResult {
         path: request.path,
         profiles: content.profiles.len(),
         modules: content.modules.len(),
         bytes: bytes.len(),
     })
+}
+
+/// The steps of [`write_export`], where tests make it fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+enum ExportStep {
+    /// Writing the staging file, after half of the bytes.
+    Write,
+    /// Replacing the destination with the staging file.
+    Replace,
+}
+
+/// Replaces `path` with `bytes`: afterwards `path` holds either all of
+/// `bytes` or, after an error, exactly what it held before (issue #402).
+///
+/// The bytes are staged in a file of this export's own, created exclusively
+/// (`create_new`) under a random name in the destination's directory,
+/// written through that handle and synced, then renamed over `path` — an
+/// atomic replacement on the same file system (`rename(2)`; on Windows
+/// `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`). No other file is
+/// opened, so a sibling that happens to look like a staging file is never
+/// written or removed, and concurrent exports never share a staging file.
+/// On every error the staging file, and only it, is removed.
+fn write_export(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_export_failing_at(path, bytes, None)
+}
+
+fn write_export_failing_at(
+    path: &Path,
+    bytes: &[u8],
+    fail_at: Option<ExportStep>,
+) -> std::io::Result<()> {
+    let injected = |step: ExportStep| {
+        if fail_at == Some(step) {
+            Err(std::io::Error::other(format!("injected {step:?} failure")))
+        } else {
+            Ok(())
+        }
+    };
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    // Removed when dropped, by its own path: every early return below
+    // cleans up exactly this file.
+    let mut staging = tempfile::Builder::new()
+        .prefix(".deckpilot-export-")
+        .suffix(".tmp")
+        .tempfile_in(dir)?;
+    if fail_at == Some(ExportStep::Write) {
+        staging.write_all(&bytes[..bytes.len() / 2])?;
+    }
+    injected(ExportStep::Write)?;
+    staging.write_all(bytes)?;
+    staging.as_file().sync_all()?;
+    injected(ExportStep::Replace)?;
+    replace_with(staging, path)?;
+    // The rename itself survives a crash once the directory is synced.
+    #[cfg(unix)]
+    if let Ok(dir) = std::fs::File::open(dir) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+/// Renames `staging` over `path`. On Windows, another program (a virus
+/// scanner, the search indexer) briefly holding the destination open makes
+/// the replacement fail with "access denied" or a sharing violation; that
+/// is retried for a bounded time, as `deckpilot_storage` does for the
+/// database files.
+fn replace_with(mut staging: tempfile::NamedTempFile, path: &Path) -> std::io::Result<()> {
+    const RETRY_FOR: Duration = Duration::from_secs(3);
+    let in_use = |error: &std::io::Error| {
+        // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION.
+        cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33))
+    };
+    let deadline = Instant::now() + RETRY_FOR;
+    let mut pause = Duration::from_millis(10);
+    loop {
+        match staging.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(error) if in_use(&error.error) && Instant::now() < deadline => {
+                staging = error.file;
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(Duration::from_millis(200));
+            }
+            // `error.file` is dropped here, which removes the staging file.
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.error.kind(),
+                    format!("could not write {}: {}", path.display(), error.error),
+                ));
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -219,4 +310,137 @@ pub fn apply_import<R: tauri::Runtime>(
 #[tauri::command]
 pub fn cancel_import(pending: State<'_, PendingImport>) {
     pending.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A new empty directory, removed when dropped.
+    struct Dir(std::path::PathBuf);
+
+    impl Dir {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("deckpilot-export-{}", ProfileId::new()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn join(&self, name: &str) -> std::path::PathBuf {
+            self.0.join(name)
+        }
+
+        /// The names of the files in the directory, sorted.
+        fn names(&self) -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(&self.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        }
+    }
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const SIBLING: &[u8] = b"unrelated sibling marker";
+
+    /// A destination with an earlier export and the sibling the old staging
+    /// scheme wrote to (`<stem>.deckpilot.tmp`).
+    fn with_earlier_export() -> (Dir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = Dir::new();
+        let destination = dir.join("backup.deckpilot");
+        let sibling = dir.join("backup.deckpilot.tmp");
+        std::fs::write(&destination, b"earlier export").unwrap();
+        std::fs::write(&sibling, SIBLING).unwrap();
+        (dir, destination, sibling)
+    }
+
+    #[test]
+    fn an_export_replaces_the_destination_and_keeps_the_sibling() {
+        let (dir, destination, sibling) = with_earlier_export();
+        write_export(&destination, b"new export").unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new export");
+        assert_eq!(std::fs::read(&sibling).unwrap(), SIBLING);
+        assert_eq!(dir.names(), ["backup.deckpilot", "backup.deckpilot.tmp"]);
+
+        // A destination that does not exist yet.
+        let fresh = dir.join("fresh.deckpilot");
+        write_export(&fresh, b"first export").unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"first export");
+    }
+
+    #[test]
+    fn a_failed_write_or_replacement_leaves_everything_as_it_was() {
+        for step in [ExportStep::Write, ExportStep::Replace] {
+            let (dir, destination, sibling) = with_earlier_export();
+            let error =
+                write_export_failing_at(&destination, b"new export", Some(step)).unwrap_err();
+            assert!(error.to_string().contains("injected"), "{step:?}: {error}");
+            assert_eq!(
+                std::fs::read(&destination).unwrap(),
+                b"earlier export",
+                "{step:?}"
+            );
+            assert_eq!(std::fs::read(&sibling).unwrap(), SIBLING, "{step:?}");
+            // The staging file, and only it, is gone.
+            assert_eq!(
+                dir.names(),
+                ["backup.deckpilot", "backup.deckpilot.tmp"],
+                "{step:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_replacement_failure_cleans_up_only_its_staging_file() {
+        let (dir, _, sibling) = with_earlier_export();
+        // A directory that holds a file cannot be replaced by a file.
+        let blocked = dir.join("blocked.deckpilot");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("inside"), b"x").unwrap();
+        let error = write_export(&blocked, b"new export").unwrap_err();
+        assert!(error.to_string().contains("blocked.deckpilot"), "{error}");
+        assert_eq!(std::fs::read(blocked.join("inside")).unwrap(), b"x");
+        assert_eq!(std::fs::read(&sibling).unwrap(), SIBLING);
+        assert_eq!(
+            dir.names(),
+            [
+                "backup.deckpilot",
+                "backup.deckpilot.tmp",
+                "blocked.deckpilot"
+            ]
+        );
+    }
+
+    #[test]
+    fn concurrent_exports_never_share_a_staging_file() {
+        let (dir, destination, sibling) = with_earlier_export();
+        // `backup.json` derived the same staging name as `backup.deckpilot`
+        // in the old scheme.
+        let other = dir.join("backup.json");
+        let contents: Vec<Vec<u8>> = (0..16u8)
+            .map(|i| vec![b'a' + i; 64 * 1024 + usize::from(i)])
+            .collect();
+        std::thread::scope(|scope| {
+            for (i, bytes) in contents.iter().enumerate() {
+                let target = if i % 2 == 0 { &destination } else { &other };
+                scope.spawn(move || write_export(target, bytes).unwrap());
+            }
+        });
+        // Each destination holds one export completely, of its own writers.
+        let written = std::fs::read(&destination).unwrap();
+        assert!(contents.iter().step_by(2).any(|c| *c == written));
+        let written = std::fs::read(&other).unwrap();
+        assert!(contents.iter().skip(1).step_by(2).any(|c| *c == written));
+        assert_eq!(std::fs::read(&sibling).unwrap(), SIBLING);
+        assert_eq!(
+            dir.names(),
+            ["backup.deckpilot", "backup.deckpilot.tmp", "backup.json"]
+        );
+    }
 }
