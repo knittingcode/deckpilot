@@ -25,13 +25,21 @@
     "colorPlateOpacity": 100
   },
   "keyLabels": [
-    { "id": "x", "text": "Hi" },
+    {
+      "id": "x",
+      "text": "Hi"
+    },
     {
       "id": "a1b2c3d4",
       "text": "{{ shared.team.name }} · {project.key}",
       "enabled": false,
       "visible": "whenResolved",
-      "position": { "mode": "absolute", "x": 250, "y": 900, "origin": "bottomLeft" },
+      "position": {
+        "mode": "absolute",
+        "x": 250,
+        "y": 900,
+        "origin": "bottomLeft"
+      },
       "offsetX": -3,
       "offsetY": 4,
       "maxWidth": 80,
@@ -53,7 +61,10 @@
       "id": "ribbon",
       "text": "{project.name}",
       "visible": "whenProject",
-      "position": { "mode": "anchored", "to": "bottom" },
+      "position": {
+        "mode": "anchored",
+        "to": "bottom"
+      },
       "background": "none",
       "layer": "behindIcon",
       "overflow": "shrink"
@@ -61,7 +72,10 @@
     {
       "id": "corner-1",
       "text": "{page.number}/{page.count}",
-      "position": { "mode": "preset", "at": "topRight" },
+      "position": {
+        "mode": "preset",
+        "at": "topRight"
+      },
       "width": 40,
       "maxHeight": 50,
       "overflow": "clip"
@@ -69,25 +83,78 @@
     {
       "id": "tag",
       "text": "v2",
-      "position": { "mode": "anchored", "to": "topLeft", "inset": 3 },
+      "position": {
+        "mode": "anchored",
+        "to": "topLeft",
+        "inset": 3
+      },
       "visible": "always"
     }
   ],
   "invalidKeyLabels": [
-    { "id": "Upper", "text": "x" },
-    { "id": "x", "text": "x", "position": { "mode": "preset", "at": "left" } },
-    { "id": "x", "text": "x", "size": 5 },
-    { "id": "x", "text": "x", "maxLines": 5 },
-    { "id": "x", "text": "x", "background": "red" },
-    { "id": "x", "text": "x", "position": { "mode": "absolute", "x": 1001, "y": 0 } }
+    {
+      "id": "Upper",
+      "text": "x"
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "position": {
+        "mode": "preset",
+        "at": "left"
+      }
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "size": 5
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "maxLines": 5
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "background": "red"
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "position": {
+        "mode": "absolute",
+        "x": 1001,
+        "y": 0
+      }
+    }
   ],
   "faceLabels": [
-    { "id": "x", "text": "Hi", "spec": {} },
+    {
+      "id": "x",
+      "text": "Hi",
+      "spec": {}
+    },
     {
       "id": "ribbon",
-      "text": "-",
-      "spec": { "position": { "mode": "anchored", "to": "bottom" }, "background": "none", "layer": "behindIcon", "overflow": "shrink" },
-      "unresolved": true
+      "text": "Main: -",
+      "spec": {
+        "position": {
+          "mode": "anchored",
+          "to": "bottom"
+        },
+        "background": "none",
+        "layer": "behindIcon",
+        "overflow": "shrink"
+      },
+      "unresolved": true,
+      "markers": [
+        {
+          "start": 6,
+          "end": 7,
+          "reference": "project.name"
+        }
+      ]
     }
   ],
   "labelBoxes": [
@@ -97,7 +164,10 @@
       "y": 56.0,
       "width": 72.0,
       "height": 16.0,
-      "canvas": { "width": 72.0, "height": 72.0 },
+      "canvas": {
+        "width": 72.0,
+        "height": 72.0
+      },
       "layer": "behindIcon",
       "truncated": false,
       "overlapsTitle": true,
@@ -111,7 +181,10 @@
       "y": 6.0,
       "width": 23.5,
       "height": 13.25,
-      "canvas": { "width": 144.0, "height": 72.0 },
+      "canvas": {
+        "width": 144.0,
+        "height": 72.0
+      },
       "layer": "overIcon",
       "truncated": true,
       "overlapsTitle": false,

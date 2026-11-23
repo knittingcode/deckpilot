@@ -28,6 +28,8 @@
 //   canvas, absolute positions in per mille. Unset fields are the defaults
 //   below; the backend drops values equal to a default when it saves.
 
+import type { MarkerSpan } from "./display-templates"
+
 /** A point of a box (a corner, an edge centre or the centre). */
 export type LabelSpot =
   | "topLeft"
@@ -113,6 +115,11 @@ export interface FaceLabel {
   spec: KeyLabelLook
   /** Some reference had no displayable value (shown as `-`). */
   unresolved?: boolean
+  /**
+   * Where each `-` marker is in `text` (after `{page.…}` and the cut), as for
+   * titles: UTF-16 offsets, `end` exclusive. Omitted when none.
+   */
+  markers?: MarkerSpan[]
 }
 
 /**
@@ -290,7 +297,19 @@ export function isFaceLabel(value: unknown): value is FaceLabel {
     LABEL_ID.test(value.id) &&
     typeof value.text === "string" &&
     isKeyLabelLook(value.spec) &&
-    optional(value.unresolved, (u) => typeof u === "boolean")
+    optional(value.unresolved, (u) => typeof u === "boolean") &&
+    optional(
+      value.markers,
+      (markers) =>
+        Array.isArray(markers) &&
+        markers.every(
+          (m) =>
+            isObject(m) &&
+            integer(0, Number.MAX_SAFE_INTEGER)(m.start) &&
+            integer(0, Number.MAX_SAFE_INTEGER)(m.end) &&
+            typeof m.reference === "string",
+        ),
+    )
   )
 }
 
