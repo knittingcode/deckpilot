@@ -74,6 +74,9 @@ pub enum CommandError {
 pub enum Param {
     Text(String),
     Number(u64),
+    /// Structured data for the window, not for interpolation (the
+    /// references a refused workflow delete lists, `workflowInUse`).
+    Data(serde_json::Value),
 }
 
 impl From<&str> for Param {
@@ -453,6 +456,8 @@ fn profile_code(error: &ProfileIssue) -> (String, Params) {
             ]),
         ),
         ProfileIssue::InUse(count) => ("inUse", params([("count", (*count).into())])),
+        ProfileIssue::ReferencesChanged => ("referencesChanged", Params::new()),
+        ProfileIssue::UsedByWorkSession => ("usedByWorkSession", Params::new()),
         ProfileIssue::NotFound(what) => {
             return (format!("profile.notFound.{}", camel(what)), Params::new());
         }

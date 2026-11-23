@@ -111,7 +111,12 @@
   "usage": {
     "none": "Nieużywane w żadnym przepływie pracy ani układzie.",
     "workflowStep": "Przepływ pracy „{{workflow}}”, krok {{step}}",
-    "layoutControl": "Układ „{{layout}}”, strona „{{page}}”, {{control}}"
+    "layoutControl": "Układ „{{layout}}”, strona „{{page}}”, {{control}}",
+    "withTrigger": "{{place}} ({{trigger}})",
+    "workflowNode": "Przepływ pracy „{{workflow}}”, węzeł podprzepływu lub pętli",
+    "actionParameter": "Akcja „{{action}}” (kandydat akcji losowej lub stan przełącznika)",
+    "workSessionStart": "Sesja pracy: przepływ rozpoczęcia",
+    "workSessionVerification": "Sesja pracy: przepływ weryfikacji"
   },
   "incompatible": {
     "note": "Nie jest uruchamiane z tego elementu sterującego: {{reason}} Pozostaje przypisane, ale nie jest uruchamiane."

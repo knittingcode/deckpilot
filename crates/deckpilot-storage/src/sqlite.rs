@@ -1011,6 +1011,44 @@ impl SqliteStore {
         Ok(result)
     }
 
+    /// Loads `profile` and its Work Session settings, applies `change`,
+    /// and writes both in one transaction (the settings only when
+    /// `change` changed them), so a change that depends on both, such as
+    /// deleting a workflow the settings name after checking what refers
+    /// to it, is never half applied or decided on a stale read. Nothing is
+    /// written when `change` fails.
+    pub fn modify_profile_with_work_session<T, E>(
+        &self,
+        profile: ProfileId,
+        at_ms: i64,
+        change: impl FnOnce(&mut Profile, &mut WorkSessionSettings) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<StorageError>,
+    {
+        let tx = self.write_transaction()?;
+        let mut document = load_profile_in(&tx, profile)?.ok_or(StorageError::UnknownProfile)?;
+        let before = crate::work_sessions::settings(&tx, profile)?;
+        let mut settings = before.clone();
+        let result = change(&mut document, &mut settings)?;
+        write_profile(&tx, &document)?;
+        if settings != before {
+            crate::work_sessions::save_settings(&tx, &settings, at_ms)?;
+        }
+        tx.commit().map_err(StorageError::from)?;
+        Ok(result)
+    }
+
+    /// A value that changes whenever the database was written, by this
+    /// connection or another (the agent's): to keep values derived from
+    /// it while it stays the same.
+    pub fn write_generation(&self) -> Result<(i64, u64)> {
+        let version: i64 = self
+            .connection
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        Ok((version, self.connection.total_changes()))
+    }
+
     /// The work session settings of `profile` (defaults if never saved).
     pub fn work_session_settings(&self, profile: ProfileId) -> Result<WorkSessionSettings> {
         crate::work_sessions::settings(&self.connection, profile)

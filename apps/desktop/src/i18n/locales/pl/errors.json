@@ -95,7 +95,15 @@
       "replaced": "klawisz {{key}} otwiera folder „{{folder}}”; wyczyść klawisz albo usuń folder zamiast go zastępować",
       "recovered": "odzyskane gesty można tylko zachować, przenieść na wolny klawisz albo odrzucić"
     },
-    "pluginFeatureOff": "wtyczka {{feature}} jest wyłączona: włącz ją w Ustawieniach › Wtyczki"
+    "pluginFeatureOff": "wtyczka {{feature}} jest wyłączona: włącz ją w Ustawieniach › Wtyczki",
+    "workflowInUse_one": "przepływ pracy jest nadal używany w {{count}} miejscu; potwierdź, aby go usunąć",
+    "workflowInUse_few": "przepływ pracy jest nadal używany w {{count}} miejscach; potwierdź, aby go usunąć",
+    "workflowInUse_many": "przepływ pracy jest nadal używany w {{count}} miejscach; potwierdź, aby go usunąć",
+    "workflowInUse_other": "przepływ pracy jest nadal używany w {{count}} miejscach; potwierdź, aby go usunąć",
+    "workflowReferencesChanged": "od potwierdzenia zmieniło się to, co używa przepływu pracy; sprawdź to ponownie",
+    "workflowNotInProfile": "klawisz {{key}} na stronie „{{page}}” uruchamia przepływ pracy spoza tego profilu; wybierz przepływ pracy tego profilu",
+    "workflowNeedsInputs": "klawisz {{key}} na stronie „{{page}}” uruchamia przepływ pracy wymagający wartości wejściowych; użyj go w węźle podprzepływu",
+    "workflowInWorkSession": "ustawienia sesji pracy używają tego przepływu pracy; wyczyść je też, aby go usunąć"
   },
   "storage": {
     "database": "błąd bazy danych: {{detail}}",
@@ -209,7 +217,9 @@
     "inUse_one": "element jest nadal używany w {{count}} miejscu; najpierw usuń te odwołania",
     "inUse_few": "element jest nadal używany w {{count}} miejscach; najpierw usuń te odwołania",
     "inUse_many": "element jest nadal używany w {{count}} miejscach; najpierw usuń te odwołania",
-    "inUse_other": "element jest nadal używany w {{count}} miejsca; najpierw usuń te odwołania"
+    "inUse_other": "element jest nadal używany w {{count}} miejsca; najpierw usuń te odwołania",
+    "referencesChanged": "od potwierdzenia zmieniło się to, co go używa; sprawdź odwołania ponownie",
+    "usedByWorkSession": "ustawienia sesji pracy go używają; wyczyść je, aby go usunąć"
   },
   "projectContext": {
     "profileMismatch": "kontekst projektu należy do innego profilu",

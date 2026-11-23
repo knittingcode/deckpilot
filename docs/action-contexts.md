@@ -17,6 +17,12 @@ stops working:
 
 Contexts are not permissions and not a security boundary.
 
+Contexts belong to action types. A key or gesture that starts a workflow
+(`BindingTarget::Workflow`) is not an action type and has no contexts: it
+goes on any key primary, dial or touch trigger and on gestures. What a
+save refuses and how a run is re-checked for workflow targets is in
+[data-model.md](data-model.md#workflows-on-keys).
+
 ## The five contexts
 
 | Context | Identifier | A use is in it when |

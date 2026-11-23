@@ -111,7 +111,12 @@
   "usage": {
     "none": "Not used in any workflow or layout.",
     "workflowStep": "Workflow “{{workflow}}”, step {{step}}",
-    "layoutControl": "Layout “{{layout}}”, page “{{page}}”, {{control}}"
+    "layoutControl": "Layout “{{layout}}”, page “{{page}}”, {{control}}",
+    "withTrigger": "{{place}} ({{trigger}})",
+    "workflowNode": "Workflow “{{workflow}}”, a Sub-workflow or Loop node",
+    "actionParameter": "Action “{{action}}” (a Random Action candidate or a Switch state)",
+    "workSessionStart": "Work Session: start workflow",
+    "workSessionVerification": "Work Session: verification workflow"
   },
   "incompatible": {
     "note": "Not run from this control: {{reason}} It stays assigned but is not run."

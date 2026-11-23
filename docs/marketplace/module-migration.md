@@ -2403,8 +2403,11 @@ The analysis in those sections still stands. The security reviews in
   every user-facing part of it.
 - The **workflow engine**, `BindingTarget::Workflow`, the execution IPC and
   the run monitoring views stay in the core. With `deckpilot.workflows`
-  off, keys that run workflows still run them, and existing workflow
-  bindings show read-only.
+  off, existing bindings to graph workflows show read-only and are kept
+  without running ("disabled plugins preserve bindings without executing
+  them", owner decision OD4 of 2026-11-23, which replaced "keys still run
+  them"); Multi Actions (step workflows) keep running. See
+  [Workflows on keys](../data-model.md#workflows-on-keys).
 - The **resource-binding store** (`machine_config`) and its editor stay in
   the core (Settings › Resources), because the `system.open-*` launchers
   use them.

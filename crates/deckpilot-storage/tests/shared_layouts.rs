@@ -3,6 +3,7 @@
 //! defaults and the layouts devices switched to, the actions and icons a
 //! layout brings, and the upgrade of a 0.8.1 database (schema 9).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use deckpilot_core::{
@@ -648,4 +649,103 @@ fn actions_that_a_layouts_actions_name_come_with_it() {
         names(&store.load_profile(home.id).unwrap().unwrap()),
         ["Switch"]
     );
+}
+
+/// A key of a shared layout that starts another profile's workflow is
+/// told apart from one whose workflow was deleted, per layout: the
+/// workflows of the profiles sharing each layout are known
+/// (`deckpilot_core::WorkflowScope`).
+#[test]
+fn the_workflows_of_the_profiles_sharing_a_layout_are_known() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (mut work, main) = work();
+    // A layout of Work's own, shared with nobody.
+    let private = DeviceLayout::new("Private", mk2());
+    work.layouts.push(private.clone());
+    store.save_profile(&work).unwrap();
+    let mut home = Profile::new("Home");
+    let own = Workflow::new("Home only");
+    home.workflows.push(own.clone());
+    store.save_profile(&home).unwrap();
+    let alone = Profile::new("Alone");
+    store.save_profile(&alone).unwrap();
+    store.assign_layout(home.id, main.id).unwrap();
+
+    let home = store.load_profile(home.id).unwrap().unwrap();
+    let deploy = work.workflows[0].id;
+    let shared = store.workflows_sharing_layouts(&home).unwrap();
+    assert_eq!(
+        shared[&main.id].iter().copied().collect::<Vec<_>>(),
+        [deploy]
+    );
+    let shared = store.workflows_sharing_layouts(&work).unwrap();
+    assert_eq!(
+        shared[&main.id].iter().copied().collect::<Vec<_>>(),
+        [own.id]
+    );
+    // Home's workflow is not "in" the layout Home does not use.
+    assert_eq!(shared[&private.id].len(), 0);
+    // A profile that shares nothing.
+    let shared = store.workflows_sharing_layouts(&alone).unwrap();
+    assert_eq!(shared.values().map(BTreeSet::len).sum::<usize>(), 0);
+}
+
+/// A profile and its Work Session settings change together or not at all.
+#[test]
+fn a_profile_and_its_work_session_settings_are_written_together() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (work, _) = work();
+    store.save_profile(&work).unwrap();
+    let deploy = work.workflows[0].id;
+    let mut settings = store.work_session_settings(work.id).unwrap();
+    settings.start_workflow = Some(deploy);
+    store.save_work_session_settings(&settings, 1).unwrap();
+    let generation = store.write_generation().unwrap();
+    assert_eq!(store.write_generation().unwrap(), generation);
+
+    // A failed change writes nothing.
+    let failed: Result<(), StorageError> =
+        store.modify_profile_with_work_session(work.id, 2, |profile, settings| {
+            profile.workflows.clear();
+            settings.start_workflow = None;
+            Err(StorageError::Invalid("no".into()))
+        });
+    assert!(failed.is_err());
+    assert_eq!(
+        store
+            .load_profile(work.id)
+            .unwrap()
+            .unwrap()
+            .workflows
+            .len(),
+        1
+    );
+    assert_eq!(
+        store.work_session_settings(work.id).unwrap().start_workflow,
+        Some(deploy)
+    );
+    assert_eq!(store.write_generation().unwrap(), generation);
+
+    // A change writes both.
+    store
+        .modify_profile_with_work_session::<_, StorageError>(work.id, 3, |profile, settings| {
+            profile.workflows.clear();
+            settings.start_workflow = None;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .load_profile(work.id)
+            .unwrap()
+            .unwrap()
+            .workflows
+            .len(),
+        0
+    );
+    assert_eq!(
+        store.work_session_settings(work.id).unwrap().start_workflow,
+        None
+    );
+    assert_ne!(store.write_generation().unwrap(), generation);
 }

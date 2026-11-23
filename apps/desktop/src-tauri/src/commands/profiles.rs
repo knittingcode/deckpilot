@@ -4,7 +4,8 @@ use serde::Serialize;
 use tauri::State;
 
 use deckpilot_core::{
-    ActionInstanceId, ActiveProjectContext, Profile, ProfileId, ProjectId, Usage, WorkflowId,
+    ActionInstanceId, ActiveProjectContext, Profile, ProfileId, ProjectId, ReferenceFingerprint,
+    Usage, WorkflowBlock, WorkflowId,
 };
 use deckpilot_storage::{ConfigStore, ProfileSummary};
 
@@ -35,7 +36,15 @@ pub struct ProfileView {
     active_project_id: Option<ProjectId>,
     issues: Vec<String>,
     action_usages: BTreeMap<ActionInstanceId, Vec<Usage>>,
+    /// Key and gesture bindings only; kept for one release, use
+    /// `workflow_references`.
     workflow_usages: BTreeMap<WorkflowId, Vec<Usage>>,
+    /// Every reference of each workflow: keys and gestures, Call and Loop
+    /// nodes, Random and Switch actions, the Work Session settings
+    /// (`Profile::workflow_references_with`).
+    workflow_references: BTreeMap<WorkflowId, Vec<Usage>>,
+    /// The workflows as entries a key can start, in the profile's order.
+    workflow_entries: Vec<WorkflowEntry>,
     /// Actions that need configuration, with their missing parameters
     /// (`deckpilot_core::completeness`). Left out when there are none, so
     /// the frontend reads the answer as before.
@@ -45,6 +54,60 @@ pub struct ProfileView {
     /// parameters leave required ones without a value. Left out when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     incomplete_uses: Vec<deckpilot_core::IncompleteUse>,
+}
+
+/// A workflow as the Action Library lists it: graph workflows in the
+/// Workflows plugin's section, step workflows (Multi Actions) in the
+/// core's Sequences. Derived, never stored.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowEntry {
+    id: WorkflowId,
+    name: String,
+    kind: WorkflowKind,
+    has_triggers: bool,
+    /// Why a key cannot start it (a required input, an invalid graph);
+    /// one with a required input cannot be dropped on a key.
+    block: Option<WorkflowBlock>,
+    /// How many places refer to it.
+    references: usize,
+    /// The fingerprint of those references: sent back to confirm deleting
+    /// it (`delete_workflow`), which fails if they changed meanwhile.
+    fingerprint: ReferenceFingerprint,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum WorkflowKind {
+    Graph,
+    Steps,
+}
+
+fn workflow_entries(
+    profile: &Profile,
+    references: &BTreeMap<WorkflowId, Vec<Usage>>,
+    registry: &deckpilot_core::ActionRegistry,
+) -> Vec<WorkflowEntry> {
+    profile
+        .workflows
+        .iter()
+        .map(|workflow| {
+            let usages = references.get(&workflow.id).map_or(&[][..], Vec::as_slice);
+            WorkflowEntry {
+                id: workflow.id,
+                name: workflow.name.clone(),
+                kind: if workflow.graph.is_some() {
+                    WorkflowKind::Graph
+                } else {
+                    WorkflowKind::Steps
+                },
+                has_triggers: !workflow.triggers.is_empty(),
+                block: deckpilot_core::workflow_block(workflow, profile, registry),
+                references: usages.len(),
+                fingerprint: ReferenceFingerprint::of(usages),
+            }
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -86,6 +149,7 @@ pub fn get_profile(
                             page: page.id,
                             page_name: page.name.clone(),
                             control: binding.control,
+                            trigger: Some(binding.trigger),
                         });
                     }
                 }
@@ -101,6 +165,18 @@ pub fn get_profile(
     let actions = state.actions();
     let incomplete_actions = deckpilot_core::completeness::incomplete_actions(&profile, &actions);
     let incomplete_uses = deckpilot_core::completeness::incomplete_uses(&profile, &actions);
+    // The Work Session settings name workflows too; a missing or locked
+    // settings table reads as none set.
+    let session = store
+        .work_session_settings(profile_id)
+        .map(|settings| super::workflows::session_workflows(&settings))
+        .unwrap_or_default();
+    let workflow_references = profile
+        .workflows
+        .iter()
+        .map(|w| (w.id, profile.workflow_references_with(w.id, &session)))
+        .collect();
+    let workflow_entries = workflow_entries(&profile, &workflow_references, &actions);
     Ok(ProfileView {
         incomplete_actions,
         incomplete_uses,
@@ -108,6 +184,8 @@ pub fn get_profile(
         issues,
         action_usages,
         workflow_usages,
+        workflow_references,
+        workflow_entries,
         profile,
     })
 }
@@ -190,5 +268,79 @@ pub fn delete_profile(state: State<'_, AppState>, profile_id: ProfileId) -> Comm
         Ok(())
     } else {
         Err(CommandError::NotFound("profile"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use deckpilot_core::graph::{ValueKind, WorkflowInput};
+    use deckpilot_core::{BindingTarget, ControlBinding, DeviceLayout, Trigger, Workflow};
+    use deckpilot_device::{ControlId, DeviceModelId, models};
+
+    use super::*;
+
+    fn graph(name: &str) -> Workflow {
+        let mut workflow = Workflow::new(name);
+        workflow.graph = Some(
+            serde_json::from_value(serde_json::json!({
+                "version": 1,
+                "nodes": [{"id": "start", "type": "trigger"}, {"id": "end", "type": "stop"}],
+                "edges": [{"from": "start", "to": "end"}],
+            }))
+            .unwrap(),
+        );
+        workflow
+    }
+
+    #[test]
+    fn workflow_entries_tell_graphs_from_sequences_and_block_inputs() {
+        let mut profile = Profile::new("Work");
+        let deploy = graph("Deploy");
+        let mut needs = graph("Needs");
+        needs.inputs.push(WorkflowInput {
+            required: true,
+            ..WorkflowInput::new("target", ValueKind::Text)
+        });
+        let multi = Workflow::new("Multi");
+        let (deploy_id, multi_id) = (deploy.id, multi.id);
+        profile.workflows.extend([deploy, needs, multi]);
+        let mut layout = DeviceLayout::new("Main", DeviceModelId::new(models::STREAM_DECK_MK2_ID));
+        for (index, workflow) in [(0, deploy_id), (1, deploy_id), (2, multi_id)] {
+            layout.pages[0].bindings.push(ControlBinding::new(
+                ControlId::Key { index },
+                Trigger::Press,
+                BindingTarget::Workflow { workflow },
+            ));
+        }
+        profile.layouts.push(layout);
+        let references: BTreeMap<WorkflowId, Vec<Usage>> = profile
+            .workflows
+            .iter()
+            .map(|w| (w.id, profile.workflow_references(w.id)))
+            .collect();
+        let entries = workflow_entries(
+            &profile,
+            &references,
+            &deckpilot_core::ActionRegistry::default(),
+        );
+        let json = serde_json::to_value(&entries).unwrap();
+        assert_eq!(json[0]["name"], "Deploy");
+        assert_eq!(json[0]["kind"], "graph");
+        assert_eq!(json[0]["references"], 2);
+        assert_eq!(json[0]["block"], serde_json::Value::Null);
+        assert_eq!(json[0]["hasTriggers"], false);
+        assert_eq!(
+            json[0]["fingerprint"],
+            profile.workflow_fingerprint(deploy_id).to_string()
+        );
+        assert_eq!(json[1]["block"]["code"], "needsInputs");
+        assert!(
+            json[1]["block"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Sub-workflow")
+        );
+        assert_eq!(json[2]["kind"], "steps");
+        assert_eq!(json[2]["references"], 1);
     }
 }
