@@ -24,13 +24,14 @@ export interface LibraryResourceEntry {
   icon: string
   target: BindingTarget
   /**
-   * `ready`: it can be dropped (an invalid graph with a warning, `reason`).
+   * `ready`: it can be dropped (an invalid graph or one with draft nodes
+   * that need configuration, with a warning, `reason`).
    * `readOnly`: a graph workflow while the Workflows plugin is off; keys
    * keep it and do not run it. `blocked`: it needs inputs and cannot be
    * dropped on a key. Neither `readOnly` nor `blocked` is draggable.
    */
   state: "ready" | "readOnly" | "blocked"
-  reason?: "workflowsOff" | "needsInputs" | "invalidGraph"
+  reason?: "workflowsOff" | "needsInputs" | "invalidGraph" | "needsConfiguration"
   /** How many places refer to it. */
   usages: number
 }
@@ -66,6 +67,9 @@ export function workflowResourceEntries(
       }
       if (entry.block?.code === "invalidGraph") {
         return { ...base, state: "ready", reason: "invalidGraph" }
+      }
+      if (entry.block?.code === "needsConfiguration") {
+        return { ...base, state: "ready", reason: "needsConfiguration" }
       }
       return { ...base, state: "ready" }
     })

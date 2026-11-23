@@ -112,8 +112,10 @@ step workflows (Multi Actions) under the core's "Sequences". An entry
 carries the kind (`graph` or `steps`), whether it has triggers, how many
 places refer to it and, as `block`, why a key cannot start it: a required
 input (`needsInputs`, listed but never dropped on a key; it runs from a
-Sub-workflow node) or an invalid graph (`invalidGraph`, it can be placed
-and fails until fixed).
+Sub-workflow node), an invalid graph (`invalidGraph`, it can be placed
+and fails until fixed) or a graph whose only errors are draft nodes that
+need configuration (`needsConfiguration`, it can be placed and runs once
+they are filled in).
 
 **References.** `Profile::workflow_references` (`get_profile`,
 `workflowReferences`) lists every place that refers to a workflow, as
@@ -172,6 +174,7 @@ reason until the configuration is loaded again, with a stable code
 | `workflowNotInProfile` | it belongs to another profile sharing the layout |
 | `workflowPluginOff` | a graph workflow while the Workflows plugin is off |
 | `workflowInvalid` | its graph has errors |
+| `workflowIncomplete` | its graph has actions that need configuration (drafts) |
 | `workflowNeedsInputs` | it has a required input |
 | `workflowAlreadyRunning` | it runs already |
 | `workflowLimit` | too many workflows run |
@@ -195,9 +198,16 @@ the plugin restores the runs. Nothing is deleted. Runs started from the
 app and by triggers (schedules, lifecycle events) are not affected, and
 neither are a Work Session's start and verification workflows started
 from a Work Session key: they belong to the Work Session feature, not to a
-binding of the workflow (pending the owner's decision). A Multi Action
-Switch whose state's workflow is refused before it runs stays on that
-state, also with "advance on failure".
+binding of the workflow (pending the owner's decision).
+
+A Multi Action Switch with "advance on failure" moves past a state whose
+workflow is refused for a reason that lasts until the user changes
+something (`workflowMissing`, `workflowNotInProfile`, `workflowInvalid`,
+`workflowIncomplete`, `workflowNeedsInputs`), as past a run that fails,
+and keeps a state refused for a reason that passes by itself
+(`workflowAlreadyRunning`, `workflowLimit`, `workflowPluginOff`), so the
+next press tries it again. Without "advance on failure" it keeps the
+state either way.
 
 ## Execution
 

@@ -32,6 +32,7 @@ describe("workflowResourceEntries", () => {
       block: { code: "needsInputs", message: "Needs input needs a value" },
     }),
     entry("b1", "Broken", { block: { code: "invalidGraph", message: "no trigger" } }),
+    entry("d1", "Draft", { block: { code: "needsConfiguration", message: "needs a value" } }),
   ]
 
   it("refers to the workflow by id, ordered by name, in its section", () => {
@@ -39,6 +40,7 @@ describe("workflowResourceEntries", () => {
     expect(listed.map((e) => e.label)).toEqual([
       "Broken",
       "Deploy",
+      "Draft",
       "Needs input",
       "Release",
       "Steps",
@@ -64,6 +66,10 @@ describe("workflowResourceEntries", () => {
     const broken = find(listed, "b1")
     expect(broken).toMatchObject({ state: "ready", reason: "invalidGraph" })
     expect(isDroppable(broken)).toBe(true)
+    // A draft graph too: it runs once its nodes are configured.
+    const draft = find(listed, "d1")
+    expect(draft).toMatchObject({ state: "ready", reason: "needsConfiguration" })
+    expect(isDroppable(draft)).toBe(true)
   })
 
   it("keeps graph workflows read-only while the plugin is off, and Multi Actions ready", () => {

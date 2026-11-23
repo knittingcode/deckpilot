@@ -392,7 +392,7 @@ export interface ActionNotification {
   /**
    * A stable code for what the agent itself reports, e.g. a key whose
    * workflow did not start: `workflowMissing`, `workflowNotInProfile`,
-   * `workflowPluginOff`, `workflowInvalid`, `workflowNeedsInputs`,
+   * `workflowPluginOff`, `workflowInvalid`, `workflowIncomplete`, `workflowNeedsInputs`,
    * `workflowAlreadyRunning`, `workflowLimit`. Title and body are English.
    */
   code?: string
@@ -794,9 +794,11 @@ export interface WorkflowEntry {
   /**
    * Why a key cannot start it. `needsInputs`: it has a required input and
    * cannot be dropped on a key (use it from a Sub-workflow node);
-   * `invalidGraph`: it can be placed and fails until fixed.
+   * `invalidGraph`: it can be placed and fails until fixed;
+   * `needsConfiguration`: its only errors are draft nodes that need
+   * configuration, so it can be placed and runs once they are filled in.
    */
-  block: null | { code: "needsInputs" | "invalidGraph"; message: string }
+  block: null | { code: "needsInputs" | "invalidGraph" | "needsConfiguration"; message: string }
   /** How many places refer to it (`workflowReferences[id].length`). */
   references: number
   /** The fingerprint of those references, to confirm deleting it. */

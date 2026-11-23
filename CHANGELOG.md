@@ -48,8 +48,11 @@ released either. 0.6.0 is the first version intended for publication.
 - A key or gesture whose workflow did not start (missing, another
   profile's, invalid, needing input values, already running, or too many
   running) now says so in the app's status bar, once per key, instead of
-  only in the agent's log. A Multi Action Switch no longer moves past a
-  state whose workflow was refused before it ran.
+  only in the agent's log. A Multi Action Switch set to advance on
+  failure no longer skips a state whose workflow is only temporarily
+  unavailable (already running, too many running, or the Workflows plugin
+  off); it still moves past one that is missing, invalid or needs
+  configuration or input values.
 - Saving a layout refuses a new key that starts another profile's or a
   deleted workflow, a workflow that needs input values, or a graph
   workflow while the Workflows plugin is off. Keys saved like that before

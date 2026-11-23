@@ -325,6 +325,9 @@ pub enum WorkflowBlockCode {
     NeedsInputs,
     /// Its graph has errors.
     InvalidGraph,
+    /// Its graph's only errors are nodes that need configuration (drafts,
+    /// `crate::completeness`): it runs once they are filled in.
+    NeedsConfiguration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,14 +361,23 @@ pub fn workflow_block(
     if crate::graph::WorkflowGraph::is_runnable(&issues) {
         return None;
     }
-    let first = issues
+    let errors: Vec<&crate::graph::GraphIssue> = issues
         .iter()
-        .find(|i| i.severity == crate::graph::IssueSeverity::Error)
-        .map(|i| i.message.clone())
-        .unwrap_or_default();
+        .filter(|i| i.severity == crate::graph::IssueSeverity::Error)
+        .collect();
+    let drafts = errors
+        .iter()
+        .all(|i| i.code.as_deref() == Some(crate::CONFIGURATION_INCOMPLETE));
     Some(WorkflowBlock {
-        code: WorkflowBlockCode::InvalidGraph,
-        message: first,
+        code: if drafts {
+            WorkflowBlockCode::NeedsConfiguration
+        } else {
+            WorkflowBlockCode::InvalidGraph
+        },
+        message: errors
+            .first()
+            .map(|i| i.message.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -442,6 +454,9 @@ pub enum WorkflowRefusal {
     /// Its graph has errors.
     #[serde(rename = "workflowInvalid")]
     Invalid,
+    /// Its graph has nodes that need configuration (drafts).
+    #[serde(rename = "workflowIncomplete")]
+    Incomplete,
     /// It has a required input.
     #[serde(rename = "workflowNeedsInputs")]
     NeedsInputs,
@@ -454,6 +469,23 @@ pub enum WorkflowRefusal {
 }
 
 impl WorkflowRefusal {
+    /// Whether it lasts until the user changes something (the workflow,
+    /// the key): deleted, another profile's, needing inputs, invalid or
+    /// incomplete. The others pass by themselves (a run ends, the
+    /// Workflows plugin is turned on again). A Multi Action Switch with
+    /// "advance on failure" moves past a permanent refusal and stays on a
+    /// temporary one.
+    pub fn is_permanent(self) -> bool {
+        match self {
+            Self::Missing
+            | Self::NotInThisProfile
+            | Self::NeedsInputs
+            | Self::Invalid
+            | Self::Incomplete => true,
+            Self::PluginOff | Self::AlreadyRunning | Self::Limit => false,
+        }
+    }
+
     /// The stable code (`workflowMissing`…).
     pub fn code(self) -> &'static str {
         match self {
@@ -461,6 +493,7 @@ impl WorkflowRefusal {
             Self::NotInThisProfile => "workflowNotInProfile",
             Self::PluginOff => "workflowPluginOff",
             Self::Invalid => "workflowInvalid",
+            Self::Incomplete => "workflowIncomplete",
             Self::NeedsInputs => "workflowNeedsInputs",
             Self::AlreadyRunning => "workflowAlreadyRunning",
             Self::Limit => "workflowLimit",
@@ -473,6 +506,7 @@ impl WorkflowRefusal {
             Self::NotInThisProfile,
             Self::PluginOff,
             Self::Invalid,
+            Self::Incomplete,
             Self::NeedsInputs,
             Self::AlreadyRunning,
             Self::Limit,
@@ -490,6 +524,9 @@ impl WorkflowRefusal {
                 "the Workflows plugin is off; turn it on in Settings › Plugins to run it"
             }
             Self::Invalid => "the workflow has errors; fix them in Workflows",
+            Self::Incomplete => {
+                "the workflow has actions that need configuration; fill them in in Workflows"
+            }
             Self::NeedsInputs => "the workflow needs input values; run it from a Sub-workflow node",
             Self::AlreadyRunning => "the workflow is already running",
             Self::Limit => "too many workflows are running; wait for one to finish",

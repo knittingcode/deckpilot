@@ -514,6 +514,7 @@ fn refusal_codes_are_stable() {
         (WorkflowRefusal::NotInThisProfile, "workflowNotInProfile"),
         (WorkflowRefusal::PluginOff, "workflowPluginOff"),
         (WorkflowRefusal::Invalid, "workflowInvalid"),
+        (WorkflowRefusal::Incomplete, "workflowIncomplete"),
         (WorkflowRefusal::NeedsInputs, "workflowNeedsInputs"),
         (WorkflowRefusal::AlreadyRunning, "workflowAlreadyRunning"),
         (WorkflowRefusal::Limit, "workflowLimit"),
@@ -864,7 +865,11 @@ fn a_draft_graph_still_refers_and_is_blocked_like_the_engine_blocks_it() {
     );
     // Not runnable until filled in, the same verdict as the engine's.
     let block = workflow_block(saved, &profile, &registry).unwrap();
-    assert_eq!(block.code, WorkflowBlockCode::InvalidGraph);
+    assert_eq!(block.code, WorkflowBlockCode::NeedsConfiguration);
+    assert_eq!(
+        serde_json::to_value(&block).unwrap()["code"],
+        "needsConfiguration"
+    );
     let engine = crate::Engine::new(registry);
     assert!(engine.check_runnable(&profile, caller_id).is_err());
     // Its Call node still refers to the target, so the target is not
@@ -881,5 +886,32 @@ fn a_draft_graph_still_refers_and_is_blocked_like_the_engine_blocks_it() {
     assert_eq!(
         layout.workflow_binding_issues(None, &profile, engine.registry(), false),
         Vec::new()
+    );
+}
+
+#[test]
+fn permanent_refusals_are_told_from_temporary_ones() {
+    let permanent: Vec<WorkflowRefusal> = [
+        WorkflowRefusal::Missing,
+        WorkflowRefusal::NotInThisProfile,
+        WorkflowRefusal::PluginOff,
+        WorkflowRefusal::Invalid,
+        WorkflowRefusal::Incomplete,
+        WorkflowRefusal::NeedsInputs,
+        WorkflowRefusal::AlreadyRunning,
+        WorkflowRefusal::Limit,
+    ]
+    .into_iter()
+    .filter(|r| r.is_permanent())
+    .collect();
+    assert_eq!(
+        permanent,
+        [
+            WorkflowRefusal::Missing,
+            WorkflowRefusal::NotInThisProfile,
+            WorkflowRefusal::Invalid,
+            WorkflowRefusal::Incomplete,
+            WorkflowRefusal::NeedsInputs,
+        ]
     );
 }

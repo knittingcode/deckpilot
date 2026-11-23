@@ -345,10 +345,12 @@ fn switched(title: &str, position: &str) -> Frame {
 }
 
 /// With "advance on failure", a state whose run fails moves the switch
-/// on, as before; a state whose workflow is refused before it runs (here:
-/// it needs input values) leaves the switch where it is, and is told.
+/// on, as before, and so does a workflow refused for a reason that lasts
+/// until the user changes something (here: it needs input values); one
+/// refused for a reason that passes by itself (here: it runs already)
+/// keeps the state, so the next press tries it again. Both are told.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_switch_does_not_advance_past_a_refused_workflow() {
+async fn a_switch_advances_past_permanent_refusals_and_holds_on_temporary_ones() {
     use deckpilot_core::{ActionParameters, ParameterValue};
     use deckpilot_modules::{deck, general};
 
@@ -371,9 +373,13 @@ async fn a_switch_does_not_advance_past_a_refused_workflow() {
             deckpilot_core::graph::ValueKind::Text,
         )
     });
+    let slow = support::waiting_workflow("Slow", 5_000);
+    let slow_id = slow.id;
     let states = format!(
-        "action:{} | One | dot\nworkflow:{} | Two | dot\naction:{} | Three | dot",
-        fails.id, needs.id, fails.id
+        "action:{f} | One | dot\nworkflow:{n} | Two | dot\nworkflow:{s} | Three | dot\naction:{f} | Four | dot",
+        f = fails.id,
+        n = needs.id,
+        s = slow.id
     );
     let switch = registry
         .create_instance(
@@ -394,7 +400,7 @@ async fn a_switch_does_not_advance_past_a_refused_workflow() {
         BindingTarget::action(switch.id),
     ));
     work.actions.extend([fails, switch]);
-    work.workflows.push(needs);
+    work.workflows.extend([needs, slow]);
     work.layouts.push(layout);
     let (paths, db_key) = support::data_dir(&dir, &work, &[]);
     let mock = MockBackend::new();
@@ -403,14 +409,14 @@ async fn a_switch_does_not_advance_past_a_refused_workflow() {
     connected(&agent, &device).await;
     let mut events = agent.events().await;
 
-    assert!(shows(&mock, &device, 0, &switched("One", "1/3")), "first");
+    assert!(shows(&mock, &device, 0, &switched("One", "1/4")), "first");
     // A run that fails: on to the next state.
     mock.tap(&device, key(0));
     assert!(
-        shows(&mock, &device, 0, &switched("Two", "2/3")),
-        "advanced"
+        shows(&mock, &device, 0, &switched("Two", "2/4")),
+        "failed run"
     );
-    // A refused workflow: told, and the switch stays.
+    // Permanent (needs inputs): told, and on to the next state.
     mock.tap(&device, key(0));
     let told = notification(&mut events).await;
     assert_eq!(
@@ -418,7 +424,28 @@ async fn a_switch_does_not_advance_past_a_refused_workflow() {
         Some("workflowNeedsInputs"),
         "{told:?}"
     );
+    assert!(
+        shows(&mock, &device, 0, &switched("Three", "3/4")),
+        "permanent"
+    );
+    // Temporary (running already): told, and the state is kept.
+    let running = agent.start_workflow(slow_id).await.unwrap();
+    mock.tap(&device, key(0));
+    let told = notification(&mut events).await;
+    assert_eq!(
+        told.code.as_deref(),
+        Some("workflowAlreadyRunning"),
+        "{told:?}"
+    );
     quiet(&mut events).await;
-    assert!(shows(&mock, &device, 0, &switched("Two", "2/3")), "stayed");
+    assert!(
+        shows(&mock, &device, 0, &switched("Three", "3/4")),
+        "temporary"
+    );
+    let _ = agent
+        .request(Request::CancelExecution {
+            execution: running.id,
+        })
+        .await;
     agent.shutdown().await;
 }

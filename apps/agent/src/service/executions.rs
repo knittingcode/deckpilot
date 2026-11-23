@@ -322,6 +322,11 @@ impl Agent {
                     {
                         WorkflowRefusal::NeedsInputs
                     }
+                    Some(block)
+                        if block.code == deckpilot_core::WorkflowBlockCode::NeedsConfiguration =>
+                    {
+                        WorkflowRefusal::Incomplete
+                    }
                     _ => WorkflowRefusal::Invalid,
                 };
             return Err(refused(engine_error(&error), refusal));
