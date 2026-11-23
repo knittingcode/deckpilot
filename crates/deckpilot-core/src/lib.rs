@@ -65,9 +65,11 @@ pub use alias::{
 pub use appearance::{
     ActionTitle, Color, DEFAULT_MARQUEE_PAUSE_MS, DEFAULT_MARQUEE_SPEED, DEFAULT_MIN_TEXT_POINTS,
     DEFAULT_TITLE_FONT, DefaultAppearance, FitLines, FontFamilyId, FontSize, Icon, IconData,
-    IconFit, IconRef, KeyAppearance, KeyBackground, MARQUEE_SPEED, MAX_ICON_BYTES, MAX_ICON_NAME,
-    MAX_ICON_SIZE, MAX_ICONS, MAX_MARQUEE_PAUSE_MS, MAX_TEXT_LINES, TEXT_SIZE_POINTS, TITLE_FONTS,
-    TextAlign, TextAppearance, TextMode, TextOverflow, TitleAlign, TitleFeature, TitleFont,
+    IconFit, IconRef, KeyAppearance, KeyBackground, KeyLabel, KeyLabelLook, LabelBackground,
+    LabelId, LabelLayer, LabelOverflow, LabelPosition, LabelVisibility, LabelWeight, MARQUEE_SPEED,
+    MAX_ICON_BYTES, MAX_ICON_NAME, MAX_ICON_SIZE, MAX_ICONS, MAX_MARQUEE_PAUSE_MS, MAX_TEXT_LINES,
+    Spot, TEXT_SIZE_POINTS, TITLE_FONTS, TextAlign, TextAppearance, TextMode, TextOverflow,
+    TitleAlign, TitleFeature, TitleFont,
 };
 pub use assets::{
     AssetId, AssetRef, BACKGROUND_ASSET_PREFIX, BUILTIN_GRADIENTS, BUILTIN_NAMESPACE, Background,
@@ -103,7 +105,9 @@ pub use execution::{
     ActionResult, ActionStatus, CapabilityDenied, ContextEffect, DeckRequest, ExecutionContext,
     ExecutionControl, ProfileTarget, Progress, RunOrigin, RunSummary, WorkflowCause,
 };
-pub use face::{FaceStyle, KeyFace, PageLabel, render_label, render_page_label};
+pub use face::{
+    FaceLabel, FaceStyle, KeyFace, LabelMarker, PageLabel, render_label, render_page_label,
+};
 pub use folder::{
     AutoExit, AutoExitError, BackPosition, FolderBack, FolderBackError, FolderBackReport,
     FolderExit, FolderTimers, reserved_back_control,

@@ -1,0 +1,196 @@
+{
+  "comment": "Key label contract fixtures: Rust serializes exactly these (crates/deckpilot-render/tests/label_contract.rs); key-labels.contract.test.ts checks the TS guards and limits against them.",
+  "limits": {
+    "labels": 8,
+    "template": 160,
+    "clusters": 120,
+    "id": 16,
+    "lines": [1, 4],
+    "size": [6, 32],
+    "padding": [0, 12],
+    "radius": [0, 12],
+    "percent": [5, 100],
+    "offset": 72,
+    "inset": 36,
+    "perMille": 1000,
+    "canvas": 72
+  },
+  "defaults": {
+    "size": 10,
+    "lines": 2,
+    "minSize": 6,
+    "padding": 2,
+    "radius": 2,
+    "plateOpacity": 60,
+    "colorPlateOpacity": 100
+  },
+  "keyLabels": [
+    {
+      "id": "x",
+      "text": "Hi"
+    },
+    {
+      "id": "a1b2c3d4",
+      "text": "{{ shared.team.name }} · {project.key}",
+      "enabled": false,
+      "visible": "whenResolved",
+      "position": {
+        "mode": "absolute",
+        "x": 250,
+        "y": 900,
+        "origin": "bottomLeft"
+      },
+      "offsetX": -3,
+      "offsetY": 4,
+      "maxWidth": 80,
+      "height": 30,
+      "size": 12,
+      "weight": "bold",
+      "align": "right",
+      "color": "#010203",
+      "background": "#fac864",
+      "backgroundOpacity": 75,
+      "padding": 4,
+      "radius": 0,
+      "layer": "overTitle",
+      "overflow": "wrap",
+      "maxLines": 3,
+      "minSize": 7
+    },
+    {
+      "id": "ribbon",
+      "text": "{project.name}",
+      "visible": "whenProject",
+      "position": {
+        "mode": "anchored",
+        "to": "bottom"
+      },
+      "background": "none",
+      "layer": "behindIcon",
+      "overflow": "shrink"
+    },
+    {
+      "id": "corner-1",
+      "text": "{page.number}/{page.count}",
+      "position": {
+        "mode": "preset",
+        "at": "topRight"
+      },
+      "width": 40,
+      "maxHeight": 50,
+      "overflow": "clip"
+    },
+    {
+      "id": "tag",
+      "text": "v2",
+      "position": {
+        "mode": "anchored",
+        "to": "topLeft",
+        "inset": 3
+      },
+      "visible": "always"
+    }
+  ],
+  "invalidKeyLabels": [
+    {
+      "id": "Upper",
+      "text": "x"
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "position": {
+        "mode": "preset",
+        "at": "left"
+      }
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "size": 5
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "maxLines": 5
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "background": "red"
+    },
+    {
+      "id": "x",
+      "text": "x",
+      "position": {
+        "mode": "absolute",
+        "x": 1001,
+        "y": 0
+      }
+    }
+  ],
+  "faceLabels": [
+    {
+      "id": "x",
+      "text": "Hi",
+      "spec": {}
+    },
+    {
+      "id": "ribbon",
+      "text": "Main: -",
+      "spec": {
+        "position": {
+          "mode": "anchored",
+          "to": "bottom"
+        },
+        "background": "none",
+        "layer": "behindIcon",
+        "overflow": "shrink"
+      },
+      "unresolved": true,
+      "markers": [
+        {
+          "start": 6,
+          "end": 7,
+          "reference": "project.name"
+        }
+      ]
+    }
+  ],
+  "labelBoxes": [
+    {
+      "id": "ribbon",
+      "x": 0.0,
+      "y": 56.0,
+      "width": 72.0,
+      "height": 16.0,
+      "canvas": {
+        "width": 72.0,
+        "height": 72.0
+      },
+      "layer": "behindIcon",
+      "truncated": false,
+      "overlapsTitle": true,
+      "plate": false,
+      "fontPoints": 10.0,
+      "lines": 1
+    },
+    {
+      "id": "corner-1",
+      "x": 115.5,
+      "y": 6.0,
+      "width": 23.5,
+      "height": 13.25,
+      "canvas": {
+        "width": 144.0,
+        "height": 72.0
+      },
+      "layer": "overIcon",
+      "truncated": true,
+      "overlapsTitle": false,
+      "plate": true,
+      "fontPoints": 7.5,
+      "lines": 1
+    }
+  ]
+}

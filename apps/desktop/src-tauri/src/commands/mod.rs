@@ -15,6 +15,7 @@ pub(crate) mod agent;
 pub(crate) mod assets;
 mod credentials;
 mod icons;
+mod key_labels;
 pub(crate) mod key_states;
 mod layouts;
 pub(crate) mod live_preview;

@@ -12,7 +12,8 @@ use deckpilot_device::{ControlId, DeviceModelId, ModelCatalog, models};
 use deckpilot_portability::import::validate;
 use deckpilot_portability::payload::{self, ExportOptions, Payload};
 use deckpilot_portability::{
-    ImportMode, ImportOptions, PAYLOAD_VERSION, PAYLOAD_VERSION_WITHOUT_LIBRARY, plan, preview,
+    ImportMode, ImportOptions, PAYLOAD_VERSION_WITH_LIBRARY, PAYLOAD_VERSION_WITHOUT_LIBRARY, plan,
+    preview,
 };
 use deckpilot_storage::crypto::{KdfParams, Password};
 use deckpilot_storage::{ConfigStore, SqliteStore};
@@ -102,7 +103,7 @@ fn import(store: &SqliteStore, payload: &Payload, mode: ImportMode) {
 fn an_export_of_everything_round_trips_shared_and_unused_layouts() {
     let (store, work, home, main, spare) = configuration();
     let payload = sealed(&payload::export(&store, &modules(), None, OPTIONS, 1, "test").unwrap());
-    assert_eq!(payload.version, PAYLOAD_VERSION);
+    assert_eq!(payload.version, PAYLOAD_VERSION_WITH_LIBRARY);
     assert_eq!(payload.library.layouts, vec![spare.clone()]);
     let preview = preview(&payload, &store, &modules(), Vec::new()).unwrap();
     assert_eq!(preview.unassigned_layouts, ["Spare"]);

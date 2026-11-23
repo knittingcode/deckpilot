@@ -86,6 +86,15 @@ pub async fn save_layout(
             appearance.check().map_err(CommandError::Invalid)?;
         }
     }
+    // Label templates the agent knows would show a sensitive value or an
+    // identifier (a plugin's declaration) are refused too.
+    super::key_labels::check(
+        &state.paths,
+        profile_id,
+        super::key_labels::templates([&layout]),
+    )
+    .await
+    .map_err(CommandError::Invalid)?;
     // Folder pages without a Back setting (moved into a folder, or from
     // before the reserved Back key) get one as migration 11 gives it: the
     // reserved key when it is free or only goes back, else where it was.
@@ -376,6 +385,12 @@ pub struct ControlFace {
     /// title has placeholders, while an agent of protocol 17 answers.
     #[serde(skip_serializing_if = "Option::is_none")]
     title_display: Option<ResolvedDisplayTemplate>,
+    /// With `render`: where the renderer put each label the key shows, in
+    /// canvas units (`docs/key-text.md`, "Labels"): the editor draws its
+    /// outlines and handles from these, never its own layout. Left out
+    /// when the key shows no labels.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    label_boxes: Vec<deckpilot_render::LabelBox>,
 }
 
 /// How a key's title comes out on the device ([`deckpilot_render::TextReport`]).
@@ -520,22 +535,24 @@ struct PageFaces {
     incompatible: Vec<deckpilot_core::IncompatibleBinding>,
     /// What each control that navigates does to the view.
     navigation: Vec<(ControlId, deckpilot_core::ControlNavigation)>,
-    /// Every title template the faces resolved, by control.
-    titles: Vec<(ControlId, String, DisplayText)>,
+    /// Every template the faces resolved (titles and labels), by control,
+    /// with whether it is the title.
+    titles: Vec<(ControlId, String, DisplayText, bool)>,
 }
 
 /// Records the template and the text of every title resolved by `inner`.
 struct Collect<'a> {
     inner: &'a dyn DisplayTemplates,
-    seen: std::cell::RefCell<Vec<(ControlId, String, DisplayText)>>,
+    seen: std::cell::RefCell<Vec<(ControlId, String, DisplayText, bool)>>,
 }
 
 impl DisplayTemplates for Collect<'_> {
     fn display(&self, key: &TextKey, template: &str) -> DisplayText {
         let text = self.inner.display(key, template);
+        let title = key.slot == deckpilot_core::variables::TextSlot::Title;
         self.seen
             .borrow_mut()
-            .push((key.control, template.to_owned(), text.clone()));
+            .push((key.control, template.to_owned(), text.clone(), title));
         text
     }
 }
@@ -555,7 +572,8 @@ async fn resolved_preview(
 ) -> CommandResult<(PageFaces, bool)> {
     let first = page_preview(state, profile_id, layout, page_id, project_id, live, None)?;
     let mut templates: Vec<String> = Vec::new();
-    for (_, template, _) in &first.titles {
+    // Titles and labels alike: the device resolves both through the agent.
+    for (_, template, _, _) in &first.titles {
         if template.contains('{') && !templates.contains(template) {
             templates.push(template.clone());
         }
@@ -733,9 +751,20 @@ pub async fn preview_layout(
                 let png = deckpilot_render::frame_png(&frame)?;
                 // Measured at the device's own size: what the device shows.
                 let text = deckpilot_render::text_report(&face, native.0, native.1, icons);
-                Some((deckpilot_core::IconData::new(png).data_url(), text))
+                // In canvas units: the same at the preview's size.
+                let labels = deckpilot_render::label_layout_for(
+                    &face,
+                    native.0,
+                    native.1,
+                    icons,
+                    &preview.look,
+                );
+                Some((deckpilot_core::IconData::new(png).data_url(), text, labels))
             });
-            let (image, text) = drawn.map_or((None, None), |(image, text)| (Some(image), text));
+            let (image, text, label_boxes) = drawn
+                .map_or((None, None, Vec::new()), |(image, text, labels)| {
+                    (Some(image), text, labels)
+                });
             ControlFace {
                 control,
                 face,
@@ -751,6 +780,7 @@ pub async fn preview_layout(
                     })
                     .collect(),
                 text: text.map(TextLayoutReport::from),
+                label_boxes,
                 navigation: preview
                     .navigation
                     .iter()
@@ -760,8 +790,10 @@ pub async fn preview_layout(
                     .titles
                     .iter()
                     .rev()
-                    .find(|(c, template, _)| by_agent && *c == control && template.contains('{'))
-                    .map(|(_, template, display)| ResolvedDisplayTemplate {
+                    .find(|(c, template, _, title)| {
+                        by_agent && *title && *c == control && template.contains('{')
+                    })
+                    .map(|(_, template, display, _)| ResolvedDisplayTemplate {
                         template: template.clone(),
                         display: display.clone(),
                     }),

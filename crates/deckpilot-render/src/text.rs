@@ -96,7 +96,11 @@ fn font(weight: Weight) -> &'static FontRef<'static> {
 
 /// The glyph of `ch`, `?` for a character the font does not have.
 fn glyph_of(font: &FontRef<'static>, ch: char) -> GlyphId {
-    let charmap = font.charmap();
+    glyph_in(&font.charmap(), ch)
+}
+
+/// [`glyph_of`] with the font's character map read once.
+fn glyph_in(charmap: &skrifa::charmap::Charmap<'static>, ch: char) -> GlyphId {
     charmap
         .map(ch)
         .filter(|id| *id != GlyphId::NOTDEF)
@@ -104,19 +108,33 @@ fn glyph_of(font: &FontRef<'static>, ch: char) -> GlyphId {
         .unwrap_or(GlyphId::NOTDEF)
 }
 
-/// The kerning between two glyphs in font units (the `kern` table that
-/// `assets/make-fonts.py` writes from the font's pair adjustments).
-fn kerning(font: &FontRef<'static>, left: GlyphId, right: GlyphId) -> f32 {
+/// The horizontal pair tables of the font's `kern` table (the one that
+/// `assets/make-fonts.py` writes from the font's pair adjustments), read
+/// once per line of text.
+fn kern_pairs(font: &FontRef<'static>) -> Vec<skrifa::raw::tables::kern::Subtable0<'static>> {
     let Ok(kern) = font.kern() else {
-        return 0.0;
+        return Vec::new();
     };
     kern.subtables()
         .flatten()
         .filter(|subtable| subtable.is_horizontal() && !subtable.is_cross_stream())
-        .find_map(|subtable| match subtable.kind() {
-            Ok(SubtableKind::Format0(pairs)) => pairs.kerning(left, right),
+        .filter_map(|subtable| match subtable.kind() {
+            Ok(SubtableKind::Format0(pairs)) => Some(pairs),
             _ => None,
         })
+        .collect()
+}
+
+/// The kerning between two glyphs in font units: the first pair table
+/// that has the pair.
+fn kerning(
+    pairs: &[skrifa::raw::tables::kern::Subtable0<'static>],
+    left: GlyphId,
+    right: GlyphId,
+) -> f32 {
+    pairs
+        .iter()
+        .find_map(|pairs| pairs.kerning(left, right))
         .map_or(0.0, |value| value as f32)
 }
 
@@ -324,6 +342,8 @@ impl Style {
             .units_per_em
             .max(1);
         let units = self.size / f32::from(em);
+        let charmap = font.charmap();
+        let pairs = kern_pairs(font);
         let mut x = 0.0;
         let mut previous: Option<GlyphId> = None;
         let mut glyphs = Vec::new();
@@ -335,9 +355,9 @@ impl Style {
             .filter_map(|cluster| cluster.chars().next())
             .filter(|c| !c.is_control())
         {
-            let id = glyph_of(font, ch);
+            let id = glyph_in(&charmap, ch);
             if let Some(previous) = previous {
-                x += kerning(font, previous, id) * units;
+                x += kerning(&pairs, previous, id) * units;
             }
             glyphs.push((id, x));
             x += metrics.advance_width(id).unwrap_or(0.0);
@@ -449,6 +469,17 @@ impl Style {
     pub(crate) fn wrapped(self, text: &str, width: f32, max_lines: usize) -> Wrapped {
         wrap_report(text, max_lines, |candidate| self.width(candidate) <= width)
     }
+
+    /// [`Style::fit`] by halving ([`fit_halving`]).
+    pub(crate) fn fit_halving(self, text: &str, width: f32) -> String {
+        fit_halving(text, |candidate| self.width(candidate) <= width)
+    }
+
+    /// [`Style::wrapped`] with the last line cut by halving.
+    pub(crate) fn wrapped_halving(self, text: &str, width: f32, max_lines: usize) -> Wrapped {
+        let fits = |candidate: &str| self.width(candidate) <= width;
+        wrap_report_cut(text, max_lines, fits, |rest| fit_halving(rest, fits))
+    }
 }
 
 /// The grapheme clusters of `text`: what a reader sees as one character.
@@ -475,6 +506,38 @@ pub(crate) fn fit_with(text: &str, fits: impl Fn(&str) -> bool) -> String {
         }
     }
     String::new()
+}
+
+/// [`fit_with`] by halving: the longest start of `text` (whole grapheme
+/// clusters, spaces before the `…` dropped) that `fits` accepts with `…`,
+/// found in a logarithmic number of tries. For text whose width grows with
+/// every cluster (key labels), the same cut as [`fit_with`].
+pub(crate) fn fit_halving(text: &str, fits: impl Fn(&str) -> bool) -> String {
+    if fits(text) {
+        return text.to_owned();
+    }
+    let parts = clusters(text);
+    let cut = |keep: usize| {
+        let mut cut = parts[..keep].concat();
+        let trimmed = cut.trim_end().len();
+        cut.truncate(trimmed);
+        cut.push('…');
+        cut
+    };
+    if !fits(&cut(0)) {
+        return String::new();
+    }
+    // `cut(low)` fits; `cut(high)` does not (or is the whole text).
+    let (mut low, mut high) = (0, parts.len());
+    while high - low > 1 {
+        let middle = low + (high - low) / 2;
+        if fits(&cut(middle)) {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    cut(low)
 }
 
 /// Lines of wrapped text.
@@ -514,6 +577,17 @@ pub(crate) fn wrap_with(text: &str, max_lines: usize, fits: impl Fn(&str) -> boo
 /// - when more lines would be needed, the last line holds the rest of the
 ///   text (line breaks read as spaces), cut with `…`.
 pub(crate) fn wrap_report(text: &str, max_lines: usize, fits: impl Fn(&str) -> bool) -> Wrapped {
+    wrap_report_cut(text, max_lines, &fits, |rest| fit_with(rest, &fits))
+}
+
+/// [`wrap_report`] with the last line cut by `cut` (the rest of the text,
+/// shortened with `…` until it fits).
+pub(crate) fn wrap_report_cut(
+    text: &str,
+    max_lines: usize,
+    fits: impl Fn(&str) -> bool,
+    cut: impl Fn(&str) -> String,
+) -> Wrapped {
     let mut tokens: Vec<Token<'_>> = Vec::new();
     for (index, paragraph) in text.lines().enumerate() {
         if index > 0 {
@@ -601,7 +675,7 @@ pub(crate) fn wrap_report(text: &str, max_lines: usize, fits: impl Fn(&str) -> b
             .filter(|part| !part.is_empty())
             .collect();
         let rest = rest.join(" ");
-        let cut = fit_with(&rest, &fits);
+        let cut = cut(&rest);
         wrapped.truncated = cut != rest;
         lines.truncate(max_lines - 1);
         lines.push((cut, (from, offset)));

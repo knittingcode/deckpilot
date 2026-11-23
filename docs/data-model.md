@@ -655,6 +655,7 @@ written before it existed) serialize exactly as before.
 | `text` | the title's text mode and its settings: `{ mode, size, align, maxLines, overflow, minSize, fit, speed, pause }`, every field optional; `mode` is `wrap`, `singleLine`, `autoFit` or `marquee` ([key-text.md](key-text.md)) | wrapped, as before text modes |
 | `fontFamily` | a title font id of `TITLE_FONTS` (`inter`); an unknown id is kept and drawn with Inter, and refused when saved from the app | `inter` |
 | `bold`, `italic`, `underline` | `true` or `false` (explicit `false` is kept: it beats a plugin's suggestion); bold is Inter SemiBold, italic a 10° slant ([key-text.md](key-text.md#title-appearance)) | off |
+| `labels` | up to 8 further texts: `{ id, text, enabled, visible, position, offsetX, offsetY, width, maxWidth, height, maxHeight, size, weight, align, color, background, backgroundOpacity, padding, radius, layer, overflow, maxLines, minSize }`, every field but `id` (`[a-z0-9-]{1,16}`, unique on the key) and `text` (a display template, ≤ 160 characters) optional ([key-text.md](key-text.md#labels)) | none (not written) |
 
 Unset, explicit black, explicit white and `transparent` are four different
 values: an explicit colour is stored and drawn as chosen, whatever the

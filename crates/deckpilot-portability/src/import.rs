@@ -89,6 +89,7 @@ pub fn validate(
                 return invalid(format!("profile `{name}`: icon “{}”: {error}", icon.name));
             }
         }
+        check_labels(&profile.layouts, name)?;
         // Folder keys with more than their folder are normalized when
         // imported, as migration 12 did with stored ones: a warning.
         let mut normalized = profile.clone();
@@ -122,6 +123,29 @@ pub fn validate(
     validate_variables(payload)?;
     validate_library(payload, catalog, &mut warnings)?;
     Ok(warnings)
+}
+
+/// Checks the key labels of `layouts` as saving does
+/// ([`deckpilot_core::appearance::labels::check_labels`]): limits, ids, and
+/// no template that shows a secret, a sensitive or a run's value. Only the
+/// labels: other look values are kept as an older version wrote them.
+fn check_labels(
+    layouts: &[deckpilot_core::DeviceLayout],
+    place: &str,
+) -> Result<(), PortabilityError> {
+    for layout in layouts {
+        let bindings = layout
+            .pages
+            .iter()
+            .flat_map(|page| &page.bindings)
+            .chain(layout.recovered_bindings());
+        for look in bindings.filter_map(|binding| binding.appearance.as_ref()) {
+            deckpilot_core::appearance::check_labels(&look.labels).map_err(|error| {
+                PortabilityError::Invalid(format!("{place}: layout `{}`: {error}", layout.name))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Checks the layouts of no profile ([`Payload::library`]) like a
@@ -162,6 +186,7 @@ fn validate_library(
             return invalid(format!("icon “{}”: {error}", icon.name));
         }
     }
+    check_labels(&library.layouts, "layouts of no profile")?;
     // The layouts with what they use, as a profile would hold them.
     let mut holder = Profile::new("Layouts");
     holder.actions.clone_from(&library.actions);
