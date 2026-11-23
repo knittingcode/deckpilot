@@ -13,7 +13,15 @@ import { ReferenceInput } from "@/components/variable-picker/reference-input"
 import { ReferenceValueField } from "@/components/variable-picker/reference-value"
 import { VariablePicker } from "@/components/variable-picker/variable-picker"
 import { useTranslation } from "@/i18n"
+import { MachineResourceField } from "@/components/machine-resource-field"
 import { initialValue } from "@/lib/parameters"
+import {
+  WEBSITE,
+  WEBSITE_PROBLEMS,
+  checkWebsite,
+  machinePick,
+  parameterTexts,
+} from "@/lib/system-actions"
 import { PROJECTS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
 import { PROFILE_PARAMETER, ProfileField, SWITCH_PROFILE_TYPE } from "@/modules/deck/profile-field"
 import { CANDIDATES_PARAMETER, RANDOM_TYPE } from "@/modules/deck/candidates"
@@ -79,13 +87,47 @@ export function ParameterField({
     actionType === MULTI_SWITCH_TYPE &&
     spec.key === STATES_PARAMETER &&
     value.type === "text"
+  // The System actions' machine-local values: picked, bound on this
+  // computer, never typed as paths.
+  const pick = value.type === "resource" ? machinePick(actionType, spec.key) : null
+  const texts = parameterTexts(actionType, spec)
+  const website =
+    actionType === WEBSITE && spec.key === "url" && value.type === "text"
+      ? checkWebsite(value.value)
+      : null
+  // An empty address is reported as a missing required value.
+  const websiteError =
+    website?.problem && website.problem !== "empty" ? t(WEBSITE_PROBLEMS[website.problem]) : null
   return (
     <div className="grid gap-2">
       <Label id={labelId} htmlFor={id}>
-        {spec.label}
+        {texts.label}
         {spec.required && <span className="text-destructive">*</span>}
       </Label>
-      {profile ? (
+      {pick && value.type === "resource" ? (
+        <div className="grid gap-2">
+          <MachineResourceField
+            id={id}
+            pick={pick}
+            optional={!spec.required}
+            value={resourceOrNull(value.value)}
+            onChange={(reference) => {
+              onChange({
+                type: "resource",
+                value: reference ?? { type: "projectRole", role: "" },
+              })
+            }}
+          />
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground">
+              {t("actions:system.picker.advanced")}
+            </summary>
+            <div className="pt-2">
+              <ResourceControl id={`${id}-key`} value={value.value} onChange={onChange} />
+            </div>
+          </details>
+        </div>
+      ) : profile ? (
         <ProfileField
           id={id}
           value={value.value}
@@ -144,9 +186,25 @@ export function ParameterField({
           />
         </div>
       )}
-      {spec.description && <p className="text-xs text-muted-foreground">{spec.description}</p>}
+      {websiteError && (
+        <p className="text-xs text-destructive" role="alert">
+          {websiteError}
+        </p>
+      )}
+      {website?.url && website.url !== (value.type === "text" ? value.value.trim() : "") && (
+        <p className="text-xs text-muted-foreground" role="status">
+          {t("actions:system.website.opens", { url: website.url })}
+        </p>
+      )}
+      {texts.description && <p className="text-xs text-muted-foreground">{texts.description}</p>}
     </div>
   )
+}
+
+/** A resource reference that names something, else `null`. */
+function resourceOrNull(reference: ResourceRef): ResourceRef | null {
+  const name = reference.type === "fixed" ? reference.key : reference.role
+  return name.trim() === "" ? null : reference
 }
 
 function Control({

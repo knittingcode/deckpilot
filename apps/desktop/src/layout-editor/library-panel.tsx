@@ -29,6 +29,7 @@ import {
 import type { ActionPreset, DragSource } from "./editing"
 import { loadCompatibleOnly, saveCompatibleOnly } from "./library-sidebar"
 import type { TargetGroup, TargetOption } from "./targets"
+import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
 
 /** A 16px icon in a small neutral square, the same for every row. */
 function EntryIcon({ children }: { children: ReactNode }) {
@@ -225,7 +226,7 @@ function CatalogItem({ entry, incompatible }: { entry: CatalogEntry; incompatibl
   if (incompatible !== undefined) {
     return (
       <IncompatibleEntry
-        label={entry.type.name}
+        label={actionTypeName(entry.type)}
         reason={incompatible}
         icon={<ActionIcon name={entry.type.node?.icon} />}
       />
@@ -237,16 +238,16 @@ function CatalogItem({ entry, incompatible }: { entry: CatalogEntry; incompatibl
       className={cn(ENTRY, isDragging && "opacity-60")}
       {...attributes}
       {...listeners}
-      aria-label={t("editor:library.drag", { name: entry.type.name })}
+      aria-label={t("editor:library.drag", { name: actionTypeName(entry.type) })}
       title={t("editor:library.typeTitle", {
-        description: entry.type.description,
+        description: actionTypeDescription(entry.type),
         module: entry.module,
       })}
     >
       <EntryIcon>
         <ActionIcon name={entry.type.node?.icon} />
       </EntryIcon>
-      <span className="min-w-0 flex-1 truncate">{entry.type.name}</span>
+      <span className="min-w-0 flex-1 truncate">{actionTypeName(entry.type)}</span>
     </li>
   )
 }

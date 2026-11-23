@@ -1,0 +1,58 @@
+[package]
+name = "deckpilot-apps"
+description = "Installed applications, their stable identifiers, and closing running applications, for DeckPilot's System actions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# macOS bundles' Info.plist (XML or binary), read on every platform so
+# that the fixtures are tested everywhere.
+plist = { version = "1", default-features = false }
+serde.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Only the test helper (src/bin): it ignores SIGTERM to play a program that
+# does not quit when asked.
+libc = "0.2"
+rustix = { version = "1", default-features = false, features = ["process", "std"] }
+
+# NSRunningApplication and NSWorkspace: their bindings are safe calls.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSURL"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    # Only the test helper's window (src/bin).
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# The Win32 calls (windows, closing, process identity) are unsafe in Rust.
+# This crate keeps them in one small, documented module (`native_windows`)
+# and the test helper; everything else in the workspace forbids unsafe code.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"

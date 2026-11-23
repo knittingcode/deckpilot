@@ -21,6 +21,8 @@ tauri-build.workspace = true
 
 [dependencies]
 base64.workspace = true
+# The application pickers (commands/machine.rs).
+deckpilot-apps.workspace = true
 deckpilot-core.workspace = true
 deckpilot-device.workspace = true
 deckpilot-ipc.workspace = true

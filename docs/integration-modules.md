@@ -39,21 +39,25 @@ Common to all of them:
 
 ## System (`system`)
 
-Opens applications, web pages, files and folders, runs commands, checks
-whether programs are running and shows CPU, memory, network and disk use.
+Opens applications, web pages, files and folders, closes applications,
+runs commands, checks whether programs are running and shows CPU, memory,
+network and disk use. Website, Open, Open Application and Close
+Application are described in [system-actions.md](system-actions.md).
 
 Capabilities: machine resources, open applications/files/pages, run
-programs, see running programs.
+programs, see running programs, quit applications you run
+(`process-control`).
 
 Setting: **Allow running commands** (`allowCommands`, off by default). It
 is machine-specific: never exported, and an import cannot turn it on.
 
 | Action type | Effect | Parameters | Outputs |
 | ----------- | ------ | ---------- | ------- |
-| `system.open-app` | opens | `application` (application resource), `arguments` (one per line) | `application` |
-| `system.open-url` | opens | `url` (`http`, `https` or `mailto`) | `url` |
-| `system.open-file` | opens | `location` (resource), `path` (relative), `application` (optional application resource) | `path` |
+| `system.open-app` (Open Application) | opens | `application` (application resource: a bundle id, App Paths name, AppUserModelID, desktop-file id or path), `arguments` (one per line) | `application` |
+| `system.open-url` (Website) | opens | `url` (`http` or `https`, normalised; `https://` added without a scheme; a saved `mailto` still opens), `browser` (optional application resource; the default browser otherwise) | `url` |
+| `system.open-file` (Open) | opens | `location` (resource: a file, folder or application), `path` (optional, relative inside a folder resource), `application` (optional application resource) | `path` |
 | `system.open-directory` | opens | `location` (folder resource), `path` (optional relative subfolder) | `path` |
+| `system.close-app` (Close Application) | modifies | `application` (application resource), `force` (off) | `instances`, `closed`, `forced` |
 | `system.run-command` | modifies | `program` (resource), `arguments` (one per line), `workingDirectory` (optional folder resource; home folder otherwise), `timeoutSeconds` (1–3600, 60), `failOnNonZero` (on) | `exitCode`, `stdout`*, `stderr`*, `outputTruncated`, `durationMs` |
 | `system.process-status` | read-only | `name` (program name; case and `.exe` ignored) | `running`, `count`, `pids` |
 | `system.cpu` | read-only | `warningPercent` (0–100, 70), `criticalPercent` (0–100, 90) | `usagePercent`, `level` |
@@ -64,12 +68,16 @@ is machine-specific: never exported, and an import cannot turn it on.
 \* sensitive: available to later nodes, not kept.
 
 Opening uses the platform's launcher, never a shell: `open` on macOS
-(`-a` for an application path or name, `-b` for a bundle identifier),
-`xdg-open` on Linux (an application is started directly, a `.desktop` id
-with `gtk-launch`), and on Windows `rundll32 url.dll,FileProtocolHandler`
-for pages and files, `explorer` for folders and the executable itself for
-applications. Other URL schemes (`file:`, `javascript:`, custom handlers)
-are refused because they can start programs. Relative paths cannot leave
+(`-a` for an application path or name, `-b` for a bundle identifier, also
+for a browser chosen by bundle identifier), `xdg-open` on Linux (an
+application is started directly, a `.desktop` id with its entry's `Exec`
+line, split by the Desktop Entry specification's rules and started
+without a shell), and on Windows `rundll32 url.dll,FileProtocolHandler`
+for pages and files, `explorer` for folders and `shell:AppsFolder\<AUMID>`,
+the App Paths executable or the executable itself for applications. Other
+URL schemes (`file:`, `javascript:`, custom handlers) are refused because
+they can start programs, and so are web addresses with a user name or
+password. Relative paths cannot leave
 their resource (`..`, absolute paths and drive letters are refused), and
 what they lead to must be inside it too: a link (symlink) inside the
 resource that points outside it is refused with `invalid-path`, a link to

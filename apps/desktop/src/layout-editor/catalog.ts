@@ -14,6 +14,7 @@ import type {
   ModuleInfo,
   ParameterValue,
 } from "@/lib/types"
+import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
 
 export interface CatalogEntry {
   type: ActionType
@@ -110,7 +111,7 @@ export function freeActionName(actions: ActionInstance[], name: string): string 
 /** What to create for a type dropped on a control. */
 export function newAction(actions: ActionInstance[], type: ActionType): ActionInput {
   return {
-    name: freeActionName(actions, type.name),
+    name: freeActionName(actions, actionTypeName(type)),
     actionType: type.id,
     parameters: defaultParameters(type),
     description: "",
@@ -127,7 +128,7 @@ export function filterCatalog(groups: CatalogGroup[], query: string): CatalogGro
     .map((group) => ({
       ...group,
       entries: group.entries.filter((entry) =>
-        `${entry.type.name} ${entry.type.description} ${group.label} ${entry.module}`
+        `${entry.type.name} ${actionTypeName(entry.type)} ${actionTypeDescription(entry.type)} ${group.label} ${entry.module}`
           .toLowerCase()
           .includes(needle),
       ),

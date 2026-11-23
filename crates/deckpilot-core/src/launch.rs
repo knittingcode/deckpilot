@@ -98,13 +98,8 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
                 arguments,
             },
         ) => {
-            // A bundle identifier such as `com.apple.Safari` has dots but
-            // no slash; a path or a name (`Safari`) is opened with `-a`.
-            let by_id = !is_path(application)
-                && application.contains('.')
-                && !application.to_ascii_lowercase().ends_with(".app");
             let mut args = vec![
-                if by_id { "-b" } else { "-a" }.to_owned(),
+                mac_application_flag(application).to_owned(),
                 application.clone(),
             ];
             if !arguments.is_empty() {
@@ -119,7 +114,14 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
                 path: p,
                 application,
             },
-        ) => launcher("open", vec!["-a".into(), application.clone(), path(p)]),
+        ) => launcher(
+            "open",
+            vec![
+                mac_application_flag(application).into(),
+                application.clone(),
+                path(p),
+            ],
+        ),
         (Os::Linux, OpenTarget::Url(url)) => launcher("xdg-open", vec![url.clone()]),
         (Os::Linux, OpenTarget::Path(p)) => launcher("xdg-open", vec![path(p)]),
         (
@@ -187,6 +189,17 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
             ));
         }
     })
+}
+
+/// `open`'s flag for an application: `-b` for a bundle identifier such as
+/// `com.apple.Safari` (dots, no slash, no spaces, not an `.app`), `-a` for
+/// a path or a name (`Safari`).
+fn mac_application_flag(application: &str) -> &'static str {
+    let by_id = !is_path(application)
+        && application.contains('.')
+        && !application.contains(char::is_whitespace)
+        && !application.to_ascii_lowercase().ends_with(".app");
+    if by_id { "-b" } else { "-a" }
 }
 
 fn launcher(program: &str, args: Vec<String>) -> LaunchPlan {
@@ -539,6 +552,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(args(&with), ["-a", "TextEdit", "/tmp/a.txt"]);
+        // A browser bound by its bundle identifier opens a page with `-b`.
+        let page = url_plan(Os::MacOs, "https://example.com/", Some("com.google.Chrome")).unwrap();
+        assert_eq!(
+            args(&page),
+            ["-b", "com.google.Chrome", "https://example.com/"]
+        );
+        let named = plan(Os::MacOs, &app("Visual Studio Code", &[])).unwrap();
+        assert_eq!(args(&named), ["-a", "Visual Studio Code"]);
     }
 
     #[test]

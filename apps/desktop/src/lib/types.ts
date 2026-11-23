@@ -939,6 +939,20 @@ export interface MachineConfig {
 
 export type ResourceStatus = "ok" | "missing" | "unbound" | "unchecked"
 
+/** What kind of identifier an installed application is bound by (`deckpilot_apps::IdKind`). */
+export type ApplicationIdKind = "bundle" | "appPaths" | "aumid" | "desktopFile" | "path"
+
+/** An installed application, as the pickers list it (`list_applications`). */
+export interface InstalledApp {
+  name: string
+  /** What a binding stores: the stable id, or the path when there is none. */
+  id: string
+  kind: ApplicationIdKind
+  path?: string
+  /** It opens web pages. */
+  browser: boolean
+}
+
 export interface ResourceCheck {
   key: string
   kind: ResourceKind | null
@@ -954,6 +968,7 @@ export type Capability =
   | "open-external"
   | "process-execution"
   | "process-inspect"
+  | "process-control"
   | "network"
   | "notifications"
   | "credentials"

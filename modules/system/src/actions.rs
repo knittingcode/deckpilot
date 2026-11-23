@@ -12,11 +12,16 @@ use deckpilot_core::{
     RefreshPolicy, ResourceKind, StateError,
 };
 
+use deckpilot_apps::Launchable;
+use deckpilot_apps::close::Options as CloseOptions;
+
+use crate::apps::Apps;
 use crate::monitor::{self, Report, Sampler, Thresholds};
 use crate::support::{self, Failure, fail};
 use crate::{ALLOW_COMMANDS, codes};
 
 pub const OPEN_APP: &str = "system.open-app";
+pub const CLOSE_APP: &str = "system.close-app";
 pub const OPEN_URL: &str = "system.open-url";
 pub const OPEN_FILE: &str = "system.open-file";
 pub const OPEN_DIRECTORY: &str = "system.open-directory";
@@ -41,14 +46,20 @@ pub fn id(value: &str) -> ActionTypeId {
 
 pub fn handlers(
     launcher: &Arc<dyn Launcher>,
+    apps: &Arc<dyn Apps>,
     sampler: &Arc<Sampler>,
     allow_commands: bool,
 ) -> Vec<Box<dyn ActionHandler>> {
+    let opener = Opener {
+        launcher: launcher.clone(),
+        apps: apps.clone(),
+    };
     vec![
-        Box::new(OpenApp::new(launcher.clone())),
-        Box::new(OpenUrl::new(launcher.clone())),
-        Box::new(OpenFile::new(launcher.clone())),
+        Box::new(OpenApp::with(opener.clone())),
+        Box::new(OpenUrl::with(opener.clone())),
+        Box::new(OpenFile::with(opener.clone())),
         Box::new(OpenDirectory::new(launcher.clone())),
+        Box::new(CloseApp::new(apps.clone())),
         Box::new(RunCommand::new(allow_commands)),
         Box::new(ProcessStatus::new()),
         Box::new(Monitor::new(Metric::Cpu, sampler.clone())),
@@ -144,6 +155,81 @@ fn open_with(
         .map_err(|e| fail(e.code(), e.to_string()))
 }
 
+/// The one launch service of Open, Open Application and Website: what an
+/// application value opens with comes from `deckpilot-apps` (a Linux
+/// `.desktop` entry's `Exec`, a Windows App Paths executable or
+/// `AppUserModelID`), and the core's launch plan runs it without a shell.
+#[derive(Debug, Clone)]
+pub struct Opener {
+    pub launcher: Arc<dyn Launcher>,
+    pub apps: Arc<dyn Apps>,
+}
+
+/// What an application is opened with.
+#[derive(Debug, Clone)]
+pub enum With {
+    /// Its arguments (Open Application).
+    Arguments(Vec<String>),
+    /// A web page (Website with a browser).
+    Url(String),
+    /// A file or folder (Open with).
+    Path(std::path::PathBuf),
+}
+
+/// A failure of `deckpilot-apps`, as the action's result.
+pub fn app_failure(error: deckpilot_apps::AppError) -> Failure {
+    fail(error.code, error.message)
+}
+
+impl Opener {
+    fn launcher(&self) -> &dyn Launcher {
+        self.launcher.as_ref()
+    }
+
+    /// Opens `application` (an application resource's value) with `with`.
+    pub fn application(
+        &self,
+        context: &ExecutionContext<'_>,
+        application: &str,
+        with: With,
+    ) -> Result<(), Failure> {
+        context
+            .permit(Capability::OpenExternal)
+            .map_err(ActionResult::from)?;
+        let targets = match &with {
+            With::Arguments(arguments) => arguments.clone(),
+            With::Url(url) => vec![url.clone()],
+            With::Path(path) => vec![path.to_string_lossy().into_owned()],
+        };
+        let target = match self
+            .apps
+            .launchable(application, &targets)
+            .map_err(app_failure)?
+        {
+            Launchable::Application(value) => match with {
+                With::Arguments(arguments) => OpenTarget::Application {
+                    application: value,
+                    arguments,
+                },
+                With::Url(url) => OpenTarget::PathWith {
+                    path: url.into(),
+                    application: value,
+                },
+                With::Path(path) => OpenTarget::PathWith {
+                    path,
+                    application: value,
+                },
+            },
+            Launchable::Program { program, arguments } => OpenTarget::Application {
+                application: program.to_string_lossy().into_owned(),
+                arguments,
+            },
+            Launchable::File(path) => OpenTarget::Path(path),
+        };
+        open_with(self.launcher(), context, &target)
+    }
+}
+
 fn outcome(result: Result<ActionResult, Failure>) -> ActionResult {
     result.unwrap_or_else(|failure| failure)
 }
@@ -160,31 +246,46 @@ fn arguments_kind() -> ParameterKind {
 const ARGUMENTS_HELP: &str = "Each argument is passed as it is: nothing is split on spaces or \
                               interpreted by a shell.";
 
-/// `system.open-app`: starts an application bound as a resource.
+/// The application parameter of Open Application and Close Application.
+fn application_parameter() -> ParameterSpec {
+    described(
+        parameter(
+            "application",
+            "Application",
+            resource(Some(ResourceKind::Application)),
+            true,
+        ),
+        "An installed application, chosen on this computer and kept there: its macOS bundle \
+         identifier, Windows App Paths name or AppUserModelID, or Linux desktop-file id, else \
+         its path. Bound again on each computer; never exported.",
+    )
+}
+
+/// `system.open-app` (Open Application): starts an application bound as a
+/// resource.
 #[derive(Debug)]
 pub struct OpenApp {
     definition: ActionType,
-    launcher: Arc<dyn Launcher>,
+    opener: Opener,
 }
 
 impl OpenApp {
+    /// With this computer's applications.
     pub fn new(launcher: Arc<dyn Launcher>) -> Self {
+        Self::with(Opener {
+            launcher,
+            apps: Arc::new(crate::apps::SystemApps),
+        })
+    }
+
+    pub fn with(opener: Opener) -> Self {
         Self {
             definition: definition(
                 OPEN_APP,
-                "Open application",
-                "Starts an application bound on this computer, optionally with arguments.",
+                "Open Application",
+                "Starts an application installed on this computer, optionally with arguments.",
                 vec![
-                    described(
-                        parameter(
-                            "application",
-                            "Application",
-                            resource(Some(ResourceKind::Application)),
-                            true,
-                        ),
-                        "An application resource: a path to the application, a macOS bundle \
-                         identifier or a Linux .desktop id, bound on each computer.",
-                    ),
+                    application_parameter(),
                     described(
                         parameter("arguments", "Arguments", arguments_kind(), false),
                         ARGUMENTS_HELP,
@@ -199,7 +300,7 @@ impl OpenApp {
                     )],
                 ),
             ),
-            launcher,
+            opener,
         }
     }
 }
@@ -222,47 +323,107 @@ impl ActionHandler for OpenApp {
                 "application",
             )?;
             let arguments = support::arguments(parameters.text("arguments"))?;
-            if application.contains(['/', '\\']) {
-                support::existing(application.clone().into(), false)?;
-            }
-            open_with(
-                self.launcher.as_ref(),
-                context,
-                &OpenTarget::Application {
-                    application: application.clone(),
-                    arguments,
-                },
-            )?;
+            self.opener
+                .application(context, &application, With::Arguments(arguments))?;
             Ok(ActionResult::success(format!("opened {application}"))
                 .with_data("application", application))
         })())
     }
 }
 
-/// `system.open-url`: opens a web page or mail address in the default
-/// program.
+/// `system.open-url` (Website): opens a web page in the default browser
+/// or a chosen one. A `mailto:` address, which saved actions may hold,
+/// still opens in the mail program, never with a chosen browser.
 #[derive(Debug)]
 pub struct OpenUrl {
     definition: ActionType,
-    launcher: Arc<dyn Launcher>,
+    opener: Opener,
+}
+
+/// A saved mail address: opened as before (`paths::web_url`).
+fn is_mail(text: &str) -> bool {
+    text.trim().to_ascii_lowercase().starts_with("mailto:")
 }
 
 impl OpenUrl {
+    /// With this computer's applications.
     pub fn new(launcher: Arc<dyn Launcher>) -> Self {
+        Self::with(Opener {
+            launcher,
+            apps: Arc::new(crate::apps::SystemApps),
+        })
+    }
+
+    pub fn with(opener: Opener) -> Self {
         Self {
             definition: definition(
                 OPEN_URL,
-                "Open URL",
-                "Opens a web page (http, https) or a mail address (mailto) in the default \
-                 browser or mail program.",
-                vec![described(
-                    parameter("url", "URL", text(2048, false), true),
-                    "Other schemes are refused because they can start programs.",
-                )],
+                "Website",
+                "Opens a web page (http or https) in the default browser or in a browser chosen \
+                 on this computer.",
+                vec![
+                    described(
+                        parameter("url", "URL", text(2048, false), true),
+                        "An http or https address; https:// is added when no scheme is written. \
+                         Other schemes are refused because they can start programs.",
+                    ),
+                    described(
+                        parameter(
+                            "browser",
+                            "Open with",
+                            resource(Some(ResourceKind::Application)),
+                            false,
+                        ),
+                        "A browser installed on this computer; the default browser when empty.",
+                    ),
+                ],
                 opens("globe", vec![OutputSpec::new("url", "URL", ValueKind::Url)]),
             ),
-            launcher,
+            opener,
         }
+    }
+
+    fn open(
+        &self,
+        parameters: &ActionParameters,
+        context: &ExecutionContext<'_>,
+    ) -> Result<ActionResult, Failure> {
+        let text = parameters.text("url").unwrap_or_default();
+        let browser = parameters.resource("browser");
+        if is_mail(text) {
+            if browser.is_some() {
+                return Err(fail(
+                    codes::INVALID_URL,
+                    "a mail address opens in the mail program, not in a browser",
+                ));
+            }
+            let url = support::web_url(text)?;
+            open_with(
+                self.opener.launcher(),
+                context,
+                &OpenTarget::Url(url.clone()),
+            )?;
+            return Ok(ActionResult::success(format!("opened {url}")).with_data("url", url));
+        }
+        let url = deckpilot_core::paths::website_url(text)?;
+        match browser {
+            None => open_with(
+                self.opener.launcher(),
+                context,
+                &OpenTarget::Url(url.clone()),
+            )?,
+            Some(reference) => {
+                let browser = support::resolve(
+                    context,
+                    Some(reference),
+                    Some(ResourceKind::Application),
+                    "browser",
+                )?;
+                self.opener
+                    .application(context, &browser, With::Url(url.clone()))?;
+            }
+        }
+        Ok(ActionResult::success(format!("opened {url}")).with_data("url", url))
     }
 }
 
@@ -271,20 +432,38 @@ impl ActionHandler for OpenUrl {
         &self.definition
     }
 
+    /// A URL written as it is must be one that opens; a template or a
+    /// reference is checked when it runs.
+    fn validate(&self, parameters: &ActionParameters) -> Vec<ParameterError> {
+        let Some(text) = parameters.text("url") else {
+            return Vec::new();
+        };
+        let problem = if is_mail(text) {
+            if parameters.resource("browser").is_some() {
+                Some("a mail address opens in the mail program, not in a browser".to_owned())
+            } else {
+                support::web_url(text).err().map(|e| e.message)
+            }
+        } else {
+            deckpilot_core::paths::website_url(text)
+                .err()
+                .map(|e| e.message)
+        };
+        problem
+            .map(|reason| ParameterError::Invalid {
+                key: "url".into(),
+                reason,
+            })
+            .into_iter()
+            .collect()
+    }
+
     fn execute(
         &self,
         parameters: &ActionParameters,
         context: &ExecutionContext<'_>,
     ) -> ActionResult {
-        outcome((|| {
-            let url = support::web_url(parameters.text("url").unwrap_or_default())?;
-            open_with(
-                self.launcher.as_ref(),
-                context,
-                &OpenTarget::Url(url.clone()),
-            )?;
-            Ok(ActionResult::success(format!("opened {url}")).with_data("url", url))
-        })())
+        outcome(self.open(parameters, context))
     }
 }
 
@@ -300,7 +479,8 @@ fn location_parameters(directory: bool) -> Vec<ParameterSpec> {
             if directory {
                 "A folder resource, e.g. the project's repository."
             } else {
-                "A file or folder resource the file is in, e.g. the project's repository."
+                "A file, folder or application chosen on this computer and kept there (never \
+                 exported), or a folder the file is in, e.g. the project's repository."
             },
         ),
         described(
@@ -308,11 +488,29 @@ fn location_parameters(directory: bool) -> Vec<ParameterSpec> {
                 "path",
                 if directory { "Subfolder" } else { "File" },
                 text(1024, false),
-                !directory,
+                false,
             ),
-            "Relative to the resource, e.g. docs/README.md. It cannot leave the resource.",
+            if directory {
+                "Relative to the resource, e.g. docs. It cannot leave the resource."
+            } else {
+                "Optional: a file or folder inside a folder resource, e.g. docs/README.md. It \
+                 cannot leave the resource. Empty: the resource itself opens."
+            },
         ),
     ]
+}
+
+/// A resource that is gone says so, and where to choose it again.
+fn moved(failure: Failure) -> Failure {
+    if failure.code.as_deref() == Some(codes::NOT_FOUND) {
+        let message = format!(
+            "{}; it may have been moved or deleted. Choose it again in the action or in \
+             Settings › Resources",
+            failure.message
+        );
+        return fail(codes::NOT_FOUND, message);
+    }
+    failure
 }
 
 fn resolve_location(
@@ -326,19 +524,27 @@ fn resolve_location(
         directory.then_some(ResourceKind::Directory),
         "location",
     )?;
-    support::existing_inside(&base, parameters.text("path"), directory)
+    support::existing_inside(&base, parameters.text("path"), directory).map_err(moved)
 }
 
-/// `system.open-file`: opens a file with its default application or a
-/// chosen one.
+/// `system.open-file` (Open): opens a file, folder or application with
+/// its default association, or a file with a chosen application.
 #[derive(Debug)]
 pub struct OpenFile {
     definition: ActionType,
-    launcher: Arc<dyn Launcher>,
+    opener: Opener,
 }
 
 impl OpenFile {
+    /// With this computer's applications.
     pub fn new(launcher: Arc<dyn Launcher>) -> Self {
+        Self::with(Opener {
+            launcher,
+            apps: Arc::new(crate::apps::SystemApps),
+        })
+    }
+
+    pub fn with(opener: Opener) -> Self {
         let mut parameters = location_parameters(false);
         parameters.push(described(
             parameter(
@@ -347,20 +553,21 @@ impl OpenFile {
                 resource(Some(ResourceKind::Application)),
                 false,
             ),
-            "An application resource; the file's default application when empty.",
+            "An application installed on this computer; the default application when empty.",
         ));
         Self {
             definition: definition(
                 OPEN_FILE,
-                "Open file",
-                "Opens a file inside a resource with its default application or a chosen one.",
+                "Open",
+                "Opens a file, folder or application chosen on this computer with its default \
+                 application, or a file with a chosen one.",
                 parameters,
                 opens(
                     "file",
                     vec![OutputSpec::new("path", "Path", ValueKind::Path)],
                 ),
             ),
-            launcher,
+            opener,
         }
     }
 }
@@ -377,19 +584,23 @@ impl ActionHandler for OpenFile {
     ) -> ActionResult {
         outcome((|| {
             let path = resolve_location(parameters, context, false)?;
-            let target = match parameters.resource("application") {
-                Some(reference) => OpenTarget::PathWith {
-                    path: path.clone(),
-                    application: support::resolve(
+            match parameters.resource("application") {
+                Some(reference) => {
+                    let application = support::resolve(
                         context,
                         Some(reference),
                         Some(ResourceKind::Application),
                         "application",
-                    )?,
-                },
-                None => OpenTarget::Path(path.clone()),
-            };
-            open_with(self.launcher.as_ref(), context, &target)?;
+                    )?;
+                    self.opener
+                        .application(context, &application, With::Path(path.clone()))?;
+                }
+                None => open_with(
+                    self.opener.launcher(),
+                    context,
+                    &OpenTarget::Path(path.clone()),
+                )?,
+            }
             let shown = path.display().to_string();
             Ok(ActionResult::success(format!("opened {shown}")).with_data("path", shown))
         })())
@@ -441,6 +652,145 @@ impl ActionHandler for OpenDirectory {
             let shown = path.display().to_string();
             Ok(ActionResult::success(format!("opened {shown}")).with_data("path", shown))
         })())
+    }
+}
+
+/// `system.close-app` (Close Application): quits the running instances of
+/// an application bound as a resource that the current user owns,
+/// gracefully, and forced only with `force` (`deckpilot_apps::close`).
+/// Only in runs the user started, like a plugin's privileged calls.
+#[derive(Debug)]
+pub struct CloseApp {
+    definition: ActionType,
+    apps: Arc<dyn Apps>,
+}
+
+impl CloseApp {
+    pub fn new(apps: Arc<dyn Apps>) -> Self {
+        let mut force = described(
+            parameter(
+                "force",
+                "Force quit if it does not close",
+                ParameterKind::Boolean,
+                true,
+            ),
+            "Off: the application is asked to quit, as with its Quit command, and may ask to \
+             save first. On: what is still running after 5 seconds is ended at once, and unsaved \
+             work is lost.",
+        );
+        force.default = Some(ParameterValue::Boolean(false));
+        Self {
+            definition: definition(
+                CLOSE_APP,
+                "Close Application",
+                "Quits an application chosen on this computer: every instance you run, \
+                 gracefully first. Never another user's programs or the system's.",
+                vec![application_parameter(), force],
+                NodeSpec {
+                    icon: Some("app-window".into()),
+                    outputs: vec![
+                        OutputSpec::new("instances", "Instances found", ValueKind::Integer),
+                        OutputSpec::new("closed", "Closed", ValueKind::Boolean),
+                        OutputSpec::new("forced", "Forced", ValueKind::Integer),
+                    ],
+                    // The grace period, a forced close and its check.
+                    timeout_ms: 15_000,
+                    retry_safe: true,
+                    idempotent: false,
+                    cancellable: true,
+                    effect: ActionEffect::Modifies,
+                    ..NodeSpec::default()
+                },
+            ),
+            apps,
+        }
+    }
+
+    fn close(
+        &self,
+        parameters: &ActionParameters,
+        context: &ExecutionContext<'_>,
+    ) -> Result<ActionResult, Failure> {
+        if !context
+            .origin()
+            .is_some_and(deckpilot_core::RunOrigin::is_user_initiated)
+        {
+            return Err(fail(
+                codes::NOT_USER_INITIATED,
+                "Close Application runs only when you start it (a key, a gesture, the app or a \
+                 workflow you started), never from a schedule, an event or a simulated press",
+            ));
+        }
+        for capability in [Capability::ProcessInspect, Capability::ProcessControl] {
+            context.permit(capability).map_err(ActionResult::from)?;
+        }
+        let application = support::resolve(
+            context,
+            parameters.resource("application"),
+            Some(ResourceKind::Application),
+            "application",
+        )?;
+        let target = self.apps.close_target(&application).map_err(app_failure)?;
+        let force = parameters.boolean("force").unwrap_or(false);
+        let options = CloseOptions {
+            force,
+            ..CloseOptions::default()
+        };
+        let wait = |duration: Duration| context.wait(duration);
+        let report = self
+            .apps
+            .close(&target, options, &wait)
+            .map_err(app_failure)?;
+        let name = target.describe();
+        let closed = report.remaining == 0;
+        let left_alone = if report.skipped > 0 {
+            format!(
+                " ({} of another user or protected left alone)",
+                report.skipped
+            )
+        } else {
+            String::new()
+        };
+        let message = match (report.instances, closed) {
+            (0, _) => format!("{name} is not running{left_alone}"),
+            (_, true) if report.forced > 0 => format!(
+                "closed {name}: {} of {} forced{left_alone}",
+                report.forced, report.instances
+            ),
+            (1, true) => format!("closed {name}{left_alone}"),
+            (n, true) => format!("closed {n} instances of {name}{left_alone}"),
+            (_, false) if force => {
+                return Err(fail(
+                    deckpilot_apps::codes::CLOSE_FAILED,
+                    format!(
+                        "{name} is still running after force quit ({} of {} left)",
+                        report.remaining, report.instances
+                    ),
+                ));
+            }
+            (_, false) => format!(
+                "asked {name} to quit; it is still running (it may be asking to save). Turn on \
+                 “Force quit if it does not close” to end it"
+            ),
+        };
+        Ok(ActionResult::success(message)
+            .with_data("instances", report.instances.to_string())
+            .with_data("closed", closed.to_string())
+            .with_data("forced", report.forced.to_string()))
+    }
+}
+
+impl ActionHandler for CloseApp {
+    fn definition(&self) -> &ActionType {
+        &self.definition
+    }
+
+    fn execute(
+        &self,
+        parameters: &ActionParameters,
+        context: &ExecutionContext<'_>,
+    ) -> ActionResult {
+        outcome(self.close(parameters, context))
     }
 }
 

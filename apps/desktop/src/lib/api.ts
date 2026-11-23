@@ -38,6 +38,7 @@ import type {
   SecurityPolicy,
   SecurityView,
   WindowSpec,
+  InstalledApp,
   MachineConfig,
   MigrationNote,
   ModuleInfo,
@@ -338,6 +339,10 @@ export const api = {
   setResourceBinding: (key: string, kind: ResourceKind, value: string) =>
     invoke<MachineConfig>("set_resource_binding", { key, kind, value }),
   removeResourceBinding: (key: string) => invoke<MachineConfig>("remove_resource_binding", { key }),
+  /** This computer's installed applications, for the application and browser pickers. */
+  listApplications: () => invoke<InstalledApp[]>("list_applications"),
+  /** A picked application file as a binding stores it (bundle id, App Paths name, desktop id, path). */
+  describeApplication: (path: string) => invoke<InstalledApp>("describe_application", { path }),
   /** This computer's default gesture timings (`gestures.defaults`). */
   getGestureDefaults: () => invoke<GestureTimings>("get_gesture_defaults"),
   setGestureDefaults: (timings: GestureTimings) =>
