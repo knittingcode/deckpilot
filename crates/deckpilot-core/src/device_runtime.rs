@@ -1750,7 +1750,6 @@ pub fn page_faces_with(
                             binding,
                             &title,
                             project.is_some(),
-                            label,
                         ))
                     },
                 )
@@ -1960,7 +1959,6 @@ fn face_labels(
     binding: &ControlBinding,
     title: &Title<'_>,
     has_project: bool,
-    page: PageLabel<'_>,
 ) -> Vec<crate::FaceLabel> {
     let Some(look) = binding.appearance.as_ref() else {
         return Vec::new();
@@ -1982,7 +1980,6 @@ fn face_labels(
                 crate::FaceLabel::resolved(
                     label.id,
                     &display,
-                    page,
                     label.look.clone(),
                     crate::appearance::labels::MAX_LABEL_CLUSTERS,
                 )

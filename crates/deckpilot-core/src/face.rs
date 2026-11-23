@@ -86,15 +86,15 @@ pub struct KeyFace {
 pub struct FaceLabel {
     pub id: LabelId,
     /// The resolved text (references and `{page.…}` placeholders), at most
-    /// [`crate::appearance::labels::MAX_LABEL_CLUSTERS`] characters.
+    /// [`crate::appearance::labels::MAX_LABEL_CLUSTERS`] grapheme clusters.
     pub text: String,
     pub spec: KeyLabelLook,
     /// A reference of the template had no displayable value (shown as
     /// [`crate::variables::UNRESOLVED_MARKER`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unresolved: bool,
-    /// Where each unresolved marker is in `text` (after `{page.…}` and the
-    /// cut), as [`crate::variables::MarkerSpan`]: UTF-16 offsets, `end`
+    /// Where each unresolved marker is in `text` (after the cut), as
+    /// [`crate::variables::MarkerSpan`]: UTF-16 offsets, `end`
     /// exclusive, with the reference it stands for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<LabelMarker>,
@@ -111,58 +111,30 @@ pub struct LabelMarker {
 }
 
 impl FaceLabel {
-    /// The label `id` with `display` (its resolved template) as its text:
-    /// `{page.…}` expanded in the text around the markers (never in a
-    /// value), then cut after `max` characters with `…`. Markers move with
-    /// the text; one the cut reaches is dropped.
+    /// The label `id` with `display` (its resolved template, `{page.…}`
+    /// already expanded in the template) as its text, cut after `max`
+    /// grapheme clusters with `…`. Markers keep their places; one the cut
+    /// reaches is dropped.
     pub fn resolved(
         id: LabelId,
         display: &crate::variables::DisplayText,
-        page: PageLabel<'_>,
         spec: KeyLabelLook,
         max: usize,
     ) -> Self {
-        let unresolved = !display.unresolved.is_empty();
-        // Byte ranges of the markers in the resolved text.
-        let mut ranges = Vec::new();
-        let (mut units, mut spans) = (0, display.markers.iter().peekable());
-        let mut start_byte = None;
-        for (byte, ch) in display
-            .text
-            .char_indices()
-            .chain(std::iter::once((display.text.len(), ' ')))
-        {
-            if let Some(span) = spans.peek() {
-                if start_byte.is_none() && units == span.start {
-                    start_byte = Some(byte);
-                }
-                if let Some(from) = start_byte
-                    && units == span.end
-                {
-                    ranges.push((from, byte, span.reference.clone()));
-                    start_byte = None;
-                    spans.next();
-                }
-            }
-            units += ch.len_utf16();
-        }
-        let mut text = String::new();
-        let mut markers = Vec::new();
-        let mut at = 0;
-        for (from, to, reference) in ranges {
-            text.push_str(&render_page_label(&display.text[at..from], page));
-            let start = text.encode_utf16().count();
-            text.push_str(&display.text[from..to]);
-            markers.push(LabelMarker {
-                start,
-                end: text.encode_utf16().count(),
-                reference,
-            });
-            at = to;
-        }
-        text.push_str(&render_page_label(&display.text[at..], page));
-        if text.chars().count() > max {
-            text = text.chars().take(max.saturating_sub(1)).collect();
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut text = display.text.clone();
+        let mut markers: Vec<LabelMarker> = display
+            .markers
+            .iter()
+            .map(|marker| LabelMarker {
+                start: marker.start,
+                end: marker.end,
+                reference: marker.reference.clone(),
+            })
+            .collect();
+        let clusters: Vec<&str> = display.text.graphemes(true).collect();
+        if clusters.len() > max {
+            text = clusters[..max.saturating_sub(1)].concat();
             let kept = text.encode_utf16().count();
             markers.retain(|marker| marker.end <= kept);
             text.push('…');
@@ -171,7 +143,7 @@ impl FaceLabel {
             id,
             text,
             spec,
-            unresolved,
+            unresolved: !display.unresolved.is_empty(),
             markers,
         }
     }

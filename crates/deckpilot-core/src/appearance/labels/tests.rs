@@ -339,3 +339,66 @@ fn spots_and_positions() {
         LabelPosition::Preset { at: Spot::Bottom }
     );
 }
+
+/// With the agent's variables (a plugin's declarations): a reference the
+/// plugin declares sensitive, or an identifier, is refused; one of a plugin
+/// that is not here is not (it shows the marker until its plugin declares
+/// it display-safe).
+#[test]
+fn the_agents_variables_refuse_sensitive_and_identifier_references() {
+    use crate::variables::{
+        DeclaredScope, Resolution, VariableDeclaration, VariableEnvironment, VariableRegistry,
+        VariableSource, VariableType,
+    };
+    struct Nothing;
+    impl VariableSource for Nothing {
+        fn resolve(&self, _: &VariableDeclaration, _: &VariableEnvironment<'_>) -> Resolution {
+            Resolution::UnavailableUntilRuntime
+        }
+    }
+    let mut registry = VariableRegistry::new();
+    registry
+        .register_module(
+            &crate::ModuleId::new("acme.api").unwrap(),
+            &[
+                VariableDeclaration {
+                    sensitive: true,
+                    ..VariableDeclaration::new(
+                        "plugins.acme.api.token",
+                        "Token",
+                        VariableType::String,
+                        DeclaredScope::Machine,
+                    )
+                },
+                VariableDeclaration {
+                    identifier: true,
+                    ..VariableDeclaration::new(
+                        "plugins.acme.api.account",
+                        "Account",
+                        VariableType::String,
+                        DeclaredScope::Machine,
+                    )
+                },
+                VariableDeclaration::new(
+                    "plugins.acme.api.city",
+                    "City",
+                    VariableType::String,
+                    DeclaredScope::Machine,
+                ),
+            ],
+            Some(std::sync::Arc::new(Nothing)),
+        )
+        .unwrap();
+    let labels = |text: &str| vec![KeyLabel::new(id("x"), text)];
+    for refused in [
+        "{{ plugins.acme.api.token }}",
+        "Account {{ plugins.acme.api.account }}",
+    ] {
+        let error = check_labels_with(&labels(refused), &registry).unwrap_err();
+        assert!(error.contains("never shows"), "{refused}: {error}");
+        // The core alone does not know the plugin: allowed there.
+        assert!(check_labels(&labels(refused)).is_ok());
+    }
+    assert!(check_labels_with(&labels("{{ plugins.acme.api.city }}"), &registry).is_ok());
+    assert!(check_labels_with(&labels("{{ plugins.other.thing.name }}"), &registry).is_ok());
+}

@@ -238,6 +238,10 @@ fn markers_follow_page_placeholders_and_the_cut() {
                 "{page.name}: {{ shared.team.name }} / {project.key} ż",
             ),
             label("cut", &format!("{}{{project.key}}", "x".repeat(130))),
+            // Two references back to back: two markers.
+            label("adjacent", "{{ shared.team.a }}{{ shared.team.b }}"),
+            // A page name that looks like a reference is text.
+            label("paged", "{page.name}"),
         ],
     )]);
     let shown = face(&setup, false);
@@ -256,9 +260,29 @@ fn markers_follow_page_placeholders_and_the_cut() {
     assert!(cut.unresolved);
     assert_eq!(cut.markers, []);
     assert!(cut.text.ends_with('…'));
+    let adjacent = &shown.labels[2];
+    assert_eq!(adjacent.text, "--");
+    assert_eq!(
+        adjacent.markers.iter().map(at).collect::<Vec<_>>(),
+        [
+            (0, 1, "shared.team.a".to_owned()),
+            (1, 2, "shared.team.b".to_owned())
+        ]
+    );
     let json = serde_json::to_value(mixed).unwrap();
     assert_eq!(
         json["markers"][0],
         serde_json::json!({ "start": 6, "end": 7, "reference": "shared.team.name" })
     );
+}
+
+#[test]
+fn texts_are_cut_between_grapheme_clusters() {
+    // "e" with a combining acute accent: two characters, one cluster.
+    let accented = "e\u{301}".repeat(130);
+    let setup = setup(vec![labelled(Trigger::Press, vec![label("a", &accented)])]);
+    let shown = face(&setup, true);
+    let text = &shown.labels[0].text;
+    assert!(text.ends_with("e\u{301}…"), "never inside a cluster");
+    assert_eq!(text.chars().count(), 2 * 119 + 1);
 }
