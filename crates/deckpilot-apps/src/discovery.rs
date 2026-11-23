@@ -14,6 +14,8 @@ const MAX_LISTED: usize = 4096;
 pub struct Roots {
     /// macOS: folders holding `.app` bundles.
     pub bundles: Vec<PathBuf>,
+    /// macOS: single bundles outside those folders (the Finder).
+    pub bundle_files: Vec<PathBuf>,
     /// Linux: the XDG data folders.
     pub xdg: XdgDirs,
     /// Windows: Start menu folders.
@@ -34,6 +36,7 @@ impl Roots {
         }
         Self {
             bundles,
+            bundle_files: vec![PathBuf::from("/System/Library/CoreServices/Finder.app")],
             xdg: XdgDirs::from_env(),
             start_menu: windows_apps::start_menu_roots(),
             registry: true,
@@ -54,6 +57,12 @@ pub fn discover_in(platform: Platform, roots: &Roots) -> Vec<InstalledApp> {
             .bundles
             .iter()
             .flat_map(|dir| bundle::scan(dir))
+            .chain(
+                roots
+                    .bundle_files
+                    .iter()
+                    .filter_map(|path| bundle::read(path)),
+            )
             .map(|b| b.installed())
             .collect(),
         Platform::Linux => xdg::applications(&roots.xdg),
@@ -89,6 +98,7 @@ mod tests {
     fn empty() -> Roots {
         Roots {
             bundles: Vec::new(),
+            bundle_files: Vec::new(),
             xdg: XdgDirs::only(&[]),
             start_menu: Vec::new(),
             registry: false,

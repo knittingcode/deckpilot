@@ -19,6 +19,9 @@ pub enum StoreError {
     /// This build links plain SQLite; nothing may be stored unencrypted.
     #[error("this build has no SQLCipher, so the plugin database cannot be opened")]
     EncryptionUnavailable,
+    /// SQLCipher is linked but did not initialize on the connection.
+    #[error("SQLCipher is incomplete on the plugin database connection: {0}")]
+    SqlCipherIncomplete(String),
     #[error("the plugin database is damaged: {0}")]
     Corrupt(String),
     #[error("the plugin database has schema {found}; this build supports up to {supported}")]
