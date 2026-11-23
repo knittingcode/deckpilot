@@ -425,6 +425,14 @@ pixels, so it is the same at every size.
 (SemiBold); `align` defaults by position (left in left corners, right in
 right ones, else centred); `padding` and `radius` 0–12 units (default 2).
 
+**Cost.** `cargo test --release -p deckpilot-render --test label_cost --
+--nocapture` measures it (Apple M-series, render plus JPEG): the worst-case
+key (8 labels wrapping on 4 lines over an icon image, with plates) about
+0.85 ms at 120 px (budget 1 ms), a label text change about 0.09 ms at 72 px
+(budget 0.3 ms; icon and background images are scaled once per size and
+kept, `ScaledImageCache`), against about 0.05 ms for the same key without
+labels.
+
 The renderer is the only place labels are laid out: the app's previews are
 the renderer's images, and the editor gets each label's box from it
 (`labelBoxes`).

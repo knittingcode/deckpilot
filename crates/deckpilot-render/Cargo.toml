@@ -13,10 +13,12 @@ ab_glyph_rasterizer.workspace = true
 deckpilot-core.workspace = true
 deckpilot-device.workspace = true
 image = { workspace = true, features = ["png", "jpeg"] }
+serde.workspace = true
 skrifa.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 sha2.workspace = true
 
 [lints]

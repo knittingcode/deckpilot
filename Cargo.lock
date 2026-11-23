@@ -1439,6 +1439,8 @@ dependencies = [
  "deckpilot-core",
  "deckpilot-device",
  "image",
+ "serde",
+ "serde_json",
  "sha2 0.11.1",
  "skrifa",
  "unicode-segmentation",

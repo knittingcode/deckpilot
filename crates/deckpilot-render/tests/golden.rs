@@ -11,6 +11,11 @@
 //!   again by a change that adds to the renderer (`DECKPILOT_BLESS=g0` is
 //!   the only way to rewrite them, on purpose).
 //!
+//! - **Labels** (`labels`): G1–G8 of `docs/key-text.md`, "Labels": every
+//!   preset, ribbons over icons, absolute positions near the edges, eight
+//!   labels in three layers, every overflow mode, plates, state marks over
+//!   labels; the touch zone is one of the sizes.
+//!
 //! `DECKPILOT_BLESS=1` rewrites every other set from what the renderer
 //! draws now.
 //!
@@ -26,9 +31,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use deckpilot_core::{
-    Accent, AssetId, AssetRef, Background, Color, DefaultAppearance, FaceStyle, FitLines, FontSize,
-    Glyph, IconFit, IconRef, Indicator, KeyAppearance, KeyFace, TextAlign, TextAppearance,
-    TextMode, TextOverflow, TitleAlign,
+    Accent, AssetId, AssetRef, Background, Color, DefaultAppearance, FaceLabel, FaceStyle,
+    FitLines, FontSize, Glyph, IconFit, IconRef, Indicator, KeyAppearance, KeyFace, KeyLabelLook,
+    LabelBackground, LabelId, LabelLayer, LabelOverflow, LabelPosition, LabelWeight, Spot,
+    TextAlign, TextAppearance, TextMode, TextOverflow, TitleAlign,
 };
 use deckpilot_device::{Frame, KeyBackground};
 use deckpilot_render::{Icons, LibraryAsset, render_for};
@@ -556,4 +562,459 @@ fn g0_keys_without_labels_are_unchanged() {
         &g0(),
         &icons(),
     );
+}
+
+fn label(id: &str, text: &str, spec: KeyLabelLook) -> FaceLabel {
+    FaceLabel {
+        id: LabelId::new(id).unwrap(),
+        text: text.into(),
+        spec,
+        unresolved: false,
+        markers: Vec::new(),
+    }
+}
+
+fn at(spot: Spot) -> KeyLabelLook {
+    KeyLabelLook {
+        position: LabelPosition::Preset { at: spot },
+        ..KeyLabelLook::default()
+    }
+}
+
+fn anchored(to: Spot) -> KeyLabelLook {
+    KeyLabelLook {
+        position: LabelPosition::Anchored { to, inset: None },
+        ..KeyLabelLook::default()
+    }
+}
+
+fn absolute(x: u16, y: u16, origin: Spot) -> KeyLabelLook {
+    KeyLabelLook {
+        position: LabelPosition::Absolute {
+            x,
+            y,
+            origin: Some(origin),
+        },
+        ..KeyLabelLook::default()
+    }
+}
+
+fn labelled(face: KeyFace, labels: Vec<FaceLabel>) -> KeyFace {
+    face.with_labels(labels)
+}
+
+fn iconed(title: &str, fit: IconFit) -> KeyFace {
+    look(
+        action(title),
+        KeyAppearance {
+            icon: icon(LOGO, fit),
+            ..KeyAppearance::default()
+        },
+    )
+}
+
+const POLISH: &str = "Zażółć gęślą jaźń — źdźbło łąki";
+
+/// G1–G8.
+#[expect(clippy::too_many_lines, reason = "one case per entry")]
+fn labels() -> Vec<Case> {
+    let symbol = || action("Mail").with_symbol(Some("mail"));
+    let mut cases: Vec<Case> = [
+        ("g1-top", Spot::Top),
+        ("g1-center", Spot::Center),
+        ("g1-bottom", Spot::Bottom),
+        ("g1-top-left", Spot::TopLeft),
+        ("g1-top-right", Spot::TopRight),
+        ("g1-bottom-left", Spot::BottomLeft),
+        ("g1-bottom-right", Spot::BottomRight),
+    ]
+    .into_iter()
+    .map(|(name, spot)| {
+        case(
+            name,
+            labelled(symbol(), vec![label("a", "SHOP-12", at(spot))]),
+        )
+    })
+    .collect();
+    let ribbon = KeyLabelLook {
+        padding: Some(2),
+        ..anchored(Spot::Bottom)
+    };
+    cases.extend([
+        case(
+            "g2-ribbon-over-icon",
+            labelled(
+                look(
+                    action(""),
+                    KeyAppearance {
+                        icon: icon(LOGO, IconFit::Fill),
+                        show_title: Some(false),
+                        ..KeyAppearance::default()
+                    },
+                ),
+                vec![label("ribbon", "Shop front", ribbon.clone())],
+            ),
+        ),
+        case(
+            "g2-ribbon-icon-title",
+            labelled(
+                iconed("Deploy", IconFit::Fit),
+                vec![label(
+                    "ribbon",
+                    "staging",
+                    KeyLabelLook {
+                        position: LabelPosition::Anchored {
+                            to: Spot::Top,
+                            inset: Some(2),
+                        },
+                        ..ribbon.clone()
+                    },
+                )],
+            ),
+        ),
+        case(
+            "g3-absolute-edges",
+            labelled(
+                action("Edges"),
+                vec![
+                    label(
+                        "tl",
+                        "TL",
+                        KeyLabelLook {
+                            offset_x: Some(-10),
+                            offset_y: Some(-10),
+                            ..absolute(0, 0, Spot::Center)
+                        },
+                    ),
+                    label("br", "BR", absolute(1000, 1000, Spot::Center)),
+                    label(
+                        "mid",
+                        "pushed",
+                        KeyLabelLook {
+                            offset_y: Some(30),
+                            ..absolute(500, 900, Spot::Top)
+                        },
+                    ),
+                    label(
+                        "wide",
+                        "A wide absolute label",
+                        KeyLabelLook {
+                            width: Some(100),
+                            offset_x: Some(40),
+                            ..absolute(500, 400, Spot::Center)
+                        },
+                    ),
+                ],
+            ),
+        ),
+        case(
+            "g4-eight-labels",
+            labelled(
+                iconed("Eight", IconFit::Fit),
+                vec![
+                    label(
+                        "behind",
+                        "BEHIND",
+                        KeyLabelLook {
+                            layer: Some(LabelLayer::BehindIcon),
+                            background: Some(LabelBackground::Color(Color([200, 30, 30]))),
+                            ..anchored(Spot::Center)
+                        },
+                    ),
+                    label("tl", "1", at(Spot::TopLeft)),
+                    label("tr", "2", at(Spot::TopRight)),
+                    label("bl", "3", at(Spot::BottomLeft)),
+                    label("br", "4", at(Spot::BottomRight)),
+                    label(
+                        "top",
+                        "top",
+                        KeyLabelLook {
+                            weight: Some(LabelWeight::Bold),
+                            ..anchored(Spot::Top)
+                        },
+                    ),
+                    label(
+                        "over",
+                        "OVER",
+                        KeyLabelLook {
+                            layer: Some(LabelLayer::OverTitle),
+                            color: Some(Color([255, 220, 0])),
+                            background: Some(LabelBackground::None),
+                            size: Some(14),
+                            ..anchored(Spot::Bottom)
+                        },
+                    ),
+                    label(
+                        "under",
+                        "under title",
+                        KeyLabelLook {
+                            size: Some(7),
+                            ..absolute(500, 700, Spot::Center)
+                        },
+                    ),
+                ],
+            ),
+        ),
+    ]);
+    let overflow = |mode: LabelOverflow, extra: KeyLabelLook| KeyLabelLook {
+        overflow: Some(mode),
+        ..extra
+    };
+    cases.extend([
+        case(
+            "g5-ellipsis",
+            labelled(
+                action(""),
+                vec![label(
+                    "a",
+                    POLISH,
+                    overflow(LabelOverflow::Ellipsis, at(Spot::Center)),
+                )],
+            ),
+        ),
+        case(
+            "g5-clip",
+            labelled(
+                action(""),
+                vec![label(
+                    "a",
+                    POLISH,
+                    overflow(LabelOverflow::Clip, at(Spot::Center)),
+                )],
+            ),
+        ),
+        case(
+            "g5-wrap-2",
+            labelled(
+                action(""),
+                vec![label(
+                    "a",
+                    POLISH,
+                    overflow(LabelOverflow::Wrap, at(Spot::Center)),
+                )],
+            ),
+        ),
+        case(
+            "g5-wrap-4-height",
+            labelled(
+                action(""),
+                vec![label(
+                    "a",
+                    POLISH,
+                    overflow(
+                        LabelOverflow::Wrap,
+                        KeyLabelLook {
+                            max_lines: Some(4),
+                            max_height: Some(40),
+                            ..at(Spot::Top)
+                        },
+                    ),
+                )],
+            ),
+        ),
+        case(
+            "g5-shrink",
+            labelled(
+                action(""),
+                vec![
+                    label(
+                        "a",
+                        "Łódź Kaliska",
+                        overflow(
+                            LabelOverflow::Shrink,
+                            KeyLabelLook {
+                                size: Some(16),
+                                ..at(Spot::Top)
+                            },
+                        ),
+                    ),
+                    label(
+                        "b",
+                        POLISH,
+                        overflow(LabelOverflow::Shrink, at(Spot::Bottom)),
+                    ),
+                ],
+            ),
+        ),
+        case(
+            "g6-solid-no-plate",
+            labelled(
+                action("Solid"),
+                vec![label("a", "no plate", anchored(Spot::Top))],
+            ),
+        ),
+        case(
+            "g6-low-contrast",
+            labelled(
+                look(
+                    action("Light"),
+                    KeyAppearance {
+                        background: Some(Background::Plain(
+                            deckpilot_device::KeyBackground::Color(Color([235, 235, 230])),
+                        )),
+                        text_color: Some(Color([20, 20, 20])),
+                        ..KeyAppearance::default()
+                    },
+                ),
+                vec![label(
+                    "a",
+                    "pale",
+                    KeyLabelLook {
+                        color: Some(Color([250, 250, 250])),
+                        ..anchored(Spot::Top)
+                    },
+                )],
+            ),
+        ),
+        case(
+            "g6-picture",
+            labelled(
+                look(
+                    action("Photo"),
+                    KeyAppearance {
+                        background: background(&format!("asset:{PHOTO}")),
+                        ..KeyAppearance::default()
+                    },
+                ),
+                vec![
+                    label("auto", "auto", anchored(Spot::TopLeft)),
+                    label(
+                        "none",
+                        "none",
+                        KeyLabelLook {
+                            background: Some(LabelBackground::None),
+                            ..anchored(Spot::TopRight)
+                        },
+                    ),
+                    label(
+                        "own",
+                        "own",
+                        KeyLabelLook {
+                            background: Some(LabelBackground::Color(Color([20, 90, 200]))),
+                            background_opacity: Some(50),
+                            radius: Some(6),
+                            ..absolute(500, 500, Spot::Center)
+                        },
+                    ),
+                ],
+            ),
+        ),
+        case(
+            "g6-gradient",
+            labelled(
+                look(
+                    action("Midnight"),
+                    KeyAppearance {
+                        background: background("asset:deckpilot.gradient-midnight"),
+                        ..KeyAppearance::default()
+                    },
+                ),
+                vec![label("a", "gradient", at(Spot::Top))],
+            ),
+        ),
+    ]);
+    let mut marked = labelled(
+        action("Build").with_detail("ok"),
+        vec![
+            label("top", "TOP RIBBON", anchored(Spot::Top)),
+            label("bottom", "BOTTOM RIBBON", anchored(Spot::Bottom)),
+            label("corner", "9", anchored(Spot::TopRight)),
+            label("left", "L", anchored(Spot::TopLeft)),
+        ],
+    );
+    marked.badge = Some("3".into());
+    marked.toggle = Some(true);
+    marked.progress = Some(60);
+    marked.indicator = Some(Indicator::Error);
+    marked.highlighted = true;
+    cases.push(case("g7-state-marks-on-top", marked));
+    cases
+}
+
+/// G1–G8 (`docs/key-text.md`, "Labels").
+#[test]
+fn labels_are_drawn_as_reviewed() {
+    check_set(
+        "labels",
+        "# Key labels G1–G8 (docs/key-text.md, \"Labels\"). DECKPILOT_BLESS=1 rewrites them.",
+        &labels(),
+        &icons(),
+    );
+}
+
+/// Every label case breaks its lines and places its boxes the same at
+/// every size (in units).
+#[test]
+fn label_layout_is_the_same_at_every_size() {
+    let icons = icons();
+    for case in labels() {
+        let at = |w: u32, h: u32| deckpilot_render::label_layout(&case.face, w, h, &icons);
+        let base = at(72, 72);
+        assert!(!base.is_empty(), "{}", case.name);
+        for (w, h) in [(96, 96), (120, 120), (144, 144), (216, 216), (80, 80)] {
+            let other = at(w, h);
+            assert_eq!(other.len(), base.len());
+            for (a, b) in base.iter().zip(&other) {
+                let close = |x: f32, y: f32| (x - y).abs() < 0.01;
+                assert!(
+                    close(a.x, b.x)
+                        && close(a.y, b.y)
+                        && close(a.width, b.width)
+                        && close(a.height, b.height)
+                        && close(a.font_points, b.font_points)
+                        && a.lines == b.lines
+                        && a.truncated == b.truncated
+                        && a.plate == b.plate,
+                    "{} {}x{}: {a:?} != {b:?}",
+                    case.name,
+                    w,
+                    h
+                );
+            }
+        }
+        // The touch zone and the 3x preview of it agree too.
+        let zone = at(200, 100);
+        let zone3 = at(600, 300);
+        for (a, b) in zone.iter().zip(&zone3) {
+            assert!(
+                (a.x - b.x).abs() < 0.01 && a.lines == b.lines,
+                "{}",
+                case.name
+            );
+        }
+    }
+}
+
+/// A key's own pixels outside its labels are those of the same key
+/// without labels: labels float, the title stays where it was.
+#[test]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "pixel coordinates of a 72 px key"
+)]
+fn labels_do_not_move_the_title() {
+    let icons = icons();
+    let plain = action("Mail").with_symbol(Some("mail"));
+    let with = labelled(
+        plain.clone(),
+        vec![label("a", "x", anchored(Spot::TopLeft))],
+    );
+    let frame = render_for(&plain, 72, 72, &icons, &DefaultAppearance::BUILTIN);
+    let labelled_frame = render_for(&with, 72, 72, &icons, &DefaultAppearance::BUILTIN);
+    let boxes = deckpilot_render::label_layout(&with, 72, 72, &icons);
+    let b = &boxes[0];
+    let mut differing_outside = 0;
+    for y in 0..72 {
+        for x in 0..72 {
+            let inside = (x as f32) >= b.x.floor() - 1.0
+                && (x as f32) <= b.x + b.width + 1.0
+                && (y as f32) >= b.y.floor() - 1.0
+                && (y as f32) <= b.y + b.height + 1.0;
+            if !inside && frame.pixel(x, y) != labelled_frame.pixel(x, y) {
+                differing_outside += 1;
+            }
+        }
+    }
+    assert_eq!(differing_outside, 0);
+    assert!(!b.overlaps_title);
 }
