@@ -1350,6 +1350,7 @@ export type AgentCapability =
   | "simulateInput"
   | "restoreBundled"
   | "livePreview"
+  | "displayTemplates"
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */
 export type AgentReload =

@@ -15,6 +15,7 @@
 //!   listings, pages, icon chunks), on both sides.
 //! * [`simulation`]: simulated presses of protocol 14.
 //! * [`live_preview`]: the editor's live preview of protocol 16.
+//! * [`display_templates`]: variables in key titles, protocol 17.
 //!
 //! Every connection starts with a `hello` carrying the protocol version and a
 //! random token that the agent writes to a file readable only by the current
@@ -22,6 +23,7 @@
 //! token is a second, platform-independent layer of access control.
 
 pub mod client;
+pub mod display_templates;
 pub mod endpoint;
 pub mod framing;
 pub mod instance;
