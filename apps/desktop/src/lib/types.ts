@@ -1,5 +1,6 @@
 // TypeScript mirrors of the serialized Rust types (camelCase serde names).
 
+import type { FaceLabel, KeyLabel, LabelBox } from "./key-labels"
 import type { ActionContext, ContextIncompatibility } from "./action-context"
 import type { ProfileCompleteness } from "./action-completeness"
 
@@ -581,6 +582,8 @@ export interface KeyAppearance {
   bold?: boolean | null
   italic?: boolean | null
   underline?: boolean | null
+  /** Further texts on the key, at most 8, in paint order (lib/key-labels.ts). */
+  labels?: KeyLabel[] | null
 }
 
 /** A font key titles may use (`deckpilot_core::TitleFont`). */
@@ -1153,6 +1156,8 @@ export interface KeyFace {
   series?: number[] | null
   /** The key's icon by name (lib/icons.ts), drawn by the renderer. */
   symbol?: string | null
+  /** The labels the key shows, resolved (lib/key-labels.ts); omitted when none. */
+  labels?: FaceLabel[]
 }
 
 /** What the agent knows about a key's live state (`StateSnapshot`). */
@@ -1201,6 +1206,11 @@ export interface ControlFace {
   incompatible?: { trigger: Trigger; reason: IncompatibilityReason; message: string }[]
   /** With `render`: how the title comes out on the device. */
   text?: TextLayoutReport
+  /**
+   * With `render`: where the renderer put each label shown, in canvas units
+   * (lib/key-labels.ts); omitted when the key shows no labels.
+   */
+  labelBoxes?: LabelBox[]
 }
 
 export type ConnectionState = "connected" | "disconnected"
@@ -1336,6 +1346,7 @@ export type AgentCapability =
   | "restoreBundled"
   | "livePreview"
   | "displayTemplates"
+  | "keyLabels"
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */
 export type AgentReload =
