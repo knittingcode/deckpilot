@@ -1871,7 +1871,6 @@ mod tests {
         assert!(!ok(&long));
     }
 
-    #[cfg(feature = "test-hooks")]
     /// A plugin that publishes the value it already published announces
     /// nothing, so no key is redrawn for it; a new value is announced once.
     #[test]
@@ -1924,6 +1923,7 @@ mod tests {
         assert_eq!(count(&mut announced), 1);
     }
 
+    #[cfg(feature = "test-hooks")]
     #[test]
     fn an_invocation_opens_at_most_a_few_urls() {
         let dir = std::env::temp_dir().join(format!("dp-opener-{}", std::process::id()));
