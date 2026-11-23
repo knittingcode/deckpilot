@@ -12,7 +12,9 @@
 //! Faces without labels never reach this module: their keys are drawn
 //! exactly as before labels existed.
 
-use deckpilot_core::appearance::labels::{CANVAS_UNITS, MAX_LABEL_CLUSTERS, PER_MILLE};
+use deckpilot_core::appearance::labels::{
+    CANVAS_UNITS, DEFAULT_COVER_PLATE_OPACITY, MAX_LABEL_CLUSTERS, PER_MILLE,
+};
 use deckpilot_core::{
     FaceLabel, IconFit, KeyAppearance, KeyFace, LabelBackground, LabelId, LabelLayer,
     LabelOverflow, LabelPosition, LabelWeight, Spot, TextAlign,
@@ -130,7 +132,7 @@ struct Scene {
 }
 
 fn scene(face: &KeyFace, width: u32, height: u32, icons: &Icons, colors: KeyColors) -> Scene {
-    let (canvas, scale) = Canvas::of(width, height);
+    let (canvas, _) = Canvas::of(width, height);
     let default_look = KeyAppearance::default();
     let look = face.appearance.as_ref().unwrap_or(&default_look);
     let own = own_icon(look, icons);
@@ -161,8 +163,17 @@ fn scene(face: &KeyFace, width: u32, height: u32, icons: &Icons, colors: KeyColo
             }
         });
     }
-    // The title's block as the title layout puts it (in pixels, at this
-    // size), across the text area.
+    // The title's block and the icon mark as the title layout puts them on
+    // the key at 72 units' size (one pixel a unit), so a label that grazes
+    // them is treated alike at every size.
+    let canonical = (
+        canvas.width.round().max(1.0) as u32,
+        canvas.height.round().max(1.0) as u32,
+    );
+    let unit = (
+        canvas.width / canonical.0 as f32,
+        canvas.height / canonical.1 as f32,
+    );
     let placed = layout(
         &Request {
             face,
@@ -171,8 +182,8 @@ fn scene(face: &KeyFace, width: u32, height: u32, icons: &Icons, colors: KeyColo
             has_mark: mark_of(face, own).is_some(),
             over_icon: matches!(own, Some(OwnIcon::Image(..))),
         },
-        width,
-        height,
+        canonical.0,
+        canonical.1,
     );
     let title = placed.block.map(|(top, bottom)| {
         let (left, right) = placed
@@ -185,19 +196,19 @@ fn scene(face: &KeyFace, width: u32, height: u32, icons: &Icons, colors: KeyColo
                 )
             });
         Rect {
-            left: left / scale,
-            top: top / scale,
-            right: right / scale,
-            bottom: bottom / scale,
+            left: left * unit.0,
+            top: top * unit.1,
+            right: right * unit.0,
+            bottom: bottom * unit.1,
         }
     });
     let mut marks: Vec<Rect> = placed
         .mark
         .map(|(left, top, side)| Rect {
-            left: left / scale,
-            top: top / scale,
-            right: (left + side) / scale,
-            bottom: (top + side) / scale,
+            left: left * unit.0,
+            top: top * unit.1,
+            right: (left + side) * unit.0,
+            bottom: (top + side) * unit.1,
         })
         .into_iter()
         .collect();
@@ -529,6 +540,17 @@ fn place(label: &FaceLabel, scene: &Scene) -> Placed {
             let over_mark = scene.marks.iter().any(|mark| mark.meets(bounds));
             let low_contrast = contrast(key_ink, scene.colors.background) < MIN_CONTRAST;
             plated_over_title = over_title;
+            // Over the title or a mark, a stronger plate, so what is under
+            // it does not show through (unless the label sets one).
+            let opacity = if over_title || over_mark {
+                f32::from(
+                    spec.background_opacity
+                        .unwrap_or(DEFAULT_COVER_PLATE_OPACITY)
+                        .min(100),
+                ) / 100.0
+            } else {
+                opacity
+            };
             (over_picture || over_title || over_mark || low_contrast).then(|| {
                 let dark = if luminance(key_ink) >= 0.5 {
                     [0, 0, 0]
