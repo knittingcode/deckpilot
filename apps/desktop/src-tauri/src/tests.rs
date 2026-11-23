@@ -230,7 +230,8 @@ fn configuration_flow_through_ipc() {
         "create_action",
         json!({
             "profileId": profile_id,
-            "action": { "name": "Broken", "actionType": "general.log", "parameters": {} }
+            "action": { "name": "Broken", "actionType": "general.log",
+                        "parameters": { "message": { "type": "integer", "value": 1 } } }
         }),
     );
     assert!(invalid.unwrap_err().as_str().unwrap().contains("message"));
@@ -335,7 +336,7 @@ fn actions_can_be_edited_duplicated_and_are_protected_while_used() {
     );
     assert_eq!(saved["id"], action["id"]);
     let mut invalid = saved.clone();
-    invalid["parameters"] = json!({});
+    invalid["parameters"] = json!({ "message": { "type": "boolean", "value": true } });
     assert!(
         h.call(
             "update_action",
@@ -4048,7 +4049,8 @@ fn plugin_actions_are_validated_against_what_the_agent_reported() {
     let after = types(&h);
     assert_eq!(after.len(), before.len() + 1);
     assert!(after.contains(&"acme.hello-weather.greet".to_owned()));
-    let missing = h
+    // Without its required name: saved as a draft that needs configuration.
+    let draft = h
         .call(
             "create_action",
             json!({
@@ -4056,8 +4058,17 @@ fn plugin_actions_are_validated_against_what_the_agent_reported() {
                 "action": { "name": "Greet", "actionType": "acme.hello-weather.greet", "parameters": {} }
             }),
         )
-        .unwrap_err();
-    assert!(missing.as_str().unwrap().contains("name"), "{missing}");
+        .unwrap();
+    assert_eq!(draft["incomplete"], json!(["name"]));
+    let view = h.ok("get_profile", json!({ "profileId": profile_id }));
+    assert_eq!(
+        view["incompleteActions"][draft["id"].as_str().unwrap()],
+        json!(["name"])
+    );
+    h.ok(
+        "delete_action",
+        json!({ "profileId": profile_id, "actionId": draft["id"] }),
+    );
     let action = greet("Greet").unwrap();
     let workflow = json!({
         "id": deckpilot_core::WorkflowId::new(), "name": "Hello", "steps": [],
@@ -4300,14 +4311,6 @@ fn invalid_plugin_actions_are_refused_when_saved_like_built_in_ones() {
     let name = json!({ "type": "text", "value": "Ada" });
     for (parameters, expected) in [
         (
-            json!({}),
-            "invalid parameters: parameter `name` is required",
-        ),
-        (
-            json!({ "name": { "type": "text", "value": "   " } }),
-            "invalid parameters: parameter `name` is required",
-        ),
-        (
             json!({ "name": { "type": "text", "value": "Augusta Ada" } }),
             "invalid parameters: parameter `name`: must be at most 8 characters",
         ),
@@ -4349,7 +4352,26 @@ fn invalid_plugin_actions_are_refused_when_saved_like_built_in_ones() {
         json!({ "count": { "type": "integer", "value": 99 }, "style": { "type": "choice", "value": "x" } }),
     ));
     assert!(several.starts_with("invalid parameters: "), "{several}");
-    assert_eq!(several.matches("; ").count(), 2, "{several}");
+    // The missing name is no problem when saving (a draft), the other two
+    // are.
+    assert_eq!(several.matches("; ").count(), 1, "{several}");
+    assert!(!several.contains("`name`"), "{several}");
+
+    // Without the required name, or with a blank one, it is saved as a
+    // draft that needs configuration, without a value for it.
+    for parameters in [
+        json!({}),
+        json!({ "name": { "type": "text", "value": "   " } }),
+    ] {
+        let draft = create("acme.checks.run", parameters.clone()).unwrap();
+        assert_eq!(draft["incomplete"], json!(["name"]), "{parameters}");
+        assert!(draft["parameters"].get("name").is_none(), "{parameters}");
+        h.call(
+            "delete_action",
+            json!({ "profileId": profile_id, "actionId": draft["id"] }),
+        )
+        .unwrap();
+    }
 
     // A valid one is saved, with the declared defaults filled in.
     let saved = create(
@@ -4702,4 +4724,131 @@ fn a_refresh_failure_after_the_commit_never_applies_the_import_twice() {
     let error = h.call_raw("apply_import", apply.clone()).unwrap_err();
     assert_eq!(error["code"], "invalid.previewAgain");
     assert_eq!(profile_count(&h), 2);
+}
+
+/// Dropping a type that needs a value saves a draft at once
+/// (`deckpilot_core::completeness`): every built-in type whose required
+/// parameters have no default is accepted without them and reports what
+/// it misses; its keys, gestures and Multi Action steps are saved and
+/// reported; filling the values in clears it.
+#[allow(clippy::too_many_lines)] // One draft through every editor.
+#[test]
+fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
+    let h = Harness::new();
+    let profile_id = new_profile(&h, "Work");
+    let registry = h.window.state::<AppState>().actions();
+    let needing: Vec<(String, Vec<String>)> = registry
+        .action_types()
+        .filter(|t| !t.deprecated)
+        .map(|t| {
+            let keys = t
+                .parameters
+                .iter()
+                .filter(|p| p.required && p.default.is_none())
+                .map(|p| p.key.clone())
+                .collect::<Vec<_>>();
+            (t.id.to_string(), keys)
+        })
+        .filter(|(_, keys)| !keys.is_empty())
+        .collect();
+    let ids: Vec<&str> = needing.iter().map(|(id, _)| id.as_str()).collect();
+    for wanted in [
+        "system.open-app",
+        "system.open-url",
+        "system.open-file",
+        "system.open-directory",
+    ] {
+        assert!(ids.contains(&wanted), "{wanted} needs a value: {ids:?}");
+    }
+    let mut drafts = std::collections::BTreeMap::new();
+    for (id, keys) in &needing {
+        let draft = h
+            .call(
+                "create_action",
+                json!({ "profileId": profile_id,
+                        "action": { "name": id, "actionType": id, "parameters": {} } }),
+            )
+            .unwrap_or_else(|e| panic!("{id}: {e}"));
+        assert_eq!(draft["incomplete"], json!(keys), "{id}");
+        drafts.insert(id.clone(), draft);
+    }
+    let view = h.ok("get_profile", json!({ "profileId": profile_id }));
+    assert_eq!(
+        view["incompleteActions"].as_object().unwrap().len(),
+        needing.len()
+    );
+    assert_eq!(
+        drafts["system.open-file"]["incomplete"],
+        json!(["location", "path"])
+    );
+    assert_eq!(
+        drafts["system.open-directory"]["incomplete"],
+        json!(["location"])
+    );
+    assert_eq!(
+        drafts["system.open-app"]["incomplete"],
+        json!(["application"])
+    );
+
+    // A wrong type for a value that is there is still refused.
+    let refused = h
+        .call(
+            "create_action",
+            json!({ "profileId": profile_id, "action": { "name": "Bad", "actionType": "system.open-url",
+                    "parameters": { "url": { "type": "integer", "value": 1 } } } }),
+        )
+        .unwrap_err();
+    assert!(refused.as_str().unwrap().contains("`url`"), "{refused}");
+
+    // On a key's press and long press, and as a Multi Action step.
+    let url = drafts["system.open-url"].clone();
+    let mut layout = h.ok(
+        "create_layout",
+        json!({ "profileId": profile_id, "modelId": "elgato.streamdeck.mk2", "name": "Main", "generate": false }),
+    );
+    layout["pages"][0]["bindings"] = json!([
+        { "control": { "kind": "key", "index": 0 }, "trigger": { "type": "press" },
+          "target": { "type": "action", "action": url["id"] } },
+        { "control": { "kind": "key", "index": 1 }, "trigger": { "type": "click" },
+          "target": { "type": "action", "action": url["id"] } },
+        { "control": { "kind": "key", "index": 1 }, "trigger": { "type": "longPress" },
+          "target": { "type": "action", "action": url["id"],
+                      "overrides": { "url": { "type": "text", "value": "https://example.com" } } } }
+    ]);
+    let saved = h.ok(
+        "save_layout",
+        json!({ "profileId": profile_id, "layout": layout }),
+    );
+    let incomplete = saved["incomplete"].as_array().unwrap();
+    assert_eq!(incomplete.len(), 2, "{incomplete:?}");
+    assert_eq!(incomplete[1]["site"]["trigger"], json!({ "type": "click" }));
+    assert_eq!(incomplete[1]["missing"], json!(["url"]));
+    let workflow = json!({
+        "id": deckpilot_core::WorkflowId::new(), "name": "Morning",
+        "steps": [{ "action": url["id"] }]
+    });
+    let saved = h.ok(
+        "save_workflow",
+        json!({ "profileId": profile_id, "workflow": workflow }),
+    );
+    assert_eq!(saved["incomplete"][0]["site"]["kind"], "step");
+    let view = h.ok("get_profile", json!({ "profileId": profile_id }));
+    assert_eq!(view["incompleteUses"].as_array().unwrap().len(), 3);
+
+    // Filling the value in clears the draft everywhere.
+    let mut completed = url.clone();
+    completed.as_object_mut().unwrap().remove("incomplete");
+    completed["parameters"]["url"] = json!({ "type": "text", "value": "https://example.org" });
+    let saved = h.ok(
+        "update_action",
+        json!({ "profileId": profile_id, "action": completed }),
+    );
+    assert!(saved.get("incomplete").is_none(), "{saved}");
+    let view = h.ok("get_profile", json!({ "profileId": profile_id }));
+    assert!(
+        view["incompleteActions"]
+            .get(url["id"].as_str().unwrap())
+            .is_none()
+    );
+    assert!(view.get("incompleteUses").is_none(), "{view}");
 }

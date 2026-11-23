@@ -4,6 +4,7 @@
 // (or reuses an action that already is exactly that) and binds it.
 
 import type { ActionInput } from "@/lib/api"
+import { missingParameters } from "@/lib/action-completeness"
 import { creatableTypes } from "@/lib/modules"
 import type { ActionPreset } from "./editing"
 import type {
@@ -78,7 +79,9 @@ function sameValue(a: ParameterValue | undefined, b: ParameterValue | undefined)
  * An action of the profile that is exactly a new action of the type would
  * be: the same type, the default settings and no label of its own. It is
  * reused, so dropping "Next page" on five keys leaves one action in the
- * Action Library, not five.
+ * Action Library, not five. An action that still needs configuration
+ * (a required parameter has no value) is never reused: each drop gets
+ * its own, so configuring one key does not change another.
  */
 export function existingDefault(
   actions: ActionInstance[],
@@ -90,6 +93,7 @@ export function existingDefault(
     (action) =>
       action.actionType === type.id &&
       !action.label &&
+      missingParameters(type, action.parameters).length === 0 &&
       keys.every((key) => sameValue(action.parameters[key], defaults[key])),
   )
 }
@@ -142,7 +146,8 @@ function presetParameters(type: ActionType, preset: ActionPreset): ActionParamet
 
 /**
  * An action of the profile that is exactly what `preset` makes: the same
- * type and settings and no label of its own. Reused like `existingDefault`.
+ * type and settings and no label of its own. Reused like `existingDefault`
+ * (never when it needs configuration).
  */
 export function existingPreset(
   actions: ActionInstance[],
@@ -157,6 +162,7 @@ export function existingPreset(
     (action) =>
       action.actionType === type.id &&
       !action.label &&
+      missingParameters(type, action.parameters).length === 0 &&
       keys.every((key) => sameValue(empty(action.parameters[key]), wanted[key])),
   )
 }

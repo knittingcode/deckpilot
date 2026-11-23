@@ -739,20 +739,31 @@ impl DeviceLayout {
                         ));
                     }
                 }
-                let errors = match definition.normalize(&instance.parameters.overlay(overrides)) {
-                    Ok(normalized) => {
-                        registry.validate_parameters(&instance.action_type, &normalized)
+                // The instance may be a draft (`crate::completeness`): a
+                // parameter it leaves missing does not stop the overrides
+                // from being checked, and is no problem of the binding's.
+                // An override is a value: a blank one for a required
+                // parameter is still refused (clear the override instead),
+                // as every agent before drafts refuses it.
+                let merged = instance.parameters.overlay(overrides);
+                let mut errors = match registry.normalize_draft(&instance.action_type, &merged) {
+                    Ok(_) => Vec::new(),
+                    Err(crate::RegistryError::InvalidParameters(errors)) => errors,
+                    Err(other) => {
+                        report(other.to_string());
+                        continue;
                     }
-                    Err(errors) => errors,
                 };
+                errors.extend(
+                    definition
+                        .missing(&merged)
+                        .into_iter()
+                        .map(ParameterError::Missing),
+                );
                 // Problems of the instance's own values are the
                 // instance's, reported where it is edited.
                 for error in errors {
-                    let (ParameterError::Unknown(key)
-                    | ParameterError::Missing(key)
-                    | ParameterError::WrongType { key, .. }
-                    | ParameterError::Invalid { key, .. }) = &error;
-                    if overrides.get(key).is_some() {
+                    if overrides.get(error.key()).is_some() {
                         report(error.to_string());
                     }
                 }

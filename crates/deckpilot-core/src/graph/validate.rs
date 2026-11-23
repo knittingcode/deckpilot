@@ -34,14 +34,24 @@ pub struct GraphIssue {
     pub node: Option<NodeId>,
     pub severity: IssueSeverity,
     pub message: String,
+    /// [`crate::CONFIGURATION_INCOMPLETE`]: a required parameter of the
+    /// node (`parameter`) has no value. Still an error, so the graph does
+    /// not run, but saving the workflow does not refuse it. Not sent
+    /// otherwise, so older readers see the issue as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameter: Option<String>,
 }
 
 impl GraphIssue {
-    fn error(node: Option<&NodeId>, message: impl Into<String>) -> Self {
+    pub(crate) fn error(node: Option<&NodeId>, message: impl Into<String>) -> Self {
         Self {
             node: node.cloned(),
             severity: IssueSeverity::Error,
             message: message.into(),
+            code: None,
+            parameter: None,
         }
     }
 
@@ -50,6 +60,17 @@ impl GraphIssue {
             node: node.cloned(),
             severity: IssueSeverity::Warning,
             message: message.into(),
+            code: None,
+            parameter: None,
+        }
+    }
+
+    /// A required parameter of `node` has no value.
+    fn incomplete(node: &NodeId, parameter: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: Some(crate::CONFIGURATION_INCOMPLETE.to_owned()),
+            parameter: Some(parameter.to_owned()),
+            ..Self::error(Some(node), message)
         }
     }
 }
@@ -1131,11 +1152,15 @@ impl<'a> Checker<'a> {
         match definition.normalize(configured) {
             Err(errors) => {
                 for error in errors {
-                    if let crate::ParameterError::Missing(key) = &error
-                        && mappings.contains_key(key)
-                    {
-                        stopped = true;
-                        break;
+                    if let crate::ParameterError::Missing(key) = &error {
+                        if mappings.contains_key(key) {
+                            stopped = true;
+                            break;
+                        }
+                        // A draft (`crate::completeness`): saved, not run.
+                        self.issues
+                            .push(GraphIssue::incomplete(id, key, error.to_string()));
+                        continue;
                     }
                     self.issues
                         .push(GraphIssue::error(Some(id), error.to_string()));

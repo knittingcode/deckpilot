@@ -2828,6 +2828,71 @@ mod tests {
         assert_eq!(runtime.key_gestures(&device(), key), None);
     }
 
+    /// A draft (an action whose required parameter has no value yet) on a
+    /// key's click and, completed by its override, on the double click:
+    /// the layout stays compatible, the click is refused as incomplete
+    /// before anything runs, and the double click runs.
+    #[test]
+    fn a_draft_on_a_gesture_is_refused_and_its_completed_override_runs() {
+        let (mut f, _) = gesture_fixture();
+        let draft = registry()
+            .create_instance(
+                "Echo",
+                crate::testing::echo_type(),
+                &ActionParameters::new(),
+            )
+            .unwrap();
+        let draft_id = draft.id;
+        f.profile.actions.push(draft);
+        let key = ControlId::Key { index: 4 };
+        let home = f.profile.layouts[0].home_page;
+        f.profile.layouts[0]
+            .page_mut(home)
+            .unwrap()
+            .bindings
+            .extend([
+                ControlBinding::new(key, Trigger::Click, BindingTarget::action(draft_id)),
+                ControlBinding::new(
+                    key,
+                    Trigger::DoubleClick,
+                    BindingTarget::Action {
+                        action: draft_id,
+                        overrides: ActionParameters::new()
+                            .with("message", ParameterValue::Text("hello".into())),
+                    },
+                ),
+            ]);
+        let mut runtime = runtime();
+        runtime.set_profile(Some(f.profile.clone()), None);
+        connect(&mut runtime, &device());
+        assert!(matches!(
+            runtime.device_layout_status(&device()),
+            LayoutStatus::Compatible { .. }
+        ));
+        let RuntimeOutcome::Action { result, .. } = runtime
+            .dispatch_gesture(&device(), key, Gesture::Click)
+            .unwrap()
+        else {
+            panic!("the click runs its binding");
+        };
+        assert_eq!(
+            result.code.as_deref(),
+            Some(crate::CONFIGURATION_INCOMPLETE)
+        );
+        assert_eq!(
+            result.data.get("missing").map(String::as_str),
+            Some("message")
+        );
+        let RuntimeOutcome::Action { result, .. } = runtime
+            .dispatch_gesture(&device(), key, Gesture::DoubleClick)
+            .unwrap()
+        else {
+            panic!("the double click runs its binding");
+        };
+        assert!(result.is_success(), "{result:?}");
+        assert_eq!(result.message, "hello");
+    }
+
     #[test]
     fn stateful_gestures_are_handed_to_the_caller() {
         let mut f = fixture();

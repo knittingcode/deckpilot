@@ -15,6 +15,15 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Fixed
+
+- An action that needs a value, such as Open application, can now be put
+  on a key or gesture, into a Multi Action or into a workflow before you
+  fill it in. Until then it is saved as "Needs configuration" and is never
+  run: a press, a step or a workflow that reaches it is refused before
+  anything happens, and says which settings are missing. A wrong value is
+  still refused when saving. Nothing changes for configured actions.
+
 ### Changed
 
 - Built-in actions now declare where they make sense; nothing changes yet

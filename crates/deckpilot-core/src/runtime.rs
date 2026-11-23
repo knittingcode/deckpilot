@@ -1516,7 +1516,16 @@ mod tests {
             .run_action(&f.profile, &machine(), &mut context, id)
             .unwrap();
         assert!(!result.is_success());
-        assert!(result.message.contains("invalid configuration"));
+        // A stored instance without its required value needs configuration.
+        assert_eq!(
+            result.code.as_deref(),
+            Some(crate::CONFIGURATION_INCOMPLETE)
+        );
+        assert_eq!(
+            result.data.get("missing").map(String::as_str),
+            Some("message")
+        );
+        assert!(result.message.contains("parameter `message` is required"));
     }
 
     #[test]

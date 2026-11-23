@@ -289,6 +289,55 @@ never contain a value, e.g. ``parameter `project_id`: {{ system.project.current.
 (codes `reference-missing`, `reference-type`, `reference-denied`,
 `reference-unavailable`).
 
+### 7.1 Draft actions (configuration incomplete)
+
+An action instance, a binding (any trigger: press, release, click, double
+click, long press, rotation, touch), a Multi Action step and a workflow
+node may be **saved** before the required parameters of its type have a
+value; it may not **run** until they do (`crates/deckpilot-core/src/
+completeness.rs`).
+
+- **Saving** uses `ActionType::normalize_draft` / `ActionRegistry::
+  normalize_draft` (through `validate_instance`, the step and node checks
+  and `DeviceLayout::check_overrides`). A required parameter that is
+  absent with no declared default, or blank (text, code, credential, a
+  list without items, an empty project role, a blank template), is listed
+  as missing. Every other problem is still refused: unknown parameters,
+  wrong types for the values that are present, lengths, ranges, choices,
+  and the handler's own checks for the parameters that are there. A
+  missing value is left out and never replaced by anything.
+- **An override is a value.** A binding's or step's override that blanks
+  a required parameter is refused, as before. Clear the override instead.
+  Overrides that fill in what the instance misses make that use complete.
+- **Running.** `resolve_parameters` checks completeness first, on the
+  configured values (instance plus overrides plus mappings). It checks
+  again after references are resolved, because a template can render
+  empty. A run with something missing fails before any reference is
+  resolved and before any handler, built-in or plugin, is called:
+  `code: "configuration-incomplete"`, `data.missing` with the keys
+  separated by commas, and a message naming them. Required parameters
+  with a declared default are complete, as they always were. Contexts,
+  `requiresProject`, availability, capabilities and profile ownership
+  are checked as before. A workflow graph with an incomplete node keeps
+  that issue as an error (`GraphIssue.code` `configuration-incomplete`,
+  `parameter`), so the graph does not start. Only saving ignores such an
+  issue. A Multi Action runs step by step: the incomplete step fails with
+  the code, and the other steps follow their conditions.
+- **Representation.** Nothing is stored. Completeness is computed from the
+  type's schema on demand: `incompleteActions` and `incompleteUses` of
+  `get_profile`, `incomplete` of the save answers (all omitted when
+  empty). No migration, no new field in profiles, ids unchanged.
+- **Older agents** (0.12.0 and 0.13.0 share this core) load such profiles
+  unchanged. The agent never validates instance parameters when it loads
+  a profile. Its layout check reports only problems of override keys, and
+  a draft binding has none. A draft's run fails in `resolve_parameters`
+  before the handler, as `invalid configuration: parameter … is required`
+  without the code. A graph with an unmapped incomplete node is not
+  runnable, as now. `crates/deckpilot-core/tests/fixtures/
+  draft-profile.json` is the saved shape these agents were run against.
+  An older app refuses to save an action or a step override that is still
+  incomplete. It does not refuse a layout with a draft binding.
+
 ## 8. Dependency injection
 
 `ExecutionDependencies<'a>` bundles `&dyn` services handed to an execution
