@@ -357,8 +357,11 @@ export const api = {
   listBrowsers: () => invoke<{ browsers: InstalledApp[]; default?: string }>("list_browsers"),
   /** A listed application's icon as a small PNG data URL, or `null`. */
   applicationIcon: (id: string) => invoke<string | null>("application_icon", { id }),
-  /** Whether a bound application is still installed on this computer. */
-  applicationPresent: (id: string) => invoke<boolean>("application_present", { id }),
+  /**
+   * Whether a bound application is still installed on this computer; `null`
+   * when that cannot be checked (an AppUserModelID, a bare name).
+   */
+  applicationPresent: (id: string) => invoke<boolean | null>("application_present", { id }),
   /** A picked application file as a binding stores it (bundle id, App Paths name, desktop id, path). */
   describeApplication: (path: string) => invoke<InstalledApp>("describe_application", { path }),
   /** This computer's default gesture timings (`gestures.defaults`). */

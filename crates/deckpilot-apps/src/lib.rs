@@ -48,7 +48,7 @@ pub mod xdg;
 
 pub use discovery::{Roots, discover, discover_in};
 pub use id::{AppId, MAX_VALUE_LEN, Platform};
-pub use launch::{Launchable, launchable, launchable_in};
+pub use launch::{Launchable, launchable, launchable_in, presence, presence_in};
 
 use serde::Serialize;
 

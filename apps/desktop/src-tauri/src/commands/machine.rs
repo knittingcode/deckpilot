@@ -218,19 +218,22 @@ fn icon_for(id: &str) -> Option<String> {
 }
 
 /// Whether application `id` (a binding's value) is installed on this
-/// computer: what Open Application would open exists (a bundle id
-/// `LaunchServices` knows, an installed desktop entry, an App Paths
-/// registration, an existing path). Nothing is read or started.
+/// computer (`deckpilot_apps::presence`): `Some` for a bundle id, a
+/// desktop-file id, an App Paths name or a path; `None` (unknown) for an
+/// `AppUserModelID` or a bare name, which cannot be checked without
+/// starting it, and for a network path. Nothing is read or started.
 #[tauri::command]
 pub async fn application_present<R: Runtime>(
     window: WebviewWindow<R>,
     id: String,
-) -> CommandResult<bool> {
+) -> CommandResult<Option<bool>> {
     main_only(&window)?;
     tauri::async_runtime::spawn_blocking(move || {
         let trimmed = id.trim();
-        !(trimmed.starts_with("\\\\") || trimmed.starts_with("//"))
-            && deckpilot_apps::launchable(trimmed, &[]).is_ok()
+        if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+            return None;
+        }
+        deckpilot_apps::presence(trimmed)
     })
     .await
     .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))

@@ -478,7 +478,8 @@ function ApplicationPicker({
     : undefined
   // Not in the list: asked whether it is still installed (it may be outside
   // the folders discovery reads, or uninstalled).
-  const [present, setPresent] = useState<{ id: string; installed: boolean } | null>(null)
+  // `installed: null`: it cannot be checked, so no alert either way.
+  const [present, setPresent] = useState<{ id: string; installed: boolean | null } | null>(null)
   const unlisted = value !== null && apps !== null && !chosen ? value : null
   useEffect(() => {
     if (unlisted === null) return
@@ -488,14 +489,14 @@ function ApplicationPicker({
         if (!cancelled) setPresent({ id: unlisted, installed })
       },
       () => {
-        if (!cancelled) setPresent({ id: unlisted, installed: true })
+        if (!cancelled) setPresent({ id: unlisted, installed: null })
       },
     )
     return () => {
       cancelled = true
     }
   }, [unlisted])
-  const gone = unlisted !== null && present?.id === unlisted && !present.installed
+  const gone = unlisted !== null && present?.id === unlisted && present.installed === false
   const label = t("actions:system.picker.chooseApplication")
   return (
     <>

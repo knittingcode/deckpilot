@@ -339,13 +339,17 @@ answers the main window only and refuses other windows):
   (`NSWorkspace iconForFile` into a new bitmap inside an autorelease pool;
   `SHGetFileInfoW` with COM initialized on the thread; on Linux the
   `hicolor` theme or `/usr/share/pixmaps`, where `..` is refused and every
-  candidate's real path, links resolved, must be inside those folders),
+  candidate's real path, links resolved, must be inside those folders, or,
+for NixOS and Guix themes, a PNG in `/nix/store` or `/gnu/store` linked
+from inside them),
   decoded, scaled to at most 64×64 and encoded again as a PNG of at most
   64 KiB. At most 8 requests run at a time; up to 512 icons are cached,
   the oldest dropped first, and a failed icon is asked for again.
 - `application_present(id)`: whether a bound application is still
   installed (what Open Application would open exists), so an application
-  chosen outside the listed folders is not called missing.
+  chosen outside the listed folders is not called missing; unknown (no
+  alert) for an `AppUserModelID` or a bare name, which cannot be checked
+  without starting it.
 - `describe_application(path)`: a picked file as its stable id.
 
 Website validation, the inspector panels (Save and Test, the long press of

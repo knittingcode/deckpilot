@@ -303,6 +303,30 @@ describe("the machine-local pickers", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("not installed on this computer")
   })
 
+  it("show no alert for an application that cannot be checked", async () => {
+    api.applicationPresent.mockResolvedValue(null)
+    bindings = [
+      {
+        key: "app.calculator-123456",
+        kind: "application",
+        value: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+      },
+    ]
+    render(
+      <MachineResourceField
+        id="f"
+        pick="application"
+        value={{ type: "fixed", key: "app.calculator-123456" }}
+        optional={false}
+        onChange={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(api.applicationPresent).toHaveBeenCalled()
+    })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+  })
+
   it("choose another application with the native dialog, limited to applications", async () => {
     dialog.open.mockResolvedValue("/Applications/Editor.app")
     api.describeApplication.mockResolvedValue({

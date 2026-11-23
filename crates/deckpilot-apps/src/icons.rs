@@ -94,15 +94,32 @@ fn is_network_path(path: &Path) -> bool {
     text.starts_with("\\\\") || text.starts_with("//")
 }
 
+/// Read-only package stores whose files icon themes link to (NixOS, Guix).
+const STORES: [&str; 2] = ["/nix/store", "/gnu/store"];
+
 /// `path`, with its links resolved, when it is inside one of `roots`
-/// (also with their links resolved).
+/// (also with their links resolved). A link out of an icon folder is
+/// followed only into a package store ([`STORES`]), and only when `path`
+/// itself, as written, is inside one of `roots` and the target is a PNG:
+/// NixOS and Guix themes are such links.
 fn contained(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     let real = std::fs::canonicalize(path).ok()?;
-    roots
+    let inside = roots
         .iter()
         .filter_map(|root| std::fs::canonicalize(root).ok())
-        .any(|root| real.starts_with(root))
-        .then_some(real)
+        .any(|root| real.starts_with(root));
+    if inside {
+        return Some(real);
+    }
+    let written_inside = roots.iter().any(|root| path.starts_with(root));
+    let png = real
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    (written_inside && png && in_store(&real)).then_some(real)
+}
+
+fn in_store(real: &Path) -> bool {
+    STORES.iter().any(|store| real.starts_with(store))
 }
 
 fn read_bounded(path: &Path) -> Option<Vec<u8>> {
@@ -189,6 +206,16 @@ mod tests {
             .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
             .unwrap();
         out
+    }
+
+    #[test]
+    fn package_stores_are_the_only_place_a_theme_link_may_lead() {
+        assert!(in_store(Path::new(
+            "/nix/store/abc-hicolor/48x48/apps/x.png"
+        )));
+        assert!(in_store(Path::new("/gnu/store/abc-icons/x.png")));
+        assert!(!in_store(Path::new("/nix/storefront/x.png")));
+        assert!(!in_store(Path::new("/home/me/.ssh/x.png")));
     }
 
     #[test]
