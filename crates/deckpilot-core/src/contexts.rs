@@ -346,10 +346,12 @@ impl ContextWarnings for NoContextWarnings {
 
 /// The engine's execution guard for contexts (decision D1 of the action
 /// context audit: warn, do not refuse). A run in a context its type does
-/// not declare still runs; the first such run of each binding, step or
-/// node since the engine was made (the configuration was loaded) is
-/// reported. A binding, step or node is told apart by its action instance,
-/// its context and its workflow.
+/// not declare still runs; the first such run of each (context, workflow,
+/// action instance) since the engine was made is reported. That is
+/// coarser than one binding, step or node: two keys or two steps that use
+/// the same instance in the same context share a warning. The agent makes
+/// a new engine on every configuration reload, so the warning comes again
+/// after each one.
 pub struct ContextGuard {
     sink: std::sync::Arc<dyn ContextWarnings>,
     seen: std::sync::Mutex<BTreeSet<(ActionContext, Option<crate::WorkflowId>, ActionInstanceId)>>,

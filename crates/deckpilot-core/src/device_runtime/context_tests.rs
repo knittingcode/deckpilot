@@ -257,3 +257,44 @@ fn a_random_pick_runs_as_a_key_and_a_detached_action_keeps_its_context() {
     assert!(run.run().unwrap().is_success());
     assert_eq!(s.recorder.contexts(), Vec::new());
 }
+
+/// A request serialized before `context` existed reads as one without a
+/// context, and one without a context serializes as before.
+#[test]
+fn an_action_request_without_a_context_reads_and_writes_as_before() {
+    let action = ActionInstanceId::new();
+    let without = RuntimeOutcome::ActionRequested {
+        action,
+        overrides: ActionParameters::new(),
+        device: device(),
+        context: None,
+    };
+    let json = serde_json::to_value(&without).unwrap();
+    // Internally tagged: the request's fields sit beside `type`.
+    assert_eq!(json["type"], "actionRequested");
+    assert!(json.get("context").is_none(), "{json}");
+    assert_eq!(
+        serde_json::from_value::<RuntimeOutcome>(json.clone()).unwrap(),
+        without
+    );
+
+    // The same with a context: only the field is added, and it reads back.
+    let with = RuntimeOutcome::ActionRequested {
+        action,
+        overrides: ActionParameters::new(),
+        device: device(),
+        context: Some(ActionContext::Gesture),
+    };
+    let written = serde_json::to_string(&with).unwrap();
+    assert!(written.contains(r#""context":"gesture""#), "{written}");
+    assert_eq!(
+        serde_json::from_str::<RuntimeOutcome>(&written).unwrap(),
+        with
+    );
+    let older = written.replace(r#","context":"gesture""#, "");
+    assert_eq!(serde_json::to_string(&without).unwrap(), older);
+    assert_eq!(
+        serde_json::from_str::<RuntimeOutcome>(&older).unwrap(),
+        without
+    );
+}

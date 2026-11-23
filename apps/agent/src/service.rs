@@ -2220,8 +2220,8 @@ const SLOW_RELOAD: Duration = Duration::from_millis(500);
 
 /// The agent's log of runs outside their action's contexts
 /// (`deckpilot_core::contexts`, decision D1: warn, do not refuse). The
-/// engine reports the first run of each binding, step or node since the
-/// configuration was loaded; it ran.
+/// engine reports the first run of each context, workflow and action
+/// instance since the configuration was loaded; it ran.
 struct ContextLog;
 
 impl deckpilot_core::ContextWarnings for ContextLog {

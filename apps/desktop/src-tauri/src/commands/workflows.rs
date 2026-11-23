@@ -147,3 +147,74 @@ pub fn delete_workflow(
         Ok(())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use deckpilot_core::{
+        ActionContext, ActionInstanceId, ContextIssue, ContextSite, IncompatibilityReason,
+        OnFailure,
+    };
+
+    use super::*;
+    use crate::commands::reload::AgentReload;
+
+    fn workflow() -> Workflow {
+        Workflow::new("Steps").step(ActionInstanceId::new(), OnFailure::Stop)
+    }
+
+    /// Without issues, a save answers exactly what it did before
+    /// `contextIssues` existed: the workflow and `agentReload`, flattened.
+    #[test]
+    fn a_saved_workflow_without_issues_serializes_as_before() {
+        let workflow = workflow();
+        let before = serde_json::to_value(Saved {
+            value: workflow.clone(),
+            agent_reload: AgentReload::Applied,
+        })
+        .unwrap();
+        let now = serde_json::to_value(Saved {
+            value: SavedWorkflow {
+                workflow: workflow.clone(),
+                context_issues: Vec::new(),
+            },
+            agent_reload: AgentReload::Applied,
+        })
+        .unwrap();
+        assert_eq!(now, before);
+        assert!(now.get("contextIssues").is_none());
+
+        // With one, only the field is added.
+        let action = workflow.steps[0].action;
+        let mut reported = serde_json::to_value(Saved {
+            value: SavedWorkflow {
+                workflow,
+                context_issues: vec![ContextIssue {
+                    site: ContextSite::Step { index: 0 },
+                    action,
+                    reason: IncompatibilityReason::ContextUnsupported {
+                        context: ActionContext::Sequence,
+                        supported: vec![ActionContext::Key, ActionContext::Gesture],
+                    },
+                    stored: false,
+                }],
+            },
+            agent_reload: AgentReload::Applied,
+        })
+        .unwrap();
+        let issues = reported.as_object_mut().unwrap().remove("contextIssues");
+        assert_eq!(reported, before);
+        assert_eq!(
+            issues,
+            Some(serde_json::json!([{
+                "site": { "kind": "step", "index": 0 },
+                "action": action,
+                "reason": {
+                    "type": "contextUnsupported",
+                    "context": "sequence",
+                    "supported": ["key", "gesture"],
+                },
+                "stored": false,
+            }]))
+        );
+    }
+}
