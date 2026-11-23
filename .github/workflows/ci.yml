@@ -140,6 +140,10 @@ jobs:
       # (#419); the job's own 60-minute limit still catches a real hang.
       - run: cargo test --workspace --locked
         timeout-minutes: 40
+      # What real application, browser and icon discovery finds on this
+      # runner, printed (the tests above ran it without output).
+      - name: Application discovery on this runner
+        run: cargo test -p deckpilot-apps --test discovery --locked -- --nocapture --test-threads 1
       # The registry publishing tool and its end-to-end tests sit behind the
       # crate's optional `publish` feature. `cargo test --workspace` above
       # already runs them on every OS (the agent's and the app's

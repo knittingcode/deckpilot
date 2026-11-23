@@ -5,7 +5,7 @@
 // bind, and the localized names of the built-in System actions.
 
 import { i18n, type TranslationKey } from "@/i18n"
-import type { ActionType, MachineResourceBinding, ResourceKind } from "@/lib/types"
+import type { ActionType, MachineResourceBinding, Os, ResourceKind, ResourceRef } from "@/lib/types"
 
 export const WEBSITE = "system.open-url"
 export const OPEN = "system.open-file"
@@ -102,6 +102,52 @@ export function slug(name: string): string {
     .slice(0, 40)
     .replace(/-+$/g, "")
   return plain === "" ? "item" : plain
+}
+
+/**
+ * Whether a resource reference is one the pickers made (a key of this
+ * computer: `app.…`, `file.…`, `folder.…`, or an import's unbound
+ * `import.…`), shown in the simple mode; a project role or any other key
+ * opens in advanced mode. No value is simple.
+ */
+export function isLocalReference(reference: ResourceRef | null): boolean {
+  if (reference === null) return true
+  if (reference.type === "projectRole") return reference.role.trim() === ""
+  const key = reference.key.trim()
+  return key === "" || /^(app|file|folder|import)\./.test(key)
+}
+
+/**
+ * The native dialog's filter for "Choose another…": application bundles on
+ * macOS, programs and shortcuts on Windows, desktop entries on Linux (where
+ * a program has no extension, so every file is offered too).
+ */
+export function applicationFilters(
+  os: Os,
+  name: string,
+): { name: string; extensions: string[] }[] | undefined {
+  switch (os) {
+    case "macOs":
+      return [{ name, extensions: ["app"] }]
+    case "windows":
+      return [{ name, extensions: ["exe", "lnk"] }]
+    case "linux":
+      return [
+        { name, extensions: ["desktop"] },
+        { name: "*", extensions: ["*"] },
+      ]
+    case "other":
+      return undefined
+  }
+}
+
+/**
+ * The secondary parameters of a machine-local one (Open's and Open
+ * folder's file or subfolder inside a folder): drawn only on request or
+ * when set.
+ */
+export function isSecondaryParameter(actionType: string | undefined, key: string): boolean {
+  return (actionType === OPEN || actionType === OPEN_FOLDER) && key === "path"
 }
 
 /** A short random suffix for a new key: 6 lower-case letters or digits. */
@@ -242,9 +288,10 @@ export function parameterTexts(
 export function machinePick(
   actionType: string | undefined,
   key: string,
-): "application" | "browser" | "location" | null {
+): "application" | "browser" | "location" | "folder" | null {
   if (actionType === WEBSITE && key === "browser") return "browser"
   if (actionType === OPEN && key === "location") return "location"
+  if (actionType === OPEN_FOLDER && key === "location") return "folder"
   if (
     (actionType === OPEN || actionType === OPEN_APPLICATION || actionType === CLOSE_APPLICATION) &&
     key === "application"

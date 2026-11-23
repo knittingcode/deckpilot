@@ -10,8 +10,10 @@
 
 use std::path::PathBuf;
 
+use objc2::runtime::NSObjectProtocol as _;
+use objc2::sel;
 use objc2_app_kit::{NSRunningApplication, NSWorkspace};
-use objc2_foundation::NSString;
+use objc2_foundation::{NSString, NSURL};
 
 use crate::{AppError, codes};
 
@@ -20,6 +22,36 @@ pub fn bundle_path(id: &str) -> Option<PathBuf> {
     let workspace = NSWorkspace::sharedWorkspace();
     let url = workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str(id))?;
     url.path().map(|path| PathBuf::from(path.to_string()))
+}
+
+fn https_probe() -> Option<objc2::rc::Retained<NSURL>> {
+    NSURL::URLWithString(&NSString::from_str("https://example.com/"))
+}
+
+/// The application `LaunchServices` opens `https` pages with: the default
+/// browser.
+pub fn default_browser() -> Option<PathBuf> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let probe = https_probe()?;
+    let url = workspace.URLForApplicationToOpenURL(&probe)?;
+    url.path().map(|path| PathBuf::from(path.to_string()))
+}
+
+/// Every application `LaunchServices` knows to open `https` pages (macOS 12
+/// and later; `None` before, where the bundles' `Info.plist` decide).
+pub fn browsers() -> Option<Vec<PathBuf>> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    if !workspace.respondsToSelector(sel!(URLsForApplicationsToOpenURL:)) {
+        return None;
+    }
+    let probe = https_probe()?;
+    let urls = workspace.URLsForApplicationsToOpenURL(&probe);
+    Some(
+        urls.to_vec()
+            .iter()
+            .filter_map(|url| url.path().map(|p| PathBuf::from(p.to_string())))
+            .collect(),
+    )
 }
 
 /// The process ids of the running applications with bundle id `id`.
