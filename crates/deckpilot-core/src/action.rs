@@ -394,7 +394,8 @@ impl ParameterError {
 /// binding, a step or a node that is not configured yet.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DraftParameters {
-    /// The values, with defaults filled in; a missing value is absent.
+    /// The values, with defaults filled in. A missing value is absent, or
+    /// blank as it was given.
     pub parameters: ActionParameters,
     /// Required parameters without a value, in the schema's order. Empty:
     /// the parameters are complete and [`ActionType::normalize`] accepts
@@ -430,23 +431,30 @@ impl ActionType {
     /// default, or blank) is listed in [`DraftParameters::missing`] instead
     /// of refused. Every other problem (unknown parameters, wrong types,
     /// lengths, ranges, choices) is still refused. No value is invented
-    /// for a missing parameter.
+    /// for a missing parameter, and a blank value is kept as it was typed:
+    /// it is not replaced by the declared default, and stays missing until
+    /// it is filled in.
     pub fn normalize_draft(
         &self,
         parameters: &ActionParameters,
     ) -> Result<DraftParameters, Vec<ParameterError>> {
-        let (parameters, errors) = self.check_all(parameters);
+        let (mut normalized, errors) = self.check_all(parameters);
         let (missing, errors): (Vec<_>, Vec<_>) = errors
             .into_iter()
             .partition(|error| matches!(error, ParameterError::Missing(_)));
-        if errors.is_empty() {
-            Ok(DraftParameters {
-                parameters,
-                missing: missing.iter().map(|e| e.key().to_owned()).collect(),
-            })
-        } else {
-            Err(errors)
+        if !errors.is_empty() {
+            return Err(errors);
         }
+        let missing: Vec<String> = missing.iter().map(|e| e.key().to_owned()).collect();
+        for key in &missing {
+            if let Some(blank) = parameters.get(key) {
+                normalized.0.insert(key.clone(), blank.clone());
+            }
+        }
+        Ok(DraftParameters {
+            parameters: normalized,
+            missing,
+        })
     }
 
     /// The required parameters `parameters` leave without a value, in the

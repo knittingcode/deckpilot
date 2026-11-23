@@ -304,16 +304,19 @@ completeness.rs`).
   list without items, an empty project role, a blank template), is listed
   as missing. Every other problem is still refused: unknown parameters,
   wrong types for the values that are present, lengths, ranges, choices,
-  and the handler's own checks for the parameters that are there. A
-  missing value is left out and never replaced by anything.
-- **An override is a value.** A binding's or step's override that blanks
+  and the handler's own checks for the parameters that are there (for a
+  node too). A missing value is never replaced by anything: an absent one
+  stays absent, a blank one is stored as typed (even over a declared
+  default) and stays missing.
+- **An override is a value.** A binding's, step's or node's override that blanks
   a required parameter is refused, as before. Clear the override instead.
   Overrides that fill in what the instance misses make that use complete.
 - **Running.** `resolve_parameters` checks completeness first, on the
   configured values (instance plus overrides plus mappings). It checks
   again after references are resolved, because a template can render
   empty. A run with something missing fails before any reference is
-  resolved and before any handler, built-in or plugin, is called:
+  resolved and before any handler, built-in or plugin, is called, and
+  before `requiresProject` is checked:
   `code: "configuration-incomplete"`, `data.missing` with the keys
   separated by commas, and a message naming them. Required parameters
   with a declared default are complete, as they always were. Contexts,

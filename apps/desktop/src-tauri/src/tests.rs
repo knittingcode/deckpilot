@@ -4358,14 +4358,14 @@ fn invalid_plugin_actions_are_refused_when_saved_like_built_in_ones() {
     assert!(!several.contains("`name`"), "{several}");
 
     // Without the required name, or with a blank one, it is saved as a
-    // draft that needs configuration, without a value for it.
+    // draft that needs configuration; a blank name is kept as typed.
     for parameters in [
         json!({}),
         json!({ "name": { "type": "text", "value": "   " } }),
     ] {
         let draft = create("acme.checks.run", parameters.clone()).unwrap();
         assert_eq!(draft["incomplete"], json!(["name"]), "{parameters}");
-        assert!(draft["parameters"].get("name").is_none(), "{parameters}");
+        assert_eq!(draft["parameters"], parameters, "{parameters}");
         h.call(
             "delete_action",
             json!({ "profileId": profile_id, "actionId": draft["id"] }),

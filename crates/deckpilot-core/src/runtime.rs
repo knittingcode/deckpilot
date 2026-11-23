@@ -928,15 +928,26 @@ impl Engine {
         // `not-from-a-key` (`settle_request`).
         self.contexts
             .check(handler.definition(), instance, invocation);
+        let configured = match overrides {
+            Some(overrides) => instance.parameters.overlay(overrides),
+            None => instance.parameters.clone(),
+        };
+        // An action that needs configuration says so before anything else
+        // about the run (`crate::completeness`); `resolve_parameters`
+        // checks again after resolving references.
+        let missing = handler.definition().missing(&configured);
+        if !missing.is_empty() {
+            return Ok(crate::resolution::ResolutionFailure::Incomplete {
+                missing,
+                other: Vec::new(),
+            }
+            .into_result());
+        }
         if handler.definition().requires_project && project.is_none() {
             return Ok(ActionResult::failure(
                 "this action requires an active project",
             ));
         }
-        let configured = match overrides {
-            Some(overrides) => instance.parameters.overlay(overrides),
-            None => instance.parameters.clone(),
-        };
         let Resolved {
             parameters,
             redactor,

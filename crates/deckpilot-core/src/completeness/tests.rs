@@ -87,6 +87,18 @@ impl ActionHandler for Open {
         &self.definition
     }
 
+    /// A check of its own beyond the schema, on a value that is there.
+    fn validate(&self, parameters: &ActionParameters) -> Vec<ParameterError> {
+        if parameters.integer("count") == Some(7) {
+            vec![ParameterError::Invalid {
+                key: "count".into(),
+                reason: "7 is not allowed".into(),
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn execute(
         &self,
         parameters: &ActionParameters,
@@ -111,8 +123,12 @@ struct World {
 }
 
 fn registry_with(runs: &Arc<AtomicUsize>, capabilities: Option<&[Capability]>) -> ActionRegistry {
+    registry_of(Open::new(runs.clone()), capabilities)
+}
+
+fn registry_of(open: Open, capabilities: Option<&[Capability]>) -> ActionRegistry {
     let mut registry = crate::testing::registry();
-    let handler = Box::new(Open::new(runs.clone()));
+    let handler = Box::new(open);
     match capabilities {
         None => registry.register(handler).unwrap(),
         Some(granted) => registry
@@ -219,8 +235,95 @@ fn a_blank_required_value_is_missing_too() {
             registry.validate_instance(&mut instance),
             Ok(vec!["application".to_owned()])
         );
-        assert!(instance.parameters.get("application").is_none());
+        // Kept as it was typed.
+        assert_eq!(
+            instance.parameters.get("application"),
+            Some(&ParameterValue::Text(blank.into()))
+        );
     }
+}
+
+/// A blank value typed over a declared default is the user's: it is
+/// stored as typed, reported missing and refused when run, never replaced
+/// by the default.
+#[test]
+fn a_blank_value_over_a_default_is_kept_and_never_runs_with_the_default() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut open = Open::new(runs.clone());
+    open.definition.parameters[0].default = Some(ParameterValue::Text("hi".into()));
+    let registry = registry_of(open, None);
+    // Without a value the default fills it, as always.
+    let filled = registry
+        .create_instance("Open", open_type(), &ActionParameters::new())
+        .unwrap();
+    assert_eq!(
+        filled.parameters.get("application"),
+        Some(&ParameterValue::Text("hi".into()))
+    );
+    let mut blank = filled.clone();
+    blank.parameters = app("  ");
+    assert_eq!(
+        registry.validate_instance(&mut blank),
+        Ok(vec!["application".to_owned()])
+    );
+    assert_eq!(
+        blank.parameters.get("application"),
+        Some(&ParameterValue::Text("  ".into()))
+    );
+    let mut profile = Profile::new("Work");
+    profile.actions.push(blank.clone());
+    assert_eq!(
+        incomplete_actions(&profile, &registry),
+        BTreeMap::from([(blank.id, vec!["application".to_owned()])])
+    );
+    let w = World {
+        engine: Engine::new(registry),
+        runs,
+        profile,
+        draft: blank.id,
+    };
+    assert_incomplete(&run(&w, None), "application");
+    assert_eq!(w.runs.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_draft_that_needs_a_project_says_it_needs_configuration_first() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut open = Open::new(runs.clone());
+    open.definition.requires_project = true;
+    let registry = registry_of(open, None);
+    let mut profile = Profile::new("Work");
+    let draft = registry
+        .create_instance("Open", open_type(), &ActionParameters::new())
+        .unwrap();
+    let id = draft.id;
+    profile.actions.push(draft);
+    let w = World {
+        engine: Engine::new(registry),
+        runs,
+        profile,
+        draft: id,
+    };
+    // No project is active either: completeness wins.
+    assert_incomplete(&run(&w, None), "application");
+    // Complete, it still needs the project.
+    let refused = run(&w, Some(&app("Mail")));
+    assert!(
+        refused.message.contains("requires an active project"),
+        "{refused:?}"
+    );
+    assert_eq!(w.runs.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn the_handlers_checks_apply_to_the_values_a_draft_has() {
+    let w = world();
+    let mut instance = w.profile.action(w.draft).unwrap().clone();
+    instance.parameters = ActionParameters::new().with("count", ParameterValue::Integer(7));
+    assert!(matches!(
+        w.engine.registry().validate_instance(&mut instance),
+        Err(RegistryError::InvalidParameters(errors)) if errors[0].key() == "count"
+    ));
 }
 
 #[test]
@@ -790,4 +893,48 @@ fn the_saved_shape_of_drafts_is_the_fixture_older_agents_were_run_against() {
     );
     let back: Profile = serde_json::from_str(&json).unwrap();
     assert_eq!(back, profile);
+}
+
+/// A graph node on a draft: a blank override of a required parameter is
+/// refused (as for a binding or a step), and the handler's own checks run
+/// on the values that are there.
+#[test]
+fn a_draft_node_is_checked_like_a_binding_or_a_step() {
+    let w = world();
+    let node_with = |overrides: ActionParameters| {
+        let steps = crate::Workflow::new("Open").step(w.draft, OnFailure::Stop);
+        let mut workflow = steps.clone();
+        let mut graph = from_steps(&steps, &w.profile).graph;
+        for node in &mut graph.nodes {
+            if let NodeKind::Action { overrides: o, .. } = &mut node.kind {
+                *o = overrides.clone();
+            }
+        }
+        workflow.graph = Some(graph);
+        workflow.steps.clear();
+        workflow
+    };
+    let blank = node_with(app(" "));
+    let issues = blank.validate(&w.profile, w.engine.registry());
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert!(
+        issues[0].contains("`application` is required"),
+        "{issues:?}"
+    );
+
+    let unlucky = node_with(ActionParameters::new().with("count", ParameterValue::Integer(7)));
+    let issues = unlucky.validate(&w.profile, w.engine.registry());
+    assert_eq!(issues.len(), 1, "{issues:?}");
+    assert!(issues[0].contains("7 is not allowed"), "{issues:?}");
+
+    // A draft node with a valid override is saved, and reported.
+    let fine = node_with(ActionParameters::new().with("count", ParameterValue::Integer(2)));
+    assert_eq!(
+        fine.validate(&w.profile, w.engine.registry()),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        workflow_incomplete(&fine, &w.profile, w.engine.registry()).len(),
+        1
+    );
 }
