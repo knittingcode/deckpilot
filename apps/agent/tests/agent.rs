@@ -60,14 +60,38 @@ const HANG: Duration = Duration::from_secs(120);
 /// Like the agent binary, a test agent waits briefly for the lock of one
 /// that is still stopping.
 const LOCK_WAIT: Duration = Duration::from_secs(2);
-/// Upper bound for [`wait_for`] to see a status. Starting the agent opens
-/// (and may first encrypt, migrate or unlock) the database, which takes
-/// several seconds on a loaded CI runner (`opening the database took long
-/// ... total_ms=7553` was seen) while other tests of this binary run, so
-/// [`TIMEOUT`] is too tight here. Still well below [`HANG`], so a wait that
-/// never ends fails with the last status rather than the watchdog's
-/// message; passing tests continue as soon as the condition holds.
+/// Upper bound for one [`wait_for`] to see a status. Starting the agent
+/// opens (and may first encrypt, migrate or unlock) the database, which
+/// takes several seconds on a loaded CI runner (`opening the database took
+/// long ... total_ms=7553` was seen) while other tests of this binary run,
+/// so [`TIMEOUT`] is too tight here. Passing tests continue as soon as the
+/// condition holds. A test may wait several times under one [`watch`], so
+/// each wait is also cut to what is left of the test's [`HANG`] budget
+/// (less [`REPORT_MARGIN`]): a wait that never succeeds fails with the last
+/// status instead of the watchdog ending the binary.
 const STATUS_WAIT: Duration = Duration::from_secs(75);
+/// What a failing [`wait_for`] leaves of the [`HANG`] budget: its last
+/// status request may run [`ATTEMPT`] past the deadline, then it panics
+/// and the test unwinds.
+const REPORT_MARGIN: Duration = Duration::from_secs(15);
+
+thread_local! {
+    /// When the watchdog of the test running on this thread ends the
+    /// binary; set by [`watch`], cleared when its [`Watched`] is dropped.
+    /// A `#[tokio::test]` polls the test's future on this thread.
+    static HANG_AT: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// How long a [`wait_for`] starting now may wait.
+fn status_wait() -> Duration {
+    HANG_AT
+        .with(std::cell::Cell::get)
+        .map_or(STATUS_WAIT, |hang_at| {
+            let left = hang_at.saturating_duration_since(std::time::Instant::now());
+            STATUS_WAIT.min(left.saturating_sub(REPORT_MARGIN))
+        })
+}
 
 /// The agent task and the sender that stops it.
 type Running = (JoinHandle<Result<(), AgentError>>, oneshot::Sender<()>);
@@ -81,12 +105,32 @@ struct TestAgent {
     task: Option<JoinHandle<Result<(), AgentError>>>,
     stop: Option<oneshot::Sender<()>>,
     /// Ends the test binary if the test hangs.
-    watchdog: Watchdog,
+    watchdog: Watched,
+}
+
+/// A test's [`Watchdog`], and its [`HANG`] deadline for [`wait_for`].
+struct Watched(Watchdog);
+
+impl std::ops::Deref for Watched {
+    type Target = Watchdog;
+    fn deref(&self) -> &Watchdog {
+        &self.0
+    }
+}
+
+impl Drop for Watched {
+    fn drop(&mut self) {
+        HANG_AT.with(|hang_at| hang_at.set(None));
+    }
 }
 
 /// A watchdog for the running test (libtest names its thread after it).
-fn watch() -> Watchdog {
-    Watchdog::new(std::thread::current().name().unwrap_or("a test"), HANG)
+fn watch() -> Watched {
+    HANG_AT.with(|hang_at| hang_at.set(Some(std::time::Instant::now() + HANG)));
+    Watched(Watchdog::new(
+        std::thread::current().name().unwrap_or("a test"),
+        HANG,
+    ))
 }
 
 impl Drop for TestAgent {
@@ -1480,7 +1524,7 @@ async fn agent_status(paths: &AgentPaths) -> Option<AgentStatus> {
 }
 
 async fn wait_for(paths: &AgentPaths, predicate: impl Fn(&AgentStatus) -> bool) -> AgentStatus {
-    let deadline = tokio::time::Instant::now() + STATUS_WAIT;
+    let deadline = tokio::time::Instant::now() + status_wait();
     let mut last = None;
     loop {
         // One status request that gets no answer must not keep the loop
