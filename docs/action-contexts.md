@@ -67,7 +67,7 @@ Every built-in action type declares its contexts. The contract test
 | `deck.next-page`, `deck.previous-page`, `deck.switch-profile`, `deck.brightness`, `deck.random`, `deck.switch-layout`, `deck.previous-layout` | key, gesture | A deck request is applied only for a key or a gesture. In any workflow it fails with `not-from-a-key` |
 | `deck.multi-switch` | key, gesture, display | As above. Its face shows the current state |
 | `deck.page-indicator` | display | Its face shows the page; its press does nothing |
-| `system.open-app`, `system.open-url`, `system.open-file`, `system.open-directory`, `system.run-command`, `http.request`, `notifications.show` | key, gesture, sequence, workflow | General purpose |
+| `system.open-app`, `system.open-url`, `system.open-file`, `system.open-directory`, `system.close-app`, `system.run-command`, `http.request`, `notifications.show` | key, gesture, sequence, workflow | General purpose. `system.close-app` also refuses runs the user did not start ([system-actions.md](system-actions.md#4-contexts-run-origins-and-permissions)) |
 | `system.process-status`, `http.health-check` | sequence, workflow | Queries: the result drives a step condition or later nodes |
 | `system.cpu`, `system.memory`, `system.network`, `system.disk` | display, workflow | A live reading on a key, or a value for a workflow |
 | `notifications.workflow-summary` | workflow | Only a graph run has a summary |

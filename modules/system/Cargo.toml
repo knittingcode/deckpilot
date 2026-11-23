@@ -1,6 +1,6 @@
 [package]
 name = "deckpilot-module-system"
-description = "DeckPilot system feature module: open applications, files and pages, run commands"
+description = "DeckPilot system feature module: open applications, files and pages, close applications, run commands"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,9 +9,13 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+deckpilot-apps.workspace = true
 deckpilot-core.workspace = true
 sysinfo.workspace = true
 url.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

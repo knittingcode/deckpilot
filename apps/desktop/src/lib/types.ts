@@ -1034,6 +1034,20 @@ export interface MachineConfig {
 
 export type ResourceStatus = "ok" | "missing" | "unbound" | "unchecked"
 
+/** What kind of identifier an installed application is bound by (`deckpilot_apps::IdKind`). */
+export type ApplicationIdKind = "bundle" | "appPaths" | "aumid" | "desktopFile" | "path"
+
+/** An installed application, as the pickers list it (`list_applications`). */
+export interface InstalledApp {
+  name: string
+  /** What a binding stores: the stable id, or the path when there is none. */
+  id: string
+  kind: ApplicationIdKind
+  path?: string
+  /** It opens web pages. */
+  browser: boolean
+}
+
 export interface ResourceCheck {
   key: string
   kind: ResourceKind | null
@@ -1049,6 +1063,7 @@ export type Capability =
   | "open-external"
   | "process-execution"
   | "process-inspect"
+  | "process-control"
   | "network"
   | "notifications"
   | "credentials"
@@ -1661,6 +1676,32 @@ export interface ImportPreview {
   settings: AppSettings
   /** Shared variables in the export (deckpilot_portability::VariablesPreview). */
   variables: ImportVariablesPreview
+  /**
+   * Close Application actions of the export. Each is imported unbound (it
+   * closes nothing) unless confirmed in `ImportOptions.confirmedCloseActions`.
+   */
+  closeActions?: ImportCloseAction[]
+}
+
+/**
+ * A Close Application action an import brings (deckpilot_portability::CloseActionPreview):
+ * one entry per copy, a profile's or the layout library's. Confirmation is by
+ * `action` id and covers every copy.
+ */
+export interface ImportCloseAction {
+  /** Its profile; `null` for a copy in the layout library. */
+  profile: string | null
+  profileName: string | null
+  inLibrary: boolean
+  /** Its id in the export. */
+  action: string
+  name: string
+  /** A resource key, or `role:<name>` for a project role. */
+  application: string | null
+  /** The key is bound on this computer: confirming it closes a real application here. */
+  boundHere: boolean
+  /** It force-quits (its own setting or an override). */
+  force: boolean
 }
 
 /** The shared variables an import brings. */
@@ -1686,6 +1727,8 @@ export interface ImportOptions {
   conflicts: Record<string, ConflictResolution>
   moduleSettings: boolean
   appSettings: boolean
+  /** Close Application actions (ids as in the export) the user confirmed. */
+  confirmedCloseActions?: string[]
 }
 
 /** Application settings that mean the same on every computer. */
@@ -1714,6 +1757,8 @@ export interface ImportSummary {
   variableValues: number
   /** Values that were not imported, and why. */
   skippedValues: string[]
+  /** Close Application actions imported unbound because they were not confirmed. */
+  unboundCloseActions?: string[]
   /**
    * The import was committed, but the app could not reload the imported
    * module settings; they take effect when it starts next.

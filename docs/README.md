@@ -44,6 +44,9 @@ led to it; where the code differs, the code and the tests win.
 - [Integration modules](integration-modules.md): the System, HTTP and
   Notifications modules, and where the former Git, Docker, Workspace,
   GitHub, GitLab and Jira modules went (first-party plugins).
+- [System actions](system-actions.md): Website, Open, Open Application and
+  Close Application: the audit, the decisions, the platform matrix and the
+  safety rules of closing applications.
 - [Compatibility](compatibility.md): protocol negotiation and the tested
   matrix of app and agent versions.
 - [Built-in actions and feature parity](feature-parity.md): what exists

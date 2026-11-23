@@ -11,7 +11,13 @@
 //! - Nothing goes through a shell. Opening uses the operating system's
 //!   launcher (`open`, `xdg-open`, `rundll32`) or starts the application
 //!   directly ([`deckpilot_core::launch`]); commands are started with an
-//!   argument list.
+//!   argument list. Installed applications are resolved by `deckpilot-apps`
+//!   (stable ids: bundle ids, App Paths names, `AppUserModelID`s,
+//!   desktop-file ids).
+//! - Close Application ([`actions::CloseApp`]) only acts in runs the user
+//!   started, identifies an application by its stable id or exact
+//!   executable (never by name), only touches the current user's processes,
+//!   never a protected one, and forces only when the action says so.
 //! - Running commands is off until the user allows it on this computer
 //!   (the `allowCommands` setting, which is never exported or imported).
 //!   The program must be a bound resource, so an imported workflow cannot
@@ -22,6 +28,7 @@
 //! Error codes are listed in [`codes`].
 
 pub mod actions;
+pub mod apps;
 pub mod monitor;
 pub mod support;
 
@@ -30,6 +37,7 @@ use std::sync::Arc;
 
 use deckpilot_core::launch::{Launcher, SystemLauncher};
 
+use crate::apps::{Apps, SystemApps};
 use crate::monitor::Sampler;
 use deckpilot_core::{
     ActionHandler, ActionParameters, Capability, FeatureModule, ModuleId, ModuleManifest,
@@ -57,6 +65,13 @@ pub mod codes {
     /// This computer does not report the value (CPU use, memory, disk
     /// space).
     pub const UNAVAILABLE: &str = "unavailable";
+    /// Close Application in a run the user did not start (a schedule, an
+    /// event, a simulated press).
+    pub const NOT_USER_INITIATED: &str = "not-user-initiated";
+    /// The application value is not an identifier or path
+    /// (`deckpilot_apps::codes`, also `not-identifiable`,
+    /// `protected-process`, `close-failed`).
+    pub const INVALID_APPLICATION: &str = deckpilot_apps::codes::INVALID_APPLICATION;
 }
 
 /// # Panics
@@ -70,6 +85,7 @@ pub fn module_id() -> ModuleId {
 pub struct SystemModule {
     manifest: ModuleManifest,
     launcher: Arc<dyn Launcher>,
+    apps: Arc<dyn Apps>,
     /// Shared by the monitor actions of every configuration.
     sampler: Arc<Sampler>,
 }
@@ -82,14 +98,20 @@ impl SystemModule {
     /// The module with another launcher, e.g. one that records plans in
     /// tests instead of opening windows.
     pub fn with_launcher(launcher: Arc<dyn Launcher>) -> Self {
+        Self::with_platform(launcher, Arc::new(SystemApps))
+    }
+
+    /// The module with another launcher and another view of the installed
+    /// and running applications (tests: nothing real is opened or closed).
+    pub fn with_platform(launcher: Arc<dyn Launcher>, apps: Arc<dyn Apps>) -> Self {
         Self {
             manifest: ModuleManifest {
                 id: module_id(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 name: "System".into(),
-                description: "Opens applications, web pages, files and folders, runs commands, \
-                              checks whether programs are running and shows CPU, memory, network \
-                              and disk use."
+                description: "Opens applications, web pages, files and folders, closes \
+                              applications, runs commands, checks whether programs are running \
+                              and shows CPU, memory, network and disk use."
                     .into(),
                 platforms: Vec::new(),
                 pages: Vec::new(),
@@ -98,6 +120,7 @@ impl SystemModule {
                     Capability::OpenExternal,
                     Capability::ProcessExecution,
                     Capability::ProcessInspect,
+                    Capability::ProcessControl,
                 ],
                 config: vec![ParameterSpec {
                     key: ALLOW_COMMANDS.into(),
@@ -125,6 +148,7 @@ impl SystemModule {
                 variables: Vec::new(),
             },
             launcher,
+            apps,
             sampler: Arc::new(Sampler::new()),
         }
     }
@@ -143,6 +167,6 @@ impl FeatureModule for SystemModule {
 
     fn action_handlers(&self, config: &ActionParameters) -> Vec<Box<dyn ActionHandler>> {
         let allow_commands = config.boolean(ALLOW_COMMANDS).unwrap_or(false);
-        actions::handlers(&self.launcher, &self.sampler, allow_commands)
+        actions::handlers(&self.launcher, &self.apps, &self.sampler, allow_commands)
     }
 }

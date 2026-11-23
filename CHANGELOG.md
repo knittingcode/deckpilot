@@ -28,6 +28,30 @@ released either. 0.6.0 is the first version intended for publication.
   DeckPilot 0.13 and earlier open layouts with such a title but refuse to
   save them, and to duplicate an action whose label is such a title, until
   the title is shortened to 32 characters.
+- Close Application: a key, a gesture or a workflow you start can quit an
+  application. It asks the application to quit, as its Quit command does,
+  so it can ask you to save; with "Force quit if it does not close" on,
+  what still runs after 5 seconds is ended. Every instance you run of
+  exactly that application is closed, never another user's programs, the
+  system's or DeckPilot itself, and never from a schedule or an event.
+  A run that is cancelled or runs out of time while the application has
+  time to quit never forces it, and DeckPilot running as root or as an
+  administrator (elevated) closes nothing.
+- Importing a configuration lists its Close Application actions, marks
+  those that force-quit, and imports each one unbound (it closes nothing)
+  unless you allow it in the import review.
+- Open Application, Open, Website and Close Application offer the
+  applications installed on this computer and the system's file picker in
+  the inspector and the Action Library, instead of a typed resource key. A
+  choice is kept on this computer only, marked as such, and never
+  exported; DeckPilot stores the application's stable identifier (its
+  bundle id, App Paths name or desktop entry) where it has one.
+- An Open Application key can quit its application on a long press: one
+  choice in the inspector binds Close Application to the key's long press.
+- Website can open a page in a browser you choose instead of the default
+  one, and adds `https://` to an address written without it.
+- Open opens a chosen file, folder or application by itself; a file
+  inside a folder is now optional.
 - Keys can carry up to 8 labels besides their title: short texts at the top,
   centre, bottom or a corner, along an edge (a ribbon over the icon) or
   anywhere on the key, each with its own size, colour, background and layer,
@@ -39,6 +63,21 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
+- Linux: an application bound by its desktop entry starts from the entry's
+  own command line, so `gtk-launch` is no longer needed, and it can open a
+  file or a page.
+- Open URL is now called Website, Open file is Open, and Open
+  application is Open Application; their saved actions keep working
+  unchanged.
+- Website refuses addresses with a user name or password
+  (`https://user:pass@…`) or with a backslash, which earlier versions
+  opened. Saved mail addresses (`mailto:`) still open.
+- Linux: a desktop entry with `Terminal=true` is no longer opened by Open
+  Application (earlier versions started it with `gtk-launch`, which opens
+  it in a terminal). Bind the program itself, or your terminal with the
+  program as its argument.
+- Windows: pages, files and folders open through `rundll32.exe` and
+  `explorer.exe` by their full path in the Windows folder.
 - **Behaviour change: while the Workflows plugin is disabled, keys and
   gestures bound to a graph workflow no longer run it.** Disabled plugins
   preserve bindings without executing them: the keys are kept, show

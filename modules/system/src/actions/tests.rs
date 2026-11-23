@@ -11,6 +11,9 @@ use deckpilot_core::{
 };
 
 use super::*;
+use crate::apps::RecordingApps;
+use deckpilot_apps::close::Report as CloseReport;
+use deckpilot_core::{RunOrigin, WorkflowCause};
 
 struct Fixture {
     profile: Profile,
@@ -125,7 +128,8 @@ fn code(result: &ActionResult) -> Option<&str> {
 #[test]
 fn every_action_type_declares_its_node_contract() {
     let launcher: Arc<dyn Launcher> = Arc::new(RecordingLauncher::new());
-    let handlers = handlers(&launcher, &Arc::new(Sampler::new()), false);
+    let apps: Arc<dyn Apps> = Arc::new(RecordingApps::default());
+    let handlers = handlers(&launcher, &apps, &Arc::new(Sampler::new()), false);
     let ids: Vec<_> = handlers
         .iter()
         .map(|h| h.definition().id.to_string())
@@ -137,6 +141,7 @@ fn every_action_type_declares_its_node_contract() {
             OPEN_URL,
             OPEN_FILE,
             OPEN_DIRECTORY,
+            CLOSE_APP,
             RUN_COMMAND,
             PROCESS_STATUS,
             CPU,
@@ -150,7 +155,7 @@ fn every_action_type_declares_its_node_contract() {
         assert!(!definition.node.outputs.is_empty(), "{}", definition.id);
         assert!(definition.node.icon.is_some());
         let expected = match definition.id.as_str() {
-            RUN_COMMAND => ActionEffect::Modifies,
+            RUN_COMMAND | CLOSE_APP => ActionEffect::Modifies,
             PROCESS_STATUS | CPU | MEMORY | NETWORK | DISK => ActionEffect::ReadOnly,
             _ => ActionEffect::Opens,
         };
@@ -693,4 +698,439 @@ fn a_first_reading_stops_when_cancelled() {
         let result = run(&monitor(metric), ActionParameters::new(), &context);
         assert_eq!(code(&result), Some("cancelled"), "{metric:?}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Website, Open, Open Application and Close Application
+// (docs/system-actions.md).
+
+fn opener(launcher: &Arc<RecordingLauncher>, apps: &Arc<RecordingApps>) -> Opener {
+    Opener {
+        launcher: launcher.clone(),
+        apps: apps.clone(),
+    }
+}
+
+fn bind(fixture: &mut Fixture, k: &str, kind: ResourceKind, value: &str) {
+    fixture.machine.set_binding(MachineResourceBinding {
+        key: key(k),
+        kind,
+        value: value.to_owned(),
+    });
+}
+
+#[test]
+fn websites_are_normalised_and_other_schemes_refused() {
+    let fixture = fixture();
+    let launcher = Arc::new(RecordingLauncher::new());
+    let handler = OpenUrl::new(launcher.clone());
+    let result = run(
+        &handler,
+        ActionParameters::new().with("url", text("Example.com/docs")),
+        &fixture.context(),
+    );
+    assert!(result.is_success(), "{}", result.message);
+    assert_eq!(result.data["url"], "https://example.com/docs");
+    for bad in [
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "data:text/html,x",
+        "ms-settings:privacy",
+        "https://user:secret@example.com",
+        "https://example.com\\@evil.example",
+    ] {
+        let refused = run(
+            &handler,
+            ActionParameters::new().with("url", text(bad)),
+            &fixture.context(),
+        );
+        assert_eq!(code(&refused), Some(crate::codes::INVALID_URL), "{bad}");
+        let problems = handler.validate(&ActionParameters::new().with("url", text(bad)));
+        assert_eq!(problems.len(), 1, "{bad}");
+    }
+    assert_eq!(launcher.plans().len(), 1, "nothing else was opened");
+    // A saved mail address still opens, in the mail program only.
+    let mail = ActionParameters::new().with("url", text("mailto:team@example.com"));
+    assert_eq!(handler.validate(&mail), []);
+    assert!(run(&handler, mail.clone(), &fixture.context()).is_success());
+    let with_browser = mail.with("browser", fixed("tools.editor"));
+    assert_eq!(handler.validate(&with_browser).len(), 1);
+    // A template is checked when it runs, not when it is saved.
+    let template = ActionParameters::new().with(
+        "url",
+        ParameterValue::Template("https://{{ shared.host }}/".into()),
+    );
+    assert_eq!(handler.validate(&template), []);
+}
+
+#[test]
+fn a_website_opens_in_the_chosen_browser() {
+    let mut fixture = fixture();
+    let launcher = Arc::new(RecordingLauncher::new());
+    let apps = Arc::new(RecordingApps::default());
+    let browser_dir = fixture.dir.join("Browser");
+    std::fs::create_dir_all(&browser_dir).unwrap();
+    let browser = browser_dir.join(if cfg!(windows) {
+        "browser.exe"
+    } else {
+        "browser"
+    });
+    std::fs::write(&browser, "").unwrap();
+    bind(
+        &mut fixture,
+        "apps.browser",
+        ResourceKind::Application,
+        &browser.to_string_lossy(),
+    );
+    let gone = fixture.dir.join("Gone").join("browser");
+    bind(
+        &mut fixture,
+        "apps.gone-browser",
+        ResourceKind::Application,
+        &gone.to_string_lossy(),
+    );
+    let handler = OpenUrl::with(opener(&launcher, &apps));
+    let result = run(
+        &handler,
+        ActionParameters::new()
+            .with("url", text("https://example.com"))
+            .with("browser", fixed("apps.browser")),
+        &fixture.context(),
+    );
+    assert!(result.is_success(), "{}", result.message);
+    let plan = &launcher.plans()[0];
+    assert!(
+        plan.args.contains(&"https://example.com/".to_owned()),
+        "{plan:?}"
+    );
+    assert!(
+        plan.program == browser.to_string_lossy()
+            || plan.args.contains(&browser.to_string_lossy().into_owned()),
+        "{plan:?}"
+    );
+    assert_eq!(
+        apps.calls(),
+        [format!("launch {} https://example.com/", browser.display())]
+    );
+    // A browser that is not installed (any more) fails before anything opens.
+    let missing = run(
+        &handler,
+        ActionParameters::new()
+            .with("url", text("https://example.com"))
+            .with("browser", fixed("apps.gone-browser")),
+        &fixture.context(),
+    );
+    assert_eq!(code(&missing), Some(crate::codes::NOT_FOUND));
+    assert!(
+        missing.message.contains("moved or uninstalled"),
+        "{}",
+        missing.message
+    );
+    let unbound = run(
+        &handler,
+        ActionParameters::new()
+            .with("url", text("https://example.com"))
+            .with("browser", fixed("apps.unbound")),
+        &fixture.context(),
+    );
+    assert_eq!(code(&unbound), Some("resource-unbound"));
+    assert_eq!(launcher.plans().len(), 1);
+    // A launcher that cannot start says so.
+    let failing = OpenUrl::new(Arc::new(RecordingLauncher::failing()));
+    let result = run(
+        &failing,
+        ActionParameters::new().with("url", text("https://example.com")),
+        &fixture.context(),
+    );
+    assert_eq!(code(&result), Some("program-not-found"));
+}
+
+#[test]
+fn open_opens_a_bound_file_folder_or_application_itself() {
+    let mut fixture = fixture();
+    let launcher = Arc::new(RecordingLauncher::new());
+    let file = fixture.dir.join("docs/README.md");
+    bind(
+        &mut fixture,
+        "files.readme",
+        ResourceKind::Other,
+        &file.to_string_lossy(),
+    );
+    let moved_file = fixture.dir.join("moved.pdf");
+    bind(
+        &mut fixture,
+        "files.moved",
+        ResourceKind::Other,
+        &moved_file.to_string_lossy(),
+    );
+    let handler = OpenFile::new(launcher.clone());
+    for location in ["files.readme", "shop.repository"] {
+        let result = run(
+            &handler,
+            ActionParameters::new().with("location", fixed(location)),
+            &fixture.context(),
+        );
+        assert!(result.is_success(), "{location}: {}", result.message);
+    }
+    let plans = launcher.plans();
+    assert_eq!(plans.len(), 2);
+    assert!(plans[0].args.contains(&file.to_string_lossy().into_owned()));
+    let moved = run(
+        &handler,
+        ActionParameters::new().with("location", fixed("files.moved")),
+        &fixture.context(),
+    );
+    assert_eq!(code(&moved), Some(crate::codes::NOT_FOUND));
+    assert!(
+        moved.message.contains("Settings › Resources"),
+        "{}",
+        moved.message
+    );
+    assert_eq!(launcher.plans().len(), 2);
+}
+
+#[test]
+fn saved_open_actions_keep_their_parameters() {
+    // As saved before Website, Open and Open Application were extended.
+    let saved = [
+        (
+            OPEN_URL,
+            ActionParameters::new().with("url", text("https://example.com/x")),
+        ),
+        (
+            OPEN_FILE,
+            ActionParameters::new()
+                .with("location", role("repository"))
+                .with("path", text("docs/README.md"))
+                .with("application", fixed("tools.editor")),
+        ),
+        (
+            OPEN_APP,
+            ActionParameters::new()
+                .with("application", fixed("tools.editor"))
+                .with("arguments", text("--new-window")),
+        ),
+        (
+            OPEN_DIRECTORY,
+            ActionParameters::new()
+                .with("location", role("repository"))
+                .with("path", text("docs")),
+        ),
+    ];
+    let fixture = fixture();
+    let launcher: Arc<dyn Launcher> = Arc::new(RecordingLauncher::new());
+    let apps: Arc<dyn Apps> = Arc::new(RecordingApps::default());
+    let all = handlers(&launcher, &apps, &Arc::new(Sampler::new()), false);
+    for (id, parameters) in saved {
+        let handler = all
+            .iter()
+            .find(|h| h.definition().id.as_str() == id)
+            .unwrap();
+        // The stored JSON reads back the same, normalizes and validates.
+        let json = serde_json::to_string(&parameters).unwrap();
+        let read: ActionParameters = serde_json::from_str(&json).unwrap();
+        assert_eq!(read, parameters, "{id}");
+        let normalized = handler.definition().normalize(&read).unwrap();
+        assert!(handler.validate(&normalized).is_empty(), "{id}");
+        let result = handler.execute(&normalized, &fixture.context());
+        assert!(result.is_success(), "{id}: {}", result.message);
+    }
+}
+
+fn close_parameters(force: bool) -> ActionParameters {
+    ActionParameters::new()
+        .with("application", fixed("apps.editor"))
+        .with("force", ParameterValue::Boolean(force))
+}
+
+fn close_fixture() -> Fixture {
+    let mut fixture = fixture();
+    bind(
+        &mut fixture,
+        "apps.editor",
+        ResourceKind::Application,
+        "com.example.Editor",
+    );
+    fixture
+}
+
+#[test]
+fn close_application_runs_only_when_the_user_started_it() {
+    let fixture = close_fixture();
+    let apps = Arc::new(RecordingApps::new(CloseReport {
+        instances: 1,
+        asked: 1,
+        ..CloseReport::default()
+    }));
+    let handler = CloseApp::new(apps.clone());
+    for origin in [
+        None,
+        Some(RunOrigin::Simulated),
+        Some(RunOrigin::Workflow {
+            cause: WorkflowCause::Schedule,
+        }),
+        Some(RunOrigin::Workflow {
+            cause: WorkflowCause::Event,
+        }),
+        Some(RunOrigin::Workflow {
+            cause: WorkflowCause::Startup,
+        }),
+        Some(RunOrigin::Workflow {
+            cause: WorkflowCause::WorkSession,
+        }),
+    ] {
+        let context = fixture.context().with_origin(origin);
+        let result = run(&handler, close_parameters(false), &context);
+        assert_eq!(
+            code(&result),
+            Some(crate::codes::NOT_USER_INITIATED),
+            "{origin:?}"
+        );
+    }
+    assert_eq!(apps.calls(), Vec::<String>::new());
+    for origin in [
+        RunOrigin::Key,
+        RunOrigin::Gesture,
+        RunOrigin::App,
+        RunOrigin::Workflow {
+            cause: WorkflowCause::User,
+        },
+    ] {
+        let context = fixture.context().with_origin(Some(origin));
+        let result = run(&handler, close_parameters(false), &context);
+        assert!(result.is_success(), "{origin:?}: {}", result.message);
+        assert_eq!(result.data["closed"], "true");
+    }
+    assert_eq!(apps.calls().len(), 4);
+}
+
+#[test]
+fn close_application_needs_its_capabilities() {
+    let fixture = close_fixture();
+    let apps = Arc::new(RecordingApps::default());
+    let handler = CloseApp::new(apps.clone());
+    for granted in [
+        BTreeSet::from([Capability::MachineResources, Capability::ProcessInspect]),
+        BTreeSet::from([Capability::MachineResources, Capability::ProcessControl]),
+    ] {
+        let context = fixture
+            .context()
+            .with_origin(Some(RunOrigin::Key))
+            .restricted(&granted);
+        let result = run(&handler, close_parameters(true), &context);
+        assert_eq!(code(&result), Some("not-permitted"));
+    }
+    assert_eq!(apps.calls(), Vec::<String>::new());
+}
+
+#[test]
+fn close_application_is_graceful_unless_force_is_on() {
+    let fixture = close_fixture();
+    let context = fixture.context().with_origin(Some(RunOrigin::Key));
+    // Still running after the grace period: reported, never killed.
+    let stays = Arc::new(RecordingApps::new(CloseReport {
+        instances: 2,
+        asked: 2,
+        remaining: 1,
+        ..CloseReport::default()
+    }));
+    let result = run(
+        &CloseApp::new(stays.clone()),
+        close_parameters(false),
+        &context,
+    );
+    assert!(result.is_success(), "{}", result.message);
+    assert_eq!(result.data["closed"], "false");
+    assert!(result.message.contains("Force quit"), "{}", result.message);
+    assert_eq!(stays.calls(), ["close com.example.Editor force=false"]);
+    // With force, what remains is a failure.
+    let result = run(
+        &CloseApp::new(stays.clone()),
+        close_parameters(true),
+        &context,
+    );
+    assert_eq!(code(&result), Some(deckpilot_apps::codes::CLOSE_FAILED));
+    assert_eq!(stays.calls()[1], "close com.example.Editor force=true");
+    // Forced and gone.
+    let forced = Arc::new(RecordingApps::new(CloseReport {
+        instances: 1,
+        asked: 1,
+        forced: 1,
+        ..CloseReport::default()
+    }));
+    let result = run(&CloseApp::new(forced), close_parameters(true), &context);
+    assert!(result.is_success());
+    assert_eq!(result.data["forced"], "1");
+    // Not running: nothing to do.
+    let idle = Arc::new(RecordingApps::default());
+    let result = run(&CloseApp::new(idle), close_parameters(false), &context);
+    assert!(result.message.contains("not running"), "{}", result.message);
+    assert_eq!(result.data["instances"], "0");
+}
+
+#[test]
+fn a_cancelled_close_application_says_nothing_was_forced() {
+    let fixture = close_fixture();
+    let context = fixture.context().with_origin(Some(RunOrigin::Key));
+    let apps = Arc::new(RecordingApps::new(CloseReport {
+        instances: 1,
+        asked: 1,
+        remaining: 1,
+        interrupted: true,
+        ..CloseReport::default()
+    }));
+    let result = run(&CloseApp::new(apps), close_parameters(true), &context);
+    assert_eq!(code(&result), Some(deckpilot_apps::codes::INTERRUPTED));
+    assert!(
+        result.message.contains("nothing was forced"),
+        "{}",
+        result.message
+    );
+}
+
+#[test]
+fn close_application_refuses_what_it_cannot_identify() {
+    let mut fixture = close_fixture();
+    bind(
+        &mut fixture,
+        "apps.bad",
+        ResourceKind::Application,
+        "--help",
+    );
+    let context = fixture.context().with_origin(Some(RunOrigin::Key));
+    let apps = Arc::new(RecordingApps::default());
+    let result = run(
+        &CloseApp::new(apps.clone()),
+        ActionParameters::new().with("application", fixed("apps.bad")),
+        &context,
+    );
+    assert_eq!(code(&result), Some(crate::codes::INVALID_APPLICATION));
+    let result = run(
+        &CloseApp::new(apps.clone()),
+        ActionParameters::new().with("application", fixed("apps.unbound")),
+        &context,
+    );
+    assert_eq!(code(&result), Some("resource-unbound"));
+    // The real platform: the deny-list is applied before anything is done.
+    let real = CloseApp::new(Arc::new(crate::apps::SystemApps));
+    bind(
+        &mut fixture,
+        "apps.finder",
+        ResourceKind::Application,
+        "com.apple.finder",
+    );
+    let context = fixture.context().with_origin(Some(RunOrigin::Key));
+    let result = run(
+        &real,
+        ActionParameters::new().with("application", fixed("apps.finder")),
+        &context,
+    );
+    let expected = if cfg!(target_os = "macos") {
+        deckpilot_apps::codes::PROTECTED_PROCESS
+    } else {
+        // Elsewhere a dotted name is a program that is not on PATH.
+        deckpilot_apps::codes::NOT_FOUND
+    };
+    assert_eq!(code(&result), Some(expected), "{}", result.message);
+    assert_eq!(apps.calls(), Vec::<String>::new());
 }

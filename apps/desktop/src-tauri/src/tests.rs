@@ -4796,6 +4796,7 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
         "system.open-url",
         "system.open-file",
         "system.open-directory",
+        "system.close-app",
     ] {
         assert!(ids.contains(&wanted), "{wanted} needs a value: {ids:?}");
     }
@@ -4816,16 +4817,23 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
         view["incompleteActions"].as_object().unwrap().len(),
         needing.len()
     );
+    // Open's file inside a folder is optional (docs/system-actions.md).
     assert_eq!(
         drafts["system.open-file"]["incomplete"],
-        json!(["location", "path"])
+        json!(["location"])
     );
+    assert_eq!(drafts["system.open-url"]["incomplete"], json!(["url"]));
     assert_eq!(
         drafts["system.open-directory"]["incomplete"],
         json!(["location"])
     );
     assert_eq!(
         drafts["system.open-app"]["incomplete"],
+        json!(["application"])
+    );
+    // Close Application's force has a default (off): only the application.
+    assert_eq!(
+        drafts["system.close-app"]["incomplete"],
         json!(["application"])
     );
 
