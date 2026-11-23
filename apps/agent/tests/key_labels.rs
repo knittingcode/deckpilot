@@ -328,84 +328,101 @@ async fn variable_changes_are_coalesced_per_device() {
     assert_eq!(s.agent.handle.variable_redraws(), before);
 }
 
-/// Input latency is not affected by label updates: during a storm of
-/// variable changes (one every millisecond), a key press opens its page as
-/// fast as without the storm, and the storm redraws at most 20 times a
-/// second.
+/// Waits until key 2 shows `next` (the home page) or not (the second).
+async fn wait_key2(s: &Setup, next: &Frame, on_home: bool) {
+    let mock = s.mock.clone();
+    let device = s.device.clone();
+    let next = next.clone();
+    let shown = tokio::task::spawn_blocking(move || {
+        mock.wait_for(&device, TIMEOUT, |frames, _| {
+            frames
+                .get(&key(2))
+                .is_some_and(|frame| (*frame == next) == on_home)
+        })
+    })
+    .await
+    .unwrap();
+    assert!(shown, "the press was not handled");
+}
+
+/// The median of five presses of "Next", from the tap until the second
+/// page shows (each followed by Back).
+async fn press_latency(s: &Setup, next: &Frame) -> Duration {
+    let mut times = Vec::new();
+    for _ in 0..5 {
+        s.mock.tap(&s.device, key(2));
+        let start = Instant::now();
+        wait_key2(s, next, false).await;
+        times.push(start.elapsed());
+        s.mock.tap(&s.device, key(2));
+        wait_key2(s, next, true).await;
+        // The home page shows the storm again.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+    times.sort();
+    times[2]
+}
+
+/// Input latency is not affected by label updates. During a storm of
+/// variable changes that change what key 0 shows (a new value every 2 ms,
+/// read and announced as a plugin's publish would be), a key press opens
+/// its page within 25 ms of the time it takes without the storm (well under
+/// the 50 ms coalescing delay: no press waits for a redraw), while the
+/// storm redraws the key at most 20 times a second and the key does change.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_press_during_a_storm_of_changes_is_handled_at_once() {
     let s = setup().await;
     s.device_shows_the_preview().await;
-    let home = s.frame(key(0)).unwrap();
+    // Key 2 is "Next" on the home page and Back on the second: what it
+    // shows tells the pages apart while key 0 changes with the storm.
+    let next = s.frame(key(2)).unwrap();
+    let quiet = press_latency(&s, &next).await;
 
-    // Press latency: tap "Next", wait until key 0 shows the second page.
-    let press = |s: &Setup| {
-        let mock = s.mock.clone();
-        let device = s.device.clone();
-        let home = home.clone();
-        s.mock.tap(&s.device, key(2));
-        let start = Instant::now();
-        async move {
-            let shown = tokio::task::spawn_blocking(move || {
-                mock.wait_for(&device, TIMEOUT, |frames, _| {
-                    frames.get(&key(0)).is_some_and(|frame| *frame != home)
-                })
-            })
-            .await
-            .unwrap();
-            assert!(shown, "the press was not handled");
-            start.elapsed()
-        }
-    };
-    let back = |s: &Setup| {
-        let mock = s.mock.clone();
-        let device = s.device.clone();
-        let home = home.clone();
-        s.mock.tap(&s.device, key(2));
-        async move {
-            let shown = tokio::task::spawn_blocking(move || {
-                mock.wait_for(&device, TIMEOUT, |frames, _| {
-                    frames.get(&key(0)) == Some(&home)
-                })
-            })
-            .await
-            .unwrap();
-            assert!(shown, "not back on the home page");
-        }
-    };
-    let quiet = press(&s).await;
-    back(&s).await;
-    s.device_shows_the_preview().await;
-
-    let handle = s.agent.handle.clone();
     let storm = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let raging = storm.clone();
+    let handle = s.agent.handle.clone();
+    let database = s.agent.store();
     let storming = tokio::spawn(async move {
+        let name = VariableKey::new("team.name").unwrap();
+        let mut round = 0_u32;
         while raging.load(std::sync::atomic::Ordering::Relaxed) {
-            handle.publish_variables_changed(vec!["team.name".into()]);
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            round += 1;
+            database
+                .set_shared_variable_value(
+                    &name,
+                    &ScopeKey::Global,
+                    &VariableValue::String(format!("Team {round}")),
+                )
+                .unwrap();
+            handle.reload_variables();
+            tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        round
     });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The key really changes during the storm.
+    let early = s.frame(key(0)).unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_ne!(s.frame(key(0)).unwrap(), early, "the storm is drawn");
+    let stormy = press_latency(&s, &next).await;
+    // The redraw rate on the home page, during the storm.
     let before = s.agent.handle.variable_redraws();
-    let stormy = press(&s).await;
-    // Back on the home page (it shows the variable again) for the rate.
-    back(&s).await;
     let counted = Instant::now();
     tokio::time::sleep(Duration::from_millis(1000)).await;
     let redraws = s.agent.handle.variable_redraws() - before;
-    let elapsed = counted.elapsed().as_secs_f64() + 0.3;
+    let elapsed = counted.elapsed().as_secs_f64();
     storm.store(false, std::sync::atomic::Ordering::Relaxed);
-    storming.await.unwrap();
+    let rounds = storming.await.unwrap();
     println!(
-        "press latency: {quiet:?} quiet, {stormy:?} during a storm; {redraws} variable redraws in {elapsed:.2} s"
+        "press latency (median of 5): {quiet:?} quiet, {stormy:?} during a storm of {rounds} changes; \
+         {redraws} variable redraws in {elapsed:.2} s"
     );
     assert!(
-        stormy < quiet + Duration::from_millis(100),
-        "{stormy:?} vs {quiet:?}"
+        stormy < quiet + Duration::from_millis(25),
+        "{stormy:?} during the storm vs {quiet:?}"
     );
-    assert!(stormy < Duration::from_millis(500), "{stormy:?}");
     #[expect(clippy::cast_precision_loss, reason = "a few dozen redraws")]
     let rate = redraws as f64 / elapsed;
     assert!(rate <= 21.0, "{redraws} redraws in {elapsed:.2} s");
+    assert!(redraws >= 5, "the storm was redrawn {redraws} times");
 }
