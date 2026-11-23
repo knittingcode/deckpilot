@@ -5,9 +5,10 @@
 //! a second (a plugin publishing a value, a work session's timer). Such a
 //! change does not redraw at once: the first one schedules the device's
 //! redraw [`DISPLAY_REDRAW_DELAY`] later, further changes until then ride
-//! along, and a device is redrawn for variables at most every
-//! [`DISPLAY_REDRAW_INTERVAL`] (20 a second), so a change shows within
-//! about 100 ms at worst. Input, actions, profile, layout and page changes
+//! along. A new change is scheduled only once the pending redraw is done,
+//! so a device is redrawn for variables at most once per
+//! [`DISPLAY_REDRAW_DELAY`] (20 a second), and a change shows within about
+//! 50 ms. Input, actions, profile, layout and page changes
 //! still redraw at once (`Agent::render` directly); such a redraw also
 //! takes care of a pending variable redraw.
 //!
@@ -20,18 +21,16 @@ use std::time::{Duration, Instant};
 
 use deckpilot_device::DeviceId;
 
-/// How long after the first change a device is redrawn.
+/// How long after the first change a device is redrawn; also the shortest
+/// time between two redraws of a device for variables (at most 20 a
+/// second).
 pub const DISPLAY_REDRAW_DELAY: Duration = Duration::from_millis(50);
-/// The shortest time between two redraws of a device for variables: at
-/// most 20 a second.
-pub const DISPLAY_REDRAW_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Pending variable redraws, by device. Times are passed in, so tests
 /// choose the clock.
 #[derive(Debug, Default)]
 pub struct DisplayRedraws {
     pending: HashMap<DeviceId, Instant>,
-    last: HashMap<DeviceId, Instant>,
 }
 
 impl DisplayRedraws {
@@ -39,14 +38,13 @@ impl DisplayRedraws {
     /// scheduled a redraw (`false`: one was pending; this change rides
     /// along).
     pub fn schedule(&mut self, device: &DeviceId, now: Instant) -> bool {
+        // A pending redraw takes the change along, so a device is redrawn
+        // for variables at most once per DISPLAY_REDRAW_DELAY.
         if self.pending.contains_key(device) {
             return false;
         }
-        let mut due = now + DISPLAY_REDRAW_DELAY;
-        if let Some(last) = self.last.get(device) {
-            due = due.max(*last + DISPLAY_REDRAW_INTERVAL);
-        }
-        self.pending.insert(device.clone(), due);
+        self.pending
+            .insert(device.clone(), now + DISPLAY_REDRAW_DELAY);
         true
     }
 
@@ -71,16 +69,14 @@ impl DisplayRedraws {
         due
     }
 
-    /// `device` was redrawn at `now` (for any reason): a pending variable
-    /// redraw is done with.
-    pub fn rendered(&mut self, device: &DeviceId, now: Instant) {
+    /// `device` was redrawn (for any reason): a pending variable redraw is
+    /// done with.
+    pub fn rendered(&mut self, device: &DeviceId) {
         self.pending.remove(device);
-        self.last.insert(device.clone(), now);
     }
 
     pub fn forget(&mut self, device: &DeviceId) {
         self.pending.remove(device);
-        self.last.remove(device);
     }
 }
 
@@ -111,7 +107,7 @@ mod tests {
                 redraws.schedule(&deck, start + now);
             }
             for due in redraws.take_due(start + now) {
-                redraws.rendered(&due, start + now);
+                redraws.rendered(&due);
                 drawn.push(now);
             }
             now += Duration::from_millis(1);
@@ -151,7 +147,7 @@ mod tests {
         assert!(redraws.schedule(&b, now + Duration::from_millis(20)));
         assert_eq!(redraws.next_due(), Some(now + DISPLAY_REDRAW_DELAY));
         // A press redraws A at once: nothing left to do for it.
-        redraws.rendered(&a, now + Duration::from_millis(10));
+        redraws.rendered(&a);
         assert_eq!(redraws.take_due(now + Duration::from_millis(60)), []);
         assert_eq!(
             redraws.take_due(now + Duration::from_millis(70)),

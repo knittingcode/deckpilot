@@ -228,10 +228,10 @@ pub(crate) enum Command {
     },
 }
 
-/// Cloneable access to a running agent.
 /// A redraw that takes longer is logged with its key count.
 const SLOW_REDRAW: Duration = Duration::from_millis(8);
 
+/// Cloneable access to a running agent.
 #[derive(Debug, Clone)]
 pub struct AgentHandle {
     commands: mpsc::UnboundedSender<Command>,
@@ -2057,7 +2057,7 @@ impl Agent {
     /// still image.
     fn render(&mut self, device: &DeviceId, force: bool) {
         let started = std::time::Instant::now();
-        self.display_redraws.rendered(device, started);
+        self.display_redraws.rendered(device);
         let (mut faces, texts) = self.runtime.display_faces(device);
         if self.sessions.contains_key(device) {
             self.titles.record(device, texts);
