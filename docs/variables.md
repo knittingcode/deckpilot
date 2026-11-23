@@ -341,8 +341,8 @@ returned to plugins), so nothing leaks to it.
 A title with references may be up to 160 characters as stored
 (`MAX_TITLE_TEMPLATE_CHARS`, so plugin references fit); what the key shows is
 cut to 32 characters (`…`). DeckPilot 0.12 and 0.13 open layouts with such
-titles; they check the length only when saving, so they refuse to save one
-until the title is shortened.
+titles; they check the length only when saving, so they refuse to save one, and
+to duplicate an action whose label is one, until the title is shortened.
 
 **Page placeholders.** `{page.number}`, `{page.count}` and `{page.name}` are
 expanded in the template before references are resolved, so a value that
