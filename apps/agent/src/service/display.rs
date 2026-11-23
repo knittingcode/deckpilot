@@ -164,24 +164,37 @@ impl Agent {
         Ok(Response::DisplayTemplates { texts })
     }
 
-    /// Variables changed (`sharedVariablesChanged`): redraws the devices
-    /// whose shown texts depend on one of them, and nothing else.
+    /// Variables changed (`sharedVariablesChanged`): schedules a redraw of
+    /// the devices whose shown texts (titles, labels) depend on one of
+    /// them, coalesced per device (`display_redraws.rs`), and nothing else.
     pub(super) fn display_variables_changed(&mut self, keys: &[String]) {
         let devices = self.titles.devices_for(keys);
         debug!(
             changed = keys.len(),
             devices = devices.len(),
-            "variables changed; redrawing the titles that use them"
+            "variables changed; redrawing the texts that use them"
         );
+        let now = std::time::Instant::now();
         for device in devices {
-            self.render(&device, false);
+            self.display_redraws.schedule(&device, now);
         }
     }
 
     /// Events were missed: every device with a dynamic text is redrawn
-    /// (the frame diff sends only what changed).
+    /// (the frame diff sends only what changed), coalesced as well.
     pub(super) fn display_events_lagged(&mut self) {
+        let now = std::time::Instant::now();
         for device in self.titles.dynamic_devices() {
+            self.display_redraws.schedule(&device, now);
+        }
+    }
+
+    /// The coalesced variable redraws that are due.
+    pub(super) fn on_display_redraws_due(&mut self) {
+        for device in self.display_redraws.take_due(std::time::Instant::now()) {
+            self.handle
+                .variable_redraws
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.render(&device, false);
         }
     }
