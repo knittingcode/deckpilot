@@ -225,17 +225,20 @@ mod tests {
         let (a, b) = (device("A"), device("B"));
         titles.record(&a, vec![text(0, Some("shared.team.name")), text(1, None)]);
         titles.record(&b, vec![text(0, Some("projects.current.key"))]);
-        assert_eq!(titles.devices_for(&["team.name".into()]), [a.clone()]);
+        assert_eq!(titles.devices_for(&["team.name".into()]), vec![a.clone()]);
         assert_eq!(titles.affected(&a, &["team.name".into()]).len(), 1);
         assert_eq!(
             titles.devices_for(&["plugins.deckpilot.projects.current.key".into()]),
-            [b.clone()]
+            vec![b.clone()]
         );
-        assert!(titles.devices_for(&["team.size".into()]).is_empty());
+        assert_eq!(
+            titles.devices_for(&["team.size".into()]),
+            Vec::<DeviceId>::new()
+        );
         // A device that shows only static texts is not kept.
         titles.record(&b, vec![text(0, None)]);
-        assert_eq!(titles.dynamic_devices(), [a.clone()]);
+        assert_eq!(titles.dynamic_devices(), vec![a.clone()]);
         titles.forget(&a);
-        assert!(titles.dynamic_devices().is_empty());
+        assert_eq!(titles.dynamic_devices(), Vec::<DeviceId>::new());
     }
 }

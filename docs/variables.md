@@ -277,3 +277,73 @@ service loop, which re-renders dependent key faces (`after_change`, work
 session faces) and emits `projectChanged`, `profileChanged` and
 `sharedVariablesChanged`. Pickers and the Variables page refresh previews
 on those events; there is no polling.
+
+## 3. Variables in key titles
+
+Key titles are **display templates**: plain text with references in the
+reference grammar (`{{ projects.current.key }}`, `{{ shared.team.name }}`,
+`{{ system.profile.current.name }}`), mixed with text and with each other
+(`Projekt: {{ projects.current.key }}`). The older key label placeholders
+keep working unchanged: `{profile}`, `{project.key}` and `{project.name}`
+are resolved through the engine as `system.profile.current.name`,
+`system.project.current.key` and `system.project.current.name`; `{page.…}`
+stays the layout's (`docs/key-text.md`). The title is stored as typed; nothing
+is migrated or rewritten.
+
+### 3.1 One function
+
+`deckpilot_core::variables::resolve_display_template(environment, template)`
+returns the text, the unresolved references (name and reason, never a
+value), the positions of their markers (`markers`, UTF-16 offsets), text
+between `{{ }}` that is not a reference (`invalid`, kept as typed) and the
+dependencies of the text. The environment is the engine's
+(`Engine::display_templates`): shared variables from the agent's snapshots,
+core and module variables from its registry, in a **display context**: the
+profile, its active project, a preview phase, no device, workflow or run.
+
+- The device: `Runtime::display_faces` resolves every title through it while
+  drawing a page (`page_faces_with`), and records each text by **binding and
+  text slot** (`TextKey`: page, control, trigger, `TextSlot::Title`).
+- The editor: `resolveDisplayTemplates` (protocol 17) runs the same function
+  in the agent; `preview_layout` asks it for the page's templates and draws
+  with its answers (`ControlFace.titleDisplay` carries them), so the Canvas
+  and the device agree. Without an agent the app resolves with the core alone
+  (`core_display`): the older placeholders, profile, project and platform.
+
+The function is not tied to the title: further key labels add `TextSlot`
+variants, each resolved by the same call and tracked under its own key.
+
+### 3.2 Display-safe sources
+
+Only these resolve on a key (`display_safe`, `display_listed` for the
+picker, `listDisplayVariables`):
+
+| Source | Resolves |
+| ------ | -------- |
+| `system.profile.current.name`, `system.project.current.key`/`.name`, `system.platform` | yes |
+| Module and plugin variables | when declared non-sensitive, of string, integer or boolean type, with a machine, profile or project scope and no requirement but a project, while the module or plugin is enabled |
+| Shared variables | when not sensitive and of string, integer or boolean type |
+| Sensitive values, secret references (credentials), `steps.…`, `workflow.…`, `system.device.…`, ids, the work session | never |
+
+A refused reference is never resolved where its declaration already says so;
+a shared variable is dropped as soon as its resolution says it is sensitive.
+Profile isolation is the engine's: values of another profile are missing.
+
+### 3.3 Unresolved references
+
+A reference without a displayable value shows `-` (`UNRESOLVED_MARKER`),
+the mark the older placeholders always showed without a project: never a
+stale value, never an error, and the template is kept. The editor tells a
+marker from a value that reads `-` by `markers`, and warns with
+`unresolved` (non-destructive).
+
+### 3.4 Updates
+
+Without polling. Profile and project changes redraw every device
+(`after_change`); a `sharedVariablesChanged` (a shared value after a reload,
+a plugin's published value, a module or plugin enabled or disabled) redraws
+only the devices showing a text that depends on one of the named keys
+(`TitleDependencies`, `DisplayDependency::changed_by`). A device is sent only
+the keys whose face changed. Plugin state titles keep their precedence
+(`docs/key-text.md`, "Title precedence"): a template the user typed on a
+plugin action's key is the user's title.

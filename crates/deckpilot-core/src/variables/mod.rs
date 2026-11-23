@@ -30,9 +30,9 @@ use crate::{
 
 pub use catalog::{CatalogEntry, CatalogFilter, ReferenceAvailability, VariableGroup};
 pub use display::{
-    DisplayDependency, DisplayEnvironment, DisplayTemplates, DisplayText, RecordingTemplates,
-    ResolvedTemplates, TextKey, TextSlot, UNRESOLVED_MARKER, UnresolvedReason, UnresolvedReference,
-    display_context, display_listed, display_safe, resolve_display_template,
+    DisplayDependency, DisplayEnvironment, DisplayTemplates, DisplayText, MarkerSpan,
+    RecordingTemplates, ResolvedTemplates, TextKey, TextSlot, UNRESOLVED_MARKER, UnresolvedReason,
+    UnresolvedReference, display_context, display_listed, display_safe, resolve_display_template,
 };
 pub use expression::{
     ExpressionError, ExpressionPart, SystemVariable, VariableRef, parse_expression,

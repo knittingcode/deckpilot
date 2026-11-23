@@ -256,6 +256,9 @@ pub struct Runtime {
     clock: Clock,
 }
 
+/// The display templates a device's faces resolved, by binding and text.
+pub type DisplayTexts = Vec<(crate::variables::TextKey, crate::variables::DisplayText)>;
+
 /// Most pages kept in [`Runtime::remembered_pages`]: profiles times
 /// devices, far beyond real use. Beyond it nothing more is remembered.
 const MAX_REMEMBERED_PAGES: usize = 512;
@@ -1157,13 +1160,7 @@ impl Runtime {
     /// [`Runtime::faces`], with every display template the faces resolved
     /// ([`crate::variables::resolve_display_template`], through the
     /// engine's variables) and what each depends on, by binding and text.
-    pub fn display_faces(
-        &self,
-        device: &DeviceId,
-    ) -> (
-        Vec<(ControlId, KeyFace)>,
-        Vec<(crate::variables::TextKey, crate::variables::DisplayText)>,
-    ) {
+    pub fn display_faces(&self, device: &DeviceId) -> (Vec<(ControlId, KeyFace)>, DisplayTexts) {
         let Some(model) = self.catalog.get(&device.model) else {
             return (Vec::new(), Vec::new());
         };
@@ -2021,6 +2018,9 @@ mod folder_tests;
 
 #[cfg(test)]
 mod title_tests;
+
+#[cfg(test)]
+mod display_tests;
 
 #[cfg(test)]
 mod tests {

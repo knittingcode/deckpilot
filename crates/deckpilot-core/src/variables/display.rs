@@ -169,6 +169,19 @@ pub struct UnresolvedReference {
     pub reason: UnresolvedReason,
 }
 
+/// Where one [`UNRESOLVED_MARKER`] is in [`DisplayText::text`], so the
+/// editor can tell it from a value that happens to read `-`. Offsets are
+/// in UTF-16 code units (as JavaScript strings count), `end` exclusive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkerSpan {
+    pub start: usize,
+    pub end: usize,
+    /// The reference the marker stands for, as in
+    /// [`UnresolvedReference::reference`].
+    pub reference: String,
+}
+
 /// A template resolved for display.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +191,9 @@ pub struct DisplayText {
     /// The references shown as [`UNRESOLVED_MARKER`], in order, each once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved: Vec<UnresolvedReference>,
+    /// Every marker in `text`, in order (a reference used twice has two).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<MarkerSpan>,
     /// Text between `{{` and `}}` that is not a reference, kept as typed
     /// (as before display templates), each once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -310,11 +326,9 @@ fn context_dependencies(reference: &VariableRef, into: &mut BTreeSet<DisplayDepe
             into.insert(DisplayDependency::Profile);
         }
         VariableRef::System(SystemVariable::Platform) | VariableRef::Step(_) => {}
-        VariableRef::System(_) => {
-            into.insert(DisplayDependency::Project);
-        }
-        // A shared or module value may be set per project.
-        VariableRef::Shared(_) | VariableRef::Module(_) => {
+        // The project's own values, and shared or module values, which may
+        // be set per project.
+        VariableRef::System(_) | VariableRef::Shared(_) | VariableRef::Module(_) => {
             into.insert(DisplayDependency::Project);
         }
     }
@@ -379,7 +393,7 @@ pub fn resolve_display_template(
 ) -> DisplayText {
     let mut out = DisplayText::default();
     if !template.contains('{') {
-        out.text = template.to_owned();
+        template.clone_into(&mut out.text);
         return out;
     }
     let mut rest = template;
@@ -392,15 +406,14 @@ pub fn resolve_display_template(
             return out;
         };
         let raw = &after[..end];
-        match VariableRef::parse(raw) {
-            Ok(reference) => reference_value(environment, &reference, raw.trim(), &mut out),
-            Err(_) => {
-                let typed = &rest[start..start + 2 + end + 2];
-                if !out.invalid.iter().any(|seen| seen == raw.trim()) {
-                    out.invalid.push(raw.trim().to_owned());
-                }
-                literal(environment, typed, &mut out);
+        if let Ok(reference) = VariableRef::parse(raw) {
+            reference_value(environment, &reference, raw.trim(), &mut out);
+        } else {
+            let typed = &rest[start..start + 2 + end + 2];
+            if !out.invalid.iter().any(|seen| seen == raw.trim()) {
+                out.invalid.push(raw.trim().to_owned());
             }
+            literal(environment, typed, &mut out);
         }
         rest = &after[end + 2..];
     }
@@ -421,7 +434,13 @@ fn reference_value(
     match display_value(reference, environment) {
         Ok(text) => out.text.push_str(&text),
         Err(reason) => {
+            let start = out.text.encode_utf16().count();
             out.text.push_str(UNRESOLVED_MARKER);
+            out.markers.push(MarkerSpan {
+                start,
+                end: start + UNRESOLVED_MARKER.encode_utf16().count(),
+                reference: name.to_owned(),
+            });
             if !out.unresolved.iter().any(|seen| seen.reference == name) {
                 out.unresolved.push(UnresolvedReference {
                     reference: name.to_owned(),

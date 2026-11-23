@@ -88,12 +88,26 @@ export type UnresolvedReference = {
   reference: string
 } & UnresolvedReason
 
+/**
+ * Where one `-` marker is in `DisplayText.text`, so the editor can tell it
+ * from a value that reads `-`: UTF-16 offsets (JavaScript string indices),
+ * `end` exclusive.
+ */
+export interface MarkerSpan {
+  start: number
+  end: number
+  /** The reference it stands for, as in `UnresolvedReference.reference`. */
+  reference: string
+}
+
 /** A template resolved for display, as the device shows it. */
 export interface DisplayText {
   /** The text the key shows (before `{page.…}` and text layout). */
   text: string
   /** References shown as `-`, in order, each once. Omitted when none. */
   unresolved?: UnresolvedReference[]
+  /** Every marker in `text`, in order (a reference used twice has two). Omitted when none. */
+  markers?: MarkerSpan[]
   /** Text between `{{ }}` that is not a reference, kept as typed. Omitted when none. */
   invalid?: string[]
   /** Omitted for a static text. */
@@ -110,9 +124,11 @@ declare module "./types" {
     /**
      * The key's title template as the agent resolved it for this preview
      * (the binding's label, else its action's), with its diagnostics.
-     * Omitted for keys without a title template and without an agent of
-     * protocol 17 (the title is then resolved by the app's fallback, which
-     * knows only the older placeholders).
+     * Omitted for keys whose title has no `{`, and when no agent of
+     * protocol 17 answered (the face's title is then resolved by the core
+     * alone: the older placeholders, `system.profile.current.name`,
+     * `system.project.current.*` and `system.platform`; other references
+     * show `-`).
      */
     titleDisplay?: ResolvedDisplayTemplate
   }

@@ -220,8 +220,9 @@ replace it or draw its keys itself.
 
 ## Dynamic text
 
-Templates (`{project.key}`, `{project.name}`, `{profile}`, `{page.…}`) are
-resolved, and a module's or plugin's label and detail applied, **before**
+Templates (`{project.key}`, `{project.name}`, `{profile}`, `{page.…}`, and
+references such as `{{ shared.team.name }}`, see `docs/variables.md` §3) are
+resolved by the agent, and a module's or plugin's label and detail applied, **before**
 the title is measured. A different resolved text is a different face, so it
 is laid out (fitted, wrapped) again; frames are cached by face and size, so
 an unchanged text is not drawn twice.

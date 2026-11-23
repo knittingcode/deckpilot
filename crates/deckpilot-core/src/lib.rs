@@ -91,8 +91,8 @@ pub use credentials::{
     NoCredentials, Secret,
 };
 pub use device_runtime::{
-    DetachedAction, EditorTarget, LayoutStatus, NavigationError, NavigationState, Runtime,
-    RuntimeOutcome, core_display, page_faces, page_faces_with,
+    DetachedAction, DisplayTexts, EditorTarget, LayoutStatus, NavigationError, NavigationState,
+    Runtime, RuntimeOutcome, core_display, page_faces, page_faces_with,
 };
 pub use editor_navigation::{
     ControlNavigation, EditorNavigation, NavigationOperation, control_navigation,

@@ -19,6 +19,7 @@ fn key(text: &str) -> VariableKey {
     VariableKey::new(text).unwrap()
 }
 
+#[allow(clippy::too_many_lines)] // One shared fixture for every case.
 fn fixture() -> Fixture {
     let mut profile = Profile::new("Work");
     profile.projects.push(Project::new(
@@ -325,7 +326,7 @@ fn text_that_is_not_a_reference_stays_as_typed() {
     let text = fixture.resolve(Some(0), "{{ env.home }} and {{ unclosed");
     assert_eq!(text.text, "{{ env.home }} and {{ unclosed");
     assert_eq!(text.invalid, ["env.home"]);
-    assert!(text.unresolved.is_empty());
+    assert_eq!(text.unresolved, []);
 }
 
 #[test]
@@ -484,6 +485,7 @@ fn display_text_serializes_for_the_editor() {
         serde_json::json!({
             "text": "-",
             "unresolved": [{"reference": "projects.current.key", "reason": "missing", "missing": "noProject"}],
+            "markers": [{"start": 0, "end": 1, "reference": "projects.current.key"}],
             "dependencies": [{"kind": "project"}, {"kind": "variable", "reference": "projects.current.key"}],
         })
     );
@@ -499,4 +501,31 @@ fn display_text_serializes_for_the_editor() {
     };
     let json = serde_json::to_value(key).unwrap();
     assert_eq!(json["slot"], serde_json::json!({"kind": "title"}));
+}
+
+#[test]
+fn markers_are_told_apart_from_values_that_read_like_one() {
+    let mut fixture = fixture();
+    fixture.shared = fixture.shared.set(
+        &key("team.name"),
+        ScopeKey::Global,
+        VariableValue::String("-".into()),
+    );
+    // "Zespół: " is 8 UTF-16 units; the value "-" is not a marker.
+    let text = fixture.resolve(
+        None,
+        "Zespół: {{ shared.team.name }} {{ shared.team.unset }}",
+    );
+    assert_eq!(text.text, "Zespół: - -");
+    assert_eq!(
+        text.markers,
+        [MarkerSpan {
+            start: 10,
+            end: 11,
+            reference: "shared.team.unset".into()
+        }]
+    );
+    let twice = fixture.resolve(None, "{{ shared.team.unset }}{{ shared.team.unset }}");
+    assert_eq!(twice.markers.len(), 2);
+    assert_eq!(twice.unresolved.len(), 1);
 }
