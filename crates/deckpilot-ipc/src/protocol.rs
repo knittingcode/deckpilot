@@ -159,7 +159,17 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// carries `pageId`, an optional field. A client of protocol 15 or older
 /// never sends the new requests (refused locally, and by the agent from
 /// such a connection) and receives no `livePreview` messages.
-pub const PROTOCOL_VERSION: u32 = 16;
+///
+/// Version 17: variables in key titles (capability `displayTemplates`,
+/// [`crate::display_templates`], `docs/variables.md`). Key titles may hold
+/// references (`{{ projects.current.key }}`), which the agent resolves for
+/// display, on the device and for the editor: `listDisplayVariables`
+/// lists the display-safe references of a context, `resolveDisplayTemplates`
+/// resolves templates as the device shows them. A client of protocol 16 or
+/// older never sends them (refused locally, and by the agent from such a
+/// connection); nothing older clients receive changes, and keys show
+/// resolved titles whatever the client.
+pub const PROTOCOL_VERSION: u32 = 17;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -342,10 +352,14 @@ pub enum Capability {
     /// `navigateLivePreview`, `endLivePreview` and `livePreview` messages.
     /// Protocol 16.
     LivePreview,
+    /// Variables in key titles: `listDisplayVariables`,
+    /// `resolveDisplayTemplates`. Without it the app shows titles as typed
+    /// and resolves only the older placeholders. Protocol 17.
+    DisplayTemplates,
 }
 
 impl Capability {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -362,6 +376,7 @@ impl Capability {
         Self::SimulateInput,
         Self::RestoreBundled,
         Self::LivePreview,
+        Self::DisplayTemplates,
     ];
 
     /// The protocol that introduced the capability.
@@ -382,6 +397,7 @@ impl Capability {
             Self::SimulateInput => 14,
             Self::RestoreBundled => 15,
             Self::LivePreview => 16,
+            Self::DisplayTemplates => 17,
         }
     }
 
@@ -968,6 +984,22 @@ pub enum Request {
     InspectMockDevice {
         device: DeviceId,
     },
+    /// The references a key title may use in `context` that match
+    /// `filter`: display-safe sources only, metadata only. Answers
+    /// [`Response::Variables`]. Since protocol 17
+    /// ([`crate::display_templates`]).
+    ListDisplayVariables {
+        context: Box<ResolutionContext>,
+        #[serde(default)]
+        filter: Box<CatalogFilter>,
+    },
+    /// What each template shows on a key in `context` (its profile, and its
+    /// project or the profile's active one), in the order asked. Answers
+    /// [`Response::DisplayTemplates`]. Since protocol 17.
+    ResolveDisplayTemplates {
+        context: Box<ResolutionContext>,
+        templates: Vec<String>,
+    },
 }
 
 impl Request {
@@ -1023,6 +1055,9 @@ impl Request {
             Self::WatchKeyStates { actions, .. } if actions.len() > MAX_WATCHED_KEYS => Err(
                 format!("at most {MAX_WATCHED_KEYS} keys can be watched at once"),
             ),
+            Self::ResolveDisplayTemplates { templates, .. } => {
+                crate::display_templates::check_templates(templates)
+            }
             Self::PreviewReferences { items, .. } if items.len() > MAX_PREVIEW_ITEMS => Err(
                 format!("at most {MAX_PREVIEW_ITEMS} references can be previewed at once"),
             ),
@@ -1255,6 +1290,11 @@ pub enum Response {
     /// Answer to `previewReferences`, in the order asked. Since protocol 7.
     ReferencePreviews {
         previews: Vec<ReferencePreview>,
+    },
+    /// Answer to `resolveDisplayTemplates`, in the order asked. Since
+    /// protocol 17.
+    DisplayTemplates {
+        texts: Vec<crate::display_templates::ResolvedDisplayTemplate>,
     },
     /// Answer to `getWorkSession` and `clearWorkSessionNotices`. Since
     /// protocol 8.
@@ -1721,6 +1761,7 @@ impl Request {
             | Self::NavigateLivePreview { .. }
             | Self::EndLivePreview { .. }
             | Self::InspectMockDevice { .. } => 16,
+            Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices
@@ -2533,7 +2574,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 16);
+        assert_eq!(PROTOCOL_VERSION, 17);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),
