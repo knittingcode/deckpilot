@@ -377,8 +377,14 @@ resolved exactly like a title (`resolve_display_template`: `{{ reference }}`,
 the older `{profile}`, `{project.key}`, `{project.name}`, then `{page.…}`).
 Only display-safe sources resolve; a reference without a displayable value
 shows `-`. A template that names a secret, a sensitive value or a run's
-value (`steps.…`, `workflow.…`) is refused when saved or imported. At most
-120 grapheme clusters of the resolved text are laid out (then `…`).
+value (`steps.…`, `workflow.…`) is refused when saved or imported, by the
+core and, while the agent runs, by the agent's own variables: a plugin's or
+module's variable declared sensitive or an identifier, or a shared variable
+whose value is sensitive, is refused too. A reference the agent does not
+know yet (a plugin that is not installed) is kept and shows `-` until its
+plugin declares it display-safe. `{page.…}` is expanded in the template
+before references resolve, so a value is never expanded. At most 120
+grapheme clusters of the resolved text are laid out (then `…`).
 `visible` hides a label while its references are unresolved or its text is
 empty (`whenResolved`) or while no project is active (`whenProject`);
 `enabled: false` keeps a label without drawing it.
@@ -397,7 +403,7 @@ the label's box placed there). `offsetX`/`offsetY` move it by units. Width
 is fixed (`width`, percent) or follows the text up to `maxWidth` (presets at
 top, center and bottom and edge anchors: the full width; corners: 60 %);
 height likewise (`height`, `maxHeight`). The box is moved, never cut, to
-stay on the key.
+stay on the key. Text taller than a fixed height is clipped to the box.
 
 **Overflow.** `ellipsis` (one line, `…`, default), `clip`, `wrap` (up to
 `maxLines`, 1–4, default 2, the last line cut with `…`; lines that do not fit
@@ -413,8 +419,12 @@ labels, the highlight border, then the state marks (badge, toggle, progress,
 indicator), always on top. Within a layer, labels are painted in list order.
 
 **Plate.** `background: auto` (default) draws a plate when the label's box
-meets a picture (the icon image, a background image or gradient, a series)
-or when its colour has less than 4.5:1 contrast with the key's background:
+meets a picture (the icon image, a background image or gradient, a series),
+the title, the key's icon mark or a state mark (badge, toggle, progress,
+indicator), or when its colour has less than 4.5:1 contrast with the key's
+background. A label that sets no layer and meets the title is painted over
+the title, on its plate (under the title the plate could not make either
+readable); a layer the label sets is always kept. The plate is
 black at `backgroundOpacity` (default 60 %) behind light text, white behind
 dark text. `none` never draws one; `#rrggbb` draws that colour (default
 100 %). An unset colour is the key's text colour, or white or black where
@@ -438,8 +448,9 @@ key count, never its texts.
 
 **Cost.** `cargo test --release -p deckpilot-render --test label_cost --
 --nocapture` measures it (Apple M-series, render plus JPEG): the worst-case
-key (8 labels wrapping on 4 lines over an icon image, with plates) about
-0.85 ms at 120 px (budget 1 ms), a label text change about 0.09 ms at 72 px
+key (8 labels over an icon image, with plates) in every overflow mode at
+72, 96 and 120 px is at most about 0.85 ms (wrapping on 4 lines at 120 px;
+budget 1 ms), a label text change about 0.09 ms at 72 px
 (budget 0.3 ms; icon and background images are scaled once per size and
 kept, `ScaledImageCache`), against about 0.05 ms for the same key without
 labels.
