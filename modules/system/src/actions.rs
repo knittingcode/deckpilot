@@ -406,24 +406,42 @@ impl OpenUrl {
             return Ok(ActionResult::success(format!("opened {url}")).with_data("url", url));
         }
         let url = deckpilot_core::paths::website_url(text)?;
-        match browser {
-            None => open_with(
+        let default = |context: &ExecutionContext<'_>| {
+            open_with(
                 self.opener.launcher(),
                 context,
                 &OpenTarget::Url(url.clone()),
-            )?,
-            Some(reference) => {
-                let browser = support::resolve(
-                    context,
-                    Some(reference),
-                    Some(ResourceKind::Application),
-                    "browser",
-                )?;
-                self.opener
-                    .application(context, &browser, With::Url(url.clone()))?;
+            )
+        };
+        let Some(reference) = browser else {
+            default(context)?;
+            return Ok(ActionResult::success(format!("opened {url}")).with_data("url", url));
+        };
+        let chosen = support::resolve(
+            context,
+            Some(reference),
+            Some(ResourceKind::Application),
+            "browser",
+        )?;
+        match self
+            .opener
+            .application(context, &chosen, With::Url(url.clone()))
+        {
+            Ok(()) => Ok(ActionResult::success(format!("opened {url}")).with_data("url", url)),
+            // The chosen browser was uninstalled or moved: the page still
+            // opens, in the default browser, and the result says so.
+            Err(failure) if failure.code.as_deref() == Some(codes::NOT_FOUND) => {
+                default(context)?;
+                Ok(ActionResult::success(format!(
+                    "opened {url} in the default browser: the chosen browser is not \
+                     installed any more ({})",
+                    failure.message
+                ))
+                .with_data("url", url)
+                .with_data("fallback", "default-browser"))
             }
+            Err(failure) => Err(failure),
         }
-        Ok(ActionResult::success(format!("opened {url}")).with_data("url", url))
     }
 }
 

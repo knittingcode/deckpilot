@@ -812,7 +812,8 @@ fn a_website_opens_in_the_chosen_browser() {
         apps.calls(),
         [format!("launch {} https://example.com/", browser.display())]
     );
-    // A browser that is not installed (any more) fails before anything opens.
+    // A browser that is not installed any more: the page opens in the
+    // default browser, and the result says so.
     let missing = run(
         &handler,
         ActionParameters::new()
@@ -820,11 +821,18 @@ fn a_website_opens_in_the_chosen_browser() {
             .with("browser", fixed("apps.gone-browser")),
         &fixture.context(),
     );
-    assert_eq!(code(&missing), Some(crate::codes::NOT_FOUND));
+    assert!(missing.is_success(), "{}", missing.message);
+    assert_eq!(missing.data["fallback"], "default-browser");
     assert!(
-        missing.message.contains("moved or uninstalled"),
+        missing.message.contains("default browser"),
         "{}",
         missing.message
+    );
+    let fallback = launcher.plans().last().cloned().unwrap();
+    assert!(
+        !fallback.args.iter().any(|a| a.contains("Gone"))
+            && fallback.program != gone.to_string_lossy(),
+        "{fallback:?}"
     );
     let unbound = run(
         &handler,
@@ -834,7 +842,7 @@ fn a_website_opens_in_the_chosen_browser() {
         &fixture.context(),
     );
     assert_eq!(code(&unbound), Some("resource-unbound"));
-    assert_eq!(launcher.plans().len(), 1);
+    assert_eq!(launcher.plans().len(), 2);
     // A launcher that cannot start says so.
     let failing = OpenUrl::new(Arc::new(RecordingLauncher::failing()));
     let result = run(
