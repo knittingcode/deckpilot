@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-apps"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "libc",
  "objc2-app-kit",
