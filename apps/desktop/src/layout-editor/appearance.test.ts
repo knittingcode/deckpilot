@@ -308,3 +308,36 @@ describe("icon files", () => {
     expect(iconName(`${"x".repeat(80)}.jpg`)).toHaveLength(64)
   })
 })
+
+describe("key labels survive other look changes", () => {
+  const labels = [{ id: "a", text: "{{ projects.current.name }}" }]
+
+  it("are kept when the look is normalized", () => {
+    expect(normalizeAppearance({ labels })).toEqual({ labels })
+    expect(normalizeAppearance({ labels: [] })).toBeNull()
+  })
+
+  it("are kept when a colour of the key changes", () => {
+    const binding = {
+      control: { kind: "key", index: 0 },
+      trigger: { type: "press" },
+      target: { type: "back" },
+      label: null,
+      appearance: { labels },
+    } as ControlBinding
+    const layout: DeviceLayout = {
+      id: "l",
+      name: "L",
+      model: "m",
+      homePage: "h",
+      pages: [{ id: "h", name: "H", bindings: [binding] }],
+    }
+    const result = applyAppearance(layout, "h", [{ kind: "key", index: 0 }], {
+      background: "#123456",
+    })
+    expect(result.layout.pages[0]?.bindings[0]?.appearance).toEqual({
+      background: "#123456",
+      labels,
+    })
+  })
+})
