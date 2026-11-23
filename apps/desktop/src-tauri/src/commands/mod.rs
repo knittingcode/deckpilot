@@ -123,6 +123,8 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         projects::select_project,
         variables::list_variables,
         variables::preview_references,
+        variables::list_display_variables,
+        variables::resolve_display_templates,
         machine::get_machine_config,
         machine::set_resource_binding,
         machine::remove_resource_binding,

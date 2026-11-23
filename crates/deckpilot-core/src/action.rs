@@ -777,8 +777,14 @@ pub struct ActionInstance {
     pub label: Option<String>,
 }
 
-/// Longest accepted key label.
+/// Longest accepted key label, and longest title a key shows.
 pub const MAX_LABEL_CHARS: usize = 32;
+
+/// Longest accepted key label that holds references (`{{ … }}`, a display
+/// template, `docs/variables.md` §3): the references are long, what the key
+/// shows is cut to [`MAX_LABEL_CHARS`]. Earlier versions read such labels
+/// and refuse only to save them.
+pub const MAX_TITLE_TEMPLATE_CHARS: usize = 160;
 
 /// Checks presentation fields shared by actions and bindings.
 pub fn validate_presentation(icon: Option<&str>, label: Option<&str>) -> Result<(), String> {
@@ -792,12 +798,15 @@ pub fn validate_presentation(icon: Option<&str>, label: Option<&str>) -> Result<
             return Err(format!("invalid icon name `{icon}`"));
         }
     }
-    if let Some(label) = label
-        && label.chars().count() > MAX_LABEL_CHARS
-    {
-        return Err(format!(
-            "label must be at most {MAX_LABEL_CHARS} characters"
-        ));
+    if let Some(label) = label {
+        let limit = if label.contains("{{") {
+            MAX_TITLE_TEMPLATE_CHARS
+        } else {
+            MAX_LABEL_CHARS
+        };
+        if label.chars().count() > limit {
+            return Err(format!("label must be at most {limit} characters"));
+        }
     }
     Ok(())
 }

@@ -20,12 +20,13 @@ use deckpilot_device::{
 use crate::gesture::{BoundGestures, Gesture, GestureTimings};
 use crate::i18n::SystemText;
 use crate::stateful::StatefulBinding;
+use crate::variables::{DisplayTemplates, RecordingTemplates};
 use crate::{
     ActionContext, ActionInstanceId, ActionParameters, ActionRegistry, ActionResult,
     ActiveProjectContext, BindingTarget, ControlBinding, CycleDirection, DeviceLayout, Engine,
     EngineError, FaceStyle, FolderExit, FolderTimers, KeyFace, LayoutId, MachineConfig, PageId,
     PageLabel, Profile, ProfileId, Project, ProjectId, Trigger, WorkflowId, WorkflowReport,
-    render_label, render_page_label,
+    render_page_label,
 };
 
 /// The clock Auto Exit countdowns ([`crate::FolderTimers`]) are measured
@@ -257,6 +258,9 @@ pub struct Runtime {
     workflow_scope: crate::WorkflowScope,
     clock: Clock,
 }
+
+/// The display templates a device's faces resolved, by binding and text.
+pub type DisplayTexts = Vec<(crate::variables::TextKey, crate::variables::DisplayText)>;
 
 /// Most pages kept in [`Runtime::remembered_pages`]: profiles times
 /// devices, far beyond real use. Beyond it nothing more is remembered.
@@ -1166,8 +1170,15 @@ impl Runtime {
     /// What every display-capable control of a connected device should show.
     /// Never executes actions. Returns an empty list for unknown models.
     pub fn faces(&self, device: &DeviceId) -> Vec<(ControlId, KeyFace)> {
+        self.display_faces(device).0
+    }
+
+    /// [`Runtime::faces`], with every display template the faces resolved
+    /// ([`crate::variables::resolve_display_template`], through the
+    /// engine's variables) and what each depends on, by binding and text.
+    pub fn display_faces(&self, device: &DeviceId) -> (Vec<(ControlId, KeyFace)>, DisplayTexts) {
         let Some(model) = self.catalog.get(&device.model) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let controls: Vec<ControlId> = model
             .capabilities
@@ -1195,23 +1206,36 @@ impl Runtime {
         };
 
         let Some(profile) = self.profile() else {
-            return notice(self.placeholder.as_deref().ok_or(SystemText::NoProfile));
+            return (
+                notice(self.placeholder.as_deref().ok_or(SystemText::NoProfile)),
+                Vec::new(),
+            );
         };
         let (Some(layout), Some(page)) = (self.layout_of(device), self.current_page(device)) else {
-            return notice(Err(SystemText::NoLayout));
+            return (notice(Err(SystemText::NoLayout)), Vec::new());
         };
         let Some(page) = layout.page(page) else {
-            return notice(Err(SystemText::NoLayout));
+            return (notice(Err(SystemText::NoLayout)), Vec::new());
         };
-        let mut faces = page_faces_in(
-            self.engine.registry(),
-            layout,
-            page.id,
+        let (mut faces, texts) = self.engine.display_templates(
             profile,
-            self.active_project(),
-            &controls,
-            Some(&model.capabilities),
-            &self.workflow_scope,
+            &self.machine,
+            self.active_project_id(),
+            |environment| {
+                let recorder = RecordingTemplates::new(environment);
+                let faces = page_faces_scoped(
+                    self.engine.registry(),
+                    layout,
+                    page.id,
+                    profile,
+                    self.active_project(),
+                    &controls,
+                    Some(&model.capabilities),
+                    &recorder,
+                    &self.workflow_scope,
+                );
+                (faces, recorder.into_texts())
+            },
         );
         // *Back to previous layout* with nowhere to go back to.
         let system_back = self.system_back(device);
@@ -1236,7 +1260,7 @@ impl Runtime {
                 }
             }
         }
-        faces
+        (faces, texts)
     }
 
     /// The bindings of the active profile's layouts that cannot run their
@@ -1613,6 +1637,11 @@ fn page_path(layout: &DeviceLayout, page: Option<PageId>) -> Option<Vec<PageId>>
 /// model's `capabilities`, a control whose shown binding runs an action
 /// that cannot run from it shows as unavailable, as an action whose type
 /// cannot run here does.
+///
+/// Titles are resolved with the core's variables only ([`core_display`]):
+/// the older placeholders, the profile, the project and the platform. The
+/// agent resolves them with every display-safe variable
+/// ([`page_faces_with`], [`Runtime::display_faces`]).
 pub fn page_faces(
     registry: &ActionRegistry,
     layout: &DeviceLayout,
@@ -1622,26 +1651,51 @@ pub fn page_faces(
     controls: &[ControlId],
     capabilities: Option<&DeviceCapabilities>,
 ) -> Vec<(ControlId, KeyFace)> {
-    page_faces_in(
-        registry,
-        layout,
-        page,
+    core_display(profile, project, |titles| {
+        page_faces_with(
+            registry,
+            layout,
+            page,
+            profile,
+            project,
+            controls,
+            capabilities,
+            titles,
+        )
+    })
+}
+
+/// Display templates resolved with the core's variables only, without
+/// shared, module or plugin variables (they show
+/// [`crate::variables::UNRESOLVED_MARKER`]): where no agent resolves them.
+pub fn core_display<R>(
+    profile: &Profile,
+    project: Option<&Project>,
+    then: impl FnOnce(&dyn DisplayTemplates) -> R,
+) -> R {
+    static CORE: std::sync::LazyLock<crate::variables::VariableRegistry> =
+        std::sync::LazyLock::new(crate::variables::VariableRegistry::new);
+    let context = crate::variables::display_context(profile.id, project.map(|p| p.id));
+    let resolver = crate::resolution::ContextResolver {
         profile,
-        project,
-        controls,
-        capabilities,
-        &crate::WorkflowScope::default(),
-    )
+        os: crate::Os::current(),
+        shared: &crate::resolution::NoSharedVariables,
+        outputs: None,
+        registry: &CORE,
+        live: &crate::variables::NoLiveState,
+    };
+    then(&crate::variables::DisplayEnvironment {
+        context: &context,
+        resolver: &resolver,
+        registry: &CORE,
+    })
 }
 
 /// [`page_faces`], with keys that start workflows shown as `scope` says:
 /// a deleted workflow as "Workflow missing", another profile's as "Not in
 /// this profile", a graph workflow while the Workflows plugin is off as
-/// "Workflows off".
-#[expect(
-    clippy::too_many_arguments,
-    reason = "page_faces' arguments and the workflow scope"
-)]
+/// "Workflows off". Titles are resolved with the core's variables only.
+#[allow(clippy::too_many_arguments)]
 pub fn page_faces_in(
     registry: &ActionRegistry,
     layout: &DeviceLayout,
@@ -1650,6 +1704,61 @@ pub fn page_faces_in(
     project: Option<&Project>,
     controls: &[ControlId],
     capabilities: Option<&DeviceCapabilities>,
+    scope: &crate::WorkflowScope,
+) -> Vec<(ControlId, KeyFace)> {
+    core_display(profile, project, |titles| {
+        page_faces_scoped(
+            registry,
+            layout,
+            page,
+            profile,
+            project,
+            controls,
+            capabilities,
+            titles,
+            scope,
+        )
+    })
+}
+
+/// [`page_faces`] with the titles resolved by `titles`, which is asked for
+/// every title template the page's keys show.
+#[allow(clippy::too_many_arguments)]
+pub fn page_faces_with(
+    registry: &ActionRegistry,
+    layout: &DeviceLayout,
+    page: PageId,
+    profile: &Profile,
+    project: Option<&Project>,
+    controls: &[ControlId],
+    capabilities: Option<&DeviceCapabilities>,
+    titles: &dyn DisplayTemplates,
+) -> Vec<(ControlId, KeyFace)> {
+    page_faces_scoped(
+        registry,
+        layout,
+        page,
+        profile,
+        project,
+        controls,
+        capabilities,
+        titles,
+        &crate::WorkflowScope::default(),
+    )
+}
+
+/// [`page_faces_with`] and [`page_faces_in`] together: titles resolved by
+/// `titles`, keys that start workflows shown as `scope` says.
+#[allow(clippy::too_many_arguments)]
+pub fn page_faces_scoped(
+    registry: &ActionRegistry,
+    layout: &DeviceLayout,
+    page: PageId,
+    profile: &Profile,
+    project: Option<&Project>,
+    controls: &[ControlId],
+    capabilities: Option<&DeviceCapabilities>,
+    titles: &dyn DisplayTemplates,
     scope: &crate::WorkflowScope,
 ) -> Vec<(ControlId, KeyFace)> {
     let Some(page) = layout.page(page) else {
@@ -1672,6 +1781,11 @@ pub fn page_faces_in(
         count,
         name: &page.name,
     };
+    let paged = PagedTemplates {
+        inner: titles,
+        page: label,
+        shown: std::cell::RefCell::default(),
+    };
     controls
         .iter()
         .map(|control| {
@@ -1693,10 +1807,15 @@ pub fn page_faces_in(
                             crate::binding_incompatibility(binding, capabilities, registry, profile)
                                 .is_some()
                         });
+                        let title = Title {
+                            titles: &paged,
+                            page: page.id,
+                            binding,
+                        };
                         if incompatible {
-                            unavailable_face(binding, profile, project)
+                            unavailable_face(binding, profile, &title)
                         } else {
-                            face_for(registry, binding, layout, profile, project, scope)
+                            face_for(registry, binding, layout, profile, project, &title, scope)
                         }
                         .with_appearance(binding.appearance.as_ref())
                         .with_title_suggestions(title_suggestions(registry, binding, profile))
@@ -1704,7 +1823,11 @@ pub fn page_faces_in(
                     },
                 )
             };
-            face.title = render_page_label(&face.title, label);
+            // A title resolved from a template had its `{page.…}` expanded
+            // before its values went in; values are never expanded.
+            if !paged.resolved(*control, &face.title) {
+                face.title = render_page_label(&face.title, label);
+            }
             face.detail = face.detail.map(|detail| render_page_label(&detail, label));
             (*control, face)
         })
@@ -1774,11 +1897,7 @@ pub fn shown_binding(page: &crate::LayoutPage, control: ControlId) -> Option<&Co
 /// The face of an action binding that cannot run from its control: its
 /// label, marked unavailable (the look of an action whose type cannot run
 /// here).
-fn unavailable_face(
-    binding: &ControlBinding,
-    profile: &Profile,
-    project: Option<&Project>,
-) -> KeyFace {
+fn unavailable_face(binding: &ControlBinding, profile: &Profile, title: &Title<'_>) -> KeyFace {
     let instance = binding
         .target
         .action_id()
@@ -1793,11 +1912,8 @@ fn unavailable_face(
                 .to_owned()
         })
         .unwrap_or_default();
-    let face = KeyFace::new(
-        FaceStyle::Notice,
-        render_label(&template, &profile.name, project),
-    )
-    .with_system_detail(SystemText::Unavailable);
+    let face = KeyFace::new(FaceStyle::Notice, title.text(&template))
+        .with_system_detail(SystemText::Unavailable);
     match instance {
         Some(instance) if binding.label.is_none() && instance.label.is_none() => {
             face.with_action_name(instance.action_type.to_string())
@@ -1821,12 +1937,84 @@ fn open_page_title(
     binding.label.clone().or_else(name)
 }
 
+/// The page's display templates, as a page's keys resolve them: the
+/// layout's `{page.…}` placeholders are expanded in the template first, so
+/// values that go in are never expanded; a title with references is cut to
+/// [`crate::MAX_LABEL_CHARS`] as shown (its template may be longer, up to
+/// [`crate::MAX_TITLE_TEMPLATE_CHARS`]).
+struct PagedTemplates<'a> {
+    inner: &'a dyn DisplayTemplates,
+    page: PageLabel<'a>,
+    /// The titles resolved, by control.
+    shown: std::cell::RefCell<Vec<(ControlId, String)>>,
+}
+
+impl PagedTemplates<'_> {
+    /// Whether `title` is what a template of `control` resolved to.
+    fn resolved(&self, control: ControlId, title: &str) -> bool {
+        self.shown
+            .borrow()
+            .iter()
+            .any(|(shown, text)| *shown == control && text == title)
+    }
+}
+
+impl DisplayTemplates for PagedTemplates<'_> {
+    fn display(
+        &self,
+        key: &crate::variables::TextKey,
+        template: &str,
+    ) -> crate::variables::DisplayText {
+        let template = render_page_label(template, self.page);
+        let mut display = self.inner.display(key, &template);
+        if key.slot == crate::variables::TextSlot::Title {
+            if template.contains("{{") {
+                display.text = cut_title(&display.text);
+            }
+            self.shown
+                .borrow_mut()
+                .push((key.control, display.text.clone()));
+        }
+        display
+    }
+}
+
+/// `text` cut to [`crate::MAX_LABEL_CHARS`] characters, the last one `…`.
+fn cut_title(text: &str) -> String {
+    if text.chars().count() <= crate::MAX_LABEL_CHARS {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(crate::MAX_LABEL_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// The title of one binding, resolved by the page's display templates.
+struct Title<'a> {
+    titles: &'a dyn DisplayTemplates,
+    page: PageId,
+    binding: &'a ControlBinding,
+}
+
+impl Title<'_> {
+    fn text(&self, template: &str) -> String {
+        let key = crate::variables::TextKey {
+            page: self.page,
+            control: self.binding.control,
+            trigger: self.binding.trigger,
+            slot: crate::variables::TextSlot::Title,
+        };
+        self.titles.display(&key, template).text
+    }
+}
+
 fn face_for(
     registry: &ActionRegistry,
     binding: &ControlBinding,
     layout: &DeviceLayout,
     profile: &Profile,
     project: Option<&Project>,
+    title: &Title<'_>,
     scope: &crate::WorkflowScope,
 ) -> KeyFace {
     match &binding.target {
@@ -1849,7 +2037,7 @@ fn face_for(
                 .or_else(|| target.flatten().map(|layout| layout.name.as_str()))
                 .or_else(|| suggested_title(registry, instance))
                 .unwrap_or(&instance.name);
-            let label = render_label(template, &profile.name, project);
+            let label = title.text(template);
             // The instance's name, which it took from its type: a default
             // the agent may show in another language ([`crate::i18n`]).
             let default_name = binding.label.is_none()
@@ -1892,7 +2080,7 @@ fn face_for(
             )
         }
         BindingTarget::Workflow { workflow } => {
-            workflow_face(binding, layout.id, *workflow, profile, project, scope)
+            workflow_face(binding, layout.id, *workflow, profile, title, scope)
         }
         BindingTarget::OpenPage { page } => open_page_title(layout, binding, *page)
             .map_or_else(
@@ -1912,11 +2100,7 @@ fn face_for(
         // face without it, e.g. in the layout designer's preview.
         BindingTarget::Stateful(stateful) => KeyFace::new(
             FaceStyle::Action,
-            render_label(
-                binding.label.as_deref().unwrap_or(stateful.name()),
-                &profile.name,
-                project,
-            ),
+            title.text(binding.label.as_deref().unwrap_or(stateful.name())),
         )
         .with_symbol(Some(match stateful {
             StatefulBinding::WorkSession { .. } => symbols::WORK_SESSION,
@@ -1925,35 +2109,28 @@ fn face_for(
 }
 
 /// The face of a key that starts `workflow`: its name (or the key's own
-/// title) with the workflow glyph; "Workflows off" while graph workflows
-/// cannot run from keys; "Workflow missing" or "Not in this profile" when
-/// the profile does not have it ([`crate::WorkflowScope`]).
+/// title, through the display templates) with the workflow glyph;
+/// "Workflows off" while graph workflows cannot run from keys; "Workflow
+/// missing" or "Not in this profile" when the profile does not have it
+/// ([`crate::WorkflowScope`], by the key's own `layout`).
 fn workflow_face(
     binding: &ControlBinding,
     layout: LayoutId,
     workflow: crate::WorkflowId,
     profile: &Profile,
-    project: Option<&Project>,
+    title: &Title<'_>,
     scope: &crate::WorkflowScope,
 ) -> KeyFace {
     match profile.workflow(workflow) {
         // Kept, not run, while the Workflows plugin is off.
         Some(definition) if scope.graphs_off && definition.graph.is_some() => KeyFace::new(
             FaceStyle::Notice,
-            render_label(
-                binding.label.as_deref().unwrap_or(&definition.name),
-                &profile.name,
-                project,
-            ),
+            title.text(binding.label.as_deref().unwrap_or(&definition.name)),
         )
         .with_system_detail(SystemText::WorkflowsOff),
         Some(definition) => KeyFace::new(
             FaceStyle::Workflow,
-            render_label(
-                binding.label.as_deref().unwrap_or(&definition.name),
-                &profile.name,
-                project,
-            ),
+            title.text(binding.label.as_deref().unwrap_or(&definition.name)),
         )
         .with_symbol(Some(symbols::WORKFLOW)),
         // Deleted, or another profile's in a shared layout.
@@ -2001,6 +2178,9 @@ mod folder_tests;
 
 #[cfg(test)]
 mod title_tests;
+
+#[cfg(test)]
+mod display_tests;
 
 #[cfg(test)]
 mod tests {

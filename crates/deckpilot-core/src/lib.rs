@@ -55,8 +55,8 @@ pub(crate) mod testing;
 
 pub use action::{
     ActionInstance, ActionParameters, ActionType, ActionTypeId, DraftParameters, MAX_LABEL_CHARS,
-    ParameterError, ParameterKind, ParameterSpec, ParameterValue, lines_of, looks_secret,
-    validate_presentation,
+    MAX_TITLE_TEMPLATE_CHARS, ParameterError, ParameterKind, ParameterSpec, ParameterValue,
+    lines_of, looks_secret, validate_presentation,
 };
 pub use alias::{
     ACTION_ALIASES, ActionAlias, AliasOutcome, AliasStatus, FIRST_PARTY_PUBLISHER, LegacyRoute,
@@ -92,8 +92,9 @@ pub use credentials::{
     NoCredentials, Secret,
 };
 pub use device_runtime::{
-    DetachedAction, EditorTarget, LayoutStatus, NavigationError, NavigationState, Runtime,
-    RuntimeOutcome, page_faces, page_faces_in,
+    DetachedAction, DisplayTexts, EditorTarget, LayoutStatus, NavigationError, NavigationState,
+    Runtime, RuntimeOutcome, core_display, page_faces, page_faces_in, page_faces_scoped,
+    page_faces_with,
 };
 pub use editor_navigation::{
     ControlNavigation, EditorNavigation, NavigationOperation, control_navigation,

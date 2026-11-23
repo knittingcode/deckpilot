@@ -15,14 +15,18 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- An action that needs a value, such as Open application, can now be put
-  on a key or gesture, into a Multi Action or into a workflow before you
-  fill it in. Until then it is saved as "Needs configuration" and is never
-  run: a press, a step or a workflow that reaches it is refused before
-  anything happens, and says which settings are missing. A wrong value is
-  still refused when saving. Nothing changes for configured actions.
+- Key titles can show variables: `{{ projects.current.key }}`,
+  `{{ shared.team.name }}` or `{{ system.profile.current.name }}`, alone,
+  several at once or mixed with text. The device and the editor's preview
+  show the same text, and keys update when the project, the profile or a
+  value changes. Sensitive variables and credentials never show on a key;
+  a value that is not available shows `-`. `{profile}`, `{project.key}` and
+  `{project.name}` keep working, and saved titles are not changed. A title
+  with variables may be up to 160 characters long; the key shows at most 32.
+  DeckPilot 0.13 and earlier open layouts with such a title but refuse to
+  save them until the title is shortened to 32 characters.
 
 ### Changed
 
@@ -72,6 +76,12 @@ released either. 0.6.0 is the first version intended for publication.
   Random Action or Multi Action Switch, or the Work Session settings, could
   be deleted without any warning, which broke what used it. Every kind of
   use now counts.
+- An action that needs a value, such as Open application, can now be put
+  on a key or gesture, into a Multi Action or into a workflow before you
+  fill it in. Until then it is saved as "Needs configuration" and is never
+  run: a press, a step or a workflow that reaches it is refused before
+  anything happens, and says which settings are missing. A wrong value is
+  still refused when saving. Nothing changes for configured actions.
 
 ## [0.13.0] - 2026-11-22
 

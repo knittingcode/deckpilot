@@ -34,6 +34,8 @@ use crate::instance::{InstanceLock, LockError};
 use crate::render;
 
 mod deck;
+mod display;
+mod display_redraws;
 mod executions;
 mod folders;
 mod gestures;
@@ -228,6 +230,9 @@ pub(crate) enum Command {
 }
 
 /// Cloneable access to a running agent.
+/// A redraw that takes longer is logged with its key count.
+const SLOW_REDRAW: Duration = Duration::from_millis(8);
+
 #[derive(Debug, Clone)]
 pub struct AgentHandle {
     commands: mpsc::UnboundedSender<Command>,
@@ -245,6 +250,8 @@ pub struct AgentHandle {
     pub(crate) plugin_dialogs: Arc<crate::plugin_dialogs::PluginDialogs>,
     pub(crate) desktop_clients: Arc<AtomicUsize>,
     work_session: watch::Receiver<deckpilot_core::work_session::WorkSessionSnapshot>,
+    /// How many redraws variable changes caused (`display_redraws.rs`).
+    variable_redraws: Arc<AtomicUsize>,
 }
 
 impl AgentHandle {
@@ -264,6 +271,22 @@ impl AgentHandle {
 
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.events.subscribe()
+    }
+
+    /// Announces `keys` as changed variables, as a plugin publishing values
+    /// does (tests).
+    #[cfg(feature = "test-hooks")]
+    pub fn publish_variables_changed(&self, keys: Vec<String>) {
+        let _ = self
+            .events
+            .send(AgentEvent::SharedVariablesChanged { keys });
+    }
+
+    /// How many redraws variable changes caused so far (tests).
+    #[cfg(feature = "test-hooks")]
+    pub fn variable_redraws(&self) -> usize {
+        self.variable_redraws
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Watches the key states of `actions` of `profile` for the connection
@@ -563,6 +586,11 @@ pub struct Agent {
     stateful: stateful::StatefulKeys,
     /// Rendered key images by face and size.
     frames: render::FrameCache,
+    /// What the titles each device shows depend on (`display.rs`).
+    titles: display::TitleDependencies,
+    /// Variable-driven redraws, coalesced per device (`display_redraws.rs`).
+    display_redraws: display_redraws::DisplayRedraws,
+
     /// Decoded icons of the active profile.
     icons: render::Icons,
     /// Counts icon reloads, so scrolling keys are drawn again with new
@@ -617,6 +645,10 @@ impl Agent {
     /// Opens storage, loads the active profile, writes a fresh client token
     /// and starts listening for IPC clients. Must be called from within a
     /// Tokio runtime.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one field per part of the agent's state"
+    )]
     pub fn start(options: AgentOptions, lock: InstanceLock) -> Result<Self, AgentError> {
         let paths = &options.paths;
         // The agent starts locked. `run` then opens a database with a
@@ -661,6 +693,7 @@ impl Agent {
             plugin_dialogs: Arc::default(),
             desktop_clients: Arc::new(AtomicUsize::new(0)),
             work_session,
+            variable_redraws: Arc::new(AtomicUsize::new(0)),
         };
         let server = crate::server::spawn(listener, handle.clone(), token, shutdown_rx);
         info!(endpoint = %endpoint.display(), backend = options.backend.name(), ?security, "agent started");
@@ -706,6 +739,8 @@ impl Agent {
             refused_keys: workflow_keys::RefusedKeys::default(),
             stateful: stateful::StatefulKeys::default(),
             frames: render::FrameCache::new(FRAME_CACHE),
+            titles: display::TitleDependencies::default(),
+            display_redraws: display_redraws::DisplayRedraws::default(),
             icons: render::Icons::default(),
             icons_version: 0,
             marquee_clock: crate::marquee::monotonic_clock(),
@@ -785,6 +820,9 @@ impl Agent {
         let mut rescan = tokio::time::interval(self.options.rescan_interval);
         rescan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         rescan.reset();
+        // Variable changes (shared values, plugin values, modules enabled
+        // or disabled) redraw the titles that use them (`display.rs`).
+        let mut variable_events = self.handle.events.subscribe();
         let mut auto_lock = tokio::time::interval(self.options.auto_lock_check);
         auto_lock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         auto_lock.reset();
@@ -805,6 +843,11 @@ impl Agent {
                 || tokio::time::Instant::now() + Duration::from_secs(3600),
                 tokio::time::Instant::from_std,
             );
+            // Sleeps until a coalesced variable redraw is due, if any.
+            let display_due = self.display_redraws.next_due().map_or_else(
+                || tokio::time::Instant::now() + Duration::from_secs(3600),
+                tokio::time::Instant::from_std,
+            );
             // Sleeps until the elapsed time on a shown work session key
             // changes, if any.
             let face_due = self.next_work_session_face_due().map_or_else(
@@ -816,6 +859,18 @@ impl Agent {
                 Some(command) = self.commands.recv() => self.handle_command(command),
                 Some(signal) = self.signals.recv() => {
                     self.handle_signal(signal);
+                    Flow::Continue
+                }
+                event = variable_events.recv() => {
+                    match event {
+                        Ok(AgentEvent::SharedVariablesChanged { keys }) => {
+                            self.display_variables_changed(&keys);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            self.display_events_lagged();
+                        }
+                        Ok(_) | Err(broadcast::error::RecvError::Closed) => {}
+                    }
                     Flow::Continue
                 }
                 _ = rescan.tick() => {
@@ -845,6 +900,10 @@ impl Agent {
                 }
                 () = tokio::time::sleep_until(face_due) => {
                     self.on_work_session_face_due();
+                    Flow::Continue
+                }
+                () = tokio::time::sleep_until(display_due) => {
+                    self.on_display_redraws_due();
                     Flow::Continue
                 }
             };
@@ -1115,6 +1174,12 @@ impl Agent {
             Request::PreviewReferences { context, items } => {
                 self.preview_references(&context, &items)
             }
+            Request::ListDisplayVariables { context, filter } => {
+                self.list_display_variables(&context, &filter)
+            }
+            Request::ResolveDisplayTemplates { context, templates } => {
+                self.resolve_display_templates(&context, templates)
+            }
             Request::GetAutostart => {
                 let enabled = self.autostart()?.is_enabled().map_err(failed)?;
                 Ok(Response::Autostart { enabled })
@@ -1269,6 +1334,8 @@ impl Agent {
             | Request::GetActiveProject
             | Request::ListVariables { .. }
             | Request::PreviewReferences { .. }
+            | Request::ListDisplayVariables { .. }
+            | Request::ResolveDisplayTemplates { .. }
             | Request::GetAutostart
             | Request::Subscribe
             | Request::SubscribePluginEvents { .. }
@@ -1977,6 +2044,8 @@ impl Agent {
             session.io.close(Vec::new(), CLOSE_TIMEOUT);
         }
         self.forget_gestures(device);
+        self.titles.forget(device);
+        self.display_redraws.forget(device);
         self.states.forget_device(device);
         self.session_faces.forget_device(device);
         let _ = self.runtime.handle_event(&DeviceEvent::Disconnected {
@@ -1994,7 +2063,12 @@ impl Agent {
     /// new list whenever it changes; a key that stops scrolling gets its
     /// still image.
     fn render(&mut self, device: &DeviceId, force: bool) {
-        let mut faces = self.runtime.faces(device);
+        let started = std::time::Instant::now();
+        self.display_redraws.rendered(device, started);
+        let (mut faces, texts) = self.runtime.display_faces(device);
+        if self.sessions.contains_key(device) {
+            self.titles.record(device, texts);
+        }
         if self.sessions.contains_key(device) {
             self.decorate_faces(device, &mut faces, std::time::Instant::now());
         }
@@ -2040,6 +2114,15 @@ impl Agent {
             updates.push((control, frame));
             states::record_face(device, control, &face);
             session.rendered.insert(control, face);
+        }
+        let elapsed = started.elapsed();
+        if elapsed > SLOW_REDRAW {
+            // Never the texts: only how long and how many keys.
+            info!(
+                ms = elapsed.as_secs_f64() * 1000.0,
+                keys = updates.len(),
+                "slow redraw"
+            );
         }
         if force || scrolling != session.scrolling || session.scrolling_icons != self.icons_version
         {
@@ -2466,6 +2549,7 @@ impl AgentHandle {
             plugin_dialogs: Arc::default(),
             desktop_clients: Arc::new(AtomicUsize::new(0)),
             work_session,
+            variable_redraws: Arc::new(AtomicUsize::new(0)),
         };
         (handle, received)
     }
