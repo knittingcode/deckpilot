@@ -928,15 +928,26 @@ impl Engine {
         // `not-from-a-key` (`settle_request`).
         self.contexts
             .check(handler.definition(), instance, invocation);
+        let configured = match overrides {
+            Some(overrides) => instance.parameters.overlay(overrides),
+            None => instance.parameters.clone(),
+        };
+        // An action that needs configuration says so before anything else
+        // about the run (`crate::completeness`); `resolve_parameters`
+        // checks again after resolving references.
+        let missing = handler.definition().missing(&configured);
+        if !missing.is_empty() {
+            return Ok(crate::resolution::ResolutionFailure::Incomplete {
+                missing,
+                other: Vec::new(),
+            }
+            .into_result());
+        }
         if handler.definition().requires_project && project.is_none() {
             return Ok(ActionResult::failure(
                 "this action requires an active project",
             ));
         }
-        let configured = match overrides {
-            Some(overrides) => instance.parameters.overlay(overrides),
-            None => instance.parameters.clone(),
-        };
         let Resolved {
             parameters,
             redactor,
@@ -1516,7 +1527,16 @@ mod tests {
             .run_action(&f.profile, &machine(), &mut context, id)
             .unwrap();
         assert!(!result.is_success());
-        assert!(result.message.contains("invalid configuration"));
+        // A stored instance without its required value needs configuration.
+        assert_eq!(
+            result.code.as_deref(),
+            Some(crate::CONFIGURATION_INCOMPLETE)
+        );
+        assert_eq!(
+            result.data.get("missing").map(String::as_str),
+            Some("message")
+        );
+        assert!(result.message.contains("parameter `message` is required"));
     }
 
     #[test]

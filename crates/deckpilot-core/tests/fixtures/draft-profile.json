@@ -1,0 +1,227 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "name": "Drafts",
+  "description": "",
+  "actions": [
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Echo draft",
+      "actionType": "test.echo",
+      "parameters": {}
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "name": "Echo",
+      "actionType": "test.echo",
+      "parameters": {
+        "message": {
+          "type": "text",
+          "value": "done"
+        }
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "name": "Multi",
+      "steps": [
+        {
+          "action": "00000000-0000-4000-8000-000000000002",
+          "onFailure": "continue",
+          "condition": {
+            "type": "always"
+          }
+        },
+        {
+          "action": "00000000-0000-4000-8000-000000000003",
+          "onFailure": "continue",
+          "condition": {
+            "type": "always"
+          }
+        },
+        {
+          "action": "00000000-0000-4000-8000-000000000002",
+          "onFailure": "continue",
+          "condition": {
+            "type": "always"
+          },
+          "overrides": {
+            "message": {
+              "type": "text",
+              "value": "filled"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "name": "Graph",
+      "steps": [],
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "start",
+            "type": "trigger",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            }
+          },
+          {
+            "id": "step_1",
+            "type": "action",
+            "action": "00000000-0000-4000-8000-000000000002",
+            "policy": {
+              "onError": "stop",
+              "retry": {
+                "attempts": 0,
+                "backoffMs": 0
+              }
+            },
+            "label": "Echo draft",
+            "position": {
+              "x": 280.0,
+              "y": 0.0
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "start",
+            "port": "out",
+            "to": "step_1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000008",
+      "name": "Mapped",
+      "steps": [],
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "start",
+            "type": "trigger",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            }
+          },
+          {
+            "id": "step_1",
+            "type": "action",
+            "action": "00000000-0000-4000-8000-000000000002",
+            "mappings": {
+              "message": {
+                "type": "template",
+                "template": "mapped"
+              }
+            },
+            "policy": {
+              "onError": "stop",
+              "retry": {
+                "attempts": 0,
+                "backoffMs": 0
+              }
+            },
+            "label": "Echo draft",
+            "position": {
+              "x": 280.0,
+              "y": 0.0
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "start",
+            "port": "out",
+            "to": "step_1"
+          }
+        ]
+      }
+    }
+  ],
+  "projects": [],
+  "layouts": [
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "name": "Main",
+      "model": "elgato.streamdeck.mk2",
+      "homePage": "00000000-0000-4000-8000-000000000005",
+      "pages": [
+        {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "name": "Home",
+          "bindings": [
+            {
+              "control": {
+                "kind": "key",
+                "index": 0
+              },
+              "trigger": {
+                "type": "press"
+              },
+              "target": {
+                "type": "action",
+                "action": "00000000-0000-4000-8000-000000000002"
+              }
+            },
+            {
+              "control": {
+                "kind": "key",
+                "index": 1
+              },
+              "trigger": {
+                "type": "click"
+              },
+              "target": {
+                "type": "action",
+                "action": "00000000-0000-4000-8000-000000000002"
+              }
+            },
+            {
+              "control": {
+                "kind": "key",
+                "index": 1
+              },
+              "trigger": {
+                "type": "longPress"
+              },
+              "target": {
+                "type": "action",
+                "action": "00000000-0000-4000-8000-000000000002",
+                "overrides": {
+                  "message": {
+                    "type": "text",
+                    "value": "long"
+                  }
+                }
+              }
+            },
+            {
+              "control": {
+                "kind": "key",
+                "index": 2
+              },
+              "trigger": {
+                "type": "press"
+              },
+              "target": {
+                "type": "action",
+                "action": "00000000-0000-4000-8000-000000000003"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "activeLayouts": {
+    "elgato.streamdeck.mk2": "00000000-0000-4000-8000-000000000004"
+  }
+}

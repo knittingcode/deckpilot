@@ -206,6 +206,7 @@
     "locked": "the configuration is locked"
   },
   "pluginAction": {
+    "configuration-incomplete": "the action needs configuration",
     "not-permitted": "the permission was not granted",
     "throttled": "the rate limit was reached; try again later",
     "bad-request": "the request was malformed",

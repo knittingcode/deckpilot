@@ -1,4 +1,9 @@
 {
+  "completeness": {
+    "badge": "Wymaga konfiguracji",
+    "missing": "Brakuje: {{parameters}}",
+    "runRefused": "„{{name}}” wymaga konfiguracji, zanim będzie mogła działać."
+  },
   "library": {
     "description": "Skonfigurowane akcje, gotowe do użycia w przepływach pracy i na klawiszach",
     "new": "Nowa akcja",
