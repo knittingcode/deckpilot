@@ -26,6 +26,35 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
+- **Behaviour change: while the Workflows plugin is disabled, keys and
+  gestures bound to a graph workflow no longer run it.** Disabled plugins
+  preserve bindings without executing them: the keys are kept, show
+  "Workflows off", and the app's status bar says why a press did nothing.
+  Turning the plugin on again restores them. Multi Actions are part of
+  DeckPilot itself and keep running with the plugin off; workflows started
+  from the app or by their schedules are not affected.
+- Deleting a workflow that is in use now asks first and lists every place
+  that uses it: keys and gestures, Sub-workflow and Loop nodes of other
+  workflows, Random Action and Multi Action Switch entries, and the Work
+  Session start and verification workflows. The keys are kept and show
+  "Workflow missing" unless you also choose to clear them; a Work Session
+  setting is cleared only when you tick it, otherwise the workflow is not
+  deleted; other workflows and actions are never changed. If something
+  started using the workflow while the dialog was open, the delete stops
+  and shows the updated list.
+- A key whose workflow was deleted now shows "Workflow missing" instead of
+  "Not in this profile", which is kept for a workflow of another profile
+  that shares the layout.
+- A key or gesture whose workflow did not start (missing, another
+  profile's, invalid, needing input values, already running, or too many
+  running) now says so in the app's status bar, once per key, instead of
+  only in the agent's log. A Multi Action Switch no longer moves past a
+  state whose workflow was refused before it ran.
+- Saving a layout refuses a new key that starts another profile's or a
+  deleted workflow, a workflow that needs input values, or a graph
+  workflow while the Workflows plugin is off. Keys saved like that before
+  are kept and reported, and moving or duplicating them is not new.
+
 - Built-in actions now declare where they make sense; nothing changes yet
   for existing setups. Each built-in says whether it belongs on a key, on
   a double click or long press, on a key's live display, in a Multi Action
@@ -33,6 +62,13 @@ released either. 0.6.0 is the first version intended for publication.
   without refusing it, and such a use still runs, with a warning in the
   agent's log. Wait is deprecated in favour of Delay and is no longer
   offered for new actions; saved Waits keep working unchanged.
+
+### Fixed
+
+- A workflow used only by another workflow's Sub-workflow or Loop node, a
+  Random Action or Multi Action Switch, or the Work Session settings, could
+  be deleted without any warning, which broke what used it. Every kind of
+  use now counts.
 
 ## [0.13.0] - 2026-11-22
 

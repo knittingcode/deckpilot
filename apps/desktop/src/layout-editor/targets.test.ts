@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { BindingTarget, DeviceLayout, Workflow } from "@/lib/types"
+import type { BindingTarget, DeviceLayout, Workflow, WorkflowEntry } from "@/lib/types"
 
 import {
   decodeTarget,
@@ -52,5 +52,58 @@ describe("workflow targets without the Workflows plugin", () => {
     const on = targetGroups({ actions: [], workflows }, layout, "home")
     expect(unavailableTarget(on, "workflow:graph")).toBeUndefined()
     expect(readOnlyTarget(on, "workflow:graph")).toBe(false)
+  })
+})
+
+describe("workflow targets that need inputs", () => {
+  const layout = {
+    id: "l",
+    name: "L",
+    model: "m",
+    homePage: "home",
+    pages: [{ id: "home", name: "Home", bindings: [] }],
+  } as DeviceLayout
+  const workflows = [
+    { id: "needs", name: "Needs", steps: [], graph: { version: 1, nodes: [], edges: [] } },
+    { id: "ready", name: "Ready", steps: [], graph: { version: 1, nodes: [], edges: [] } },
+  ] as unknown as Workflow[]
+  const entries: WorkflowEntry[] = [
+    {
+      id: "needs",
+      name: "Needs",
+      kind: "graph",
+      hasTriggers: false,
+      block: { code: "needsInputs", message: "Needs needs a value for its input `target`" },
+      references: 0,
+      fingerprint: "f",
+    },
+    {
+      id: "ready",
+      name: "Ready",
+      kind: "graph",
+      hasTriggers: false,
+      block: { code: "invalidGraph", message: "no trigger" },
+      references: 0,
+      fingerprint: "f",
+    },
+  ]
+
+  it("lists them but they cannot be placed; an invalid graph can", () => {
+    const groups = targetGroups(
+      { actions: [], workflows },
+      layout,
+      "home",
+      () => null,
+      true,
+      entries,
+    )
+    expect(unavailableTarget(groups, "workflow:needs")).toBe(
+      "it needs input values; use it from a Sub-workflow node",
+    )
+    expect(readOnlyTarget(groups, "workflow:needs")).toBe(false)
+    expect(unavailableTarget(groups, "workflow:ready")).toBeUndefined()
+    // Without entries (an older backend), as before.
+    const before = targetGroups({ actions: [], workflows }, layout, "home")
+    expect(unavailableTarget(before, "workflow:needs")).toBeUndefined()
   })
 })

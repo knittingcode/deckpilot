@@ -33,7 +33,7 @@ use deckpilot_core::graph::{CancellationToken, ExecutionEvent, GraphReport};
 use deckpilot_core::{
     ActiveProjectContext, Engine, EngineError, ExecutionId, ExecutionRecord, ExecutionState,
     ExecutionSummary, ExecutionTrigger, Profile, ProjectId, ProjectOutcome, ProjectScope,
-    WorkflowId, safe_event, safe_report,
+    WorkflowId, WorkflowRefusal, safe_event, safe_report,
 };
 use deckpilot_ipc::{AgentEvent, ErrorCode, IpcError, MAX_EXECUTION_LIST, Response, SecurityState};
 use deckpilot_storage::executions::{ExecutionQuery, Retention};
@@ -207,6 +207,7 @@ impl Agent {
         if self.security != SecurityState::Unlocked {
             return Err(locked());
         }
+        self.check_start(workflow, trigger, &launch.inputs)?;
         let profile = self
             .runtime
             .profile()
@@ -215,17 +216,6 @@ impl Agent {
             .workflow(workflow)
             .ok_or_else(|| engine_error(&EngineError::UnknownWorkflow(workflow)))?;
         let engine = self.runtime.shared_engine();
-        engine
-            .check_runnable_with(profile, workflow, &launch.inputs)
-            .map_err(|e| engine_error(&e))?;
-        if self.is_running(workflow) {
-            return Err(failed("this workflow is already running".into()));
-        }
-        if self.executions.running.len() >= MAX_RUNNING {
-            return Err(failed(format!(
-                "{MAX_RUNNING} workflows are already running; wait for one to finish"
-            )));
-        }
         let id = ExecutionId::new();
         let scope = definition.effective_project_scope(profile, engine.registry());
         let mut record = ExecutionRecord::start(id, definition, profile, trigger, self.now_ms());
@@ -284,6 +274,73 @@ impl Agent {
         // Keys bound to the workflow show that it runs.
         self.render_all();
         Ok(summary)
+    }
+
+    /// Whether `workflow` may start now for `trigger`. Every start
+    /// re-resolves what the key or the app named: nothing is cached in a
+    /// binding. Refusals carry a stable reason (`WorkflowRefusal::code`)
+    /// the caller reports.
+    fn check_start(
+        &self,
+        workflow: WorkflowId,
+        trigger: ExecutionTrigger,
+        inputs: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), IpcError> {
+        let refused = |error: IpcError, refusal: WorkflowRefusal| error.with_reason(refusal.code());
+        let profile = self
+            .runtime
+            .profile()
+            .ok_or_else(|| engine_error(&EngineError::NoActiveProfile))?;
+        let scope = self.runtime.workflow_scope();
+        let Some(definition) = profile.workflow(workflow) else {
+            let refusal = scope
+                .refusal(profile, None, workflow)
+                .unwrap_or(WorkflowRefusal::Missing);
+            return Err(refused(
+                engine_error(&EngineError::UnknownWorkflow(workflow)),
+                refusal,
+            ));
+        };
+        // Disabled plugins keep bindings without running them: while the
+        // Workflows plugin is off, keys and gestures do not start graph
+        // workflows (Multi Actions are the core's and still run).
+        if super::workflow_keys::from_key(trigger)
+            && scope.refusal(profile, None, workflow) == Some(WorkflowRefusal::PluginOff)
+        {
+            return Err(refused(
+                failed(WorkflowRefusal::PluginOff.message().to_owned()),
+                WorkflowRefusal::PluginOff,
+            ));
+        }
+        let engine = self.runtime.shared_engine();
+        if let Err(error) = engine.check_runnable_with(profile, workflow, inputs) {
+            let refusal =
+                match deckpilot_core::workflow_block(definition, profile, engine.registry()) {
+                    Some(block)
+                        if block.code == deckpilot_core::WorkflowBlockCode::NeedsInputs
+                            && inputs.is_empty() =>
+                    {
+                        WorkflowRefusal::NeedsInputs
+                    }
+                    _ => WorkflowRefusal::Invalid,
+                };
+            return Err(refused(engine_error(&error), refusal));
+        }
+        if self.is_running(workflow) {
+            return Err(refused(
+                failed("this workflow is already running".into()),
+                WorkflowRefusal::AlreadyRunning,
+            ));
+        }
+        if self.executions.running.len() >= MAX_RUNNING {
+            return Err(refused(
+                failed(format!(
+                    "{MAX_RUNNING} workflows are already running; wait for one to finish"
+                )),
+                WorkflowRefusal::Limit,
+            ));
+        }
+        Ok(())
     }
 
     /// `runWorkflow`: starts the run and answers `reply` when it ends.

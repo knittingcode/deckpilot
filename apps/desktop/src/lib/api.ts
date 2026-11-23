@@ -64,6 +64,7 @@ import type {
   VariableDefinition,
   VariableValue,
   Workflow,
+  WorkflowDeleteConfirmation,
   WorkflowReport,
   WorkSessionSettings,
   WorkSessionSnapshot,
@@ -288,8 +289,19 @@ export const api = {
     ),
   duplicateWorkflow: (profileId: string, workflowId: string, name: string) =>
     invoke<Workflow>("duplicate_workflow", { profileId, workflowId, name }),
-  deleteWorkflow: (profileId: string, workflowId: string) =>
-    invoke<null>("delete_workflow", { profileId, workflowId }),
+  /**
+   * Deletes a workflow. Without `confirm`, one that something refers to is
+   * refused with `invalid.workflowInUse` ({@link WorkflowInUseParams}); with
+   * it, the delete fails with `invalid.workflowReferencesChanged` when the
+   * references are no longer those the fingerprint names. Keys and gestures
+   * that start it stay ("Workflow missing") unless `clearBindings`.
+   */
+  deleteWorkflow: (profileId: string, workflowId: string, confirm?: WorkflowDeleteConfirmation) =>
+    invoke<Saved<{ cleared: number; clearedWorkSession: number }>>("delete_workflow", {
+      profileId,
+      workflowId,
+      confirm: confirm ?? null,
+    }),
   validateWorkflowGraph: (profileId: string, workflow: Workflow) =>
     invoke<GraphIssue[]>("validate_workflow_graph", { profileId, workflow }),
   convertWorkflow: (profileId: string, workflow: Workflow) =>

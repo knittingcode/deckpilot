@@ -96,6 +96,109 @@ switch) apply before the next step. Requests from elsewhere are processed only
 after the workflow finishes, so a workflow always sees a consistent context.
 The result is a `WorkflowReport` with a `StepReport` per step.
 
+### Workflows on keys
+
+A key or gesture refers to a workflow by its id,
+`BindingTarget::Workflow { workflow }`, with an optional title (`label`)
+and look (`appearance`) of its own. Nothing of the workflow is copied: one
+workflow can be on many keys, a rename reaches every key without a title
+of its own, and an edit keeps the id. Workflows belong to their profile;
+there is no workflow icon (a key's look is its own).
+
+The Action Library lists the edited profile's workflows, derived by the
+backend (`get_profile`, `workflowEntries`) and never stored: graph
+workflows under "Workflows", credited to the `deckpilot.workflows` plugin;
+step workflows (Multi Actions) under the core's "Sequences". An entry
+carries the kind (`graph` or `steps`), whether it has triggers, how many
+places refer to it and, as `block`, why a key cannot start it: a required
+input (`needsInputs`, listed but never dropped on a key; it runs from a
+Sub-workflow node) or an invalid graph (`invalidGraph`, it can be placed
+and fails until fixed).
+
+**References.** `Profile::workflow_references` (`get_profile`,
+`workflowReferences`) lists every place that refers to a workflow, as
+`Usage`s: key and gesture bindings (`layoutBinding`, with their trigger),
+Call and Loop nodes of other graphs, and action nodes whose overrides or
+mappings name it (`workflowNode`), steps whose overrides name it
+(`workflowStep`), actions whose parameters name it (`actionParameter`:
+Random Action candidates and Multi Action Switch states, `workflow:<id>`
+lines, or a key's overrides of such an action), and the profile's Work
+Session settings (`workSessionSetting`: `startWorkflow`,
+`verificationWorkflow`, stored apart from the profile document).
+`workflowUsages` (key bindings only) is kept for one release.
+
+**Deleting.** `delete_workflow(profileId, workflowId, confirm?)`:
+
+- without `confirm`, a workflow nothing refers to is deleted; one that is
+  referenced is refused with `invalid.workflowInUse`, whose `params` list
+  the references (`usages`) and their `fingerprint`;
+- with `confirm { fingerprint, clearBindings }` it is deleted when its
+  references are still those the fingerprint names (a digest of the
+  places, not of their names), else refused with
+  `invalid.workflowReferencesChanged` and the current list, so a key bound
+  in another window between the dialog and the confirmation is never lost
+  silently;
+- the keys and gestures that start it stay and show **Workflow missing**,
+  unless `clearBindings` removes them in the same save; graphs and action
+  parameters that name it are never edited (validation reports them).
+- a Work Session start or verification workflow is never cleared
+  implicitly: unless `clearWorkSession` is set, the delete is refused
+  (`invalid.workflowInWorkSession`). Unlike a key, which is visible and
+  fails one press at a time, a cleared setting changes what a session
+  does (no start workflow, finishing without verification) and a dangling
+  one would surface only when a session starts or finishes, so it takes
+  the user's explicit say. The profile and the settings are checked and
+  written in one transaction.
+
+**Saving a layout** refuses a *new* binding (one to a workflow the saved
+layout did not start anywhere, so moving, swapping or duplicating a key or
+page is not new) that starts a workflow the saving profile may not start
+from a key: another profile's or a deleted one
+(`invalid.workflowNotInProfile`; a key never runs another profile's
+workflow), a graph workflow while the Workflows plugin is off
+(`invalid.pluginFeatureOff`), or one with a required input
+(`invalid.workflowNeedsInputs`). Stored ones are kept and reported
+(`workflowIssues` of the saved layout), so no profile becomes unsavable.
+
+**Running.** Every press re-resolves the workflow in the active profile:
+nothing is cached in the binding. A start from a key or gesture that is
+refused is told to the user in the app's status bar, once per key and
+reason until the configuration is loaded again, with a stable code
+(`notification.code`, and the IPC error's `reason` for `startWorkflow`):
+
+| Code | Why |
+|---|---|
+| `workflowMissing` | it was deleted |
+| `workflowNotInProfile` | it belongs to another profile sharing the layout |
+| `workflowPluginOff` | a graph workflow while the Workflows plugin is off |
+| `workflowInvalid` | its graph has errors |
+| `workflowNeedsInputs` | it has a required input |
+| `workflowAlreadyRunning` | it runs already |
+| `workflowLimit` | too many workflows run |
+
+A key's run is user-initiated (`RunOrigin::Workflow { cause: User }`); each
+plugin action inside it is checked with its plugin's current grants and
+state. Workflow targets are not action types, so action contexts
+([action-contexts.md](action-contexts.md)) do not apply to them.
+
+**Faces.** A key whose workflow is not in the active profile shows
+"Workflow missing" when no other profile using the key's own layout has it
+(deleted), and "Not in this profile" when one does. The workflows of the
+sharing profiles are read once per configuration load in the agent, and
+kept by the app until the database is written.
+
+**Disabled plugins preserve bindings without executing them.** While the
+Workflows plugin (`deckpilot.workflows`) is disabled, keys and gestures
+bound to graph workflows are kept, show "Workflows off" and do not run;
+Multi Actions (step workflows) are the core's and keep running. Enabling
+the plugin restores the runs. Nothing is deleted. Runs started from the
+app and by triggers (schedules, lifecycle events) are not affected, and
+neither are a Work Session's start and verification workflows started
+from a Work Session key: they belong to the Work Session feature, not to a
+binding of the workflow (pending the owner's decision). A Multi Action
+Switch whose state's workflow is refused before it runs stays on that
+state, also with "advance on failure".
+
 ## Execution
 
 - **ExecutionContext** – profile, active project (optional), machine

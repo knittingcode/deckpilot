@@ -48,6 +48,7 @@ pub mod trigger;
 pub mod variables;
 pub mod work_session;
 pub mod workflow;
+pub mod workflow_refs;
 
 #[cfg(test)]
 pub(crate) mod testing;
@@ -92,7 +93,7 @@ pub use credentials::{
 };
 pub use device_runtime::{
     DetachedAction, EditorTarget, LayoutStatus, NavigationError, NavigationState, Runtime,
-    RuntimeOutcome, page_faces,
+    RuntimeOutcome, page_faces, page_faces_in,
 };
 pub use editor_navigation::{
     ControlNavigation, EditorNavigation, NavigationOperation, control_navigation,
@@ -148,6 +149,11 @@ pub use trigger::{
     WallTime, WorkflowTrigger,
 };
 pub use workflow::{OnFailure, ProjectScope, StepCondition, Workflow, WorkflowStep};
+pub use workflow_refs::{
+    DeleteOptions, DeletedWorkflow, ReferenceFingerprint, WorkSessionSetting, WorkSessionWorkflows,
+    WorkflowBindingIssue, WorkflowBindingReason, WorkflowBlock, WorkflowBlockCode, WorkflowRefusal,
+    WorkflowScope, workflow_block,
+};
 
 /// Error returned when a textual identifier does not satisfy its format rules.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -57,6 +57,12 @@ pub struct Notification {
     /// Shown in the configuration app's status bar while it is open.
     #[serde(default)]
     pub status_bar: bool,
+    /// A stable code for what the agent itself reports (a key whose
+    /// workflow did not start: `workflowMissing`…), which the app may
+    /// translate; the title and body are the English text. Not stored
+    /// when absent; actions' notifications have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 impl Notification {
@@ -69,7 +75,15 @@ impl Notification {
             severity,
             desktop: true,
             status_bar: true,
+            code: None,
         }
+    }
+
+    /// The notification with a stable `code` (see [`Notification::code`]).
+    #[must_use]
+    pub fn with_code(mut self, code: &str) -> Self {
+        self.code = Some(code.to_owned());
+        self
     }
 }
 
