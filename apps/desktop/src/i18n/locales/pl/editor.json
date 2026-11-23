@@ -1050,5 +1050,24 @@
     "button": "Nadaj",
     "label": "Nadaj uprawnienie dla {{action}} ({{plugin}})",
     "granted": "Nadano uprawnienie"
+  },
+  "titleVariables": {
+    "insert": "Wstaw zmienną do tytułu",
+    "search": "Szukaj zmiennych",
+    "list": "Zmienne, które może pokazać klawisz",
+    "loading": "Wczytywanie…",
+    "none": "Żadna zmienna nie pasuje.",
+    "unavailable": "Zmienne są dostępne, gdy działa agent DeckPilota.",
+    "shows": "Klawisz pokazuje:",
+    "cut": "Klawisz pokazuje najwyżej 32 znaki.",
+    "unresolved": "{{reference}} pokazuje „-”: {{reason}}",
+    "invalid": "„{{text}}” nie jest zmienną i jest pokazywane tak, jak wpisano.",
+    "reason": {
+      "notDisplayable": "nigdy nie jest pokazywana na klawiszu (poufna, sekret lub identyfikator).",
+      "missing": "nie ma teraz wartości.",
+      "unavailable": "jej moduł lub wtyczka jest niedostępna.",
+      "notText": "jej wartość nie jest tekstem.",
+      "runtimeOnly": "istnieje tylko podczas działania przepływu."
+    }
   }
 }

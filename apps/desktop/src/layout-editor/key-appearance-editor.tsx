@@ -10,13 +10,14 @@
 // Gestures, folder settings and the rest follow below the title.
 
 import { ImageIcon } from "lucide-react"
-import { useId, useState } from "react"
+import { useId, useRef, useState } from "react"
 
 import { KeyPreview } from "@/components/key-preview"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useTranslation } from "@/i18n"
+import { MAX_TITLE_TEMPLATE_CHARS, maxTitleLength, referenceText } from "@/lib/display-templates"
 import { folderControlOf, folderKeyTitle } from "@/lib/folder-control"
 import { controlKey, controlLabel, renamePage } from "@/lib/layout-model"
 import type { ControlId, DeviceLayout } from "@/lib/types"
@@ -32,6 +33,7 @@ import { KeyMenu } from "./icon-menu"
 import { type KeyLook, useKeyLook } from "./key-look-context"
 import { TitleFormatButton } from "./title-appearance-editor"
 import { suggestionsOf } from "./title-look"
+import { TitlePreview, TitleVariablePicker } from "./title-variables"
 
 /**
  * "Show title": whether the title is drawn on the key. Hiding keeps the
@@ -148,6 +150,7 @@ export function KeyAppearanceEditor({
 }) {
   const { t } = useTranslation()
   const look = useKeyLook()
+  const titleInput = useRef<HTMLInputElement>(null)
   if (!look || !stylable(control)) return null
   const binding = shownBinding(look.draft, look.pageId, control)
   if (!binding) return null
@@ -164,6 +167,12 @@ export function KeyAppearanceEditor({
     folder !== undefined || binding.label
       ? undefined
       : defaultTitle || face?.title || t("editor:keyHeader.noTitle")
+  const title = binding.label ?? ""
+  // The visible title, exactly as typed (only the label of what the key
+  // shows changes).
+  const setTitle = (value: string) => {
+    onChange(setShownLabel(look.draft, look.pageId, control, value), `key-title:${key}`)
+  }
   return (
     <div data-slot="key-appearance" className="grid min-w-0 gap-1.5">
       <div className="flex min-w-0 items-center gap-1.5">
@@ -173,9 +182,11 @@ export function KeyAppearanceEditor({
             folder !== undefined ? t("editor:keyHeader.folderName") : t("editor:keyHeader.title")
           }
           placeholder={placeholder}
-          maxLength={folder !== undefined ? 64 : 32}
+          // A title with references may be longer than the key shows.
+          maxLength={folder !== undefined ? 64 : maxTitleLength(title)}
           className="h-8 min-w-0 flex-1"
-          value={folderName ?? binding.label ?? ""}
+          ref={titleInput}
+          value={folderName ?? title}
           onChange={(event) => {
             const value = event.target.value
             if (folder !== undefined) {
@@ -184,13 +195,27 @@ export function KeyAppearanceEditor({
               onChange(renamePage(look.draft, folder, value), `page-name:${folder}`)
               return
             }
-            // The visible title, exactly as typed (only the label of
-            // what the key shows changes).
-            onChange(setShownLabel(look.draft, look.pageId, control, value), `key-title:${key}`)
+            setTitle(value)
           }}
         />
+        {folder === undefined && look.profileId && (
+          <TitleVariablePicker
+            profileId={look.profileId}
+            onPick={(reference) => {
+              // At the cursor, else at the end; never past the limit.
+              const input = titleInput.current
+              const start = input?.selectionStart ?? title.length
+              const end = input?.selectionEnd ?? title.length
+              const next = title.slice(0, start) + referenceText(reference) + title.slice(end)
+              if (Array.from(next).length <= MAX_TITLE_TEMPLATE_CHARS) setTitle(next)
+            }}
+          />
+        )}
         <TitleFormatButton controls={[control]} />
       </div>
+      {folder === undefined && look.profileId && title !== "" && (
+        <TitlePreview profileId={look.profileId} template={title} />
+      )}
       <ShowTitle look={look} shared={shared} controls={[control]} />
       <Problem message={look.problem ?? look.icons.problem} />
     </div>

@@ -42,6 +42,19 @@ vi.mock("@/lib/app-context", () => ({
     refresh: vi.fn(),
   }),
 }))
+// The agent resolves titles (`resolveDisplayTemplates`); here, the
+// profile's active project as the agent would show it, `-` without one.
+const agent = vi.hoisted(() => ({ projectKey: "-" }))
+vi.mock("@/lib/display-templates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/display-templates")>()),
+  resolveDisplayTemplates: (_context: unknown, templates: string[]) =>
+    Promise.resolve(
+      templates.map((template) => ({
+        template,
+        text: template.replaceAll("{project.key}", agent.projectKey),
+      })),
+    ),
+}))
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }))
@@ -112,6 +125,7 @@ function profileView(active: string | null, projects = true): ProfileView {
 }
 
 function renderEditor(view: ProfileView, shell?: EditorSelection) {
+  agent.projectKey = view.profile.projects.find((p) => p.id === view.activeProjectId)?.key ?? "-"
   const user = userEvent.setup()
   const editor = (
     <LayoutEditor
@@ -174,7 +188,9 @@ describe("device editor without a project selector", { timeout: 20_000 }, () => 
     expect(screen.getByRole("complementary", { name: "Action Library" })).toBeInTheDocument()
     expect(currentPage()).toBe("Home")
     // Without projects, project labels show a dash, as on the device.
-    expect(key("Key 1")).toHaveAttribute("title", "Key 1: Press: Work on -")
+    await waitFor(() => {
+      expect(key("Key 1")).toHaveAttribute("title", "Key 1: Press: Work on -")
+    })
     // The preview asks for the profile's own project context (none here).
     await waitFor(() => {
       expect(previewLayout).toHaveBeenCalled()
@@ -185,7 +201,10 @@ describe("device editor without a project selector", { timeout: 20_000 }, () => 
   it("shows labels with the profile's active project, as the device does", async () => {
     renderEditor(profileView("blog"))
     expect(screen.queryByText("Preview with project")).not.toBeInTheDocument()
-    expect(key("Key 1")).toHaveAttribute("title", "Key 1: Press: Work on BLOG")
+    // What the agent resolves, never the editor itself.
+    await waitFor(() => {
+      expect(key("Key 1")).toHaveAttribute("title", "Key 1: Press: Work on BLOG")
+    })
     // The backend resolves the profile's active project itself (null: no
     // choice of the editor's), so profiles keep their own projects.
     await waitFor(() => {
