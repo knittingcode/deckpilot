@@ -629,6 +629,12 @@ function LabelStage({
   )
 }
 
+/** The opacity field's placeholder: the default's number, or "auto". */
+function plateDefault(value: number | "auto" | null, auto: string): string {
+  if (value === null) return ""
+  return value === "auto" ? auto : String(value)
+}
+
 type Patch = { [K in keyof KeyLabel]?: KeyLabel[K] | null }
 
 /** One label's settings: text, position, style, and "More". */
@@ -912,9 +918,12 @@ function LabelSettings({
                 label={t("editor:labels.opacity")}
                 value={label.backgroundOpacity ?? undefined}
                 range={[0, 100]}
-                // The renderer's own default (85 over the title, else 60):
-                // shown, never written.
-                placeholder={String(defaultPlateOpacity(label, box) ?? "")}
+                // The renderer's own default (85 over the title; "auto" while
+                // the box does not say why it has a plate): shown, never written.
+                placeholder={plateDefault(
+                  defaultPlateOpacity(label, box),
+                  t("editor:labels.autoShort"),
+                )}
                 onCommit={(value) => {
                   onChange({ backgroundOpacity: value })
                 }}

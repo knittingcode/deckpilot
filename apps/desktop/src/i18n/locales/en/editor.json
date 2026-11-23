@@ -1128,6 +1128,7 @@
       "lowContrast": "Low contrast: the text may be hard to read.",
       "small": "Below 8 pt the text may be hard to read."
     },
-    "place": "Where"
+    "place": "Where",
+    "autoShort": "auto"
   }
 }

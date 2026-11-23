@@ -185,13 +185,13 @@ describe("the plate's opacity in the editor", () => {
     expect(applied({ labels })?.labels?.[0]).toMatchObject({ backgroundOpacity: 70 })
   })
 
-  it("shows 60 where the plate covers neither the title nor a mark", async () => {
+  it("shows auto where the box has a plate but does not say why", async () => {
     const user = userEvent.setup()
     sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
     render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
     await user.click(screen.getByRole("button", { name: /SHOP/ }))
     await user.click(screen.getByRole("button", { name: "More" }))
-    expect(screen.getByLabelText("Opacity (%)")).toHaveAttribute("placeholder", "60")
+    expect(screen.getByLabelText("Opacity (%)")).toHaveAttribute("placeholder", "auto")
   })
 })
 

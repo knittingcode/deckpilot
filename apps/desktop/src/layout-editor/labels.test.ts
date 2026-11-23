@@ -235,10 +235,11 @@ describe("labels survive other look changes", () => {
 })
 
 describe("the plate's opacity", () => {
-  it("defaults to 85 over the title and 60 elsewhere for the automatic plate, from the contract", () => {
+  it("is 85 over the title from the contract, and auto where the box does not say why", () => {
     expect(defaultPlateOpacity(label("a"), box({ overlapsTitle: true }))).toBe(85)
-    expect(defaultPlateOpacity(label("a"), box())).toBe(60)
-    expect(defaultPlateOpacity(label("a"), undefined)).toBe(60)
+    // A plate over a mark (85) or a picture (60): the box does not say which.
+    expect(defaultPlateOpacity(label("a"), box())).toBe("auto")
+    expect(defaultPlateOpacity(label("a"), undefined)).toBe("auto")
     expect(defaultPlateOpacity(label("a", { background: "#112233" }), box())).toBe(100)
     expect(defaultPlateOpacity(label("a", { background: "none" }), box())).toBeNull()
   })

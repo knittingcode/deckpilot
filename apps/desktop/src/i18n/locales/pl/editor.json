@@ -1174,6 +1174,7 @@
       "lowContrast": "Niski kontrast: tekst może być słabo czytelny.",
       "small": "Poniżej 8 pt tekst może być słabo czytelny."
     },
-    "place": "Miejsce"
+    "place": "Miejsce",
+    "autoShort": "auto"
   }
 }

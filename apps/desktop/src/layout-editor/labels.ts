@@ -394,14 +394,19 @@ const COVER_PLATE_OPACITY =
 
 /**
  * The plate opacity a label gets when it sets none, as the renderer decides
- * it: a colour 100; the automatic plate 85 over the title (`box`), else 60;
+ * it: a colour 100; the automatic plate 85 over the title (`box`), and
+ * `"auto"` when the box does not say why it has a plate (over a mark it is
+ * 85, over a picture or for contrast 60: the box does not report which);
  * `null` without a plate. Shown as the field's placeholder only: the editor
  * never writes it, so a key keeps the renderer's choice (a written 60 would
  * keep the plate at 60 over the title).
  */
-export function defaultPlateOpacity(label: KeyLabel, box: LabelBox | undefined): number | null {
+export function defaultPlateOpacity(
+  label: KeyLabel,
+  box: LabelBox | undefined,
+): number | "auto" | null {
   const background = label.background ?? "auto"
   if (background === "none") return null
   if (background !== "auto") return LABEL_DEFAULTS.colorPlateOpacity
-  return box?.overlapsTitle ? COVER_PLATE_OPACITY : LABEL_DEFAULTS.plateOpacity
+  return box?.overlapsTitle ? COVER_PLATE_OPACITY : "auto"
 }
