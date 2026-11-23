@@ -741,13 +741,22 @@ fn encrypting_a_legacy_database_that_is_still_open_never_hangs() {
     let keys = MemoryKeyStore::new();
     let profile = plaintext_database(&vault);
     let other = SqliteStore::open(vault.database(), &Encryption::None).unwrap();
-    let started = std::time::Instant::now();
-    let result = vault.encrypt_plaintext_system(&keys);
-    let took = started.elapsed();
-    assert!(
-        took < crate::files::RETRY_FOR + std::time::Duration::from_secs(15),
-        "took {took:?}"
-    );
+    // A hang is what this guards against, not slowness: each rename is
+    // retried for `RETRY_FOR`, and a loaded CI runner (the whole binary
+    // taking minutes) stretches every step around it, so the encryption
+    // runs on its own thread and only a wait far beyond any honest run
+    // counts as hanging. A hung thread is left behind; the test fails.
+    let hang_limit = crate::files::RETRY_FOR * 10 + std::time::Duration::from_secs(90);
+    let (done, finished) = std::sync::mpsc::channel();
+    {
+        let (vault, keys) = (vault.clone(), keys.clone());
+        std::thread::spawn(move || {
+            let _ = done.send(vault.encrypt_plaintext_system(&keys));
+        });
+    }
+    let result = finished.recv_timeout(hang_limit).unwrap_or_else(|error| {
+        panic!("the encryption hung (no result in {hang_limit:?}): {error}")
+    });
     drop(other);
     // Only Windows refuses to rename a file that is open.
     assert_eq!(
