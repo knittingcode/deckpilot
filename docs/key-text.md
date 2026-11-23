@@ -363,6 +363,72 @@ So a page with all 15 MK.2 keys scrolling costs about 3–4 % of one core
 and about 320 KB/s, well within USB full speed; a key whose title fits costs
 nothing.
 
+## Labels
+
+A key can show up to **8 labels** besides its title: short texts placed
+anywhere on the key, each with its own size, colour, plate and layer
+(`KeyAppearance.labels`, `deckpilot_core::appearance::labels`). They live on
+the look of the binding the key shows (press, else click, else the first),
+like the title and the icon; labels on another trigger's look are kept but
+not drawn, and `DeviceLayout::warnings` reports them (`DormantLook`).
+
+**Text.** A label's `text` is a display template of at most 160 characters,
+resolved exactly like a title (`resolve_display_template`: `{{ reference }}`,
+the older `{profile}`, `{project.key}`, `{project.name}`, then `{page.…}`).
+Only display-safe sources resolve; a reference without a displayable value
+shows `-`. A template that names a secret, a sensitive value or a run's
+value (`steps.…`, `workflow.…`) is refused when saved or imported. At most
+120 grapheme clusters of the resolved text are laid out (then `…`).
+`visible` hides a label while its references are unresolved or its text is
+empty (`whenResolved`) or while no project is active (`whenProject`);
+`enabled: false` keeps a label without drawing it.
+
+**Units.** Labels are laid out on a canvas whose shorter side is 72 units
+(a 200×100 touch zone is 144×72), the unit being the title's point. Line
+breaks, cuts and boxes are computed in units and only scaled to pixels when
+drawn, so a label breaks the same way at 72, 96, 120 px and in a 2× or 3×
+preview. Plate edges are snapped to whole pixels.
+
+**Position.** `preset` (top, center, bottom or a corner of the text area,
+5 units in from the sides and 6 from the top and bottom), `anchored` (an
+edge or corner of the key itself, `inset` units in: ribbons and corner
+tags) or `absolute` (`x`, `y` per mille of the canvas, `origin` the point of
+the label's box placed there). `offsetX`/`offsetY` move it by units. Width
+is fixed (`width`, percent) or follows the text up to `maxWidth` (presets at
+top, center and bottom and edge anchors: the full width; corners: 60 %);
+height likewise (`height`, `maxHeight`). The box is moved, never cut, to
+stay on the key.
+
+**Overflow.** `ellipsis` (one line, `…`, default), `clip`, `wrap` (up to
+`maxLines`, 1–4, default 2, the last line cut with `…`; lines that do not fit
+the height are dropped) and `shrink` (one line, down to `minSize`, default 6,
+then `…`). No scrolling labels.
+
+**Layers.** Labels float: they never move the title, the mark or the icon,
+and may overlap them on purpose (the layout report says when a label
+overlaps the title). The paint order is: background, background asset,
+`behindIcon` labels, icon image, series, Back icon or mark, `overIcon`
+labels (default), the title (with its scrim) and value lines, `overTitle`
+labels, the highlight border, then the state marks (badge, toggle, progress,
+indicator), always on top. Within a layer, labels are painted in list order.
+
+**Plate.** `background: auto` (default) draws a plate when the label's box
+meets a picture (the icon image, a background image or gradient, a series)
+or when its colour has less than 4.5:1 contrast with the key's background:
+black at `backgroundOpacity` (default 60 %) behind light text, white behind
+dark text. `none` never draws one; `#rrggbb` draws that colour (default
+100 %). An unset colour is the key's text colour, or white or black where
+that does not read on the plate. Decided from the layers, not by sampling
+pixels, so it is the same at every size.
+
+**Size.** 6–32 points (default 10); `weight` regular (Inter Medium) or bold
+(SemiBold); `align` defaults by position (left in left corners, right in
+right ones, else centred); `padding` and `radius` 0–12 units (default 2).
+
+The renderer is the only place labels are laid out: the app's previews are
+the renderer's images, and the editor gets each label's box from it
+(`labelBoxes`).
+
 ## Compatibility
 
 The title appearance fields (`fontFamily`, `bold`, `italic`, `underline`)
@@ -378,3 +444,12 @@ the agent through the database). Older agents ignore it and draw wrapped
 titles. Exports keep it (payload version unchanged) and older versions
 import them with wrapped titles. An older *app* does not know the field
 and drops it when it saves that layout. See [compatibility.md](compatibility.md).
+
+`labels` is additive and optional too: an empty list is not written, and a
+key without labels renders byte for byte as before (the G0 golden images,
+`crates/deckpilot-render/tests/golden`). Older agents ignore labels and draw
+the key without them; an older app drops them when it saves that layout.
+Exports with labels are written as payload version 4 (older versions refuse
+them instead of importing them without labels); exports without labels keep
+their version. Agents that draw labels announce the IPC capability
+`keyLabels`.

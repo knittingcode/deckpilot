@@ -388,3 +388,42 @@ fn copied_layouts_and_profiles_keep_their_tree() {
         3
     );
 }
+
+/// Labels on a look the key does not show (a long press next to a click)
+/// are reported, not refused; on the shown binding they are not.
+#[test]
+fn labels_on_a_look_that_is_not_shown_are_reported() {
+    let Tree { mut layout, .. } = tree();
+    let home = layout.home_page;
+    let labelled = || {
+        Some(crate::KeyAppearance {
+            labels: vec![crate::KeyLabel::new(
+                crate::LabelId::new("tag").unwrap(),
+                "Tag",
+            )],
+            ..crate::KeyAppearance::default()
+        })
+    };
+    let mut click = ControlBinding::new(key(5), Trigger::Click, BindingTarget::Back);
+    let mut hold = ControlBinding::new(key(5), Trigger::LongPress, BindingTarget::Back);
+    click.appearance = labelled();
+    hold.appearance = labelled();
+    let page = layout.page_mut(home).unwrap();
+    page.bindings.push(click);
+    page.bindings.push(hold);
+    assert_eq!(
+        layout.warnings(),
+        [LayoutIssue::DormantLook {
+            page: "Home".into(),
+            control: key(5),
+            trigger: Trigger::LongPress,
+        }]
+    );
+    // Once the click goes, the long press is the shown binding.
+    layout
+        .page_mut(home)
+        .unwrap()
+        .bindings
+        .retain(|binding| binding.trigger != Trigger::Click);
+    assert_eq!(layout.warnings(), []);
+}

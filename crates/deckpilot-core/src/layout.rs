@@ -391,6 +391,17 @@ pub enum LayoutIssue {
     /// automatic Back key on the page's first free key.
     #[error("page `{page}` has no Back key; an automatic one is shown on its first free key")]
     MissingBack { page: String },
+    /// A warning ([`DeviceLayout::warnings`]): labels on a binding whose
+    /// look the key does not show (only the shown binding's look is drawn:
+    /// press, else click, else the first). Kept, not drawn, not merged.
+    #[error(
+        "page `{page}`: {control} ({trigger:?}) has labels that are not shown; only the shown binding's look is drawn"
+    )]
+    DormantLook {
+        page: String,
+        control: ControlId,
+        trigger: Trigger,
+    },
     /// A binding other than Back on the reserved Back key of a folder page
     /// ([`crate::folder`]): that key belongs to DeckPilot.
     #[error("page `{page}`: {control} is the folder's Back key and cannot run anything else")]
