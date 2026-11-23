@@ -239,7 +239,7 @@ describe("plugin dependencies", () => {
       ),
     )
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("alertdialog", {
       name: "Project Dash 1.0.0 cannot be installed",
     })

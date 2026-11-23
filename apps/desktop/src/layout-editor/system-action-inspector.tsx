@@ -77,6 +77,10 @@ export function SystemActionPanels({
     const action = actions.find((a) => a.id === id)
     const type = types.find((t) => t.id === action?.actionType)
     if (!action || !type || !SYSTEM_TYPES.includes(type.id)) return []
+    // A draft is set up in the binding's own setup first (its required
+    // settings, saved as they are chosen); the panel follows once it is
+    // complete.
+    if (context.isDraft?.(action.id)) return []
     return [{ binding, action, type }]
   })
   if (found.length === 0) return null

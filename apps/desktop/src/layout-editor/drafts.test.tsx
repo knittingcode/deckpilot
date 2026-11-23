@@ -169,6 +169,7 @@ function viewOf(actions: ActionInstance[]): ProfileView {
   )
   return {
     activeProjectId: null,
+    actionUsages: {},
     incompleteActions,
     profile: { id: "p", name: "Work", actions, workflows: [], projects: [], layouts: [layout] },
   } as unknown as ProfileView

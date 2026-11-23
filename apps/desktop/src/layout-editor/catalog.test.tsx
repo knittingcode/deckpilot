@@ -318,7 +318,7 @@ describe("the catalog in the layout editor", { timeout: 20_000 }, () => {
     // Types that need settings are offered (the Inspector asks for them);
     // deprecated types and disabled modules' are not.
     expect(
-      within(screen.getByRole("region", { name: "System" })).getByText("Open web page"),
+      within(screen.getByRole("region", { name: "System" })).getByText("Website"),
     ).toBeInTheDocument()
     expect(screen.queryByText("Next project")).not.toBeInTheDocument()
     expect(screen.queryByText("Wait")).not.toBeInTheDocument()
@@ -430,7 +430,7 @@ describe("the library's categories", { timeout: 20_000 }, () => {
     expect(count("Navigation")).toBe(String(entries))
     const system = within(screen.getByRole("region", { name: "System" }))
     expect(system.getByText("Lock screen")).toBeInTheDocument()
-    expect(system.getByText("Open web page")).toBeInTheDocument()
+    expect(system.getByText("Website")).toBeInTheDocument()
     expect(count("System")).toBe("2")
   })
 

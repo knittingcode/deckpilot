@@ -87,7 +87,7 @@ import type {
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
 import { type KeyLook, KeyLookContext } from "./key-look-context"
-import { missingParameters } from "@/lib/action-completeness"
+import { incompleteAction, missingParameters } from "@/lib/action-completeness"
 import { missingForUse } from "@/lib/draft-actions"
 import { sameLayout } from "./same-layout"
 import {
@@ -1490,6 +1490,7 @@ export function LayoutEditor({
                           null,
                         usages: view.actionUsages,
                         device,
+                        isDraft: (id) => incompleteAction(view, id).length > 0,
                         onActionSaved: (action) => {
                           remember(action)
                           refresh()
