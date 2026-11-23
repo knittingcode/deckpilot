@@ -317,21 +317,35 @@ key is not a picker's (`shop.repository`) or that uses a project role opens
 in advanced mode and runs unchanged.
 
 **Native services** (desktop backend, `commands/machine.rs`, all reading
-`deckpilot-apps` off the main thread, nothing started, no shell):
+`deckpilot-apps` off the main thread, nothing started, no shell; each
+answers the main window only and refuses other windows):
 
 - `list_applications`: `discover()` (bundles and the Finder on macOS; App
   Paths, registered browsers and Start-menu shortcuts on Windows; XDG
   desktop entries on Linux).
 - `list_browsers`: `browsers::browsers()`: macOS `LaunchServices`
-  (`URLsForApplicationsToOpenURL`, `URLForApplicationToOpenURL`);
-  Windows `StartMenuInternet` and the `https` `UserChoice`; Linux desktop
-  entries with `x-scheme-handler/http(s)` and `mimeapps.list`.
-- `application_icon(id)`: only for an id the pickers were given (no file a
-  caller names is ever read); drawn by the system (`NSWorkspace
-  iconForFile`, `SHGetFileInfoW`, the `hicolor` theme or
-  `/usr/share/pixmaps` for a desktop entry's PNG icon), decoded, scaled to
-  at most 64×64 and encoded again as a PNG of at most 64 KiB, cached (512
-  icons).
+  (`URLsForApplicationsToOpenURL`, `URLForApplicationToOpenURL`); Windows
+  `StartMenuInternet` and the `https` `UserChoice` (else
+  `HKCR\https\shell\open\command`); Linux desktop entries with
+  `x-scheme-handler/http(s)` and the `mimeapps.list` files
+  (`$XDG_CURRENT_DESKTOP-mimeapps.list` first in each folder, `https` then
+  `http` in each file, in XDG precedence).
+- `application_icon(id)`: only for an id `discover()` or `browsers()`
+  reported, or that a picked file was described as when it is an
+  application the system knows (a bundle with an identifier, an installed
+  desktop entry, an App Paths registration). A plain path described by
+  hand never gets an icon, so no file a caller names is ever read, and a
+  network path (UNC, `\\?\`) is refused. Drawn by the system
+  (`NSWorkspace iconForFile` into a new bitmap inside an autorelease pool;
+  `SHGetFileInfoW` with COM initialized on the thread; on Linux the
+  `hicolor` theme or `/usr/share/pixmaps`, where `..` is refused and every
+  candidate's real path, links resolved, must be inside those folders),
+  decoded, scaled to at most 64×64 and encoded again as a PNG of at most
+  64 KiB. At most 8 requests run at a time; up to 512 icons are cached,
+  the oldest dropped first, and a failed icon is asked for again.
+- `application_present(id)`: whether a bound application is still
+  installed (what Open Application would open exists), so an application
+  chosen outside the listed folders is not called missing.
 - `describe_application(path)`: a picked file as its stable id.
 
 Website validation, the inspector panels (Save and Test, the long press of

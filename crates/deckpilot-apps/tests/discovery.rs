@@ -56,8 +56,23 @@ fn browsers_and_the_default_are_found() {
         assert!(found.default.is_some());
     } else if cfg!(windows) {
         assert!(!found.browsers.is_empty(), "Edge is a registered browser");
+    } else if std::path::Path::new(CHROME_DESKTOP).is_file() {
+        // The Ubuntu runner image installs Google Chrome's desktop entry.
+        assert!(
+            found
+                .browsers
+                .iter()
+                .any(|b| b.id == "google-chrome.desktop"),
+            "Google Chrome is a browser"
+        );
+    } else {
+        println!("no browser desktop entry on this runner: Linux browsers are fixture-tested only");
     }
 }
+
+/// Google Chrome's desktop entry and icon, where the runner has them.
+const CHROME_DESKTOP: &str = "/usr/share/applications/google-chrome.desktop";
+const CHROME_ICON: &str = "/usr/share/icons/hicolor/48x48/apps/google-chrome.png";
 
 #[test]
 fn icons_are_drawn_by_the_system() {
@@ -78,5 +93,14 @@ fn icons_are_drawn_by_the_system() {
         let icon = icons::icon(first, &xdg).expect("the system draws an icon");
         assert!(icon.len() <= icons::MAX_ICON_BYTES);
         assert!(icon.starts_with(b"\x89PNG\r\n\x1a\n"));
+    } else if std::path::Path::new(CHROME_ICON).is_file() {
+        let chrome = apps
+            .iter()
+            .find(|a| a.id == "google-chrome.desktop")
+            .expect("Google Chrome's desktop entry");
+        let icon = icons::icon(chrome, &xdg).expect("its hicolor icon");
+        assert!(icon.starts_with(b"\x89PNG\r\n\x1a\n"));
+    } else {
+        println!("no themed PNG icon on this runner: Linux icons are fixture-tested only");
     }
 }

@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   runAction: vi.fn(),
   listBrowsers: vi.fn(),
   applicationIcon: vi.fn(),
+  applicationPresent: vi.fn(),
 }))
 const dialog = vi.hoisted(() => ({ open: vi.fn() }))
 
@@ -45,6 +46,7 @@ beforeEach(() => {
   bindings = [{ key: "app.safari", kind: "application", value: "com.apple.Safari" }]
   api.getMachineConfig.mockImplementation(() => Promise.resolve({ os: "macOs", bindings }))
   api.applicationIcon.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=")
+  api.applicationPresent.mockResolvedValue(true)
   api.listBrowsers.mockResolvedValue({
     browsers: [
       { name: "Firefox", id: "org.mozilla.firefox", kind: "bundle", browser: true },
@@ -287,6 +289,7 @@ describe("the machine-local pickers", () => {
   })
 
   it("say when a chosen application is not installed any more", async () => {
+    api.applicationPresent.mockResolvedValue(false)
     bindings = [{ key: "app.gone-123456", kind: "application", value: "org.example.Gone" }]
     render(
       <MachineResourceField
@@ -333,6 +336,38 @@ describe("the machine-local pickers", () => {
       filters: [{ name: "Applications", extensions: ["app"] }],
     })
     expect(api.describeApplication).toHaveBeenCalledWith("/Applications/Editor.app")
+  })
+
+  it("show an application chosen from outside the listed folders as chosen, not missing", async () => {
+    // Bound and shown before discovery knows it: the system says it is
+    // installed, so no alert; after "Another application…" it is named.
+    dialog.open.mockResolvedValue("/Users/me/Tools/Editor.app")
+    api.describeApplication.mockResolvedValue({
+      name: "Editor",
+      id: "com.example.Editor",
+      kind: "bundle",
+      browser: false,
+    })
+    bindings = [{ key: "app.editor-abc123", kind: "application", value: "com.example.Editor" }]
+    const onChange = vi.fn()
+    render(
+      <MachineResourceField
+        id="f"
+        pick="application"
+        value={{ type: "fixed", key: "app.editor-abc123" }}
+        optional={false}
+        onChange={onChange}
+      />,
+    )
+    await waitFor(() => {
+      expect(api.applicationPresent).toHaveBeenCalledWith("com.example.Editor")
+    })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("combobox", { name: /Choose application/ }))
+    await user.click(await screen.findByRole("option", { name: /Another application/ }))
+    expect(await screen.findByRole("combobox", { name: /Editor/ })).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 
   it("open with the default browser unless another is chosen", async () => {

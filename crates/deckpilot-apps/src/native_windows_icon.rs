@@ -12,14 +12,39 @@ use windows_sys::Win32::Graphics::Gdi::{
     GetObjectW, HGDIOBJ, ReleaseDC,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
 /// Largest icon side read.
 const MAX_SIDE: i32 = 256;
 
+/// COM, single-threaded apartment, for the shell call on this thread
+/// (`SHGetFileInfoW` may use shell extensions), released when dropped.
+struct Com(bool);
+
+impl Com {
+    fn init() -> Self {
+        // SAFETY: plain values; balanced by CoUninitialize on success
+        // (also when COM was already initialized on this thread, S_FALSE).
+        let result =
+            unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED.cast_unsigned()) };
+        Self(result >= 0)
+    }
+}
+
+impl Drop for Com {
+    fn drop(&mut self) {
+        if self.0 {
+            // SAFETY: balances the successful CoInitializeEx of this thread.
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
 /// The shell's large icon of the file at `path`, as PNG bytes.
 pub fn icon_png(path: &Path) -> Option<Vec<u8>> {
+    let _com = Com::init();
     let wide: Vec<u16> = path
         .as_os_str()
         .to_string_lossy()

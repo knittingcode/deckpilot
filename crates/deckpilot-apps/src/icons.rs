@@ -64,6 +64,9 @@ pub fn icon_in(platform: Platform, app: &InstalledApp, xdg: &XdgDirs) -> Option<
             let file = theme_icon(entry.icon.as_deref()?, xdg)?;
             read_bounded(&file)?
         }
+        // A network path (UNC, `\\?\UNC`) could reach another computer
+        // and load its icon handlers: never drawn.
+        Platform::Windows if is_network_path(&path) => return None,
         Platform::MacOs | Platform::Windows => native(&path)?,
         _ => return None,
     };
@@ -85,6 +88,23 @@ fn native(_path: &Path) -> Option<Vec<u8>> {
     None
 }
 
+/// `\\server\share\…`, `\\?\…` or `//server/…`.
+fn is_network_path(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    text.starts_with("\\\\") || text.starts_with("//")
+}
+
+/// `path`, with its links resolved, when it is inside one of `roots`
+/// (also with their links resolved).
+fn contained(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(path).ok()?;
+    roots
+        .iter()
+        .filter_map(|root| std::fs::canonicalize(root).ok())
+        .any(|root| real.starts_with(root))
+        .then_some(real)
+}
+
 fn read_bounded(path: &Path) -> Option<Vec<u8>> {
     let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
@@ -101,10 +121,17 @@ const SIZES: [&str; 8] = [
 /// The PNG of icon `name` (a desktop entry's `Icon=`): in the `hicolor`
 /// theme of each XDG data folder, then `/usr/share/pixmaps`. An absolute
 /// `Icon=` counts only when it is a `.png` inside one of those folders.
-/// SVG icons are not drawn (no renderer is bundled).
+/// Every candidate is checked where it really is: `..` is refused, and a
+/// link that leads outside those folders is not followed. SVG icons are
+/// not drawn (no renderer is bundled).
 pub fn theme_icon(name: &str, xdg: &XdgDirs) -> Option<PathBuf> {
     let name = name.trim();
-    if name.is_empty() || name.contains('\0') {
+    if name.is_empty()
+        || name.contains('\0')
+        || Path::new(name)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return None;
     }
     let mut roots: Vec<PathBuf> = xdg
@@ -118,16 +145,16 @@ pub fn theme_icon(name: &str, xdg: &XdgDirs) -> Option<PathBuf> {
         .iter()
         .map(|base| base.join("pixmaps"))
         .collect();
+    let all: Vec<PathBuf> = roots.iter().chain(&pixmaps).cloned().collect();
     let path = Path::new(name);
     if path.is_absolute() {
-        let allowed = path
+        if !path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("png"))
-            && roots
-                .iter()
-                .chain(&pixmaps)
-                .any(|root| path.starts_with(root));
-        return (allowed && path.is_file()).then(|| path.to_path_buf());
+        {
+            return None;
+        }
+        return contained(path, &all).filter(|real| real.is_file());
     }
     if name.contains(['/', '\\']) || name.starts_with('.') {
         return None;
@@ -136,8 +163,10 @@ pub fn theme_icon(name: &str, xdg: &XdgDirs) -> Option<PathBuf> {
     for root in &roots {
         for size in SIZES {
             let candidate = root.join("hicolor").join(size).join("apps").join(&file);
-            if candidate.is_file() {
-                return Some(candidate);
+            if candidate.is_file()
+                && let Some(real) = contained(&candidate, &all)
+            {
+                return Some(real);
             }
         }
     }
@@ -145,7 +174,8 @@ pub fn theme_icon(name: &str, xdg: &XdgDirs) -> Option<PathBuf> {
     pixmaps
         .iter()
         .map(|dir| dir.join(&file))
-        .find(|candidate| candidate.is_file())
+        .filter(|candidate| candidate.is_file())
+        .find_map(|candidate| contained(&candidate, &all))
 }
 
 #[cfg(test)]
@@ -184,10 +214,39 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("secret.png"), png(8)).unwrap();
         let dirs = XdgDirs::only(&[data.path()]);
-        assert_eq!(theme_icon("editor", &dirs), Some(apps.join("editor.png")));
-        assert_eq!(theme_icon("old", &dirs), Some(pixmaps.join("old.png")));
+        let real = |p: PathBuf| std::fs::canonicalize(p).unwrap();
+        assert_eq!(
+            theme_icon("editor", &dirs),
+            Some(real(apps.join("editor.png")))
+        );
+        assert_eq!(
+            theme_icon("old", &dirs),
+            Some(real(pixmaps.join("old.png")))
+        );
         let inside = apps.join("editor.png");
-        assert_eq!(theme_icon(&inside.to_string_lossy(), &dirs), Some(inside));
+        assert_eq!(
+            theme_icon(&inside.to_string_lossy(), &dirs),
+            Some(real(inside))
+        );
+        // `..` out of the icon folders, written as an absolute path.
+        let escape = format!("{}/../../../../../secret.png", apps.display());
+        assert_eq!(theme_icon(&escape, &dirs), None);
+        assert_eq!(theme_icon("../secret", &dirs), None);
+        // A link inside the theme that leads outside it.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path().join("secret.png"), apps.join("link.png"))
+                .unwrap();
+            assert_eq!(theme_icon("link", &dirs), None);
+            let linked = apps.join("link.png");
+            assert_eq!(theme_icon(&linked.to_string_lossy(), &dirs), None);
+            std::os::unix::fs::symlink(
+                outside.path().join("secret.png"),
+                pixmaps.join("plink.png"),
+            )
+            .unwrap();
+            assert_eq!(theme_icon("plink", &dirs), None);
+        }
         for refused in [
             outside
                 .path()

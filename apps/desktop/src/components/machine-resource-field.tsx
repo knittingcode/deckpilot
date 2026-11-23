@@ -47,11 +47,32 @@ export type MachinePick = "application" | "browser" | "location" | "folder"
 
 /** Icons by application id, fetched once per window. */
 const icons = new Map<string, Promise<string | null>>()
+/** Most icon requests at a time; the rest wait their turn. */
+const MAX_ICON_REQUESTS = 8
+let running = 0
+const waiting: (() => void)[] = []
+
+async function limited<T>(task: () => Promise<T>): Promise<T> {
+  if (running >= MAX_ICON_REQUESTS) {
+    await new Promise<void>((resolve) => waiting.push(resolve))
+  }
+  running += 1
+  try {
+    return await task()
+  } finally {
+    running -= 1
+    waiting.shift()?.()
+  }
+}
 
 function iconOf(id: string): Promise<string | null> {
   let icon = icons.get(id)
   if (!icon) {
-    icon = api.applicationIcon(id).catch(() => null)
+    icon = limited(() => api.applicationIcon(id)).catch(() => {
+      // A failed request is tried again next time the icon is shown.
+      icons.delete(id)
+      return null
+    })
     icons.set(id, icon)
   }
   return icon
@@ -107,6 +128,9 @@ export function MachineResourceField({
   const [os, setOs] = useState<Os>("other")
   const [busy, setBusy] = useState(false)
   const [advancedMode, setAdvancedMode] = useState(() => !isLocalReference(value))
+  // An application chosen with "Another application…", which the list may
+  // not have (outside the folders discovery reads).
+  const [described, setDescribed] = useState<InstalledApp | null>(null)
   useEffect(() => {
     let cancelled = false
     api.getMachineConfig().then(
@@ -170,6 +194,7 @@ export function MachineResourceField({
       const picked = await openDialog({ directory: false, multiple: false, filters })
       if (typeof picked !== "string") return
       const app = await api.describeApplication(picked)
+      setDescribed(app)
       await bind("app", app.name, "application", app.id)
     } catch (e) {
       toast.error(t("actions:system.picker.failed"), { description: failureDetail(e) })
@@ -220,6 +245,7 @@ export function MachineResourceField({
         <ApplicationPicker
           id={id}
           value={bound?.value ?? null}
+          described={described}
           disabled={busy}
           onPick={(app) => void bind("app", app.name, "application", app.id)}
           onBrowse={() => void browseApplication()}
@@ -412,6 +438,7 @@ function BrowserSelect({
 function ApplicationPicker({
   id,
   value,
+  described,
   disabled,
   onPick,
   onBrowse,
@@ -419,6 +446,8 @@ function ApplicationPicker({
   id: string
   /** The bound application's id (or path). */
   value: string | null
+  /** The application just chosen with "Another application…". */
+  described: InstalledApp | null
   disabled: boolean
   onPick: (app: InstalledApp) => void
   onBrowse: () => void
@@ -444,9 +473,29 @@ function ApplicationPicker({
       cancelled = true
     }
   }, [])
-  const chosen = value ? apps?.find((a) => a.id === value) : undefined
-  // A stable id (not a path) that the system no longer lists: uninstalled.
-  const gone = value !== null && apps !== null && !chosen && !/[\\/]/.test(value)
+  const chosen = value
+    ? (apps?.find((a) => a.id === value) ?? (described?.id === value ? described : undefined))
+    : undefined
+  // Not in the list: asked whether it is still installed (it may be outside
+  // the folders discovery reads, or uninstalled).
+  const [present, setPresent] = useState<{ id: string; installed: boolean } | null>(null)
+  const unlisted = value !== null && apps !== null && !chosen ? value : null
+  useEffect(() => {
+    if (unlisted === null) return
+    let cancelled = false
+    api.applicationPresent(unlisted).then(
+      (installed) => {
+        if (!cancelled) setPresent({ id: unlisted, installed })
+      },
+      () => {
+        if (!cancelled) setPresent({ id: unlisted, installed: true })
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [unlisted])
+  const gone = unlisted !== null && present?.id === unlisted && !present.installed
   const label = t("actions:system.picker.chooseApplication")
   return (
     <>

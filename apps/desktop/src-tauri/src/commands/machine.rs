@@ -1,7 +1,7 @@
 //! This computer's resource bindings. They belong to the core: any module
 //! may resolve them if it holds the `machine-resources` capability.
 
-use tauri::State;
+use tauri::{Runtime, State, WebviewWindow};
 
 use deckpilot_apps::{IdKind, InstalledApp, Platform};
 use deckpilot_core::gesture::GestureTimings;
@@ -85,7 +85,10 @@ pub fn set_gesture_defaults(
 /// stores (a bundle id, an App Paths name, a desktop-file id) or its path.
 /// Read off the main thread; nothing is started.
 #[tauri::command]
-pub async fn list_applications() -> CommandResult<Vec<InstalledApp>> {
+pub async fn list_applications<R: Runtime>(
+    window: WebviewWindow<R>,
+) -> CommandResult<Vec<InstalledApp>> {
+    main_only(&window)?;
     tauri::async_runtime::spawn_blocking(|| remember(deckpilot_apps::discover()))
         .await
         .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
@@ -96,7 +99,10 @@ pub async fn list_applications() -> CommandResult<Vec<InstalledApp>> {
 /// registered browsers and the `https` association on Windows, desktop
 /// entries and `mimeapps.list` on Linux).
 #[tauri::command]
-pub async fn list_browsers() -> CommandResult<deckpilot_apps::browsers::Browsers> {
+pub async fn list_browsers<R: Runtime>(
+    window: WebviewWindow<R>,
+) -> CommandResult<deckpilot_apps::browsers::Browsers> {
+    main_only(&window)?;
     tauri::async_runtime::spawn_blocking(|| {
         let found = deckpilot_apps::browsers::browsers();
         remember(found.browsers.clone());
@@ -106,13 +112,40 @@ pub async fn list_browsers() -> CommandResult<deckpilot_apps::browsers::Browsers
     .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
 }
 
-/// The applications the pickers were last given, by id: the only ones an
-/// icon is drawn for, so the app never names a file to read.
+/// The pickers' commands answer the main window only (the app's editor),
+/// never a module's or a plugin's window.
+fn main_only<R: Runtime>(window: &WebviewWindow<R>) -> CommandResult<()> {
+    if window.label() == crate::windows::MAIN {
+        Ok(())
+    } else {
+        Err(CommandError::invalid(
+            "mainWindowOnly",
+            "only the main window lists applications",
+        ))
+    }
+}
+
+/// The applications an icon may be drawn for: those `discover()` and
+/// `browsers()` reported, and those a picked file was described as when it
+/// is an application the system knows (a bundle with an identifier, an
+/// installed desktop entry, an App Paths registration). Never a plain path
+/// a caller described, so no file the app names is ever read for an icon.
 static LISTED: std::sync::Mutex<Vec<InstalledApp>> = std::sync::Mutex::new(Vec::new());
-/// Icons drawn so far, as data URLs (`None`: the system has none).
-static ICONS: std::sync::Mutex<std::collections::BTreeMap<String, Option<String>>> =
-    std::sync::Mutex::new(std::collections::BTreeMap::new());
-/// Most icons kept.
+/// Most applications remembered.
+const MAX_LISTED: usize = 8192;
+/// Icons drawn so far, as data URLs (`None`: the system has none), and
+/// the order they were drawn in, oldest first.
+#[derive(Debug)]
+struct IconCache {
+    drawn: std::collections::BTreeMap<String, Option<String>>,
+    order: std::collections::VecDeque<String>,
+}
+
+static ICONS: std::sync::Mutex<IconCache> = std::sync::Mutex::new(IconCache {
+    drawn: std::collections::BTreeMap::new(),
+    order: std::collections::VecDeque::new(),
+});
+/// Most icons kept; the oldest is dropped first.
 const MAX_CACHED_ICONS: usize = 512;
 
 fn remember(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
@@ -120,6 +153,9 @@ fn remember(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     for app in &apps {
+        if listed.len() >= MAX_LISTED {
+            break;
+        }
         if !listed.iter().any(|known| known.id == app.id) {
             listed.push(app.clone());
         }
@@ -132,7 +168,11 @@ fn remember(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
 /// system and encoded again by `deckpilot_apps::icons`; `None` when there
 /// is none or the id was not listed. Cached.
 #[tauri::command]
-pub async fn application_icon(id: String) -> CommandResult<Option<String>> {
+pub async fn application_icon<R: Runtime>(
+    window: WebviewWindow<R>,
+    id: String,
+) -> CommandResult<Option<String>> {
+    main_only(&window)?;
     tauri::async_runtime::spawn_blocking(move || icon_for(&id))
         .await
         .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
@@ -143,6 +183,7 @@ fn icon_for(id: &str) -> Option<String> {
     if let Some(cached) = ICONS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .drawn
         .get(id)
     {
         return cached.clone();
@@ -163,11 +204,36 @@ fn icon_for(id: &str) -> Option<String> {
     let mut icons = ICONS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if icons.len() >= MAX_CACHED_ICONS {
-        icons.clear();
+    let IconCache { drawn, order } = &mut *icons;
+    while drawn.len() >= MAX_CACHED_ICONS {
+        let Some(oldest) = order.pop_front() else {
+            break;
+        };
+        drawn.remove(&oldest);
     }
-    icons.insert(id.to_owned(), icon.clone());
+    if drawn.insert(id.to_owned(), icon.clone()).is_none() {
+        order.push_back(id.to_owned());
+    }
     icon
+}
+
+/// Whether application `id` (a binding's value) is installed on this
+/// computer: what Open Application would open exists (a bundle id
+/// `LaunchServices` knows, an installed desktop entry, an App Paths
+/// registration, an existing path). Nothing is read or started.
+#[tauri::command]
+pub async fn application_present<R: Runtime>(
+    window: WebviewWindow<R>,
+    id: String,
+) -> CommandResult<bool> {
+    main_only(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let trimmed = id.trim();
+        !(trimmed.starts_with("\\\\") || trimmed.starts_with("//"))
+            && deckpilot_apps::launchable(trimmed, &[]).is_ok()
+    })
+    .await
+    .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
 }
 
 /// An application the user picked with the file picker, as a binding
@@ -175,14 +241,35 @@ fn icon_for(id: &str) -> Option<String> {
 /// its desktop-file id, a Windows executable registered under App Paths by
 /// that name; anything else by its path.
 #[tauri::command]
-pub fn describe_application(path: String) -> CommandResult<InstalledApp> {
-    let app = describe(Platform::current(), &path)?;
-    remember(vec![app.clone()]);
+pub fn describe_application<R: Runtime>(
+    window: WebviewWindow<R>,
+    path: String,
+) -> CommandResult<InstalledApp> {
+    main_only(&window)?;
+    describe_and_remember(Platform::current(), &path)
+}
+
+/// [`describe`], and an application the system knows (not a plain path)
+/// is remembered for its icon.
+fn describe_and_remember(platform: Platform, path: &str) -> CommandResult<InstalledApp> {
+    let app = describe(platform, path)?;
+    if app.kind != IdKind::Path {
+        remember(vec![app.clone()]);
+    }
     Ok(app)
 }
 
 fn describe(platform: Platform, path: &str) -> CommandResult<InstalledApp> {
-    let file = std::path::Path::new(path.trim());
+    let trimmed = path.trim();
+    // A UNC or `\\?\` path could reach another computer (and its icon
+    // handlers): refused.
+    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+        return Err(CommandError::invalid(
+            "applicationNotFound",
+            "applications on network paths are not offered",
+        ));
+    }
+    let file = std::path::Path::new(trimmed);
     if !file.is_absolute() || !file.exists() {
         return Err(CommandError::invalid(
             "applicationNotFound",
@@ -255,6 +342,29 @@ fn describe(platform: Platform, path: &str) -> CommandResult<InstalledApp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_described_file_never_gets_an_icon() {
+        // A plain file picked by hand is described by its path, and no icon
+        // is ever drawn for it (no read of a file the app names).
+        let dir = std::env::temp_dir().join(format!("deckpilot-icon-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("hosts");
+        std::fs::write(&file, "127.0.0.1 localhost").unwrap();
+        let described =
+            describe_and_remember(Platform::current(), &file.to_string_lossy()).unwrap();
+        assert_eq!(described.kind, IdKind::Path);
+        assert_eq!(icon_for(&described.id), None);
+        assert_eq!(icon_for(&file.to_string_lossy()), None);
+        for unc in [
+            r"\\server\share\app.exe",
+            r"\\?\C:\Windows\explorer.exe",
+            "//server/share",
+        ] {
+            assert!(describe(Platform::Windows, unc).is_err(), "{unc}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn icons_are_drawn_only_for_listed_applications() {

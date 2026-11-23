@@ -104,17 +104,16 @@ fn windows_default_program() -> Option<PathBuf> {
     use winreg::RegKey;
     use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_READ};
 
+    // The user's choice, else the machine's `https` handler.
     let prog_id: String = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_with_flags(
             r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
             KEY_READ,
         )
-        .ok()?
-        .get_value("ProgId")
-        .ok()?;
-    if prog_id.is_empty() || prog_id.contains(['\\', '/']) {
-        return None;
-    }
+        .ok()
+        .and_then(|key| key.get_value("ProgId").ok())
+        .filter(|id: &String| !id.is_empty() && !id.contains(['\\', '/']))
+        .unwrap_or_else(|| "https".to_owned());
     let command: String = RegKey::predef(HKEY_CLASSES_ROOT)
         .open_subkey_with_flags(format!(r"{prog_id}\shell\open\command"), KEY_READ)
         .ok()?
@@ -155,16 +154,32 @@ impl MimeDirs {
                         .collect()
                 },
             );
+        // Each folder's `$desktop-mimeapps.list` (for each desktop of
+        // `$XDG_CURRENT_DESKTOP`, lower case) comes before its
+        // `mimeapps.list`.
+        let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .split(':')
+            .map(|d| d.trim().to_lowercase())
+            .filter(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            .collect();
+        let lists = |dir: PathBuf| {
+            desktops
+                .iter()
+                .map(|d| dir.join(format!("{d}-mimeapps.list")))
+                .chain(std::iter::once(dir.join("mimeapps.list")))
+                .collect::<Vec<_>>()
+        };
         let mut files: Vec<PathBuf> = home
             .into_iter()
             .chain(config_dirs)
-            .map(|d| d.join("mimeapps.list"))
+            .flat_map(lists)
             .collect();
         files.extend(
             xdg.data_home
                 .iter()
                 .chain(&xdg.data_dirs)
-                .map(|d| d.join("applications/mimeapps.list")),
+                .flat_map(|d| lists(d.join("applications"))),
         );
         Self {
             files,
@@ -202,18 +217,17 @@ pub fn mimeapps_defaults(text: &str, mime: &str) -> Vec<String> {
 
 fn linux(apps: &[InstalledApp], dirs: &MimeDirs) -> Browsers {
     let installed = |id: &String| apps.iter().any(|a| a.browser && &a.id == id);
-    let default = ["x-scheme-handler/https", "x-scheme-handler/http"]
-        .iter()
-        .find_map(|mime| {
-            dirs.files.iter().find_map(|file| {
-                let metadata = std::fs::metadata(file).ok()?;
-                if metadata.len() > 256 * 1024 {
-                    return None;
-                }
-                let text = std::fs::read_to_string(file).ok()?;
-                mimeapps_defaults(&text, mime).into_iter().find(installed)
-            })
-        });
+    // Files in precedence order; in each, `https` before `http`.
+    let default = dirs.files.iter().find_map(|file| {
+        let metadata = std::fs::metadata(file).ok()?;
+        if metadata.len() > 256 * 1024 {
+            return None;
+        }
+        let text = std::fs::read_to_string(file).ok()?;
+        ["x-scheme-handler/https", "x-scheme-handler/http"]
+            .iter()
+            .find_map(|mime| mimeapps_defaults(&text, mime).into_iter().find(installed))
+    });
     among(apps, default)
 }
 
@@ -300,6 +314,23 @@ x-scheme-handler/http=org.mozilla.firefox.desktop
         assert_eq!(
             found.default.as_deref(),
             Some("org.mozilla.firefox.desktop")
+        );
+        // The more important file wins, whether it names https or http.
+        let desktop = config.path().join("gnome-mimeapps.list");
+        std::fs::write(
+            &desktop,
+            "[Default Applications]\nx-scheme-handler/http=chromium.desktop\n",
+        )
+        .unwrap();
+        let first = MimeDirs {
+            files: vec![desktop, config.path().join("mimeapps.list")],
+            xdg: XdgDirs::only(&[data.path()]),
+        };
+        assert_eq!(
+            browsers_in(Platform::Linux, &roots, &first)
+                .default
+                .as_deref(),
+            Some("chromium.desktop")
         );
         let none = MimeDirs {
             files: Vec::new(),
