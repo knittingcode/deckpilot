@@ -2640,6 +2640,7 @@ const CONTEXTS: &[(&str, &[ActionContext])] = {
         ("deck.multi-switch", &[Key, Gesture, Display]),
         ("deck.page-indicator", &[Display]),
         ("system.open-app", ANYWHERE),
+        ("system.close-app", ANYWHERE),
         ("system.open-url", ANYWHERE),
         ("system.open-file", ANYWHERE),
         ("system.open-directory", ANYWHERE),

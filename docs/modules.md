@@ -36,7 +36,7 @@ instead ([Integration modules](integration-modules.md#moved-to-first-party-plugi
 | `general`  | — | read profile |
 | `http` | — (settings with credentials) | send network requests, use stored credentials |
 | `notifications` | — (settings) | read profile, show notifications |
-| `system` | — (settings) | read machine resources, open applications/files/pages, run programs, see running programs |
+| `system` | — (settings) | read machine resources, open applications/files/pages, quit applications you run, run programs, see running programs |
 | `work-session` | Work Session | — (variables only) |
 
 The integration modules and their actions are described in
@@ -227,8 +227,8 @@ run's context after checking the module's capability.
 
 **Capability permissions.** The module manifest declares capabilities
 (`ProfileRead`, `ProjectContext`, `MachineResources`, `OpenExternal`,
-`ProcessExecution`, `ProcessInspect`, `Network`, `Notifications`,
-`Credentials`, `VariablesRead`, `DeckControl`); the context refuses the
+`ProcessExecution`, `ProcessInspect`, `ProcessControl`, `Network`,
+`Notifications`, `Credentials`, `VariablesRead`, `DeckControl`); the context refuses the
 rest (`CapabilityDenied`). Core
 helpers check them (`resolve`, `run_process`); for the others a handler
 calls `context.permit(capability)` before acting. Actions that are risky

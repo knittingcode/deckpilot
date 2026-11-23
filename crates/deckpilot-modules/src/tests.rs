@@ -77,6 +77,7 @@ fn builtin_modules_register_with_namespaced_action_types() {
             "system.open-url",
             "system.open-file",
             "system.open-directory",
+            "system.close-app",
             "system.run-command",
             "system.process-status",
             "system.cpu",

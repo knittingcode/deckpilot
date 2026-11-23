@@ -146,6 +146,10 @@
       "title": "Sprawdzanie, które programy są uruchomione",
       "description": "Odczytuje nazwy uruchomionych programów, nigdy ich wiersze poleceń ani środowisko."
     },
+    "processControl": {
+      "title": "Zamykanie uruchomionych przez Ciebie aplikacji",
+      "description": "Zamyka uruchomioną przez Ciebie aplikację, gdy prosi o to akcja: łagodnie, jak polecenie Zakończ, albo wymuszenie, jeśli akcja tak stanowi. Nigdy programów innych użytkowników, systemu ani samego DeckPilota."
+    },
     "network": {
       "title": "Wysyłanie żądań sieciowych",
       "description": "Wysyła żądania HTTP. Żądania do tego komputera lub do sieci lokalnej muszą być dozwolone osobno."

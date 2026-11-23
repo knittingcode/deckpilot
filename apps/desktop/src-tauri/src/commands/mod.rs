@@ -128,6 +128,8 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         machine::get_machine_config,
         machine::set_resource_binding,
         machine::remove_resource_binding,
+        machine::list_applications,
+        machine::describe_application,
         machine::get_gesture_defaults,
         machine::set_gesture_defaults,
         projects::check_resources,

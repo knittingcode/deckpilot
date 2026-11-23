@@ -277,5 +277,130 @@
     "trigger": "Przepływ pracy „{{workflow}}” uruchamia wyzwalacz: {{trigger}}",
     "triggerPaused": "Przepływ pracy „{{workflow}}” uruchamia wyzwalacz: {{trigger}} (wstrzymany)",
     "aTrigger": "wyzwalacz"
+  },
+  "system": {
+    "names": {
+      "website": "Strona internetowa",
+      "open": "Otwórz",
+      "openApplication": "Otwórz aplikację",
+      "closeApplication": "Zamknij aplikację",
+      "openFolder": "Otwórz folder"
+    },
+    "descriptions": {
+      "website": "Otwiera stronę internetową (http lub https) w domyślnej przeglądarce albo w przeglądarce wybranej na tym komputerze.",
+      "open": "Otwiera plik, folder lub aplikację wybrane na tym komputerze w domyślnej aplikacji albo plik w wybranej aplikacji.",
+      "openApplication": "Uruchamia aplikację zainstalowaną na tym komputerze, opcjonalnie z argumentami.",
+      "closeApplication": "Zamyka aplikację wybraną na tym komputerze: każde uruchomione przez Ciebie wystąpienie, najpierw łagodnie. Nigdy programów innych użytkowników ani systemu.",
+      "openFolder": "Otwiera zasób folderu albo folder w nim w menedżerze plików."
+    },
+    "parameters": {
+      "url": {
+        "label": "Adres",
+        "description": "Adres http lub https; gdy nie podasz schematu, zostanie dodane https://. Inne schematy są odrzucane, bo mogą uruchamiać programy."
+      },
+      "browser": {
+        "label": "Otwórz w",
+        "description": "Przeglądarka zainstalowana na tym komputerze; gdy żadnej nie wybrano, domyślna."
+      },
+      "location": {
+        "label": "Plik, folder lub aplikacja",
+        "description": "Wybrane na tym komputerze i tylko tu przechowywane: nigdy nie są eksportowane. Może to być też folder, w którym jest plik."
+      },
+      "path": {
+        "label": "Plik w folderze",
+        "description": "Opcjonalnie: plik lub folder w wybranym folderze, np. docs/README.md. Nie może wychodzić poza folder. Puste: otwiera się to, co wybrano."
+      },
+      "openWith": {
+        "label": "Otwórz w",
+        "description": "Aplikacja zainstalowana na tym komputerze; gdy żadnej nie wybrano, domyślna."
+      },
+      "application": {
+        "label": "Aplikacja",
+        "description": "Aplikacja zainstalowana na tym komputerze. DeckPilot przechowuje jej stały identyfikator (identyfikator pakietu, nazwę App Paths lub wpis pulpitu) tylko na tym komputerze."
+      },
+      "arguments": {
+        "label": "Argumenty",
+        "description": "Po jednym w wierszu, przekazywane bez zmian: nic nie jest dzielone na spacjach ani interpretowane przez powłokę."
+      },
+      "force": {
+        "label": "Wymuś zamknięcie, jeśli się nie zamknie",
+        "description": "Wyłączone: aplikacja jest proszona o zakończenie, jak poleceniem Zakończ, i może najpierw zapytać o zapisanie. Włączone: to, co działa po 5 sekundach, zostaje natychmiast zakończone, a niezapisana praca przepada."
+      }
+    },
+    "website": {
+      "opens": "Otworzy {{url}}",
+      "problems": {
+        "empty": "Wpisz adres strony.",
+        "tooLong": "Adres jest dłuższy niż 2048 bajtów.",
+        "control": "Adres zawiera znaki sterujące.",
+        "backslash": "Adres zawiera ukośnik wsteczny.",
+        "scheme": "Otwierają się tylko adresy http i https; inne schematy mogą uruchamiać programy.",
+        "invalid": "To nie jest prawidłowy adres strony.",
+        "credentials": "Usuń z adresu nazwę użytkownika i hasło.",
+        "noHost": "Adres nie zawiera hosta.",
+        "mailBrowser": "Adres e-mail otwiera się w programie pocztowym, nie w przeglądarce."
+      }
+    },
+    "picker": {
+      "thisComputer": "Tylko ten komputer",
+      "localNote": "Przechowywane na tym komputerze jako {{key}} i nigdy nieeksportowane. Na innym komputerze wybierz to ponownie tutaj albo powiąż {{key}} w Ustawieniach › Zasoby.",
+      "localHint": "To, co wybierzesz, jest przechowywane tylko na tym komputerze i nigdy nie jest eksportowane.",
+      "unbound": "Nie wybrano na tym komputerze ({{key}})",
+      "unboundHint": "Na tym komputerze nic nie jest z tym powiązane: wybierz ponownie albo powiąż to w Ustawieniach › Zasoby.",
+      "role": "{{role}} aktywnego projektu",
+      "defaultBrowser": "Domyślna przeglądarka",
+      "nothing": "Nic nie wybrano",
+      "chooseApplication": "Wybierz aplikację…",
+      "chooseBrowser": "Wybierz przeglądarkę…",
+      "chooseFile": "Wybierz plik…",
+      "chooseFolder": "Wybierz folder…",
+      "useDefault": "Użyj domyślnej przeglądarki",
+      "clear": "Wyczyść",
+      "search": "Szukaj aplikacji",
+      "loading": "Wyszukiwanie zainstalowanych aplikacji…",
+      "noMatches": "Żadna aplikacja nie pasuje.",
+      "listFailed": "Nie udało się wyświetlić zainstalowanych aplikacji: {{detail}}",
+      "browsers": "Przeglądarki",
+      "applications": "Aplikacje",
+      "otherApplications": "Inne aplikacje",
+      "browse": "Inna aplikacja…",
+      "advanced": "Klucz zasobu lub rola projektu",
+      "failed": "Nie udało się zapisać wyboru"
+    },
+    "panel": {
+      "save": "Zapisz",
+      "saved": "Zapisano akcję",
+      "saveFailed": "Nie udało się zapisać akcji",
+      "saveFirst": "Zapisz zmiany przed testem",
+      "test": "Testuj",
+      "missing": "Uzupełnij: {{fields}}",
+      "failed": "{{reason}} ({{detail}})",
+      "shared": "Akcji „{{action}}” używają też inne klawisze lub przepływy pracy; zmiany obowiązują także tam.",
+      "closeGraceful": "Łagodnie: aplikacja jest proszona o zakończenie i może najpierw zapytać o zapisanie. Nigdy nie jest zamykana siłą.",
+      "closeForce": "Wymuszanie jest włączone: to, co działa 5 sekund po prośbie, zostaje zakończone, a niezapisana praca przepada.",
+      "longPress": "Po długim naciśnięciu",
+      "longPressNone": "Nic",
+      "longPressQuit": "Zamknij aplikację",
+      "longPressOther": "Coś innego",
+      "longPressHint": "Zamknięcie przypisuje akcję Zamknij aplikację tej aplikacji do długiego naciśnięcia klawisza; widać ją w Gestach jak każdą inną.",
+      "longPressOtherHint": "Długie naciśnięcie uruchamia coś innego; zmień to w Gestach.",
+      "quitName": "Zamknij {{name}}",
+      "releaseRemoved": "Usunięto akcję zwolnienia klawisza: klawisz z długim naciśnięciem nie może też reagować na zwolnienie."
+    },
+    "errors": {
+      "invalidUrl": "Nie można otworzyć adresu: otwierają się tylko strony http i https.",
+      "notFound": "Nie znaleziono tego na tym komputerze: mogło zostać przeniesione, przemianowane lub odinstalowane. Wybierz ponownie.",
+      "unbound": "Nie wybrano tego jeszcze na tym komputerze. Wybierz to w akcji albo powiąż w Ustawieniach › Zasoby.",
+      "invalidApplication": "To nie jest aplikacja, którą DeckPilot potrafi otworzyć.",
+      "notIdentifiable": "Ta aplikacja uruchamia się przez skrypt lub program uruchamiający, więc DeckPilot nie potrafi odróżnić jej procesów i jej nie zamyka.",
+      "protected": "Ten program jest częścią systemu lub DeckPilota i nigdy nie jest zamykany.",
+      "closeFailed": "Nie udało się zamknąć aplikacji.",
+      "notUserInitiated": "Zamknij aplikację działa tylko wtedy, gdy uruchomisz ją sam, nigdy z harmonogramu ani zdarzenia.",
+      "notPermitted": "Moduł System nie ma uprawnienia do tej czynności.",
+      "programNotFound": "Program, który to otwiera, nie jest zainstalowany.",
+      "openFailed": "System nie mógł tego otworzyć.",
+      "interrupted": "Uruchomienie anulowano lub skończył się czas, gdy aplikacja miała czas na zakończenie. Niczego nie wymuszono; może nadal działać.",
+      "elevated": "DeckPilot działa jako root lub administrator, więc nie zamyka aplikacji. Uruchom DeckPilota na swoim koncie."
+    }
   }
 }
