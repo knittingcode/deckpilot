@@ -303,6 +303,8 @@ impl Workflow {
                 node: None,
                 severity: IssueSeverity::Error,
                 message,
+                code: None,
+                parameter: None,
             });
         };
         if self.triggers.len() > MAX_TRIGGERS {

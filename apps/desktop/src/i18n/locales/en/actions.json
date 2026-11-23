@@ -1,4 +1,9 @@
 {
+  "completeness": {
+    "badge": "Needs configuration",
+    "missing": "Missing: {{parameters}}",
+    "runRefused": "{{name}} needs configuration before it can run."
+  },
   "library": {
     "description": "Actions you configured, ready for workflows and keys",
     "new": "New action",

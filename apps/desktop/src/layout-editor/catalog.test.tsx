@@ -157,6 +157,13 @@ describe("the catalog of action types", () => {
     )
   })
 
+  it("never reuses an action that still needs configuration", () => {
+    // A draft of "Open web page" (no URL yet) is exactly a new one, but
+    // each drop gets its own so configuring one key leaves the others.
+    const draft = instance({ actionType: openUrl.id, parameters: {} })
+    expect(existingDefault([draft], openUrl)).toBeUndefined()
+  })
+
   it("searches names, descriptions, categories and modules", () => {
     const groups = catalogGroups(modules)
     const ids = (query: string) =>

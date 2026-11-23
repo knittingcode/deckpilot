@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use deckpilot_core::{
@@ -25,6 +25,20 @@ pub struct NewAction {
     label: Option<String>,
 }
 
+/// A saved action, with the required parameters it still leaves without a
+/// value (`deckpilot_core::completeness`): such an action is saved as a
+/// draft that needs configuration and does not run until it is complete.
+/// Serialized as the action with an `incomplete` field, left out when the
+/// action is complete, so the frontend reads it as before.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedAction {
+    #[serde(flatten)]
+    action: ActionInstance,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    incomplete: Vec<String>,
+}
+
 /// Rejects parameters that refer to another profile, e.g. a project.
 fn check_in_profile(
     state: &AppState,
@@ -44,7 +58,7 @@ pub fn create_action(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     action: NewAction,
-) -> CommandResult<ActionInstance> {
+) -> CommandResult<SavedAction> {
     let mut instance = ActionInstance {
         id: ActionInstanceId::new(),
         name: action.name,
@@ -54,11 +68,16 @@ pub fn create_action(
         icon: action.icon,
         label: action.label,
     };
-    state.actions().validate_instance(&mut instance)?;
+    // A required parameter may still be missing: dropping a type that
+    // needs a value saves a draft at once.
+    let incomplete = state.actions().validate_instance(&mut instance)?;
     modify_profile(&state, profile_id, |profile| {
         check_in_profile(&state, &instance, profile)?;
         profile.actions.push(instance.clone());
-        Ok(instance)
+        Ok(SavedAction {
+            action: instance,
+            incomplete,
+        })
     })
 }
 
@@ -68,9 +87,9 @@ pub fn update_action(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     action: ActionInstance,
-) -> CommandResult<ActionInstance> {
+) -> CommandResult<SavedAction> {
     let mut action = action;
-    state.actions().validate_instance(&mut action)?;
+    let incomplete = state.actions().validate_instance(&mut action)?;
     modify_profile(&state, profile_id, |profile| {
         check_in_profile(&state, &action, profile)?;
         let slot = profile
@@ -85,7 +104,7 @@ pub fn update_action(
             ));
         }
         *slot = action.clone();
-        Ok(action)
+        Ok(SavedAction { action, incomplete })
     })
 }
 
@@ -95,7 +114,7 @@ pub fn duplicate_action(
     profile_id: ProfileId,
     action_id: ActionInstanceId,
     name: String,
-) -> CommandResult<ActionInstance> {
+) -> CommandResult<SavedAction> {
     modify_profile(&state, profile_id, |profile| {
         let mut copy = profile
             .action(action_id)
@@ -103,9 +122,12 @@ pub fn duplicate_action(
             .clone();
         copy.id = ActionInstanceId::new();
         copy.name = name;
-        state.actions().validate_instance(&mut copy)?;
+        let incomplete = state.actions().validate_instance(&mut copy)?;
         profile.actions.push(copy.clone());
-        Ok(copy)
+        Ok(SavedAction {
+            action: copy,
+            incomplete,
+        })
     })
 }
 

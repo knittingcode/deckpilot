@@ -101,6 +101,8 @@ pub async fn save_layout(
         }
         // Reported, never refused (`docs/action-contexts.md`).
         let context_issues = layout.context_issues_for_save(stored, &registry, profile);
+        let incomplete =
+            deckpilot_core::completeness::layout_incomplete(&layout, profile, &registry);
         match profile
             .layouts
             .iter_mut()
@@ -118,6 +120,7 @@ pub async fn save_layout(
             layout,
             incompatible: kept.iter().map(ToString::to_string).collect(),
             context_issues,
+            incomplete,
         })
     })
     .await
@@ -206,6 +209,11 @@ pub struct SavedLayout {
     /// `incompatible`, whose bindings do not run.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     context_issues: Vec<deckpilot_core::ContextIssue>,
+    /// Bindings whose action needs configuration
+    /// (`deckpilot_core::completeness`): saved, refused when they run.
+    /// Left out when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    incomplete: Vec<deckpilot_core::IncompleteUse>,
 }
 
 /// What saving `layout` over `stored` (the saved version of the same
@@ -1103,6 +1111,7 @@ mod tests {
             layout: layout.clone(),
             incompatible: Vec::new(),
             context_issues: Vec::new(),
+            incomplete: Vec::new(),
         })
         .unwrap();
         assert_eq!(saved, plain);
@@ -1111,6 +1120,7 @@ mod tests {
             layout,
             incompatible: vec!["why".into()],
             context_issues,
+            incomplete: Vec::new(),
         })
         .unwrap();
         assert_eq!(reported["incompatible"], serde_json::json!(["why"]));

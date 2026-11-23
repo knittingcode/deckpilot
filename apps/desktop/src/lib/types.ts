@@ -1,6 +1,7 @@
 // TypeScript mirrors of the serialized Rust types (camelCase serde names).
 
 import type { ActionContext, ContextIncompatibility } from "./action-context"
+import type { ProfileCompleteness } from "./action-completeness"
 
 export type Os = "linux" | "macOs" | "windows" | "other"
 
@@ -346,6 +347,13 @@ export interface GraphIssue {
   node?: string
   severity: "error" | "warning"
   message: string
+  /**
+   * `configuration-incomplete`: a required parameter of the node has no
+   * value yet (`parameter`). The workflow can be saved but does not run
+   * until it is filled in (`lib/action-completeness.ts`).
+   */
+  code?: "configuration-incomplete"
+  parameter?: string
 }
 
 /** The graph form of a step workflow, with notes where it behaves differently. */
@@ -802,7 +810,7 @@ export interface ProfilesView {
   activeProfileId: string | null
 }
 
-export interface ProfileView {
+export interface ProfileView extends ProfileCompleteness {
   profile: Profile
   activeProjectId: string | null
   issues: string[]

@@ -672,6 +672,38 @@ impl ActionRegistry {
         }
     }
 
+    /// [`ActionRegistry::normalize`] for saving a configuration that may
+    /// not be finished ([`ActionType::normalize_draft`]): required
+    /// parameters without a value are returned as missing, every other
+    /// problem of the schema or the handler is refused. The handler's
+    /// problems with a missing parameter are left for when it is filled in.
+    pub fn normalize_draft(
+        &self,
+        action_type: &ActionTypeId,
+        parameters: &ActionParameters,
+    ) -> Result<crate::DraftParameters, RegistryError> {
+        let handler = self.handler(action_type).ok_or_else(|| {
+            match self.unavailable_reason(action_type) {
+                Some(reason) => RegistryError::Unavailable(action_type.clone(), reason.to_owned()),
+                None => RegistryError::UnknownActionType(action_type.clone()),
+            }
+        })?;
+        let draft = handler
+            .definition()
+            .normalize_draft(parameters)
+            .map_err(RegistryError::InvalidParameters)?;
+        let problems: Vec<ParameterError> = handler
+            .validate(&draft.parameters)
+            .into_iter()
+            .filter(|problem| !draft.missing.iter().any(|key| key == problem.key()))
+            .collect();
+        if problems.is_empty() {
+            Ok(draft)
+        } else {
+            Err(RegistryError::InvalidParameters(problems))
+        }
+    }
+
     /// The handler's own problems with normalized `parameters`
     /// ([`ActionHandler::validate`]); none for a type that cannot run.
     pub fn validate_parameters(
@@ -684,7 +716,8 @@ impl ActionRegistry {
             .unwrap_or_default()
     }
 
-    /// Creates a validated action instance with a fresh id.
+    /// Creates a validated action instance with a fresh id. It may still
+    /// need configuration ([`ActionRegistry::validate_instance`]).
     pub fn create_instance(
         &self,
         name: &str,
@@ -704,9 +737,16 @@ impl ActionRegistry {
         Ok(instance)
     }
 
-    /// Validates a complete instance (e.g. after editing) and normalizes its
-    /// name, parameters and presentation fields in place.
-    pub fn validate_instance(&self, instance: &mut ActionInstance) -> Result<(), RegistryError> {
+    /// Validates an instance for saving (e.g. after editing) and normalizes
+    /// its name, parameters and presentation fields in place. A required
+    /// parameter may still be missing: the instance is saved as a draft
+    /// that needs configuration and does not run until it is complete. The
+    /// missing parameters are returned, in the schema's order (empty: the
+    /// instance is complete). Every other problem is refused.
+    pub fn validate_instance(
+        &self,
+        instance: &mut ActionInstance,
+    ) -> Result<Vec<String>, RegistryError> {
         instance.name = instance.name.trim().to_owned();
         if instance.name.is_empty() {
             return Err(RegistryError::EmptyName);
@@ -724,8 +764,9 @@ impl ActionRegistry {
             .filter(|l| !l.is_empty());
         crate::action::validate_presentation(instance.icon.as_deref(), instance.label.as_deref())
             .map_err(RegistryError::InvalidPresentation)?;
-        instance.parameters = self.normalize(&instance.action_type, &instance.parameters)?;
-        Ok(())
+        let draft = self.normalize_draft(&instance.action_type, &instance.parameters)?;
+        instance.parameters = draft.parameters;
+        Ok(draft.missing)
     }
 
     /// Problems of an instance that only show in the context of its profile.
@@ -769,8 +810,22 @@ mod tests {
             registry.create_instance("", echo_type(), &params),
             Err(RegistryError::EmptyName)
         );
+        // A required parameter may be missing: a draft that needs
+        // configuration. A value of the wrong type never may.
+        let mut draft = registry
+            .create_instance("Greet", echo_type(), &ActionParameters::new())
+            .unwrap();
+        assert!(draft.parameters.is_empty());
+        assert_eq!(
+            registry.validate_instance(&mut draft),
+            Ok(vec!["message".to_owned()])
+        );
         assert!(matches!(
-            registry.create_instance("Greet", echo_type(), &ActionParameters::new()),
+            registry.create_instance(
+                "Greet",
+                echo_type(),
+                &ActionParameters::new().with("message", ParameterValue::Integer(1))
+            ),
             Err(RegistryError::InvalidParameters(_))
         ));
         let unknown = ActionTypeId::new("vendor.unknown").unwrap();
