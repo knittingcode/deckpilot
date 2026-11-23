@@ -103,7 +103,9 @@ pub use execution::{
     ActionResult, ActionStatus, CapabilityDenied, ContextEffect, DeckRequest, ExecutionContext,
     ExecutionControl, ProfileTarget, Progress, RunOrigin, RunSummary, WorkflowCause,
 };
-pub use face::{FaceStyle, KeyFace, PageLabel, render_label, render_page_label};
+pub use face::{
+    FaceLabel, FaceStyle, KeyFace, LabelMarker, PageLabel, render_label, render_page_label,
+};
 pub use folder::{
     AutoExit, AutoExitError, BackPosition, FolderBack, FolderBackError, FolderBackReport,
     FolderExit, FolderTimers, reserved_back_control,

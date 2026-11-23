@@ -6,7 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Accent, ButtonState, Glyph, Indicator, KeyAppearance, Project, StateSnapshot};
+use crate::{
+    Accent, ButtonState, Glyph, Indicator, KeyAppearance, KeyLabelLook, LabelId, Project,
+    StateSnapshot,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,11 +67,114 @@ pub struct KeyFace {
     /// its fallback icon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    /// The labels the key shows ([`crate::KeyLabel`]), resolved: only those
+    /// enabled and visible, in paint order within their layer. Never the
+    /// templates (they stay in the layout). Empty: none, not written, so a
+    /// face without labels is what it always was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<FaceLabel>,
     /// Which of the texts DeckPilot produced itself, so the agent draws
     /// them in the effective language ([`crate::i18n`]). Not part of the
     /// look: ignored by comparisons and never serialized.
     #[serde(skip)]
     pub text: crate::i18n::FaceText,
+}
+
+/// A label as a key shows it: its id, its resolved text and its look.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceLabel {
+    pub id: LabelId,
+    /// The resolved text (references and `{page.…}` placeholders), at most
+    /// [`crate::appearance::labels::MAX_LABEL_CLUSTERS`] characters.
+    pub text: String,
+    pub spec: KeyLabelLook,
+    /// A reference of the template had no displayable value (shown as
+    /// [`crate::variables::UNRESOLVED_MARKER`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unresolved: bool,
+    /// Where each unresolved marker is in `text` (after `{page.…}` and the
+    /// cut), as [`crate::variables::MarkerSpan`]: UTF-16 offsets, `end`
+    /// exclusive, with the reference it stands for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<LabelMarker>,
+}
+
+/// One unresolved marker of a [`FaceLabel`]'s text: the shape of
+/// [`crate::variables::MarkerSpan`] (UTF-16 offsets, `end` exclusive).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelMarker {
+    pub start: usize,
+    pub end: usize,
+    pub reference: String,
+}
+
+impl FaceLabel {
+    /// The label `id` with `display` (its resolved template) as its text:
+    /// `{page.…}` expanded in the text around the markers (never in a
+    /// value), then cut after `max` characters with `…`. Markers move with
+    /// the text; one the cut reaches is dropped.
+    pub fn resolved(
+        id: LabelId,
+        display: &crate::variables::DisplayText,
+        page: PageLabel<'_>,
+        spec: KeyLabelLook,
+        max: usize,
+    ) -> Self {
+        let unresolved = !display.unresolved.is_empty();
+        // Byte ranges of the markers in the resolved text.
+        let mut ranges = Vec::new();
+        let (mut units, mut spans) = (0, display.markers.iter().peekable());
+        let mut start_byte = None;
+        for (byte, ch) in display
+            .text
+            .char_indices()
+            .chain(std::iter::once((display.text.len(), ' ')))
+        {
+            if let Some(span) = spans.peek() {
+                if start_byte.is_none() && units == span.start {
+                    start_byte = Some(byte);
+                }
+                if let Some(from) = start_byte
+                    && units == span.end
+                {
+                    ranges.push((from, byte, span.reference.clone()));
+                    start_byte = None;
+                    spans.next();
+                }
+            }
+            units += ch.len_utf16();
+        }
+        let mut text = String::new();
+        let mut markers = Vec::new();
+        let mut at = 0;
+        for (from, to, reference) in ranges {
+            text.push_str(&render_page_label(&display.text[at..from], page));
+            let start = text.encode_utf16().count();
+            text.push_str(&display.text[from..to]);
+            markers.push(LabelMarker {
+                start,
+                end: text.encode_utf16().count(),
+                reference,
+            });
+            at = to;
+        }
+        text.push_str(&render_page_label(&display.text[at..], page));
+        if text.chars().count() > max {
+            text = text.chars().take(max.saturating_sub(1)).collect();
+            let kept = text.encode_utf16().count();
+            markers.retain(|marker| marker.end <= kept);
+            text.push('…');
+        }
+        Self {
+            id,
+            text,
+            spec,
+            unresolved,
+            markers,
+        }
+    }
 }
 
 impl KeyFace {
@@ -87,6 +193,7 @@ impl KeyFace {
             badge: None,
             series: None,
             symbol: None,
+            labels: Vec::new(),
             text: crate::i18n::FaceText::default(),
         }
     }
@@ -106,6 +213,7 @@ impl KeyFace {
             badge: None,
             series: None,
             symbol: None,
+            labels: Vec::new(),
             text: crate::i18n::FaceText::default(),
         }
     }
@@ -146,7 +254,21 @@ impl KeyFace {
     /// appearances leave it as it is).
     #[must_use]
     pub fn with_appearance(mut self, appearance: Option<&KeyAppearance>) -> Self {
-        self.appearance = appearance.filter(|a| !a.is_default()).cloned();
+        // Labels are resolved into [`KeyFace::labels`]; their templates
+        // are not part of the face (nor of its frame's cache key).
+        self.appearance = appearance
+            .map(|look| KeyAppearance {
+                labels: Vec::new(),
+                ..look.clone()
+            })
+            .filter(|a| !a.is_default());
+        self
+    }
+
+    /// The face with `labels` as the labels it shows.
+    #[must_use]
+    pub fn with_labels(mut self, labels: Vec<FaceLabel>) -> Self {
+        self.labels = labels;
         self
     }
 

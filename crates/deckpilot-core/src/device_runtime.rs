@@ -1746,6 +1746,12 @@ pub fn page_faces_with(
                         .with_appearance(binding.appearance.as_ref())
                         .with_title_suggestions(title_suggestions(registry, binding, profile))
                         .with_user_title(user_titled(binding, profile))
+                        .with_labels(face_labels(
+                            binding,
+                            &title,
+                            project.is_some(),
+                            label,
+                        ))
                     },
                 )
             };
@@ -1923,6 +1929,17 @@ struct Title<'a> {
 }
 
 impl Title<'_> {
+    /// The label `id` of the binding, resolved as the title is.
+    fn label(&self, id: crate::LabelId, template: &str) -> crate::variables::DisplayText {
+        let key = crate::variables::TextKey {
+            page: self.page,
+            control: self.binding.control,
+            trigger: self.binding.trigger,
+            slot: crate::variables::TextSlot::Label { id },
+        };
+        self.titles.display(&key, template)
+    }
+
     fn text(&self, template: &str) -> String {
         let key = crate::variables::TextKey {
             page: self.page,
@@ -1932,6 +1949,46 @@ impl Title<'_> {
         };
         self.titles.display(&key, template).text
     }
+}
+
+/// The labels the shown binding's look puts on the key: those enabled and
+/// visible ([`crate::LabelVisibility`]), each resolved as the title is
+/// (with its own text slot, so its dependencies are its own). Static labels
+/// are resolved too (unchanged); a hidden label is still resolved, so the
+/// key is redrawn when it would show.
+fn face_labels(
+    binding: &ControlBinding,
+    title: &Title<'_>,
+    has_project: bool,
+    page: PageLabel<'_>,
+) -> Vec<crate::FaceLabel> {
+    let Some(look) = binding.appearance.as_ref() else {
+        return Vec::new();
+    };
+    look.labels
+        .iter()
+        .filter(|label| label.is_enabled() && !label.text.trim().is_empty())
+        .filter_map(|label| {
+            let display = title.label(label.id, &label.text);
+            let unresolved = !display.unresolved.is_empty();
+            let visible = match label.visibility() {
+                crate::LabelVisibility::Always => true,
+                crate::LabelVisibility::WhenResolved => {
+                    !unresolved && !display.text.trim().is_empty()
+                }
+                crate::LabelVisibility::WhenProject => has_project,
+            };
+            visible.then(|| {
+                crate::FaceLabel::resolved(
+                    label.id,
+                    &display,
+                    page,
+                    label.look.clone(),
+                    crate::appearance::labels::MAX_LABEL_CLUSTERS,
+                )
+            })
+        })
+        .collect()
 }
 
 fn face_for(
@@ -2082,6 +2139,9 @@ mod title_tests;
 
 #[cfg(test)]
 mod display_tests;
+
+#[cfg(test)]
+mod label_tests;
 
 #[cfg(test)]
 mod tests {
