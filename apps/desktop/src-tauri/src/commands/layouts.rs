@@ -86,6 +86,15 @@ pub async fn save_layout(
             appearance.check().map_err(CommandError::Invalid)?;
         }
     }
+    // Label templates the agent knows would show a sensitive value or an
+    // identifier (a plugin's declaration) are refused too.
+    super::key_labels::check(
+        &state.paths,
+        profile_id,
+        super::key_labels::templates([&layout]),
+    )
+    .await
+    .map_err(CommandError::Invalid)?;
     // Folder pages without a Back setting (moved into a folder, or from
     // before the reserved Back key) get one as migration 11 gives it: the
     // reserved key when it is free or only goes back, else where it was.
