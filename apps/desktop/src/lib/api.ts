@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 
+import type { IncompleteUse, SavedAction } from "./action-completeness"
 import { errorCode, rawErrorMessage } from "./backend-error"
 
 import type {
@@ -221,11 +222,11 @@ export const api = {
     invoke<ProfileLayoutEntry[]>("profile_layouts", { profileId }),
 
   createAction: (profileId: string, action: ActionInput) =>
-    invoke<ActionInstance>("create_action", { profileId, action }),
+    invoke<SavedAction>("create_action", { profileId, action }),
   updateAction: (profileId: string, action: ActionInstance) =>
-    invoke<ActionInstance>("update_action", { profileId, action }),
+    invoke<SavedAction>("update_action", { profileId, action }),
   duplicateAction: (profileId: string, actionId: string, name: string) =>
-    invoke<ActionInstance>("duplicate_action", { profileId, actionId, name }),
+    invoke<SavedAction>("duplicate_action", { profileId, actionId, name }),
   deleteAction: (profileId: string, actionId: string) =>
     invoke<null>("delete_action", { profileId, actionId }),
   runAction: (profileId: string, actionId: string) =>
@@ -278,10 +279,13 @@ export const api = {
    * `contextIssues`: steps or nodes whose action is not meant for them; reported only.
    */
   saveWorkflow: (profileId: string, workflow: Workflow) =>
-    invoke<Saved<Workflow & { contextIssues?: ContextIssue[] }>>("save_workflow", {
-      profileId,
-      workflow,
-    }),
+    invoke<Saved<Workflow & { contextIssues?: ContextIssue[]; incomplete?: IncompleteUse[] }>>(
+      "save_workflow",
+      {
+        profileId,
+        workflow,
+      },
+    ),
   duplicateWorkflow: (profileId: string, workflowId: string, name: string) =>
     invoke<Workflow>("duplicate_workflow", { profileId, workflowId, name }),
   deleteWorkflow: (profileId: string, workflowId: string) =>
@@ -350,13 +354,18 @@ export const api = {
    * saved and run.
    */
   saveLayout: (profileId: string, layout: DeviceLayout) =>
-    invoke<Saved<DeviceLayout & { incompatible?: string[]; contextIssues?: ContextIssue[] }>>(
-      "save_layout",
-      {
-        profileId,
-        layout,
-      },
-    ),
+    invoke<
+      Saved<
+        DeviceLayout & {
+          incompatible?: string[]
+          contextIssues?: ContextIssue[]
+          incomplete?: IncompleteUse[]
+        }
+      >
+    >("save_layout", {
+      profileId,
+      layout,
+    }),
   duplicateLayout: (profileId: string, layoutId: string, name: string) =>
     invoke<string>("duplicate_layout", { profileId, layoutId, name }),
   deleteLayout: (profileId: string, layoutId: string) =>
