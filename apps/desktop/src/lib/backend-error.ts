@@ -2,6 +2,7 @@
 // "Backend errors").
 
 import { i18n } from "@/i18n"
+import type { WorkflowInUseParams } from "./types"
 
 /**
  * What a backend command rejects with (`CommandError` in
@@ -11,7 +12,12 @@ import { i18n } from "@/i18n"
 export interface BackendError {
   code: string
   message: string
-  params?: Record<string, string | number>
+  /**
+   * Texts and numbers the translation interpolates; a few refusals also
+   * carry structured data for the window (`invalid.workflowInUse`: the
+   * references, {@link WorkflowInUseParams}).
+   */
+  params?: Record<string, unknown>
 }
 
 export function isBackendError(error: unknown): error is BackendError {
@@ -45,7 +51,7 @@ export function rawErrorMessage(error: unknown): string {
  */
 export function translateErrorCode(
   code: string,
-  params?: Record<string, string | number>,
+  params?: Record<string, unknown>,
 ): string | undefined {
   // Codes come from the backend, not from the sources: the dynamic keys
   // allowlist (`scripts/i18n-dynamic-keys.json`) lists their groups.
@@ -65,4 +71,25 @@ export function translateErrorCode(
 export function errorMessage(error: unknown): string {
   if (isBackendError(error)) return translateErrorCode(error.code, error.params) ?? error.message
   return rawErrorMessage(error)
+}
+
+/**
+ * The references and fingerprint a refused workflow delete carries
+ * (`invalid.workflowInUse`, `invalid.workflowReferencesChanged`,
+ * `invalid.workflowInWorkSession`), or
+ * `undefined` for any other error.
+ */
+export function workflowInUse(error: unknown): WorkflowInUseParams | undefined {
+  if (!isBackendError(error)) return undefined
+  if (
+    error.code !== "invalid.workflowInUse" &&
+    error.code !== "invalid.workflowReferencesChanged" &&
+    error.code !== "invalid.workflowInWorkSession"
+  ) {
+    return undefined
+  }
+  const params = error.params ?? {}
+  const { usages, fingerprint } = params
+  if (!Array.isArray(usages) || typeof fingerprint !== "string") return undefined
+  return { count: usages.length, usages: usages as WorkflowInUseParams["usages"], fingerprint }
 }

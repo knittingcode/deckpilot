@@ -231,10 +231,12 @@ describe("gesture editor without the Workflows plugin", () => {
       />,
     )
     await user.click(key("Key 2"))
-    // Still assigned and still running, only not editable here.
+    // Still assigned, not run while the plugin is off, and not editable here.
     expect(describes("Key 2")).toContain("Double click: Deploy")
     expect(
-      screen.getByText(/^Read-only: the Workflows plugin is off\. This workflow still runs/),
+      screen.getByText(
+        /^Read-only: the Workflows plugin is off\. Keys keep this workflow but do not run it/,
+      ),
     ).toBeInTheDocument()
     // Not offered for another gesture; the Multi Action is.
     await user.click(key("Key 3"))

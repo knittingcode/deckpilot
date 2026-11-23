@@ -29,10 +29,10 @@ import {
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ErrorNotice } from "@/components/page"
 import { ParameterField } from "@/components/parameter-field"
 import { UsageList } from "@/components/usage-list"
+import { WorkflowDeleteDialog } from "@/components/workflow-delete-dialog"
 import { Button } from "@/components/ui/button"
 import { Panel } from "@/components/settings-layout"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -49,6 +49,7 @@ import { useExecutions } from "@/hooks/use-executions"
 import { api, errorMessage } from "@/lib/api"
 import { toastSaved } from "@/lib/agent-reload"
 import { toastFailure } from "@/lib/failure"
+import { workflowReferences } from "@/lib/workflow-references"
 import { useSnapshot } from "@/hooks/use-status"
 import { EXECUTION_STATE_LABEL, ExecutionStore } from "@/lib/executions"
 import { useTitlebar } from "@/hooks/use-titlebar"
@@ -163,7 +164,7 @@ export function StepEditor({
     profileName: view.profile.name,
   })
   const canRun = runBlocked === null
-  const usages = view.workflowUsages[workflow.id] ?? []
+  const usages = workflowReferences(view, workflow.id)
   // Runs in the agent in the background; progress and the result arrive as
   // execution events (status bar, below).
   const run = () => {
@@ -385,24 +386,20 @@ export function StepEditor({
             >
               <Copy /> {t("workflows:steps.duplicate")}
             </Button>
-            <ConfirmDialog
+            <WorkflowDeleteDialog
               trigger={
-                <Button variant="ghost" disabled={usages.length > 0}>
+                <Button variant="ghost">
                   <Trash2 /> {t("common:actions.delete")}
                 </Button>
               }
+              profileId={profileId}
+              view={view}
+              workflow={initial}
               title={t("workflows:steps.deleteTitle", { name: initial.name })}
               description={t("workflows:steps.deleteDescription")}
-              onConfirm={() => {
-                api
-                  .deleteWorkflow(profileId, workflow.id)
-                  .then(() => {
-                    toast.success(t("workflows:steps.toast.deleted"))
-                    onChanged()
-                  })
-                  .catch((e: unknown) => {
-                    toastFailure(t("workflows:steps.toast.deleteFailed"), e)
-                  })
+              onDeleted={() => {
+                toast.success(t("workflows:steps.toast.deleted"))
+                onChanged()
               }}
             />
           </>

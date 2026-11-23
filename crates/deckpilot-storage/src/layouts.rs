@@ -1294,6 +1294,65 @@ impl SqliteStore {
     pub fn layout_users(&self, id: LayoutId) -> Result<Vec<LayoutAssignment>> {
         assignments(self.connection(), &id.to_string())
     }
+
+    /// For each of `profile`'s layouts, the workflows of the other
+    /// profiles that use it too. On a key of a shared layout, a workflow
+    /// of its set is "Not in this profile" in `profile`; one no profile
+    /// sharing that layout has was deleted ("Workflow missing",
+    /// `deckpilot_core::WorkflowScope`). Reads only the assignments and
+    /// the workflow ids of the other profiles' documents (no layouts,
+    /// actions or icons are composed).
+    pub fn workflows_sharing_layouts(
+        &self,
+        profile: &Profile,
+    ) -> Result<BTreeMap<LayoutId, BTreeSet<deckpilot_core::WorkflowId>>> {
+        let mut of_profile: BTreeMap<ProfileId, BTreeSet<deckpilot_core::WorkflowId>> =
+            BTreeMap::new();
+        let mut shared = BTreeMap::new();
+        for layout in &profile.layouts {
+            let mut workflows = BTreeSet::new();
+            for user in self.layout_users(layout.id)? {
+                if user.profile_id == profile.id {
+                    continue;
+                }
+                let ids = match of_profile.entry(user.profile_id) {
+                    std::collections::btree_map::Entry::Occupied(known) => known.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(new) => {
+                        new.insert(self.document_workflow_ids(user.profile_id)?)
+                    }
+                };
+                workflows.extend(ids.iter().copied());
+            }
+            shared.insert(layout.id, workflows);
+        }
+        Ok(shared)
+    }
+
+    /// The ids of the workflows in `profile`'s stored document.
+    fn document_workflow_ids(
+        &self,
+        profile: ProfileId,
+    ) -> Result<BTreeSet<deckpilot_core::WorkflowId>> {
+        let document: Option<String> = self
+            .connection()
+            .query_row(
+                "SELECT document FROM profiles WHERE id = ?1",
+                [profile.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(document) = document else {
+            return Ok(BTreeSet::new());
+        };
+        let document: Value = serde_json::from_str(&document)?;
+        Ok(document["workflows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|workflow| workflow["id"].as_str())
+            .filter_map(|id| id.parse().ok())
+            .collect())
+    }
 }
 
 /// A kind of shared record ([`SqliteStore::stored_item`]).
