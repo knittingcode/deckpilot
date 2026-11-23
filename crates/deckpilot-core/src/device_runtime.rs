@@ -253,6 +253,9 @@ pub struct Runtime {
     /// instead of the saved one, while a live preview session lasts
     /// (`working.rs`): in memory only, never saved.
     working: BTreeMap<DeviceId, working::WorkingLayout>,
+    /// Which absent workflows are another profile's and whether graph
+    /// workflows run from keys (the agent sets it with the profile).
+    workflow_scope: crate::WorkflowScope,
     clock: Clock,
 }
 
@@ -282,8 +285,21 @@ impl Runtime {
             device_layouts_changed: false,
             folders: FolderTimers::default(),
             working: BTreeMap::new(),
+            workflow_scope: crate::WorkflowScope::default(),
             clock: Clock::default(),
         }
+    }
+
+    /// Sets which absent workflows belong to another profile sharing a
+    /// layout and whether graph workflows may run from keys
+    /// ([`crate::WorkflowScope`]). Faces follow at the next render.
+    pub fn set_workflow_scope(&mut self, scope: crate::WorkflowScope) {
+        self.workflow_scope = scope;
+    }
+
+    /// See [`Runtime::set_workflow_scope`].
+    pub fn workflow_scope(&self) -> &crate::WorkflowScope {
+        &self.workflow_scope
     }
 
     /// Measures Auto Exit countdowns with `clock` instead of
@@ -1207,7 +1223,7 @@ impl Runtime {
             self.active_project_id(),
             |environment| {
                 let recorder = RecordingTemplates::new(environment);
-                let faces = page_faces_with(
+                let faces = page_faces_scoped(
                     self.engine.registry(),
                     layout,
                     page.id,
@@ -1216,6 +1232,7 @@ impl Runtime {
                     &controls,
                     Some(&model.capabilities),
                     &recorder,
+                    &self.workflow_scope,
                 );
                 (faces, recorder.into_texts())
             },
@@ -1674,6 +1691,36 @@ pub fn core_display<R>(
     })
 }
 
+/// [`page_faces`], with keys that start workflows shown as `scope` says:
+/// a deleted workflow as "Workflow missing", another profile's as "Not in
+/// this profile", a graph workflow while the Workflows plugin is off as
+/// "Workflows off". Titles are resolved with the core's variables only.
+#[allow(clippy::too_many_arguments)]
+pub fn page_faces_in(
+    registry: &ActionRegistry,
+    layout: &DeviceLayout,
+    page: PageId,
+    profile: &Profile,
+    project: Option<&Project>,
+    controls: &[ControlId],
+    capabilities: Option<&DeviceCapabilities>,
+    scope: &crate::WorkflowScope,
+) -> Vec<(ControlId, KeyFace)> {
+    core_display(profile, project, |titles| {
+        page_faces_scoped(
+            registry,
+            layout,
+            page,
+            profile,
+            project,
+            controls,
+            capabilities,
+            titles,
+            scope,
+        )
+    })
+}
+
 /// [`page_faces`] with the titles resolved by `titles`, which is asked for
 /// every title template the page's keys show.
 #[allow(clippy::too_many_arguments)]
@@ -1686,6 +1733,33 @@ pub fn page_faces_with(
     controls: &[ControlId],
     capabilities: Option<&DeviceCapabilities>,
     titles: &dyn DisplayTemplates,
+) -> Vec<(ControlId, KeyFace)> {
+    page_faces_scoped(
+        registry,
+        layout,
+        page,
+        profile,
+        project,
+        controls,
+        capabilities,
+        titles,
+        &crate::WorkflowScope::default(),
+    )
+}
+
+/// [`page_faces_with`] and [`page_faces_in`] together: titles resolved by
+/// `titles`, keys that start workflows shown as `scope` says.
+#[allow(clippy::too_many_arguments)]
+pub fn page_faces_scoped(
+    registry: &ActionRegistry,
+    layout: &DeviceLayout,
+    page: PageId,
+    profile: &Profile,
+    project: Option<&Project>,
+    controls: &[ControlId],
+    capabilities: Option<&DeviceCapabilities>,
+    titles: &dyn DisplayTemplates,
+    scope: &crate::WorkflowScope,
 ) -> Vec<(ControlId, KeyFace)> {
     let Some(page) = layout.page(page) else {
         return controls
@@ -1741,7 +1815,7 @@ pub fn page_faces_with(
                         if incompatible {
                             unavailable_face(binding, profile, &title)
                         } else {
-                            face_for(registry, binding, layout, profile, project, &title)
+                            face_for(registry, binding, layout, profile, project, &title, scope)
                         }
                         .with_appearance(binding.appearance.as_ref())
                         .with_title_suggestions(title_suggestions(registry, binding, profile))
@@ -1995,6 +2069,7 @@ fn face_for(
     profile: &Profile,
     project: Option<&Project>,
     title: &Title<'_>,
+    scope: &crate::WorkflowScope,
 ) -> KeyFace {
     match &binding.target {
         BindingTarget::Action { action, overrides } => {
@@ -2058,19 +2133,9 @@ fn face_for(
                     }),
             )
         }
-        BindingTarget::Workflow { workflow } => match profile.workflow(*workflow) {
-            Some(definition) => KeyFace::new(
-                FaceStyle::Workflow,
-                title.text(binding.label.as_deref().unwrap_or(&definition.name)),
-            )
-            .with_symbol(Some(symbols::WORKFLOW)),
-            // A layout shared with a profile that has the workflow.
-            None => match &binding.label {
-                Some(label) => KeyFace::new(FaceStyle::Notice, label.clone()),
-                None => KeyFace::system(FaceStyle::Notice, SystemText::Workflow),
-            }
-            .with_system_detail(SystemText::NotInThisProfile),
-        },
+        BindingTarget::Workflow { workflow } => {
+            workflow_face(binding, layout.id, *workflow, profile, title, scope)
+        }
         BindingTarget::OpenPage { page } => open_page_title(layout, binding, *page)
             .map_or_else(
                 || KeyFace::system(FaceStyle::Folder, SystemText::Folder),
@@ -2094,6 +2159,40 @@ fn face_for(
         .with_symbol(Some(match stateful {
             StatefulBinding::WorkSession { .. } => symbols::WORK_SESSION,
         })),
+    }
+}
+
+/// The face of a key that starts `workflow`: its name (or the key's own
+/// title, through the display templates) with the workflow glyph;
+/// "Workflows off" while graph workflows cannot run from keys; "Workflow
+/// missing" or "Not in this profile" when the profile does not have it
+/// ([`crate::WorkflowScope`], by the key's own `layout`).
+fn workflow_face(
+    binding: &ControlBinding,
+    layout: LayoutId,
+    workflow: crate::WorkflowId,
+    profile: &Profile,
+    title: &Title<'_>,
+    scope: &crate::WorkflowScope,
+) -> KeyFace {
+    match profile.workflow(workflow) {
+        // Kept, not run, while the Workflows plugin is off.
+        Some(definition) if scope.graphs_off && definition.graph.is_some() => KeyFace::new(
+            FaceStyle::Notice,
+            title.text(binding.label.as_deref().unwrap_or(&definition.name)),
+        )
+        .with_system_detail(SystemText::WorkflowsOff),
+        Some(definition) => KeyFace::new(
+            FaceStyle::Workflow,
+            title.text(binding.label.as_deref().unwrap_or(&definition.name)),
+        )
+        .with_symbol(Some(symbols::WORKFLOW)),
+        // Deleted, or another profile's in a shared layout.
+        None => match &binding.label {
+            Some(label) => KeyFace::new(FaceStyle::Notice, label.clone()),
+            None => KeyFace::system(FaceStyle::Notice, SystemText::Workflow),
+        }
+        .with_system_detail(scope.absent_text(Some(layout), workflow)),
     }
 }
 

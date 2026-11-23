@@ -390,6 +390,13 @@ export interface ActionNotification {
   severity: "info" | "success" | "warning" | "error"
   desktop: boolean
   statusBar: boolean
+  /**
+   * A stable code for what the agent itself reports, e.g. a key whose
+   * workflow did not start: `workflowMissing`, `workflowNotInProfile`,
+   * `workflowPluginOff`, `workflowInvalid`, `workflowIncomplete`, `workflowNeedsInputs`,
+   * `workflowAlreadyRunning`, `workflowLimit`. Title and body are English.
+   */
+  code?: string
 }
 
 /** A credential stored on this computer; the secret is never sent to the app. */
@@ -751,6 +758,13 @@ export interface Profile {
   icons?: Icon[]
 }
 
+/**
+ * Where an action or workflow is referenced (`deckpilot_core::Usage`). For
+ * a workflow (`ProfileView.workflowReferences`): keys and gestures that
+ * start it, nodes of other graphs that call or loop it, steps and actions
+ * whose parameters name it (a Random Action's candidates, a Multi Action
+ * Switch's states).
+ */
 export type Usage =
   | { type: "workflowStep"; workflow: string; workflowName: string; position: number }
   | {
@@ -760,7 +774,80 @@ export type Usage =
       page: string
       pageName: string
       control: ControlId
+      /** The binding's trigger (press, a gesture…); absent from older agents. */
+      trigger?: Trigger
     }
+  /** A Call or Loop node of another graph workflow (or one whose overrides name it). */
+  | { type: "workflowNode"; workflow: string; workflowName: string; node: string }
+  /** An action whose parameters name it: Random Action candidates, Switch states. */
+  | { type: "actionParameter"; action: string; actionName: string }
+  /** The profile's Work Session settings start or verify sessions with it. */
+  | { type: "workSessionSetting"; setting: "startWorkflow" | "verificationWorkflow" }
+
+/**
+ * A workflow as the Action Library lists it (`ProfileView.workflowEntries`,
+ * derived by the backend, never stored): graph workflows in the Workflows
+ * plugin's section, step workflows (Multi Actions) in the core's Sequences.
+ */
+export interface WorkflowEntry {
+  id: string
+  name: string
+  kind: "graph" | "steps"
+  hasTriggers: boolean
+  /**
+   * Why a key cannot start it. `needsInputs`: it has a required input and
+   * cannot be dropped on a key (use it from a Sub-workflow node);
+   * `invalidGraph`: it can be placed and fails until fixed;
+   * `needsConfiguration`: its only errors are draft nodes that need
+   * configuration, so it can be placed and runs once they are filled in.
+   */
+  block: null | { code: "needsInputs" | "invalidGraph" | "needsConfiguration"; message: string }
+  /** How many places refer to it (`workflowReferences[id].length`). */
+  references: number
+  /** The fingerprint of those references, to confirm deleting it. */
+  fingerprint: string
+}
+
+/** What the user confirmed when deleting a referenced workflow. */
+export interface WorkflowDeleteConfirmation {
+  /** `WorkflowEntry.fingerprint`, or the one a refusal returned. */
+  fingerprint: string
+  /** Also remove the keys and gestures that start it (else they show "Workflow missing"). */
+  clearBindings: boolean
+  /**
+   * Also clear the Work Session settings that name it. Required when one
+   * does: without it the delete is refused (`invalid.workflowInWorkSession`).
+   */
+  clearWorkSession?: boolean
+}
+
+/**
+ * The `params` of the refusals `invalid.workflowInUse` (no confirmation
+ * given), `invalid.workflowReferencesChanged` (the references changed
+ * since the confirmation) and `invalid.workflowInWorkSession` (a Work
+ * Session setting names it and clearing it was not asked): the references
+ * now and their fingerprint.
+ */
+export interface WorkflowInUseParams {
+  count: number
+  usages: Usage[]
+  fingerprint: string
+}
+
+/**
+ * A stored key that starts a workflow this profile may not start from a
+ * key, kept and not run (`SavedLayout.workflowIssues`). New ones are refused
+ * with the reason as `invalid.<reason>`.
+ */
+export interface WorkflowBindingIssue {
+  page: string
+  pageName: string
+  control: ControlId
+  trigger: Trigger
+  workflow: string
+  reason: "workflowNotInProfile" | "pluginFeatureOff" | "workflowNeedsInputs"
+  stored: boolean
+}
 
 // Safe deletion of actions (deckpilot_storage::references, workstream E).
 
@@ -818,7 +905,12 @@ export interface ProfileView extends ProfileCompleteness {
   activeProjectId: string | null
   issues: string[]
   actionUsages: Record<string, Usage[]>
+  /** Keys and gestures only; kept for one release, use `workflowReferences`. */
   workflowUsages: Record<string, Usage[]>
+  /** Every reference of each workflow, by workflow id. Absent from older builds. */
+  workflowReferences?: Record<string, Usage[]>
+  /** The profile's workflows as library entries, in its order. Absent from older builds. */
+  workflowEntries?: WorkflowEntry[]
 }
 
 export type ActionStatus = "succeeded" | "failed" | "skipped"
