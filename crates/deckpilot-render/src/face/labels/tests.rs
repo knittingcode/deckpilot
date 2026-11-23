@@ -340,3 +340,117 @@ fn empty_faces_and_faces_without_labels_have_no_boxes() {
     let empty = KeyFace::empty().with_labels(vec![label("a", "x", KeyLabelLook::default())]);
     assert_eq!(label_layout(&empty, 72, 72, &Icons::default()), []);
 }
+
+/// D3: the automatic plate also comes when a label meets the title or a
+/// mark (the key's icon mark, a state mark), not only over pictures.
+#[test]
+fn automatic_plates_also_cover_the_title_and_marks() {
+    // A key whose title sits at the bottom under its icon mark.
+    let marked = |spec: KeyLabelLook| {
+        KeyFace::new(FaceStyle::Action, "Mail")
+            .with_symbol(Some("mail"))
+            .with_labels(vec![label("a", "SHOP-12", spec)])
+    };
+    let plate = |face: &KeyFace| label_layout(face, 72, 72, &Icons::default())[0].plate;
+    // Bottom: over the title.
+    let bottom = marked(preset(Spot::Bottom));
+    let report = &label_layout(&bottom, 72, 72, &Icons::default())[0];
+    assert!(report.overlaps_title && report.plate, "{report:?}");
+    // With no layer of its own it is painted over the title, on its plate;
+    // a layer the label sets is kept.
+    assert_eq!(report.layer, LabelLayer::OverTitle);
+    let under = marked(KeyLabelLook {
+        layer: Some(LabelLayer::OverIcon),
+        ..preset(Spot::Bottom)
+    });
+    assert_eq!(
+        label_layout(&under, 72, 72, &Icons::default())[0].layer,
+        LabelLayer::OverIcon
+    );
+    assert_eq!(
+        label_layout(&marked(preset(Spot::Top)), 72, 72, &Icons::default())[0].layer,
+        LabelLayer::OverIcon
+    );
+    // Top: over the icon mark.
+    assert!(plate(&marked(preset(Spot::Top))));
+    // A corner that meets nothing: no plate.
+    let plain = KeyFace::new(FaceStyle::Action, "Mail").with_labels(vec![label(
+        "a",
+        "1",
+        preset(Spot::TopLeft),
+    )]);
+    assert!(!plate(&plain));
+    // The same corner over a state mark (the indicator): a plate.
+    let mut indicated = KeyFace::new(FaceStyle::Action, "Mail").with_labels(vec![label(
+        "a",
+        "1",
+        preset(Spot::TopRight),
+    )]);
+    assert!(!plate(&indicated));
+    indicated.indicator = Some(deckpilot_core::Indicator::Ok);
+    assert!(plate(&indicated));
+}
+
+/// Text taller than a fixed height never paints outside the label's box.
+#[test]
+fn text_taller_than_its_box_is_clipped_to_it() {
+    let face = KeyFace::new(FaceStyle::Action, "").with_labels(vec![label(
+        "a",
+        "Ąg",
+        KeyLabelLook {
+            position: LabelPosition::Anchored {
+                to: Spot::Center,
+                inset: None,
+            },
+            size: Some(24),
+            height: Some(10),
+            width: Some(60),
+            background: Some(LabelBackground::None),
+            ..KeyLabelLook::default()
+        },
+    )]);
+    let boxed = &label_layout(&face, 72, 72, &Icons::default())[0];
+    let frame = render(&face, 72, 72);
+    let (top, bottom) = (
+        boxed.y.round() as u32,
+        (boxed.y + boxed.height).round() as u32,
+    );
+    let ink_outside = (0..72)
+        .filter(|y| *y < top || *y >= bottom)
+        .flat_map(|y| (0..72).map(move |x| (x, y)))
+        .filter(|(x, y)| frame.pixel(*x, *y) != Some([0, 0, 0]))
+        .count();
+    assert_eq!(ink_outside, 0, "{boxed:?}");
+    let ink_inside = (top..bottom)
+        .flat_map(|y| (0..72).map(move |x| (x, y)))
+        .filter(|(x, y)| frame.pixel(*x, *y) != Some([0, 0, 0]))
+        .count();
+    assert!(ink_inside > 20);
+}
+
+/// Shrinking finds the size the step search would, in a few measurements.
+#[test]
+fn shrinking_finds_the_largest_step_that_fits() {
+    let style = Style::new(Weight::Medium, 16.0);
+    for (text, width) in [
+        ("Łódź Kaliska", 40.0),
+        ("Kraków Główny", 62.0),
+        ("x", 62.0),
+        ("Zażółć gęślą jaźń źdźbło łąki", 50.0),
+        ("Zażółć gęślą jaźń źdźbło łąki pociąg i więcej", 30.0),
+    ] {
+        let least = 6.0;
+        let step = ((16.0 - least) / SHRINK_STEPS).max(0.25);
+        let linear =
+            std::iter::successors(Some(16.0_f32), |s| (*s - step > least).then_some(*s - step))
+                .chain(std::iter::once(least))
+                .map(|s| style.with_size(s))
+                .find(|s| s.width(text) <= width)
+                .map(|s| s.size);
+        assert_eq!(
+            shrink(style, text, width, least).map(|s| s.size),
+            linear,
+            "{text}"
+        );
+    }
+}

@@ -109,6 +109,9 @@ pub(crate) struct Placed {
     weight: Weight,
     /// Columns the lines draw in, for clipped labels.
     clip: Option<(f32, f32)>,
+    /// Rows the lines draw in: the box, when the text is taller than a
+    /// fixed height.
+    rows: Option<(f32, f32)>,
     ink: [u8; 3],
     /// The plate's colour and opacity (0–1), and its corner radius in units.
     plate: Option<([u8; 3], f32)>,
@@ -116,12 +119,14 @@ pub(crate) struct Placed {
 }
 
 /// What a label is laid out against: the key's colours, the pictures under
-/// it and the title's text block, all in units.
+/// it, the title's text block and the marks it may meet (the key's icon
+/// mark and its state marks), all in units.
 struct Scene {
     canvas: Canvas,
     colors: KeyColors,
     pictures: Vec<Rect>,
     title: Option<Rect>,
+    marks: Vec<Rect>,
 }
 
 fn scene(face: &KeyFace, width: u32, height: u32, icons: &Icons, colors: KeyColors) -> Scene {
@@ -186,12 +191,74 @@ fn scene(face: &KeyFace, width: u32, height: u32, icons: &Icons, colors: KeyColo
             bottom: bottom / scale,
         }
     });
+    let mut marks: Vec<Rect> = placed
+        .mark
+        .map(|(left, top, side)| Rect {
+            left: left / scale,
+            top: top / scale,
+            right: (left + side) / scale,
+            bottom: (top + side) / scale,
+        })
+        .into_iter()
+        .collect();
+    marks.extend(state_marks(face, canvas));
     Scene {
         canvas,
         colors,
         pictures,
         title,
+        marks,
     }
+}
+
+/// Where the state marks of `face` are drawn (`draw_state`), in units,
+/// a little generously.
+fn state_marks(face: &KeyFace, canvas: Canvas) -> Vec<Rect> {
+    let (w, h) = (canvas.width, canvas.height);
+    let short = w.min(h);
+    let mut marks = Vec::new();
+    let toggle = if face.toggle.is_some() {
+        let thickness = (h / 24.0).max(2.0);
+        marks.push(Rect {
+            left: 0.0,
+            top: 0.0,
+            right: w,
+            bottom: thickness,
+        });
+        thickness
+    } else {
+        0.0
+    };
+    if let Some(badge) = &face.badge {
+        let style = Style::new(Weight::SemiBold, (short * 0.13).max(6.0));
+        let text: String = badge.chars().filter(|c| !c.is_control()).take(4).collect();
+        marks.push(Rect {
+            left: 0.0,
+            top: 0.0,
+            right: 2.0 + style.width(&text) + 2.0 * (short * 0.03).max(1.0) + 1.0,
+            bottom: toggle + 2.0 + style.line_height() + 1.0,
+        });
+    }
+    if face.progress.is_some() {
+        marks.push(Rect {
+            left: 0.0,
+            top: h - (h / 18.0).max(2.0),
+            right: w,
+            bottom: h,
+        });
+    }
+    if face.indicator.is_some() {
+        // The dot: radius a sixteenth of the side, as far again from the
+        // corner.
+        let reach = 3.0 * short / 16.0 + 1.0;
+        marks.push(Rect {
+            left: w - reach,
+            top: 0.0,
+            right: w,
+            bottom: reach,
+        });
+    }
+    marks
 }
 
 /// The point `spot` of `rect`.
@@ -248,6 +315,39 @@ fn luminance([r, g, b]: [u8; 3]) -> f32 {
 fn contrast(a: [u8; 3], b: [u8; 3]) -> f32 {
     let (la, lb) = (luminance(a), luminance(b));
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// The largest size on the steps from `style`'s size down to `least`
+/// (as the title's auto fit: [`SHRINK_STEPS`] of them, at least a quarter
+/// point apart, then `least`) at which `line` is at most `width` wide;
+/// `None` when not even `least` fits. Text width grows in proportion to the
+/// size, so the step is computed and then checked, a handful of
+/// measurements instead of one per step.
+fn shrink(style: Style, line: &str, width: f32, least: f32) -> Option<Style> {
+    let size = style.size;
+    let fits = |s: f32| style.with_size(s).width(line) <= width;
+    let wide = style.width(line);
+    if wide <= width {
+        return Some(style);
+    }
+    let step = ((size - least) / SHRINK_STEPS).max(0.25);
+    // The steps are size - k * step for k = 0.. while above `least`.
+    let final_step = ((size - least) / step).ceil() as i32 - 1;
+    let at = |k: i32| size - k as f32 * step;
+    let exact = size * width / wide.max(0.01);
+    let mut k = (((size - exact) / step).ceil() as i32).clamp(0, final_step.max(0) + 1);
+    // Measurements decide: up while the step above fits, down while this
+    // one does not.
+    while k > 0 && fits(at(k - 1)) {
+        k -= 1;
+    }
+    while k <= final_step && !fits(at(k)) {
+        k += 1;
+    }
+    if k <= final_step {
+        return Some(style.with_size(at(k)));
+    }
+    fits(least).then(|| style.with_size(least))
 }
 
 /// Lays out one label against `scene`.
@@ -349,13 +449,7 @@ fn place(label: &FaceLabel, scene: &Scene) -> Placed {
         }
         LabelOverflow::Shrink => {
             let least = f32::from(spec.min_points()).min(size);
-            let step = ((size - least) / SHRINK_STEPS).max(0.25);
-            let found =
-                std::iter::successors(Some(size), |s| (*s - step > least).then_some(*s - step))
-                    .chain(std::iter::once(least))
-                    .map(|s| style.with_size(s))
-                    .find(|s| s.width(&one_line) <= content_width);
-            if let Some(fitting) = found {
+            if let Some(fitting) = shrink(style, &one_line, content_width, least) {
                 (vec![one_line.clone()], fitting, false, None)
             } else {
                 let small = style.with_size(least);
@@ -423,13 +517,19 @@ fn place(label: &FaceLabel, scene: &Scene) -> Placed {
     let opacity = f32::from(spec.background_opacity()) / 100.0;
     let own_ink = spec.color.map(deckpilot_core::Color::rgb);
     let key_ink = own_ink.unwrap_or(scene.colors.text);
+    let mut plated_over_title = false;
     let plate = match spec.background() {
         LabelBackground::None => None,
         LabelBackground::Color(color) => Some((color.rgb(), opacity)),
         LabelBackground::Auto => {
+            // Over a picture, the title or a mark the text would not read
+            // on its own (D3: the automatic plate).
             let over_picture = scene.pictures.iter().any(|picture| picture.meets(bounds));
+            let over_title = scene.title.is_some_and(|title| title.meets(bounds));
+            let over_mark = scene.marks.iter().any(|mark| mark.meets(bounds));
             let low_contrast = contrast(key_ink, scene.colors.background) < MIN_CONTRAST;
-            (over_picture || low_contrast).then(|| {
+            plated_over_title = over_title;
+            (over_picture || over_title || over_mark || low_contrast).then(|| {
                 let dark = if luminance(key_ink) >= 0.5 {
                     [0, 0, 0]
                 } else {
@@ -462,7 +562,14 @@ fn place(label: &FaceLabel, scene: &Scene) -> Placed {
             width,
             height,
             canvas,
-            layer: spec.layer(),
+            // A label that sets no layer and meets the title is painted over
+            // it on its automatic plate: under the title the plate could
+            // not make either readable.
+            layer: spec.layer.unwrap_or(if plated_over_title {
+                LabelLayer::OverTitle
+            } else {
+                LabelLayer::OverIcon
+            }),
             truncated,
             overlaps_title: scene.title.is_some_and(|title| title.meets(bounds)),
             plate: plate.is_some(),
@@ -473,6 +580,7 @@ fn place(label: &FaceLabel, scene: &Scene) -> Placed {
         size: style.size,
         weight,
         clip: clip.map(|()| (content_left, content_left + content_width)),
+        rows: (content_height > height + 0.01).then_some((y, y + height)),
         ink,
         plate,
         radius: f32::from(spec.radius()),
@@ -535,8 +643,38 @@ pub(crate) fn draw_layer(frame: &mut Frame, placed: &[Placed], layer: LabelLayer
         }
         let style = Style::new(label.weight, label.size * scale);
         let clip = label.clip.map(|(from, to)| (from * scale, to * scale));
-        for (line, left, top) in &label.lines {
-            style.draw_clipped(frame, line, (left * scale, top * scale), label.ink, clip);
+        let draw = |frame: &mut Frame, shift: f32| {
+            for (line, left, top) in &label.lines {
+                let at = (left * scale, top * scale - shift);
+                style.draw_clipped(frame, line, at, label.ink, clip);
+            }
+        };
+        match label.rows {
+            None => draw(frame, 0.0),
+            // Text taller than its box: drawn on a copy of the box's rows,
+            // which then replace them, so nothing spills out of the plate.
+            Some((top, bottom)) => {
+                let from = (top * scale).round().max(0.0) as u32;
+                let to = ((bottom * scale).round() as u32).min(frame.height());
+                if to <= from {
+                    continue;
+                }
+                let mut rows = Frame::filled(frame.width(), to - from, [0, 0, 0]);
+                copy_rows(frame, &mut rows, from, 0, to - from);
+                draw(&mut rows, from as f32);
+                copy_rows(&rows, frame, 0, from, to - from);
+            }
+        }
+    }
+}
+
+/// Copies `count` rows of `source` from row `from` to `target` at row `to`.
+fn copy_rows(source: &Frame, target: &mut Frame, from: u32, to: u32, count: u32) {
+    for row in 0..count {
+        for x in 0..source.width() {
+            if let Some(pixel) = source.pixel(x, from + row) {
+                target.put(x, to + row, pixel);
+            }
         }
     }
 }

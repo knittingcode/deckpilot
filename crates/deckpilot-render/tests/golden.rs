@@ -946,41 +946,44 @@ fn labels_are_drawn_as_reviewed() {
 /// every size (in units).
 #[test]
 fn label_layout_is_the_same_at_every_size() {
+    /// Every field of two boxes agrees (numbers within a hundredth of a
+    /// unit).
+    fn same(a: &deckpilot_render::LabelBox, b: &deckpilot_render::LabelBox) -> bool {
+        let close = |x: f32, y: f32| (x - y).abs() < 0.01;
+        a.id == b.id
+            && a.layer == b.layer
+            && close(a.canvas.width, b.canvas.width)
+            && close(a.canvas.height, b.canvas.height)
+            && close(a.x, b.x)
+            && close(a.y, b.y)
+            && close(a.width, b.width)
+            && close(a.height, b.height)
+            && close(a.font_points, b.font_points)
+            && a.lines == b.lines
+            && a.truncated == b.truncated
+            && a.plate == b.plate
+            && a.overlaps_title == b.overlaps_title
+    }
     let icons = icons();
     for case in labels() {
         let at = |w: u32, h: u32| deckpilot_render::label_layout(&case.face, w, h, &icons);
-        let base = at(72, 72);
-        assert!(!base.is_empty(), "{}", case.name);
-        for (w, h) in [(96, 96), (120, 120), (144, 144), (216, 216), (80, 80)] {
-            let other = at(w, h);
-            assert_eq!(other.len(), base.len());
-            for (a, b) in base.iter().zip(&other) {
-                let close = |x: f32, y: f32| (x - y).abs() < 0.01;
-                assert!(
-                    close(a.x, b.x)
-                        && close(a.y, b.y)
-                        && close(a.width, b.width)
-                        && close(a.height, b.height)
-                        && close(a.font_points, b.font_points)
-                        && a.lines == b.lines
-                        && a.truncated == b.truncated
-                        && a.plate == b.plate,
-                    "{} {}x{}: {a:?} != {b:?}",
-                    case.name,
-                    w,
-                    h
-                );
+        // Keys and their previews, and the touch zone and its previews.
+        for (base, sizes) in [
+            (
+                (72, 72),
+                &[(96, 96), (120, 120), (144, 144), (216, 216), (80, 80)][..],
+            ),
+            ((200, 100), &[(400, 200), (600, 300)][..]),
+        ] {
+            let base_boxes = at(base.0, base.1);
+            assert!(!base_boxes.is_empty(), "{}", case.name);
+            for (w, h) in sizes {
+                let other = at(*w, *h);
+                assert_eq!(other.len(), base_boxes.len(), "{} {w}x{h}", case.name);
+                for (a, b) in base_boxes.iter().zip(&other) {
+                    assert!(same(a, b), "{} {w}x{h}: {a:?} != {b:?}", case.name);
+                }
             }
-        }
-        // The touch zone and the 3x preview of it agree too.
-        let zone = at(200, 100);
-        let zone3 = at(600, 300);
-        for (a, b) in zone.iter().zip(&zone3) {
-            assert!(
-                (a.x - b.x).abs() < 0.01 && a.lines == b.lines,
-                "{}",
-                case.name
-            );
         }
     }
 }
