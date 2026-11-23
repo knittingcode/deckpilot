@@ -8,20 +8,20 @@
 mod support;
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use deckpilot_core::variables::{
     CatalogFilter, DisplayText, ResolutionContext, ResolvedTemplates, ScopeKey, UnresolvedReason,
     VariableDefinition, VariableKey, VariableScope, VariableType, VariableValue,
 };
 use deckpilot_core::{
-    ActionParameters, BindingTarget, ControlBinding, DeviceLayout, ModuleId, ModuleSettings,
-    ParameterValue, Profile, Project, ProjectKey, Trigger,
+    ActionParameters, BindingTarget, ControlBinding, DeviceLayout, LayoutPage, ModuleId,
+    ModuleSettings, ParameterValue, Profile, Project, ProjectKey, Trigger,
 };
 use deckpilot_device::mock::MockBackend;
 use deckpilot_device::{ControlId, DeviceId, Frame, models};
 use deckpilot_ipc::{Request, Response};
-use deckpilot_modules::general;
+use deckpilot_modules::{deck, general};
 use deckpilot_storage::{ConfigStore, SqliteStore};
 use support::{TIMEOUT, TempDir, TestAgent, data_dir, registry};
 
@@ -73,6 +73,26 @@ fn profile() -> Profile {
             binding.label = Some((*title).to_owned());
             binding
         }));
+    // Key 6 turns the page (and back): a press whose effect shows.
+    let next = registry()
+        .create_instance("Next", deck::next_page_id(), &ActionParameters::new())
+        .unwrap();
+    let next_id = next.id;
+    profile.actions.push(next);
+    let two = LayoutPage::new("Two");
+    let two_id = two.id;
+    layout.pages.push(two);
+    for page in [home, two_id] {
+        layout
+            .page_mut(page)
+            .unwrap()
+            .bindings
+            .push(ControlBinding::new(
+                key(6),
+                Trigger::Press,
+                BindingTarget::action(next_id),
+            ));
+    }
     let id = layout.id;
     profile.layouts.push(layout);
     profile.activate_layout(id).unwrap();
@@ -442,7 +462,7 @@ async fn saved_layouts_are_not_touched() {
     let labels: Vec<_> = again.pages[0]
         .bindings
         .iter()
-        .map(|b| b.label.clone().unwrap())
+        .filter_map(|b| b.label.clone())
         .collect();
     assert_eq!(labels, TITLES);
 }
@@ -461,4 +481,86 @@ async fn too_many_templates_are_refused() {
         })
         .await;
     assert!(refused.is_err(), "{refused:?}");
+}
+
+/// A storm of variable changes (one a millisecond, as a plugin publishing in
+/// a loop would announce them) redraws a device at most 20 times a second,
+/// and a key press during it is handled as fast as without it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_storm_of_changes_is_bounded_and_input_stays_fast() {
+    let s = setup().await;
+    s.device_shows_the_preview().await;
+    let frame = |s: &Setup| s.mock.frames(&s.device).get(&key(0)).cloned();
+    let home = frame(&s).unwrap();
+    // Taps "Next" and waits until key 0 shows (or stops showing) the home
+    // page's frame.
+    let tap = |s: &Setup, to_home: bool| {
+        let mock = s.mock.clone();
+        let device = s.device.clone();
+        let home = home.clone();
+        s.mock.tap(&s.device, key(6));
+        let start = Instant::now();
+        async move {
+            let shown = tokio::task::spawn_blocking(move || {
+                mock.wait_for(&device, TIMEOUT, |frames, _| {
+                    (frames.get(&key(0)) == Some(&home)) == to_home
+                })
+            })
+            .await
+            .unwrap();
+            assert!(shown, "the press was not handled");
+            start.elapsed()
+        }
+    };
+    let quiet = tap(&s, false).await;
+    tap(&s, true).await;
+
+    let handle = s.agent.handle.clone();
+    let storm = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let raging = storm.clone();
+    let storming = tokio::spawn(async move {
+        while raging.load(std::sync::atomic::Ordering::Relaxed) {
+            handle.publish_variables_changed(vec!["team.size".into()]);
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let stormy = tap(&s, false).await;
+    tap(&s, true).await;
+    let before = s.agent.handle.variable_redraws();
+    let counted = Instant::now();
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let redraws = s.agent.handle.variable_redraws() - before;
+    let elapsed = counted.elapsed().as_secs_f64();
+    storm.store(false, std::sync::atomic::Ordering::Relaxed);
+    storming.await.unwrap();
+    assert!(
+        stormy < quiet + Duration::from_millis(100) && stormy < Duration::from_millis(500),
+        "a press took {stormy:?} during the storm, {quiet:?} without"
+    );
+    #[expect(clippy::cast_precision_loss, reason = "a few dozen redraws")]
+    let rate = redraws as f64 / elapsed;
+    assert!(rate <= 21.0, "{redraws} redraws in {elapsed:.2} s");
+    assert!(redraws >= 1, "the storm was never drawn");
+    // After the storm the device shows the final value.
+    s.device_shows_the_preview().await;
+}
+
+/// A variable change a shown title does not use redraws nothing, through
+/// the coalesced path too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unrelated_change_is_never_drawn() {
+    let s = setup().await;
+    s.device_shows_the_preview().await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let before = s.agent.handle.variable_redraws();
+    let writes = s.writes();
+    for _ in 0..50 {
+        s.agent
+            .handle
+            .publish_variables_changed(vec!["team.other".into()]);
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(s.agent.handle.variable_redraws(), before);
+    assert_eq!(s.writes(), writes);
 }

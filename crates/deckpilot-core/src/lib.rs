@@ -54,8 +54,8 @@ pub(crate) mod testing;
 
 pub use action::{
     ActionInstance, ActionParameters, ActionType, ActionTypeId, DraftParameters, MAX_LABEL_CHARS,
-    ParameterError, ParameterKind, ParameterSpec, ParameterValue, lines_of, looks_secret,
-    validate_presentation,
+    MAX_TITLE_TEMPLATE_CHARS, ParameterError, ParameterKind, ParameterSpec, ParameterValue,
+    lines_of, looks_secret, validate_presentation,
 };
 pub use alias::{
     ACTION_ALIASES, ActionAlias, AliasOutcome, AliasStatus, FIRST_PARTY_PUBLISHER, LegacyRoute,

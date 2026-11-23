@@ -289,3 +289,57 @@ fn the_preview_shows_what_the_device_shows() {
         ["Build", "Projekt: SHOP", "-", "-", "Work — -", "PIN -"]
     );
 }
+
+#[test]
+fn a_template_may_be_long_while_the_key_shows_at_most_32_characters() {
+    let reference = "{{ plugins.acme.github.pullRequests.openCount }} open";
+    assert!(reference.chars().count() > crate::MAX_LABEL_CHARS);
+    crate::validate_presentation(None, Some(reference)).unwrap();
+    let static_title = "x".repeat(crate::MAX_LABEL_CHARS + 1);
+    assert!(crate::validate_presentation(None, Some(&static_title)).is_err());
+    let long = format!("{{{{ shared.team.name }}}}{}", "y".repeat(160 - 22));
+    crate::validate_presentation(None, Some(&long)).unwrap();
+    let too_long = format!("{{{{ shared.team.name }}}}{}", "y".repeat(160 - 21));
+    assert!(crate::validate_presentation(None, Some(&too_long)).is_err());
+
+    // The shown title is cut; a static title is never touched.
+    let mut profile = profile();
+    let bindings = &mut profile.layouts[0].pages[0].bindings;
+    bindings[2].label = Some("{{ shared.team.name }} and a long tail of text".into());
+    let runtime = runtime(&profile);
+    let faces = runtime.faces(&device());
+    assert_eq!(faces[2].1.title.chars().count(), crate::MAX_LABEL_CHARS);
+    assert!(faces[2].1.title.starts_with("Shop team and"));
+    assert!(faces[2].1.title.ends_with('…'));
+    assert_eq!(faces[0].1.title, "Build");
+}
+
+#[test]
+fn page_placeholders_are_expanded_in_the_template_never_in_values() {
+    let mut profile = profile();
+    let shop = profile.projects[0].id;
+    profile.layouts[0].pages[0].name = "Main page".into();
+    let bindings = &mut profile.layouts[0].pages[0].bindings;
+    bindings[2].label = Some("{page.name}: {{ shared.team.name }}".into());
+    bindings[3].label = Some("{page.number}/{page.count}".into());
+    let engine = Engine::new(registry())
+        .with_variables(Arc::new(variables(&profile).set(
+            &key("team.name"),
+            ScopeKey::Project {
+                profile: profile.id,
+                project: shop,
+            },
+            VariableValue::String("{page.name}".into()),
+        )))
+        .with_variable_registry(Arc::new(builtin_registry()));
+    let mut runtime = Runtime::new(
+        engine,
+        deckpilot_device::ModelCatalog::builtin(),
+        MachineConfig::new(Os::Linux),
+    );
+    runtime.set_profile(Some(profile.clone()), Some(shop));
+    let _ = runtime.handle_event(&DeviceEvent::Connected { device: device() });
+    let faces = runtime.faces(&device());
+    assert_eq!(faces[2].1.title, "Main page: {page.name}");
+    assert_eq!(faces[3].1.title, "1/1");
+}

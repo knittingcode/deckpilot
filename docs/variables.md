@@ -323,11 +323,30 @@ picker, `listDisplayVariables`):
 | `system.profile.current.name`, `system.project.current.key`/`.name`, `system.platform` | yes |
 | Module and plugin variables | when declared non-sensitive, of string, integer or boolean type, with a machine, profile or project scope and no requirement but a project, while the module or plugin is enabled |
 | Shared variables | when not sensitive and of string, integer or boolean type |
-| Sensitive values, secret references (credentials), `steps.…`, `workflow.…`, `system.device.…`, ids, the work session | never |
+| Sensitive values (declared, or marked so by their source when resolved), secret references (credentials), `steps.…`, `workflow.…`, `system.device.…`, the work session | never |
+| Ids: `system.project.current.id`, `projects.current.id`, `plugins.deckpilot.projects.current.id`, any plugin variable with a `host:project.id` source (`VariableDeclaration::identifier`), `workSession.id`/`.projectId` | never |
 
 A refused reference is never resolved where its declaration already says so;
 a shared variable is dropped as soon as its resolution says it is sensitive.
 Profile isolation is the engine's: values of another profile are missing.
+
+Every title is a template, whoever wrote it: the key's or the action's
+label, a layout's name on *Switch layout*, an action's name, and a plugin's
+suggested title (`title.default` of its manifest). A plugin can therefore
+show an allow-listed value on a key through its suggested title, exactly as
+a user could; it never reads the result back (titles are drawn, not
+returned to plugins), so nothing leaks to it.
+
+**Length.** A title without references is at most 32 characters, as before.
+A title with references may be up to 160 characters as stored
+(`MAX_TITLE_TEMPLATE_CHARS`, so plugin references fit); what the key shows is
+cut to 32 characters (`…`). DeckPilot 0.12 and 0.13 open layouts with such
+titles; they check the length only when saving, so they refuse to save one
+until the title is shortened.
+
+**Page placeholders.** `{page.number}`, `{page.count}` and `{page.name}` are
+expanded in the template before references are resolved, so a value that
+reads `{page.name}` stays as it is.
 
 ### 3.3 Unresolved references
 
@@ -343,7 +362,12 @@ Without polling. Profile and project changes redraw every device
 (`after_change`); a `sharedVariablesChanged` (a shared value after a reload,
 a plugin's published value, a module or plugin enabled or disabled) redraws
 only the devices showing a text that depends on one of the named keys
-(`TitleDependencies`, `DisplayDependency::changed_by`). A device is sent only
-the keys whose face changed. Plugin state titles keep their precedence
+(`TitleDependencies`, `DisplayDependency::changed_by`). Such redraws are coalesced per
+device: the first change schedules one 50 ms later, further changes ride
+along, a device is redrawn for variables at most 20 times a second, and the
+last value is always drawn; input, actions and page changes never wait for
+them (`service/display_redraws.rs`). A plugin that publishes the value it
+already had announces nothing. A device is sent only the keys whose face
+changed. Plugin state titles keep their precedence
 (`docs/key-text.md`, "Title precedence"): a template the user typed on a
 plugin action's key is the user's title.

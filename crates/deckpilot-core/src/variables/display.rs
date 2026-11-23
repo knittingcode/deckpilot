@@ -266,6 +266,10 @@ pub fn display_safe(
             SystemVariable::WorkflowExecutionId => Err(UnresolvedReason::RuntimeOnly),
             _ => Err(UnresolvedReason::NotDisplayable),
         },
+        // Ids are never text for people, whoever provides them.
+        VariableRef::Module(id) if IDENTIFIERS.contains(&id.as_str()) => {
+            Err(UnresolvedReason::NotDisplayable)
+        }
         VariableRef::Module(id) => {
             let declaration = registry.get(id).or_else(|| {
                 let alias = module_variable_alias(id)?;
@@ -285,7 +289,7 @@ pub fn display_safe(
                 .requires
                 .iter()
                 .all(|requirement| *requirement == Requirement::Project);
-            if declaration.sensitive || !scope_ok || !requires_ok {
+            if declaration.sensitive || declaration.identifier || !scope_ok || !requires_ok {
                 return Err(UnresolvedReason::NotDisplayable);
             }
             if !is_text_type(declaration.value_type) {
@@ -311,6 +315,17 @@ pub fn display_listed(entry: &super::CatalogEntry, registry: &VariableRegistry) 
         && entry.availability != super::ReferenceAvailability::RuntimeOnly
         && display_safe(&entry.reference, registry).is_ok()
 }
+
+/// Variables that hold an id, refused on keys by name too: the project id
+/// under its legacy, module and plugin spellings, and the work session's.
+/// A plugin's own ids are refused by their declaration
+/// ([`super::VariableDeclaration::identifier`], a `host:project.id` source).
+pub const IDENTIFIERS: &[&str] = &[
+    "projects.current.id",
+    "plugins.deckpilot.projects.current.id",
+    "workSession.id",
+    "workSession.projectId",
+];
 
 fn is_text_type(value_type: VariableType) -> bool {
     matches!(

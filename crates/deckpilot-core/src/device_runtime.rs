@@ -1707,6 +1707,11 @@ pub fn page_faces_with(
         count,
         name: &page.name,
     };
+    let paged = PagedTemplates {
+        inner: titles,
+        page: label,
+        shown: std::cell::RefCell::default(),
+    };
     controls
         .iter()
         .map(|control| {
@@ -1729,7 +1734,7 @@ pub fn page_faces_with(
                                 .is_some()
                         });
                         let title = Title {
-                            titles,
+                            titles: &paged,
                             page: page.id,
                             binding,
                         };
@@ -1744,7 +1749,11 @@ pub fn page_faces_with(
                     },
                 )
             };
-            face.title = render_page_label(&face.title, label);
+            // A title resolved from a template had its `{page.…}` expanded
+            // before its values went in; values are never expanded.
+            if !paged.resolved(*control, &face.title) {
+                face.title = render_page_label(&face.title, label);
+            }
             face.detail = face.detail.map(|detail| render_page_label(&detail, label));
             (*control, face)
         })
@@ -1852,6 +1861,58 @@ fn open_page_title(
         return name().or_else(|| binding.label.clone());
     }
     binding.label.clone().or_else(name)
+}
+
+/// The page's display templates, as a page's keys resolve them: the
+/// layout's `{page.…}` placeholders are expanded in the template first, so
+/// values that go in are never expanded; a title with references is cut to
+/// [`crate::MAX_LABEL_CHARS`] as shown (its template may be longer, up to
+/// [`crate::MAX_TITLE_TEMPLATE_CHARS`]).
+struct PagedTemplates<'a> {
+    inner: &'a dyn DisplayTemplates,
+    page: PageLabel<'a>,
+    /// The titles resolved, by control.
+    shown: std::cell::RefCell<Vec<(ControlId, String)>>,
+}
+
+impl PagedTemplates<'_> {
+    /// Whether `title` is what a template of `control` resolved to.
+    fn resolved(&self, control: ControlId, title: &str) -> bool {
+        self.shown
+            .borrow()
+            .iter()
+            .any(|(shown, text)| *shown == control && text == title)
+    }
+}
+
+impl DisplayTemplates for PagedTemplates<'_> {
+    fn display(
+        &self,
+        key: &crate::variables::TextKey,
+        template: &str,
+    ) -> crate::variables::DisplayText {
+        let template = render_page_label(template, self.page);
+        let mut display = self.inner.display(key, &template);
+        if key.slot == crate::variables::TextSlot::Title {
+            if template.contains("{{") {
+                display.text = cut_title(&display.text);
+            }
+            self.shown
+                .borrow_mut()
+                .push((key.control, display.text.clone()));
+        }
+        display
+    }
+}
+
+/// `text` cut to [`crate::MAX_LABEL_CHARS`] characters, the last one `…`.
+fn cut_title(text: &str) -> String {
+    if text.chars().count() <= crate::MAX_LABEL_CHARS {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(crate::MAX_LABEL_CHARS - 1).collect();
+    cut.push('…');
+    cut
 }
 
 /// The title of one binding, resolved by the page's display templates.

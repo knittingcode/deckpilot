@@ -1173,13 +1173,18 @@ impl Executor {
             Some(Err(problem)) => return CallResult::error(CallErrorCode::BadRequest, problem),
             None => None,
         };
-        if !own.store.set(plugin.as_str(), own.generation, id, value) {
-            return CallResult::error(
-                CallErrorCode::Unavailable,
-                "the plugin was stopped since this action started; its values were dropped",
-            );
+        match own.store.update(plugin.as_str(), own.generation, id, value) {
+            None => {
+                return CallResult::error(
+                    CallErrorCode::Unavailable,
+                    "the plugin was stopped since this action started; its values were dropped",
+                );
+            }
+            // The value it already had: nothing changed, so nothing is
+            // announced and no key is redrawn.
+            Some(false) => {}
+            Some(true) => self.announce(vec![format!("{}.{id}", own.namespace)]),
         }
-        self.announce(vec![format!("{}.{id}", own.namespace)]);
         CallResult::Ok(serde_json::Value::Null)
     }
 
@@ -1867,6 +1872,58 @@ mod tests {
     }
 
     #[cfg(feature = "test-hooks")]
+    /// A plugin that publishes the value it already published announces
+    /// nothing, so no key is redrawn for it; a new value is announced once.
+    #[test]
+    fn an_unchanged_publish_is_not_announced() {
+        let broker = Broker::new(
+            Arc::new(deckpilot_plugin_broker::MemoryAudit::new(10)),
+            Arc::new(deckpilot_plugin_broker::SystemClock::default()),
+            deckpilot_plugin_broker::RateLimits::default(),
+        );
+        let (events, mut announced) = broadcast::channel(16);
+        let variable: deckpilot_plugin_manifest::Variable =
+            serde_json::from_value(serde_json::json!({
+                "id": "temperature", "name": "Temperature",
+                "valueType": {"type": "integer"}, "scope": "machine"
+            }))
+            .unwrap();
+        let executor = Executor::new(
+            broker,
+            "Test".into(),
+            events,
+            Transport::Network,
+            OwnVariables {
+                store: PublishedVariables::default(),
+                namespace: "plugins.acme.test".into(),
+                generation: 0,
+                declared: vec![variable],
+            },
+            Opener::System,
+        );
+        let plugin = PluginId::new("acme.test").unwrap();
+        let publish = |value: Option<Value>| {
+            assert_eq!(
+                executor.publish(&plugin, "temperature", value.as_ref()),
+                CallResult::Ok(Value::Null)
+            );
+        };
+        let count = |announced: &mut broadcast::Receiver<AgentEvent>| {
+            std::iter::from_fn(|| announced.try_recv().ok()).count()
+        };
+        publish(Some(serde_json::json!(21)));
+        assert_eq!(count(&mut announced), 1);
+        for _ in 0..100 {
+            publish(Some(serde_json::json!(21)));
+        }
+        assert_eq!(count(&mut announced), 0, "an unchanged value was announced");
+        publish(Some(serde_json::json!(22)));
+        assert_eq!(count(&mut announced), 1);
+        publish(None);
+        publish(None);
+        assert_eq!(count(&mut announced), 1);
+    }
+
     #[test]
     fn an_invocation_opens_at_most_a_few_urls() {
         let dir = std::env::temp_dir().join(format!("dp-opener-{}", std::process::id()));

@@ -195,6 +195,11 @@ What a key shows as its title, first match wins:
    has its type's name;
 6. the action's name.
 
+Whichever wins is a display template (`docs/variables.md` §3): 1, 2, 3, 5
+and 6 may hold references, a plugin's suggested title included, and are
+resolved with the display-safe variables only. A dynamic title (4) is the
+plugin's text as it sent it, never resolved.
+
 ### Plugin titles
 
 A plugin's action may declare (plugin API 1.8,

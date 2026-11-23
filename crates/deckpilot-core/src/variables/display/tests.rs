@@ -4,8 +4,8 @@ use super::*;
 use crate::resolution::ContextResolver;
 use crate::variables::doubles::{MemoryVariables, builtin_registry};
 use crate::variables::{
-    ScopeKey, VariableDeclaration, VariableDefinition, VariableEnvironment, VariableKey,
-    VariableScope, VariableSource,
+    Requirement, ScopeKey, VariableDeclaration, VariableDefinition, VariableEnvironment,
+    VariableKey, VariableScope, VariableSource,
 };
 use crate::{ModuleId, Os, Profile, Project, ProjectKey, render_label};
 
@@ -114,7 +114,38 @@ fn fixture() -> Fixture {
                     VariableType::String,
                     DeclaredScope::Device,
                 ),
+                // Declared non-sensitive; its source says the value is.
+                VariableDeclaration::new(
+                    "plugins.acme.weather.leaky",
+                    "Leaky",
+                    VariableType::String,
+                    DeclaredScope::Machine,
+                ),
+                // A `host:project.id` source: an identifier.
+                VariableDeclaration {
+                    identifier: true,
+                    ..VariableDeclaration::new(
+                        "plugins.acme.weather.project",
+                        "Project",
+                        VariableType::String,
+                        DeclaredScope::Project,
+                    )
+                    .requires(Requirement::Project)
+                },
             ],
+            Some(Arc::new(Weather)),
+        )
+        .unwrap();
+    // The Projects plugin's id, a plain string as its manifest declares it.
+    registry
+        .register_module(
+            &ModuleId::new("deckpilot.projects").unwrap(),
+            &[VariableDeclaration::new(
+                "plugins.deckpilot.projects.current.id",
+                "Project id",
+                VariableType::String,
+                DeclaredScope::Project,
+            )],
             Some(Arc::new(Weather)),
         )
         .unwrap();
@@ -134,13 +165,15 @@ impl VariableSource for Weather {
         declaration: &VariableDeclaration,
         _environment: &VariableEnvironment<'_>,
     ) -> Resolution {
+        let name = declaration.id.name();
         Resolution::Value {
-            value: VariableValue::String(match declaration.id.name() {
-                "acme.weather.apiKey" => "plugin-secret".into(),
+            value: VariableValue::String(match name {
+                "acme.weather.apiKey" | "acme.weather.leaky" => "plugin-secret".into(),
+                "deckpilot.projects.current.id" | "acme.weather.project" => "7f1c2a9e-uuid".into(),
                 _ => "Gdańsk".into(),
             }),
             source: super::super::ValueSource::System,
-            sensitive: false,
+            sensitive: name == "acme.weather.leaky",
         }
     }
 }
@@ -352,6 +385,25 @@ fn secrets_and_unsafe_sources_never_resolve() {
         ("workflow.execution.id", UnresolvedReason::RuntimeOnly),
         ("steps.a.output.b", UnresolvedReason::RuntimeOnly),
         ("workSession.state", UnresolvedReason::NotDisplayable),
+        // A source that marks its value sensitive, against its declaration.
+        (
+            "plugins.acme.weather.leaky",
+            UnresolvedReason::NotDisplayable,
+        ),
+        // Ids: by declaration (`host:project.id`) and by name.
+        (
+            "plugins.acme.weather.project",
+            UnresolvedReason::NotDisplayable,
+        ),
+        (
+            "plugins.deckpilot.projects.current.id",
+            UnresolvedReason::NotDisplayable,
+        ),
+        ("projects.current.id", UnresolvedReason::NotDisplayable),
+        (
+            "system.project.current.id",
+            UnresolvedReason::NotDisplayable,
+        ),
         (
             "system.work.session.state",
             UnresolvedReason::NotDisplayable,
@@ -371,12 +423,14 @@ fn secrets_and_unsafe_sources_never_resolve() {
     }
     let all = fixture.resolve(
         Some(0),
-        "{{ shared.vault.pin }} {{ shared.vault.token }} {{ plugins.acme.weather.apiKey }}",
+        "{{ shared.vault.pin }} {{ shared.vault.token }} {{ plugins.acme.weather.apiKey }} \
+         {{ plugins.acme.weather.leaky }} {{ plugins.acme.weather.project }} \
+         {{ plugins.deckpilot.projects.current.id }} {{ projects.current.id }}",
     );
     let json = serde_json::to_string(&all).unwrap();
     let debug = format!("{all:?}");
     // The message names the case by its position, never the secret.
-    for (case, secret) in ["s3cr3t-pin", "github-token", "plugin-secret"]
+    for (case, secret) in ["s3cr3t-pin", "github-token", "plugin-secret", "7f1c2a9e"]
         .into_iter()
         .enumerate()
     {
@@ -530,4 +584,73 @@ fn markers_are_told_apart_from_values_that_read_like_one() {
     let twice = fixture.resolve(None, "{{ shared.team.unset }}{{ shared.team.unset }}");
     assert_eq!(twice.markers.len(), 2);
     assert_eq!(twice.unresolved.len(), 1);
+}
+
+#[test]
+fn the_picker_never_offers_ids_or_secrets() {
+    use crate::variables::{CatalogEntry, ReferenceAvailability, VariableGroup};
+    let fixture = fixture();
+    let context = display_context(fixture.profile.id, Some(fixture.profile.projects[0].id));
+    let listed: Vec<String> = fixture
+        .registry
+        .catalog(&context, false)
+        .into_iter()
+        .filter(|entry| display_listed(entry, &fixture.registry))
+        .map(|entry| entry.reference.to_string())
+        .collect();
+    assert!(
+        listed.contains(&"plugins.acme.weather.city".to_owned()),
+        "{listed:?}"
+    );
+    assert!(
+        listed.contains(&"system.project.current.key".to_owned()),
+        "{listed:?}"
+    );
+    for refused in [
+        "plugins.acme.weather.apiKey",
+        "plugins.acme.weather.project",
+        "plugins.deckpilot.projects.current.id",
+        "projects.current.id",
+        "system.project.current.id",
+        "system.profile.current.id",
+        "workSession.id",
+    ] {
+        assert!(
+            !listed.contains(&refused.to_owned()),
+            "{refused}: {listed:?}"
+        );
+    }
+    // A shared variable is judged by its entry.
+    let shared = |sensitive: bool, value_type: VariableType| CatalogEntry {
+        reference: VariableRef::parse("shared.team.name").unwrap(),
+        label: String::new(),
+        description: String::new(),
+        group: VariableGroup::Shared,
+        value_type,
+        scope: None,
+        module: None,
+        sensitive,
+        dynamic: false,
+        availability: ReferenceAvailability::Available,
+        owner: None,
+        read_only: false,
+        deprecated: None,
+        declared_scope: None,
+    };
+    assert!(display_listed(
+        &shared(false, VariableType::String),
+        &fixture.registry
+    ));
+    assert!(!display_listed(
+        &shared(true, VariableType::String),
+        &fixture.registry
+    ));
+    assert!(!display_listed(
+        &shared(false, VariableType::SecretRef),
+        &fixture.registry
+    ));
+    assert!(!display_listed(
+        &shared(false, VariableType::ProjectId),
+        &fixture.registry
+    ));
 }

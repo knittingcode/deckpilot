@@ -23,7 +23,10 @@ released either. 0.6.0 is the first version intended for publication.
   show the same text, and keys update when the project, the profile or a
   value changes. Sensitive variables and credentials never show on a key;
   a value that is not available shows `-`. `{profile}`, `{project.key}` and
-  `{project.name}` keep working, and saved titles are not changed.
+  `{project.name}` keep working, and saved titles are not changed. A title
+  with variables may be up to 160 characters long; the key shows at most 32.
+  DeckPilot 0.13 and earlier open layouts with such a title but refuse to
+  save them until the title is shortened to 32 characters.
 
 ### Changed
 
