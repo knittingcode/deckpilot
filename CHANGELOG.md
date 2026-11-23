@@ -27,6 +27,14 @@ released either. 0.6.0 is the first version intended for publication.
   with variables may be up to 160 characters long; the key shows at most 32.
   DeckPilot 0.13 and earlier open layouts with such a title but refuse to
   save them until the title is shortened to 32 characters.
+- Keys can carry up to 8 labels besides their title: short texts at the top,
+  centre, bottom or a corner, along an edge (a ribbon over the icon) or
+  anywhere on the key, each with its own size, colour, background and layer,
+  and with variables like titles. Labels are drawn the same on the device
+  and in the editor at every key size, with a readable background over
+  pictures by default; keys without labels look exactly as before. Exports
+  that contain labels need this version to import. (The editor for labels
+  follows.)
 
 ### Changed
 
