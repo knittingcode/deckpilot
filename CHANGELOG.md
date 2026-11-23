@@ -75,6 +75,14 @@ released either. 0.6.0 is the first version intended for publication.
   mode of each field; saved actions that use them open in it unchanged.
 - Open opens a chosen file, folder or application by itself; a file
   inside a folder is now optional.
+- Keys can carry up to 8 labels besides their title: short texts at the top,
+  centre, bottom or a corner, along an edge (a ribbon over the icon) or
+  anywhere on the key, each with its own size, colour, background and layer,
+  and with variables like titles. Labels are drawn the same on the device
+  and in the editor at every key size, with a readable background over
+  pictures by default; keys without labels look exactly as before. Exports
+  that contain labels need this version to import. (The editor for labels
+  follows.)
 
 ### Changed
 

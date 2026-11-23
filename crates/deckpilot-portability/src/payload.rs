@@ -22,10 +22,45 @@ use crate::{PortabilityError, archive};
 /// know. Version 3 adds [`Payload::library`], layouts no exported profile
 /// uses; an export without such layouts is written as version 2, which
 /// releases up to 0.8.1 read (profiles carry their layouts, as before).
-pub const PAYLOAD_VERSION: u32 = 3;
+/// Version 4 marks an export whose layouts have key labels
+/// (`KeyAppearance.labels`): a release that reads at most 3 refuses it
+/// instead of importing the keys without their labels. An export without
+/// labels is written as version 2 or 3, as before.
+pub const PAYLOAD_VERSION: u32 = 4;
 
-/// The version of an export whose [`Payload::library`] is empty.
+/// The version of an export without key labels whose
+/// [`Payload::library`] is not empty.
+pub const PAYLOAD_VERSION_WITH_LIBRARY: u32 = 3;
+
+/// The version of an export without key labels whose
+/// [`Payload::library`] is empty.
 pub const PAYLOAD_VERSION_WITHOUT_LIBRARY: u32 = 2;
+
+/// The version an export is written as: the oldest that holds it.
+pub fn payload_version(profiles: &[Profile], library: &LibraryExport) -> u32 {
+    let labelled = |layouts: &[deckpilot_core::DeviceLayout]| {
+        layouts.iter().any(|layout| {
+            layout
+                .pages
+                .iter()
+                .flat_map(|page| &page.bindings)
+                .chain(layout.recovered_bindings())
+                .any(|binding| {
+                    binding
+                        .appearance
+                        .as_ref()
+                        .is_some_and(|look| !look.labels.is_empty())
+                })
+        })
+    };
+    if profiles.iter().any(|profile| labelled(&profile.layouts)) || labelled(&library.layouts) {
+        PAYLOAD_VERSION
+    } else if library.is_empty() {
+        PAYLOAD_VERSION_WITHOUT_LIBRARY
+    } else {
+        PAYLOAD_VERSION_WITH_LIBRARY
+    }
+}
 
 /// Portable settings of one module, in the module's own export format.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,11 +354,7 @@ pub fn export(
     }
     Ok(Payload {
         variables,
-        version: if library.is_empty() {
-            PAYLOAD_VERSION_WITHOUT_LIBRARY
-        } else {
-            PAYLOAD_VERSION
-        },
+        version: payload_version(&selected, &library),
         library,
         exported_at,
         app_version: app_version.into(),

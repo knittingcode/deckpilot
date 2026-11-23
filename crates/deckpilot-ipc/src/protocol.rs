@@ -169,6 +169,10 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// older never sends them (refused locally, and by the agent from such a
 /// connection); nothing older clients receive changes, and keys show
 /// resolved titles whatever the client.
+///
+/// Also version 17: key labels (capability `keyLabels`). Labels travel in
+/// layouts (`KeyAppearance.labels`) and faces (`KeyFace.labels`), optional
+/// fields older peers ignore; no request changes.
 pub const PROTOCOL_VERSION: u32 = 17;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
@@ -356,10 +360,15 @@ pub enum Capability {
     /// `resolveDisplayTemplates`. Without it the app shows titles as typed
     /// and resolves only the older placeholders. Protocol 17.
     DisplayTemplates,
+    /// The agent draws key labels (`KeyAppearance.labels`, docs/key-text.md
+    /// "Labels"). Without it a key shows no labels on the device (they are
+    /// still saved) and the editor says the agent needs an update.
+    /// Protocol 17.
+    KeyLabels,
 }
 
 impl Capability {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -377,6 +386,7 @@ impl Capability {
         Self::RestoreBundled,
         Self::LivePreview,
         Self::DisplayTemplates,
+        Self::KeyLabels,
     ];
 
     /// The protocol that introduced the capability.
@@ -397,7 +407,7 @@ impl Capability {
             Self::SimulateInput => 14,
             Self::RestoreBundled => 15,
             Self::LivePreview => 16,
-            Self::DisplayTemplates => 17,
+            Self::DisplayTemplates | Self::KeyLabels => 17,
         }
     }
 

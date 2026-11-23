@@ -53,7 +53,7 @@ use std::collections::{HashMap, VecDeque};
 
 use deckpilot_core::{
     Background, DefaultAppearance, FitLines, FontSize, Glyph, Indicator, KeyAppearance, KeyFace,
-    TextAlign, TextAppearance, TextMode, TextOverflow, TitleAlign,
+    LabelLayer, TextAlign, TextAppearance, TextMode, TextOverflow, TitleAlign,
 };
 use deckpilot_device::Frame;
 
@@ -824,15 +824,35 @@ fn draw_face(
         return frame;
     }
     let layer = background_layer(look, icons);
-    if let Some(layer) = layer {
-        draw_background(&mut frame, layer);
+    match (layer, look.background.as_ref().and_then(Background::asset)) {
+        // Scaled once per size, then from the cache.
+        (Some(BackgroundLayer::Image(image)), Some(reference)) => draw_icon(
+            &mut frame,
+            &icons.scaled(
+                reference,
+                image,
+                width,
+                height,
+                deckpilot_core::IconFit::Crop,
+            ),
+        ),
+        (Some(layer), _) => draw_background(&mut frame, layer),
+        (None, _) => {}
     }
+    // Labels (none on most keys: then nothing below changes).
+    let labels = labels::place_all(face, width, height, icons, colors);
+    labels::draw_layer(&mut frame, &labels, LabelLayer::BehindIcon);
     let image = match own {
         Some(OwnIcon::Image(image, fit)) => Some((image, fit)),
         _ => None,
     };
-    if let Some((image, fit)) = image {
-        draw_icon(&mut frame, &icons::scale(image, width, height, fit));
+    if let Some((image, fit)) = image
+        && let Some(icon) = look.icon.as_ref()
+    {
+        draw_icon(
+            &mut frame,
+            &icons.scaled(&icon.id, image, width, height, fit),
+        );
     }
     // Text over a picture (the icon or a background image) sits on a band.
     let over_picture = image.is_some() || matches!(layer, Some(BackgroundLayer::Image(_)));
@@ -892,6 +912,7 @@ fn draw_face(
             Mark::Symbol(name) => text::draw_icon(&mut frame, name, left, top, side, ink),
         }
     }
+    labels::draw_layer(&mut frame, &labels, LabelLayer::OverIcon);
     if over_picture && let Some((top, bottom)) = placed.block {
         // Text over a picture sits on a translucent band, not a shadow.
         scrim(&mut frame, top - 1.0, bottom + 1.0);
@@ -905,6 +926,7 @@ fn draw_face(
             line.clip,
         );
     }
+    labels::draw_layer(&mut frame, &labels, LabelLayer::OverTitle);
     if face.highlighted {
         let thickness = (width.min(height) / 36).max(2);
         border(&mut frame, ACCENT, thickness);
@@ -1130,6 +1152,8 @@ fn border(frame: &mut Frame, color: [u8; 3], thickness: u32) {
         }
     }
 }
+
+pub(crate) mod labels;
 
 #[cfg(test)]
 mod tests;

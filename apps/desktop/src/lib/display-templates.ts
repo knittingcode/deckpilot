@@ -50,8 +50,8 @@ export const MAX_DISPLAY_TEMPLATES = 200
 /** Longest template, in bytes (UTF-8). */
 export const MAX_DISPLAY_TEMPLATE_BYTES = 2048
 
-/** Which text of a key a template is for; labels add kinds later. */
-export type TextSlot = { kind: "title" }
+/** Which text of a key a template is for: its title or a label (lib/key-labels.ts) by id. */
+export type TextSlot = { kind: "title" } | { kind: "label"; id: string }
 
 /** One text of one binding (a binding is its page, control and trigger). */
 export interface TextKey {

@@ -2784,6 +2784,45 @@ fn icons_are_imported_shown_previewed_and_deleted() {
     let plain = h.ok("preview_layout", args(Value::Null));
     assert!(plain[0].get("image").is_none());
 
+    // Key labels (docs/key-text.md, "Labels"): the preview's faces carry
+    // the resolved labels and, with `render`, the renderer's boxes in
+    // canvas units, the same at the preview's size; keys without labels
+    // carry neither.
+    assert!(faces[0].get("labelBoxes").is_none());
+    assert!(faces[0]["face"].get("labels").is_none());
+    let mut labelled = saved.clone();
+    labelled["pages"][0]["bindings"] = binding(json!({
+        "background": "#102030",
+        "labels": [
+            { "id": "ribbon", "text": "{profile}", "position": { "mode": "anchored", "to": "bottom" } },
+            { "id": "tag", "text": "v2", "position": { "mode": "preset", "at": "topLeft" } },
+            { "id": "off", "text": "off", "enabled": false }
+        ]
+    }));
+    let draft = |pixels: Value| json!({ "profileId": profile_id, "layout": labelled, "pageId": page, "projectId": null, "render": true, "keyPixels": pixels });
+    let native = h.ok("preview_layout", draft(Value::Null));
+    let face_labels = native[0]["face"]["labels"].as_array().unwrap();
+    assert_eq!(face_labels.len(), 2, "the disabled label is not shown");
+    assert_eq!(face_labels[1]["text"], "v2");
+    let boxes = native[0]["labelBoxes"].as_array().unwrap();
+    assert_eq!(boxes.len(), 2);
+    assert_eq!(boxes[0]["id"], "ribbon");
+    assert_eq!(boxes[0]["canvas"], json!({ "width": 72.0, "height": 72.0 }));
+    assert_eq!(boxes[0]["width"], 72.0);
+    let large = h.ok("preview_layout", draft(json!(144)));
+    assert_eq!(large[0]["labelBoxes"], native[0]["labelBoxes"]);
+    // A template that shows a run's value is refused when saving.
+    labelled["pages"][0]["bindings"] = binding(json!({
+        "labels": [{ "id": "bad", "text": "{{ steps.fetch.output.token }}" }]
+    }));
+    let error = h
+        .call(
+            "save_layout",
+            json!({ "profileId": profile_id, "layout": labelled }),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("never shows"), "{error}");
+
     // Without `keyPixels` the image has the device's own size (72 x 72 on
     // an MK.2); with it, the size the app shows the key at (CSS pixels
     // times the display's pixel ratio), drawn at that size rather than
@@ -4859,4 +4898,92 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
             .is_none()
     );
     assert!(view.get("incompleteUses").is_none(), "{view}");
+}
+
+/// Key labels (`docs/key-text.md`, "Labels") are judged by the agent's
+/// variables on save and import: a reference the agent knows never shows on
+/// a key (here a shared variable marked sensitive; a plugin's sensitive or
+/// identifier declaration the same way, `commands/key_labels.rs`) is
+/// refused, though the core alone cannot tell; without an agent the core's
+/// check stands.
+#[test]
+fn labels_the_agent_knows_never_show_are_refused_on_save_and_import() {
+    let h = Harness::new();
+    let profile_id = new_profile(&h, "Work");
+    let action = log_action(&h, &profile_id, "Hello", "hi");
+    h.ok(
+        "save_shared_variable",
+        json!({ "definition": {
+            "key": "deploy.token",
+            "valueType": { "type": "string" },
+            "scopes": ["global"],
+            "sensitive": true,
+            "default": { "type": "string", "value": "hunter2-secret" }
+        } }),
+    );
+    h.ok(
+        "save_shared_variable",
+        json!({ "definition": {
+            "key": "team.name",
+            "valueType": { "type": "string" },
+            "scopes": ["global"],
+            "default": { "type": "string", "value": "Shop team" }
+        } }),
+    );
+    let mut layout = h.ok(
+        "create_layout",
+        json!({ "profileId": profile_id, "modelId": "elgato.streamdeck.mk2", "name": "Main", "generate": false }),
+    );
+    let labelled = |text: &str| {
+        json!([{
+            "control": { "kind": "key", "index": 0 },
+            "trigger": { "type": "press" },
+            "target": { "type": "action", "action": action["id"] },
+            "appearance": { "labels": [{ "id": "tag", "text": text }] },
+        }])
+    };
+    let save = |layout: &Value| {
+        h.call(
+            "save_layout",
+            json!({ "profileId": profile_id, "layout": layout }),
+        )
+    };
+    // No agent: the core cannot tell a shared variable is sensitive.
+    layout["pages"][0]["bindings"] = labelled("{{ shared.deploy.token }}");
+    let saved = save(&layout).unwrap();
+    // An export with that label, for the import below.
+    let file = h.paths.data_dir.join("labels.deckpilot");
+    let export_password = generated_export_password();
+    h.ok("authenticate", json!({ "password": PASSWORD }));
+    h.ok(
+        "export_configuration",
+        json!({ "request": { "path": file.display().to_string(), "password": export_password, "confirmation": export_password, "profiles": null, "includeModuleSettings": false } }),
+    );
+
+    let (_runtime, _mock) = start_agent(&h.paths);
+    h.unlock();
+    wait_for(&h, |s| s["running"] == true);
+    let refused = h.error(
+        "save_layout",
+        json!({ "profileId": profile_id, "layout": saved }),
+    );
+    assert!(refused.contains("shared.deploy.token"), "{refused}");
+    assert!(refused.contains("never shows"), "{refused}");
+    assert!(
+        !refused.contains("hunter2"),
+        "a secret in an error: {refused}"
+    );
+    // A display-safe variable saves.
+    layout["pages"][0]["bindings"] = labelled("{{ shared.team.name }}");
+    save(&layout).unwrap();
+    // The import is refused before anything is shown or written.
+    let refused = h.error(
+        "preview_import",
+        json!({ "path": file.display().to_string(), "password": export_password }),
+    );
+    assert!(refused.contains("never shows"), "{refused}");
+    assert!(
+        !refused.contains("hunter2"),
+        "a secret in an error: {refused}"
+    );
 }
