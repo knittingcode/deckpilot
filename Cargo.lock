@@ -1439,6 +1439,7 @@ dependencies = [
  "deckpilot-core",
  "deckpilot-device",
  "image",
+ "sha2 0.11.1",
  "skrifa",
  "unicode-segmentation",
 ]
