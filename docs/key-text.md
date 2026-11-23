@@ -425,6 +425,17 @@ pixels, so it is the same at every size.
 (SemiBold); `align` defaults by position (left in left corners, right in
 right ones, else centred); `padding` and `radius` 0–12 units (default 2).
 
+**Redraws.** Each label is its own text slot (`TextSlot::Label { id }`), so
+the agent knows what each label of each shown binding depends on. A change of
+a variable no shown text uses redraws nothing. Variable-driven redraws are
+coalesced per device: the first change redraws 50 ms later, further changes
+ride along, and a device is redrawn for variables at most 20 times a second
+(a change shows within about 100 ms). Input, actions, profile, layout and
+page changes still redraw at once, and the run loop never waits for a
+redraw: a key press during a storm of changes is handled as fast as without
+it (`apps/agent/tests/key_labels.rs`). A redraw over 8 ms is logged with its
+key count, never its texts.
+
 **Cost.** `cargo test --release -p deckpilot-render --test label_cost --
 --nocapture` measures it (Apple M-series, render plus JPEG): the worst-case
 key (8 labels wrapping on 4 lines over an icon image, with plates) about
