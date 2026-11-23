@@ -19,6 +19,7 @@ import {
   WEBSITE,
   WEBSITE_PROBLEMS,
   checkWebsite,
+  isSecondaryParameter,
   machinePick,
   parameterTexts,
 } from "@/lib/system-actions"
@@ -105,7 +106,10 @@ export function ParameterField({
   // An empty address is reported as a missing required value.
   const websiteError =
     website?.problem && website.problem !== "empty" ? t(WEBSITE_PROBLEMS[website.problem]) : null
-  return (
+  // Open's file inside a folder: only on request, or when set.
+  const secondary =
+    isSecondaryParameter(actionType, spec.key) && value.type === "text" && value.value === ""
+  const field = (
     <div
       className="grid gap-2"
       data-invalid={error ? true : undefined}
@@ -119,28 +123,19 @@ export function ParameterField({
         {spec.required && <span className="text-destructive">*</span>}
       </Label>
       {pick && value.type === "resource" ? (
-        <div className="grid gap-2">
-          <MachineResourceField
-            id={id}
-            pick={pick}
-            optional={!spec.required}
-            value={resourceOrNull(value.value)}
-            onChange={(reference) => {
-              onChange({
-                type: "resource",
-                value: reference ?? { type: "projectRole", role: "" },
-              })
-            }}
-          />
-          <details className="text-xs">
-            <summary className="cursor-pointer text-muted-foreground">
-              {t("actions:system.picker.advanced")}
-            </summary>
-            <div className="pt-2">
-              <ResourceControl id={`${id}-key`} value={value.value} onChange={onChange} />
-            </div>
-          </details>
-        </div>
+        <MachineResourceField
+          id={id}
+          pick={pick}
+          optional={!spec.required}
+          value={resourceOrNull(value.value)}
+          onChange={(reference) => {
+            onChange({
+              type: "resource",
+              value: reference ?? { type: "projectRole", role: "" },
+            })
+          }}
+          advanced={<ResourceControl id={`${id}-key`} value={value.value} onChange={onChange} />}
+        />
       ) : profile ? (
         <ProfileField
           id={id}
@@ -217,6 +212,15 @@ export function ParameterField({
       )}
       {texts.description && <p className="text-xs text-muted-foreground">{texts.description}</p>}
     </div>
+  )
+  if (!secondary) return field
+  return (
+    <details className="grid gap-2 text-sm">
+      <summary className="cursor-pointer text-xs text-muted-foreground">
+        {t("actions:system.picker.inside", { label: texts.label })}
+      </summary>
+      <div className="pt-2">{field}</div>
+    </details>
   )
 }
 

@@ -49,14 +49,38 @@ const type = (id: string, name: string, parameters: ParameterSpec[]): ActionType
   parameters,
   contexts: ["key", "gesture", "sequence", "workflow"],
 })
-// As the System module declares them (modules/system/src/actions.rs).
+const resource = (key: string, label: string, required: boolean): ParameterSpec => ({
+  key,
+  label,
+  kind: { type: "resource" },
+  required,
+})
+// As the System module declares them (modules/system/src/actions.rs); the
+// app shows them by their localized names (`lib/system-actions.ts`).
 const openApp = type("system.open-app", "Open application", [
-  { key: "application", label: "Application", kind: { type: "resource" }, required: true },
+  resource("application", "Application", true),
   text("arguments", "Arguments", false),
 ])
-const openUrl = type("system.open-url", "Open web page", [text("url", "URL", true)])
-const openFile = type("system.open-file", "Open file", [text("path", "File", true)])
-const openFolder = type("system.open-directory", "Open folder", [text("path", "Folder", true)])
+const openUrl = type("system.open-url", "Open URL", [
+  text("url", "URL", true),
+  resource("browser", "Browser", false),
+])
+const openFile = type("system.open-file", "Open file", [
+  resource("location", "Location", true),
+  text("path", "File", false),
+  resource("application", "Open with", false),
+])
+const openFolder = type("system.open-directory", "Open folder", [
+  resource("location", "Folder", true),
+  text("path", "Subfolder", false),
+])
+/** The names the app gives them. */
+const shownName: Record<string, string> = {
+  [openApp.id]: "Open Application",
+  [openUrl.id]: "Website",
+  [openFile.id]: "Open",
+  [openFolder.id]: "Open folder",
+}
 const nextPage = type("deck.next-page", "Next page", [
   {
     key: "wrapAround",
@@ -124,6 +148,12 @@ vi.mock("@/lib/api", () => ({
       Promise.resolve({ ...saved, agentReload: { state: "applied" } }),
     createAction: (...args: unknown[]) => createAction(...args) as unknown,
     updateAction: (...args: unknown[]) => updateAction(...args) as unknown,
+    // The machine-local pickers (`components/machine-resource-field.tsx`).
+    getMachineConfig: () => Promise.resolve({ os: "macOs", bindings: [] }),
+    listApplications: () => Promise.resolve([]),
+    listBrowsers: () => Promise.resolve({ browsers: [], default: null }),
+    applicationIcon: () => Promise.resolve(null),
+    applicationPresent: () => Promise.resolve(true),
   },
   errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
 }))
@@ -244,9 +274,9 @@ afterEach(cleanup)
 describe("dropping a type whose required settings are not filled in", { timeout: 20_000 }, () => {
   it.each([
     [openApp, "application", "Application"],
-    [openUrl, "url", "URL"],
-    [openFile, "path", "File"],
-    [openFolder, "path", "Folder"],
+    [openUrl, "url", "Address"],
+    [openFile, "location", "File, folder or application"],
+    [openFolder, "location", "Folder"],
   ])(
     "puts %s on the key as a draft, focusing what it needs",
     async (dropped, missingKey, label) => {
@@ -272,18 +302,25 @@ describe("dropping a type whose required settings are not filled in", { timeout:
         expect(keyMark(1)).toBeInTheDocument()
       })
       const setup = await screen.findByRole("group", {
-        name: `${dropped.name} needs configuration`,
+        name: `${shownName[dropped.id] ?? dropped.name} needs configuration`,
       })
       expect(within(setup).getByText("Needs configuration")).toBeInTheDocument()
       const field = document.getElementById(`setup-new-1-${missingKey}`)
       expect(field).not.toBeNull()
+      // A file or folder picker is a row: its first "Choose…" button.
+      const focused =
+        field?.tagName === "DIV"
+          ? within(field.parentElement as HTMLElement).getAllByRole("button")[0]
+          : field
       await waitFor(() => {
-        expect(field).toHaveFocus()
+        expect(focused).toHaveFocus()
       })
       expect(field).toHaveAttribute("aria-required", "true")
       expect(field).toHaveAttribute("aria-invalid", "true")
       expect(field).toHaveAccessibleDescription("Required: fill this in before the action can run.")
-      expect(within(setup).getByText(label, { exact: false })).toBeInTheDocument()
+      expect(
+        within(setup).getByText(label, { exact: false, selector: "label" }),
+      ).toBeInTheDocument()
     },
   )
 

@@ -131,6 +131,26 @@ pub fn launchable_in(
     }
 }
 
+/// Whether application `value` is installed on this computer, when that
+/// can be checked: a bundle id, a desktop-file id, an App Paths name or a
+/// path. `None` for what cannot be checked without starting it (an
+/// `AppUserModelID`, a bare program or application name).
+pub fn presence(value: &str) -> Option<bool> {
+    presence_in(Platform::current(), value, &XdgDirs::from_env())
+}
+
+/// As [`presence`], for `platform` with `xdg` folders (tests).
+pub fn presence_in(platform: Platform, value: &str, xdg: &XdgDirs) -> Option<bool> {
+    let id = AppId::parse(platform, value).ok()?;
+    match id {
+        AppId::Aumid(_) | AppId::Program(_) => None,
+        AppId::Path(ref path) if path.to_string_lossy().starts_with("\\\\") => None,
+        AppId::Bundle(_) | AppId::DesktopFile(_) | AppId::AppPaths(_) | AppId::Path(_) => {
+            Some(launchable_in(platform, value, &[], xdg).is_ok())
+        }
+    }
+}
+
 /// A Windows path read on another system cannot be checked there (tests).
 fn path_exists(platform: Platform, path: &Path) -> bool {
     path.exists() || (platform != Platform::current() && !path.is_absolute())
@@ -201,6 +221,45 @@ mod tests {
         assert_eq!(missing.code, codes::NOT_FOUND);
         let terminal = launchable_in(Platform::Linux, "top.desktop", &[], &dirs).unwrap_err();
         assert_eq!(terminal.code, codes::INVALID_APPLICATION);
+    }
+
+    #[test]
+    fn presence_is_unknown_where_it_cannot_be_checked() {
+        let dirs = XdgDirs::only(&[]);
+        assert_eq!(
+            presence_in(
+                Platform::Windows,
+                "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+                &dirs
+            ),
+            None
+        );
+        assert_eq!(presence_in(Platform::Linux, "code", &dirs), None);
+        assert_eq!(presence_in(Platform::MacOs, "Safari", &dirs), None);
+        assert_eq!(
+            presence_in(Platform::Linux, "gone.desktop", &dirs),
+            Some(false)
+        );
+        assert_eq!(
+            presence_in(Platform::Windows, "deckpilot-none.exe", &dirs),
+            Some(false)
+        );
+        assert_eq!(presence_in(Platform::Linux, "--bad", &dirs), None);
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("tool");
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(
+            presence_in(Platform::current(), &exe.to_string_lossy(), &dirs),
+            Some(true)
+        );
+        assert_eq!(
+            presence_in(
+                Platform::current(),
+                &dir.path().join("gone").to_string_lossy(),
+                &dirs
+            ),
+            Some(false)
+        );
     }
 
     #[test]

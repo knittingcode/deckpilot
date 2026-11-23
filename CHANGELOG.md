@@ -64,7 +64,15 @@ released either. 0.6.0 is the first version intended for publication.
 - An Open Application key can quit its application on a long press: one
   choice in the inspector binds Close Application to the key's long press.
 - Website can open a page in a browser you choose instead of the default
-  one, and adds `https://` to an address written without it.
+  one, and adds `https://` to an address written without it. "Open with"
+  lists the browsers installed on this computer with their icons, the
+  system's default first; when the chosen browser is uninstalled, the page
+  opens in the default browser and the result says so.
+- The application pickers show the installed applications with their own
+  icons, and "Another application…" opens the system's file dialog limited
+  to applications. Open and Open folder choose files and folders with the
+  system's dialogs. Resource keys and project roles moved to an Advanced
+  mode of each field; saved actions that use them open in it unchanged.
 - Open opens a chosen file, folder or application by itself; a file
   inside a folder is now optional.
 

@@ -86,7 +86,7 @@ export function ActionSetup({
   useEffect(() => {
     if (!autoFocus || !first) return
     const field = container.current?.querySelector<HTMLElement>(`[id="${idPrefix}-${first}"]`)
-    field?.focus()
+    focusTarget(field)?.focus()
     onFocused()
   }, [autoFocus, first, idPrefix, onFocused])
 
@@ -131,4 +131,17 @@ export function ActionSetup({
       )}
     </div>
   )
+}
+
+const FOCUSABLE = "input, textarea, select, button, [tabindex]:not([tabindex='-1'])"
+
+/**
+ * What takes focus for the field `field`: the field itself, or, for a
+ * picker shown as a row (a chosen file or folder with its "Choose…"
+ * buttons), the row's first control.
+ */
+function focusTarget(field: HTMLElement | null | undefined): HTMLElement | null {
+  if (!field) return null
+  if (field.matches(FOCUSABLE)) return field
+  return field.parentElement?.querySelector<HTMLElement>(FOCUSABLE) ?? null
 }
