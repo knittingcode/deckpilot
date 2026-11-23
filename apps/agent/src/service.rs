@@ -34,6 +34,7 @@ use crate::instance::{InstanceLock, LockError};
 use crate::render;
 
 mod deck;
+mod display;
 mod executions;
 mod folders;
 mod gestures;
@@ -560,6 +561,8 @@ pub struct Agent {
     stateful: stateful::StatefulKeys,
     /// Rendered key images by face and size.
     frames: render::FrameCache,
+    /// What the titles each device shows depend on (`display.rs`).
+    titles: display::TitleDependencies,
     /// Decoded icons of the active profile.
     icons: render::Icons,
     /// Counts icon reloads, so scrolling keys are drawn again with new
@@ -702,6 +705,7 @@ impl Agent {
             gestures: gestures::Gestures::default(),
             stateful: stateful::StatefulKeys::default(),
             frames: render::FrameCache::new(FRAME_CACHE),
+            titles: display::TitleDependencies::default(),
             icons: render::Icons::default(),
             icons_version: 0,
             marquee_clock: crate::marquee::monotonic_clock(),
@@ -781,6 +785,9 @@ impl Agent {
         let mut rescan = tokio::time::interval(self.options.rescan_interval);
         rescan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         rescan.reset();
+        // Variable changes (shared values, plugin values, modules enabled
+        // or disabled) redraw the titles that use them (`display.rs`).
+        let mut variable_events = self.handle.events.subscribe();
         let mut auto_lock = tokio::time::interval(self.options.auto_lock_check);
         auto_lock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         auto_lock.reset();
@@ -812,6 +819,18 @@ impl Agent {
                 Some(command) = self.commands.recv() => self.handle_command(command),
                 Some(signal) = self.signals.recv() => {
                     self.handle_signal(signal);
+                    Flow::Continue
+                }
+                event = variable_events.recv() => {
+                    match event {
+                        Ok(AgentEvent::SharedVariablesChanged { keys }) => {
+                            self.display_variables_changed(&keys);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            self.display_events_lagged();
+                        }
+                        Ok(_) | Err(broadcast::error::RecvError::Closed) => {}
+                    }
                     Flow::Continue
                 }
                 _ = rescan.tick() => {
@@ -1111,6 +1130,12 @@ impl Agent {
             Request::PreviewReferences { context, items } => {
                 self.preview_references(&context, &items)
             }
+            Request::ListDisplayVariables { context, filter } => {
+                self.list_display_variables(&context, &filter)
+            }
+            Request::ResolveDisplayTemplates { context, templates } => {
+                self.resolve_display_templates(&context, templates)
+            }
             Request::GetAutostart => {
                 let enabled = self.autostart()?.is_enabled().map_err(failed)?;
                 Ok(Response::Autostart { enabled })
@@ -1265,6 +1290,8 @@ impl Agent {
             | Request::GetActiveProject
             | Request::ListVariables { .. }
             | Request::PreviewReferences { .. }
+            | Request::ListDisplayVariables { .. }
+            | Request::ResolveDisplayTemplates { .. }
             | Request::GetAutostart
             | Request::Subscribe
             | Request::SubscribePluginEvents { .. }
@@ -1970,6 +1997,7 @@ impl Agent {
             session.io.close(Vec::new(), CLOSE_TIMEOUT);
         }
         self.forget_gestures(device);
+        self.titles.forget(device);
         self.states.forget_device(device);
         self.session_faces.forget_device(device);
         let _ = self.runtime.handle_event(&DeviceEvent::Disconnected {
@@ -1987,7 +2015,10 @@ impl Agent {
     /// new list whenever it changes; a key that stops scrolling gets its
     /// still image.
     fn render(&mut self, device: &DeviceId, force: bool) {
-        let mut faces = self.runtime.faces(device);
+        let (mut faces, texts) = self.runtime.display_faces(device);
+        if self.sessions.contains_key(device) {
+            self.titles.record(device, texts);
+        }
         if self.sessions.contains_key(device) {
             self.decorate_faces(device, &mut faces, std::time::Instant::now());
         }

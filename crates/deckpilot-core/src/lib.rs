@@ -92,7 +92,7 @@ pub use credentials::{
 };
 pub use device_runtime::{
     DetachedAction, EditorTarget, LayoutStatus, NavigationError, NavigationState, Runtime,
-    RuntimeOutcome, page_faces,
+    RuntimeOutcome, core_display, page_faces, page_faces_with,
 };
 pub use editor_navigation::{
     ControlNavigation, EditorNavigation, NavigationOperation, control_navigation,

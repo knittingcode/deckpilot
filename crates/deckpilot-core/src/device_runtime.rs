@@ -20,12 +20,13 @@ use deckpilot_device::{
 use crate::gesture::{BoundGestures, Gesture, GestureTimings};
 use crate::i18n::SystemText;
 use crate::stateful::StatefulBinding;
+use crate::variables::{DisplayTemplates, RecordingTemplates};
 use crate::{
     ActionContext, ActionInstanceId, ActionParameters, ActionRegistry, ActionResult,
     ActiveProjectContext, BindingTarget, ControlBinding, CycleDirection, DeviceLayout, Engine,
     EngineError, FaceStyle, FolderExit, FolderTimers, KeyFace, LayoutId, MachineConfig, PageId,
     PageLabel, Profile, ProfileId, Project, ProjectId, Trigger, WorkflowId, WorkflowReport,
-    render_label, render_page_label,
+    render_page_label,
 };
 
 /// The clock Auto Exit countdowns ([`crate::FolderTimers`]) are measured
@@ -1150,8 +1151,21 @@ impl Runtime {
     /// What every display-capable control of a connected device should show.
     /// Never executes actions. Returns an empty list for unknown models.
     pub fn faces(&self, device: &DeviceId) -> Vec<(ControlId, KeyFace)> {
+        self.display_faces(device).0
+    }
+
+    /// [`Runtime::faces`], with every display template the faces resolved
+    /// ([`crate::variables::resolve_display_template`], through the
+    /// engine's variables) and what each depends on, by binding and text.
+    pub fn display_faces(
+        &self,
+        device: &DeviceId,
+    ) -> (
+        Vec<(ControlId, KeyFace)>,
+        Vec<(crate::variables::TextKey, crate::variables::DisplayText)>,
+    ) {
         let Some(model) = self.catalog.get(&device.model) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let controls: Vec<ControlId> = model
             .capabilities
@@ -1179,22 +1193,35 @@ impl Runtime {
         };
 
         let Some(profile) = self.profile() else {
-            return notice(self.placeholder.as_deref().ok_or(SystemText::NoProfile));
+            return (
+                notice(self.placeholder.as_deref().ok_or(SystemText::NoProfile)),
+                Vec::new(),
+            );
         };
         let (Some(layout), Some(page)) = (self.layout_of(device), self.current_page(device)) else {
-            return notice(Err(SystemText::NoLayout));
+            return (notice(Err(SystemText::NoLayout)), Vec::new());
         };
         let Some(page) = layout.page(page) else {
-            return notice(Err(SystemText::NoLayout));
+            return (notice(Err(SystemText::NoLayout)), Vec::new());
         };
-        let mut faces = page_faces(
-            self.engine.registry(),
-            layout,
-            page.id,
+        let (mut faces, texts) = self.engine.display_templates(
             profile,
-            self.active_project(),
-            &controls,
-            Some(&model.capabilities),
+            &self.machine,
+            self.active_project_id(),
+            |environment| {
+                let recorder = RecordingTemplates::new(environment);
+                let faces = page_faces_with(
+                    self.engine.registry(),
+                    layout,
+                    page.id,
+                    profile,
+                    self.active_project(),
+                    &controls,
+                    Some(&model.capabilities),
+                    &recorder,
+                );
+                (faces, recorder.into_texts())
+            },
         );
         // *Back to previous layout* with nowhere to go back to.
         let system_back = self.system_back(device);
@@ -1219,7 +1246,7 @@ impl Runtime {
                 }
             }
         }
-        faces
+        (faces, texts)
     }
 
     /// The bindings of the active profile's layouts that cannot run their
@@ -1596,6 +1623,11 @@ fn page_path(layout: &DeviceLayout, page: Option<PageId>) -> Option<Vec<PageId>>
 /// model's `capabilities`, a control whose shown binding runs an action
 /// that cannot run from it shows as unavailable, as an action whose type
 /// cannot run here does.
+///
+/// Titles are resolved with the core's variables only ([`core_display`]):
+/// the older placeholders, the profile, the project and the platform. The
+/// agent resolves them with every display-safe variable
+/// ([`page_faces_with`], [`Runtime::display_faces`]).
 pub fn page_faces(
     registry: &ActionRegistry,
     layout: &DeviceLayout,
@@ -1604,6 +1636,59 @@ pub fn page_faces(
     project: Option<&Project>,
     controls: &[ControlId],
     capabilities: Option<&DeviceCapabilities>,
+) -> Vec<(ControlId, KeyFace)> {
+    core_display(profile, project, |titles| {
+        page_faces_with(
+            registry,
+            layout,
+            page,
+            profile,
+            project,
+            controls,
+            capabilities,
+            titles,
+        )
+    })
+}
+
+/// Display templates resolved with the core's variables only, without
+/// shared, module or plugin variables (they show
+/// [`crate::variables::UNRESOLVED_MARKER`]): where no agent resolves them.
+pub fn core_display<R>(
+    profile: &Profile,
+    project: Option<&Project>,
+    then: impl FnOnce(&dyn DisplayTemplates) -> R,
+) -> R {
+    static CORE: std::sync::LazyLock<crate::variables::VariableRegistry> =
+        std::sync::LazyLock::new(crate::variables::VariableRegistry::new);
+    let context = crate::variables::display_context(profile.id, project.map(|p| p.id));
+    let resolver = crate::resolution::ContextResolver {
+        profile,
+        os: crate::Os::current(),
+        shared: &crate::resolution::NoSharedVariables,
+        outputs: None,
+        registry: &CORE,
+        live: &crate::variables::NoLiveState,
+    };
+    then(&crate::variables::DisplayEnvironment {
+        context: &context,
+        resolver: &resolver,
+        registry: &CORE,
+    })
+}
+
+/// [`page_faces`] with the titles resolved by `titles`, which is asked for
+/// every title template the page's keys show.
+#[allow(clippy::too_many_arguments)]
+pub fn page_faces_with(
+    registry: &ActionRegistry,
+    layout: &DeviceLayout,
+    page: PageId,
+    profile: &Profile,
+    project: Option<&Project>,
+    controls: &[ControlId],
+    capabilities: Option<&DeviceCapabilities>,
+    titles: &dyn DisplayTemplates,
 ) -> Vec<(ControlId, KeyFace)> {
     let Some(page) = layout.page(page) else {
         return controls
@@ -1646,10 +1731,15 @@ pub fn page_faces(
                             crate::binding_incompatibility(binding, capabilities, registry, profile)
                                 .is_some()
                         });
+                        let title = Title {
+                            titles,
+                            page: page.id,
+                            binding,
+                        };
                         if incompatible {
-                            unavailable_face(binding, profile, project)
+                            unavailable_face(binding, profile, &title)
                         } else {
-                            face_for(registry, binding, layout, profile, project)
+                            face_for(registry, binding, layout, profile, project, &title)
                         }
                         .with_appearance(binding.appearance.as_ref())
                         .with_title_suggestions(title_suggestions(registry, binding, profile))
@@ -1727,11 +1817,7 @@ pub fn shown_binding(page: &crate::LayoutPage, control: ControlId) -> Option<&Co
 /// The face of an action binding that cannot run from its control: its
 /// label, marked unavailable (the look of an action whose type cannot run
 /// here).
-fn unavailable_face(
-    binding: &ControlBinding,
-    profile: &Profile,
-    project: Option<&Project>,
-) -> KeyFace {
+fn unavailable_face(binding: &ControlBinding, profile: &Profile, title: &Title<'_>) -> KeyFace {
     let instance = binding
         .target
         .action_id()
@@ -1746,11 +1832,8 @@ fn unavailable_face(
                 .to_owned()
         })
         .unwrap_or_default();
-    let face = KeyFace::new(
-        FaceStyle::Notice,
-        render_label(&template, &profile.name, project),
-    )
-    .with_system_detail(SystemText::Unavailable);
+    let face = KeyFace::new(FaceStyle::Notice, title.text(&template))
+        .with_system_detail(SystemText::Unavailable);
     match instance {
         Some(instance) if binding.label.is_none() && instance.label.is_none() => {
             face.with_action_name(instance.action_type.to_string())
@@ -1774,12 +1857,32 @@ fn open_page_title(
     binding.label.clone().or_else(name)
 }
 
+/// The title of one binding, resolved by the page's display templates.
+struct Title<'a> {
+    titles: &'a dyn DisplayTemplates,
+    page: PageId,
+    binding: &'a ControlBinding,
+}
+
+impl Title<'_> {
+    fn text(&self, template: &str) -> String {
+        let key = crate::variables::TextKey {
+            page: self.page,
+            control: self.binding.control,
+            trigger: self.binding.trigger,
+            slot: crate::variables::TextSlot::Title,
+        };
+        self.titles.display(&key, template).text
+    }
+}
+
 fn face_for(
     registry: &ActionRegistry,
     binding: &ControlBinding,
     layout: &DeviceLayout,
     profile: &Profile,
     project: Option<&Project>,
+    title: &Title<'_>,
 ) -> KeyFace {
     match &binding.target {
         BindingTarget::Action { action, overrides } => {
@@ -1801,7 +1904,7 @@ fn face_for(
                 .or_else(|| target.flatten().map(|layout| layout.name.as_str()))
                 .or_else(|| suggested_title(registry, instance))
                 .unwrap_or(&instance.name);
-            let label = render_label(template, &profile.name, project);
+            let label = title.text(template);
             // The instance's name, which it took from its type: a default
             // the agent may show in another language ([`crate::i18n`]).
             let default_name = binding.label.is_none()
@@ -1846,11 +1949,7 @@ fn face_for(
         BindingTarget::Workflow { workflow } => match profile.workflow(*workflow) {
             Some(definition) => KeyFace::new(
                 FaceStyle::Workflow,
-                render_label(
-                    binding.label.as_deref().unwrap_or(&definition.name),
-                    &profile.name,
-                    project,
-                ),
+                title.text(binding.label.as_deref().unwrap_or(&definition.name)),
             )
             .with_symbol(Some(symbols::WORKFLOW)),
             // A layout shared with a profile that has the workflow.
@@ -1878,11 +1977,7 @@ fn face_for(
         // face without it, e.g. in the layout designer's preview.
         BindingTarget::Stateful(stateful) => KeyFace::new(
             FaceStyle::Action,
-            render_label(
-                binding.label.as_deref().unwrap_or(stateful.name()),
-                &profile.name,
-                project,
-            ),
+            title.text(binding.label.as_deref().unwrap_or(stateful.name())),
         )
         .with_symbol(Some(match stateful {
             StatefulBinding::WorkSession { .. } => symbols::WORK_SESSION,

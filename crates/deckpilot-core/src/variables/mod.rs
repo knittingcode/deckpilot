@@ -11,6 +11,7 @@
 //! store keep working exactly as before.
 
 pub mod catalog;
+pub mod display;
 pub mod doubles;
 pub mod expression;
 pub mod registry;
@@ -28,6 +29,11 @@ use crate::{
 };
 
 pub use catalog::{CatalogEntry, CatalogFilter, ReferenceAvailability, VariableGroup};
+pub use display::{
+    DisplayDependency, DisplayEnvironment, DisplayTemplates, DisplayText, RecordingTemplates,
+    ResolvedTemplates, TextKey, TextSlot, UNRESOLVED_MARKER, UnresolvedReason, UnresolvedReference,
+    display_context, display_listed, display_safe, resolve_display_template,
+};
 pub use expression::{
     ExpressionError, ExpressionPart, SystemVariable, VariableRef, parse_expression,
     references_in_expression,

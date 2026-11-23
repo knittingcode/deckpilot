@@ -170,6 +170,32 @@ impl Engine {
         }
     }
 
+    /// The core's and the modules' variables this engine resolves.
+    pub fn variable_registry(&self) -> &crate::variables::VariableRegistry {
+        &self.variable_registry
+    }
+
+    /// The display environment of `profile` with `project` as its active
+    /// project: what key titles are resolved with
+    /// ([`crate::variables::resolve_display_template`]), on the device and
+    /// for the editor's preview alike. Shared variables come from this
+    /// engine's store, core and module variables from its registry.
+    pub fn display_templates<R>(
+        &self,
+        profile: &Profile,
+        machine: &MachineConfig,
+        project: Option<crate::ProjectId>,
+        then: impl FnOnce(&crate::variables::DisplayEnvironment<'_>) -> R,
+    ) -> R {
+        let context = crate::variables::display_context(profile.id, project);
+        let resolver = self.resolver(profile, machine, None);
+        then(&crate::variables::DisplayEnvironment {
+            context: &context,
+            resolver: &resolver,
+            registry: &self.variable_registry,
+        })
+    }
+
     /// The engine with a way to show notifications.
     #[must_use]
     pub fn with_notifier(self, notifier: std::sync::Arc<dyn crate::notify::Notifier>) -> Self {
