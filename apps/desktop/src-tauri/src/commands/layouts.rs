@@ -6,7 +6,7 @@ use deckpilot_core::variables::{
 };
 use deckpilot_core::{
     ActiveProjectContext, DeviceLayout, KeyFace, LayoutId, LayoutIssue, PageDestination, PageId,
-    ProfileId, ProjectId, core_display, page_faces_with,
+    ProfileId, ProjectId, WorkflowBindingIssue, core_display, page_faces_scoped,
 };
 use deckpilot_device::{ControlId, DeviceModelId};
 use deckpilot_ipc::display_templates::{MAX_DISPLAY_TEMPLATES, ResolvedDisplayTemplate};
@@ -15,7 +15,7 @@ use deckpilot_storage::ConfigStore;
 use super::reload::Saved;
 use super::{modify_profile, modify_profile_and_reload};
 use crate::error::{CommandError, CommandResult};
-use crate::state::{AppState, load_profile};
+use crate::state::{AppState, WORKFLOWS_PLUGIN, load_profile};
 
 /// Creates a layout for `model`, empty or generated from the profile's
 /// actions. It becomes the active layout if the model has none yet.
@@ -97,11 +97,20 @@ pub async fn save_layout(
     // (one that differs is kept as recovered, as migration 13 keeps it).
     layout.normalize_folder_labels();
     let registry = state.actions();
+    let graphs_off = state.require_feature(WORKFLOWS_PLUGIN).is_err();
     modify_profile_and_reload(&state, profile_id, |profile| {
         let stored = profile.layouts.iter().find(|l| l.id == layout.id);
         let (issues, kept) = check_for_save(&layout, stored, &state.catalog, &registry, profile);
         if !issues.is_empty() {
             return Err(refusal(&issues));
+        }
+        // New keys never start another profile's or a deleted workflow, a
+        // graph workflow while the Workflows plugin is off, or one that
+        // needs inputs; stored ones are kept and reported.
+        let workflow_issues =
+            layout.workflow_binding_issues(stored, profile, &registry, graphs_off);
+        if let Some(refused) = workflow_issues.iter().find(|issue| !issue.stored) {
+            return Err(workflow_refusal(refused));
         }
         // Reported, never refused (`docs/action-contexts.md`).
         let context_issues = layout.context_issues_for_save(stored, &registry, profile);
@@ -125,6 +134,7 @@ pub async fn save_layout(
             incompatible: kept.iter().map(ToString::to_string).collect(),
             context_issues,
             incomplete,
+            workflow_issues,
         })
     })
     .await
@@ -194,6 +204,27 @@ fn refusal(issues: &[LayoutIssue]) -> CommandError {
     )
 }
 
+/// The refusal of a new binding that starts a workflow it may not
+/// (`invalid.workflowNotInProfile`, `invalid.pluginFeatureOff`,
+/// `invalid.workflowNeedsInputs`), with the key's number as the editor
+/// shows it and the page.
+fn workflow_refusal(issue: &WorkflowBindingIssue) -> CommandError {
+    let key = match issue.control {
+        ControlId::Key { index } => u32::from(index) + 1,
+        _ => 0,
+    };
+    CommandError::invalid_with(
+        issue.reason.code(),
+        issue.to_string(),
+        [
+            ("key", key.into()),
+            ("page", issue.page_name.clone().into()),
+            ("workflow", issue.workflow.to_string().into()),
+            ("feature", "Workflows".into()),
+        ],
+    )
+}
+
 /// A saved layout, with the bindings it keeps that cannot run their
 /// action from their control. Serialized as the layout with an
 /// `incompatible` field (left out when empty), so the frontend reads it as
@@ -218,6 +249,12 @@ pub struct SavedLayout {
     /// Left out when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     incomplete: Vec<deckpilot_core::IncompleteUse>,
+    /// Stored bindings that start a workflow this profile may not start
+    /// from a key (another profile's or a deleted one, a graph workflow
+    /// while the Workflows plugin is off, one that needs inputs): kept and
+    /// not run. Left out when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    workflow_issues: Vec<WorkflowBindingIssue>,
 }
 
 /// What saving `layout` over `stored` (the saved version of the same
@@ -581,6 +618,13 @@ fn page_preview(
         .into_iter()
         .filter(|found| found.page == page_id)
         .collect();
+    // As the device shows it: a deleted workflow as missing, another
+    // profile's as not in this profile, graph workflows while the
+    // Workflows plugin is off as off.
+    let scope = deckpilot_core::WorkflowScope {
+        foreign: state.workflows_sharing_layouts(&store, &profile).ok(),
+        graphs_off: state.require_feature(WORKFLOWS_PLUGIN).is_err(),
+    };
     let empty = std::collections::BTreeMap::new();
     let (faces, titles) = core_display(&profile, project, |core| {
         let agent = ResolvedTemplates {
@@ -591,7 +635,7 @@ fn page_preview(
             inner: &agent,
             seen: std::cell::RefCell::default(),
         };
-        let faces = page_faces_with(
+        let faces = page_faces_scoped(
             &actions,
             layout,
             page_id,
@@ -600,6 +644,7 @@ fn page_preview(
             &controls,
             Some(&model.capabilities),
             &collect,
+            &scope,
         );
         (faces, collect.seen.into_inner())
     });
@@ -1042,6 +1087,56 @@ mod tests {
         (profile, registry)
     }
 
+    /// A new key that starts another profile's (or a deleted) workflow is
+    /// refused with a stable code and the key's number; one stored like
+    /// that is kept and reported in `workflowIssues`.
+    #[test]
+    fn new_keys_never_start_another_profiles_workflow() {
+        let (profile, registry) = stored();
+        let foreign = deckpilot_core::WorkflowId::new();
+        let mut saved = profile.layouts[0].clone();
+        saved.pages[0].bindings.push(ControlBinding::new(
+            ControlId::Key { index: 1 },
+            Trigger::Press,
+            BindingTarget::Workflow { workflow: foreign },
+        ));
+        // A duplicate of the stored key is no new reference; a key to a
+        // workflow the layout did not start is.
+        let mut edited = saved.clone();
+        edited.pages[0].bindings.push(ControlBinding::new(
+            ControlId::Key { index: 4 },
+            Trigger::Press,
+            BindingTarget::Workflow { workflow: foreign },
+        ));
+        edited.pages[0].bindings.push(ControlBinding::new(
+            ControlId::Key { index: 2 },
+            Trigger::Press,
+            BindingTarget::Workflow {
+                workflow: deckpilot_core::WorkflowId::new(),
+            },
+        ));
+        let issues = edited.workflow_binding_issues(Some(&saved), &profile, &registry, false);
+        let refused = issues.iter().find(|issue| !issue.stored).unwrap();
+        let error = serde_json::to_value(workflow_refusal(refused)).unwrap();
+        assert_eq!(error["code"], "invalid.workflowNotInProfile");
+        assert_eq!(error["params"]["key"], 3);
+        let kept: Vec<&WorkflowBindingIssue> = issues.iter().filter(|i| i.stored).collect();
+        assert_eq!(kept.len(), 2);
+        let reported = serde_json::to_value(SavedLayout {
+            layout: saved,
+            incompatible: Vec::new(),
+            context_issues: Vec::new(),
+            incomplete: Vec::new(),
+            workflow_issues: kept.into_iter().cloned().collect(),
+        })
+        .unwrap();
+        assert_eq!(
+            reported["workflowIssues"][0]["reason"],
+            "workflowNotInProfile"
+        );
+        assert_eq!(reported["workflowIssues"][0]["stored"], true);
+    }
+
     #[test]
     fn a_stored_incompatible_binding_is_kept_and_a_new_one_refused() {
         let (profile, registry) = stored();
@@ -1221,6 +1316,7 @@ mod tests {
             incompatible: Vec::new(),
             context_issues: Vec::new(),
             incomplete: Vec::new(),
+            workflow_issues: Vec::new(),
         })
         .unwrap();
         assert_eq!(saved, plain);
@@ -1230,6 +1326,7 @@ mod tests {
             incompatible: vec!["why".into()],
             context_issues,
             incomplete: Vec::new(),
+            workflow_issues: Vec::new(),
         })
         .unwrap();
         assert_eq!(reported["incompatible"], serde_json::json!(["why"]));

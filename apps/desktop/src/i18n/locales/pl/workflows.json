@@ -28,8 +28,7 @@
       "saved": "Zapisano przepływ pracy",
       "duplicated": "Powielono przepływ pracy",
       "duplicateFailed": "Nie powielono przepływu pracy",
-      "deleted": "Usunięto przepływ pracy",
-      "deleteFailed": "Nie usunięto przepływu pracy"
+      "deleted": "Usunięto przepływ pracy"
     },
     "run": "Uruchom przepływ pracy",
     "runNamed": "Uruchom „{{name}}”",
@@ -262,8 +261,7 @@
       "actionFailedHint": "{{error}} Możesz ją zamiast tego utworzyć w Bibliotece akcji.",
       "duplicated": "Powielono przepływ pracy",
       "duplicateFailed": "Nie powielono przepływu pracy",
-      "deleted": "Usunięto przepływ pracy",
-      "deleteFailed": "Nie usunięto przepływu pracy"
+      "deleted": "Usunięto przepływ pracy"
     },
     "save": {
       "label": "Zapisz",
@@ -316,7 +314,6 @@
       "convertedHint": "Przejrzyj te różnice, a następnie zapisz. Kroki zostają zachowane.",
       "copyName": "{{name}} (kopia)",
       "duplicate": "Powiel",
-      "inUse": "Używany przez układ lub inny przepływ pracy",
       "deleteTitle": "Usunąć „{{name}}”?",
       "deleteDescription": "Przepływ pracy i jego graf zostaną usunięte z tego profilu."
     }
@@ -920,5 +917,29 @@
       "label": "Uruchomienie",
       "description": "Bieżące uruchomienie przepływu pracy."
     }
+  },
+  "delete": {
+    "referenced_one": "Ten przepływ pracy jest używany w {{count}} miejscu. Sprawdź, co się z nim stanie, zanim go usuniesz.",
+    "referenced_few": "Ten przepływ pracy jest używany w {{count}} miejscach. Sprawdź, co się z nimi stanie, zanim go usuniesz.",
+    "referenced_many": "Ten przepływ pracy jest używany w {{count}} miejscach. Sprawdź, co się z nimi stanie, zanim go usuniesz.",
+    "referenced_other": "Ten przepływ pracy jest używany w {{count}} miejscach. Sprawdź, co się z nimi stanie, zanim go usuniesz.",
+    "keys": "Klawisze i gesty (układ › strona › element sterujący)",
+    "actions": "Akcje losowe i przełączniki",
+    "workflows": "Przepływy pracy, które go wywołują",
+    "clear_one": "Wyczyść też ten klawisz",
+    "clear_few": "Wyczyść też te {{count}} klawisze",
+    "clear_many": "Wyczyść też tych {{count}} klawiszy",
+    "clear_other": "Wyczyść też te klawisze ({{count}})",
+    "keepHint": "Klawisze zostają i pokazują „Brak przepływu”, dopóki nie wybierzesz dla nich innej akcji.",
+    "clearHint": "Klawisze zostaną opróżnione, razem z ich tytułami i wyglądem.",
+    "untouched": "Przepływy pracy i akcje, które go wskazują, nie są zmieniane: zgłaszają brakujący przepływ, dopóki ich nie poprawisz.",
+    "changed": "W międzyczasie zmieniło się to, co używa tego przepływu pracy. Sprawdź zaktualizowaną listę i potwierdź ponownie.",
+    "workSession": "Ustawienia sesji pracy",
+    "clearWorkSession_one": "Wyczyść też to ustawienie sesji pracy",
+    "clearWorkSession_few": "Wyczyść też te {{count}} ustawienia sesji pracy",
+    "clearWorkSession_many": "Wyczyść też tych {{count}} ustawień sesji pracy",
+    "clearWorkSession_other": "Wyczyść też te ustawienia sesji pracy ({{count}})",
+    "workSessionHint": "Wymagane, aby go usunąć: przepływ rozpoczęcia lub weryfikacji sesji pracy nigdy nie jest usuwany bez Twojej zgody. Po wyczyszczeniu sesje zaczynają się lub kończą bez niego.",
+    "workSessionRequired": "Ustawienia sesji pracy używają tego przepływu pracy. Zaznacz „Wyczyść też”, aby go usunąć."
   }
 }

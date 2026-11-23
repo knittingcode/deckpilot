@@ -62,7 +62,21 @@ pub struct AppState {
     pub key_watch: crate::commands::key_states::KeyStateWatch,
     /// The plugin visual assets the editor's previews draw.
     pub visual_assets: crate::commands::assets::VisualAssets,
+    /// The workflows of the profiles sharing each layout of a profile, as
+    /// last read, with the database's write generation then: previews
+    /// reuse it until something is written.
+    workflow_sharing: Mutex<Option<WorkflowSharing>>,
 }
+
+/// See [`AppState::workflows_sharing_layouts`].
+type WorkflowSharing = (
+    ProfileId,
+    (i64, u64),
+    std::collections::BTreeMap<
+        deckpilot_core::LayoutId,
+        std::collections::BTreeSet<deckpilot_core::WorkflowId>,
+    >,
+);
 
 /// What the agent reported about the database's protection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +135,7 @@ impl AppState {
             authorized_at: Mutex::new(None),
             key_watch: crate::commands::key_states::KeyStateWatch::default(),
             visual_assets: crate::commands::assets::VisualAssets::default(),
+            workflow_sharing: Mutex::new(None),
         })
     }
 
@@ -175,6 +190,35 @@ impl AppState {
             Some(_) => Err(CommandError::ConfirmationRequired),
             None => Err(CommandError::Locked),
         }
+    }
+
+    /// For each layout of `profile`, the workflows of the other profiles
+    /// that share it (`SqliteStore::workflows_sharing_layouts`), read again
+    /// only after the database was written (by the app or the agent).
+    pub fn workflows_sharing_layouts(
+        &self,
+        store: &SqliteStore,
+        profile: &Profile,
+    ) -> CommandResult<
+        std::collections::BTreeMap<
+            deckpilot_core::LayoutId,
+            std::collections::BTreeSet<deckpilot_core::WorkflowId>,
+        >,
+    > {
+        let generation = store.write_generation()?;
+        let mut cached = self
+            .workflow_sharing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some((id, at, sharing)) = cached.as_ref()
+            && *id == profile.id
+            && *at == generation
+        {
+            return Ok(sharing.clone());
+        }
+        let sharing = store.workflows_sharing_layouts(profile)?;
+        *cached = Some((profile.id, generation, sharing.clone()));
+        Ok(sharing)
     }
 
     pub fn is_unlocked(&self) -> bool {

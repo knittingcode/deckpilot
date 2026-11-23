@@ -28,8 +28,7 @@
       "saved": "Workflow saved",
       "duplicated": "Workflow duplicated",
       "duplicateFailed": "The workflow was not duplicated",
-      "deleted": "Workflow deleted",
-      "deleteFailed": "The workflow was not deleted"
+      "deleted": "Workflow deleted"
     },
     "run": "Run workflow",
     "runNamed": "Run “{{name}}”",
@@ -256,8 +255,7 @@
       "actionFailedHint": "{{error}} You can create it in the Action Library instead.",
       "duplicated": "Workflow duplicated",
       "duplicateFailed": "The workflow was not duplicated",
-      "deleted": "Workflow deleted",
-      "deleteFailed": "The workflow was not deleted"
+      "deleted": "Workflow deleted"
     },
     "save": {
       "label": "Save",
@@ -302,7 +300,6 @@
       "convertedHint": "Review these differences, then save. The steps are kept.",
       "copyName": "{{name}} (copy)",
       "duplicate": "Duplicate",
-      "inUse": "Used by a layout or another workflow",
       "deleteTitle": "Delete “{{name}}”?",
       "deleteDescription": "The workflow and its graph are removed from this profile."
     }
@@ -890,5 +887,23 @@
       "label": "Run",
       "description": "The current run of the workflow."
     }
+  },
+  "delete": {
+    "referenced_one": "{{count}} place uses this workflow. Review what happens to it before you delete it.",
+    "referenced_other": "{{count}} places use this workflow. Review what happens to them before you delete it.",
+    "keys": "Keys and gestures (layout › page › control)",
+    "actions": "Random and Switch actions",
+    "workflows": "Workflows that call it",
+    "clear_one": "Also clear this key",
+    "clear_other": "Also clear these {{count}} keys",
+    "keepHint": "The keys stay and show “Workflow missing” until you choose another action for them.",
+    "clearHint": "The keys are emptied. Their titles and looks go with them.",
+    "untouched": "Workflows and actions that name it are not changed: they report the missing workflow until you edit them.",
+    "changed": "What uses this workflow changed meanwhile. Review the updated list and confirm again.",
+    "workSession": "Work Session settings",
+    "clearWorkSession_one": "Also clear this Work Session setting",
+    "clearWorkSession_other": "Also clear these {{count}} Work Session settings",
+    "workSessionHint": "Required to delete it: a Work Session start or verification workflow is never removed without your say. Cleared, sessions start or finish without it.",
+    "workSessionRequired": "The Work Session settings use this workflow. Tick “Also clear” for them to delete it."
   }
 }

@@ -97,6 +97,8 @@ texts! {
     Missing => "face.missing", "Missing", "Brak akcji";
     Unavailable => "face.unavailable", "Unavailable", "Niedostępne";
     NotInThisProfile => "face.notInThisProfile", "Not in this profile", "Nie w tym profilu";
+    WorkflowMissing => "face.workflowMissing", "Workflow missing", "Brak przepływu";
+    WorkflowsOff => "face.workflowsOff", "Workflows off", "Przepływy wyłączone";
     Error => "face.error", "Error", "Błąd";
     NoPreviousLayout => "face.noPreviousLayout", "No previous layout", "Brak poprzedniego układu";
     NoProfile => "face.noProfile", "No profile", "Brak profilu";

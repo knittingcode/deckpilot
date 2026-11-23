@@ -51,6 +51,7 @@ mod triggers;
 pub mod variables;
 pub mod work_session;
 mod work_session_faces;
+mod workflow_keys;
 
 pub use gestures::GestureHooks;
 pub use security::{AUTO_LOCK_CHECK, Clock, system_clock};
@@ -579,6 +580,8 @@ pub struct Agent {
     key_watches: BTreeMap<u64, (ProfileId, Vec<ActionInstanceId>)>,
     /// Pending key gestures.
     gestures: gestures::Gestures,
+    /// Keys whose workflow did not start, told once each.
+    refused_keys: workflow_keys::RefusedKeys,
     /// Press-time states and hints of stateful keys.
     stateful: stateful::StatefulKeys,
     /// Rendered key images by face and size.
@@ -733,6 +736,7 @@ impl Agent {
             states: states::ButtonStates::default(),
             key_watches: BTreeMap::new(),
             gestures: gestures::Gestures::default(),
+            refused_keys: workflow_keys::RefusedKeys::default(),
             stateful: stateful::StatefulKeys::default(),
             frames: render::FrameCache::new(FRAME_CACHE),
             titles: display::TitleDependencies::default(),
@@ -1546,6 +1550,7 @@ impl Agent {
         self.states.reset();
         self.invalidate_gestures(deckpilot_core::gesture::GestureCancel::ProfileChanged);
         self.runtime.set_profile(Some(profile), project);
+        self.refresh_workflow_scope();
         self.log_unavailable_bindings();
         self.reload_icons();
         self.persisted_project = self.runtime.active_project_id();
@@ -1663,6 +1668,8 @@ impl Agent {
             }
             other => self.runtime.set_profile(other, project),
         }
+        // After the modules: whether the Workflows plugin is on.
+        self.refresh_workflow_scope();
         // The layouts devices switched to, as saved: the app may have
         // changed a default, removed or deleted a layout meanwhile.
         self.restore_device_layouts();

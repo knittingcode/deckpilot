@@ -136,6 +136,8 @@ pub struct Env {
     /// `git` first on its `PATH`).
     #[allow(clippy::struct_field_names)] // `env.extra_env`, as it reads.
     pub extra_env: Vec<(String, std::ffi::OsString)>,
+    /// More arguments (`plugins_workflows.rs` adds `--mock-devices mk2`).
+    pub extra_args: Vec<&'static str>,
     /// Bundled next to the plugin, as `default`-class plugins
     /// ([`Env::with_projects`]).
     pub companions: Vec<FirstParty>,
@@ -181,6 +183,7 @@ impl Env {
             key,
             plugin,
             extra_env: Vec::new(),
+            extra_args: Vec::new(),
             companions: Vec::new(),
         };
         env.stage(class);
@@ -342,6 +345,7 @@ impl Env {
         for (name, value) in &self.extra_env {
             command.env(name, value);
         }
+        command.args(&self.extra_args);
         let agent = Agent {
             child: command.spawn().expect("the agent starts"),
             paths: self.paths.clone(),
@@ -441,6 +445,17 @@ impl Agent {
     /// A client subscribed to the agent's events.
     pub async fn events(&self) -> AgentClient {
         let mut client = self.client().await;
+        client.subscribe().await.unwrap();
+        client
+    }
+
+    /// A client subscribed to the agent's events as the configuration app
+    /// is: it also receives the status bar's notifications.
+    pub async fn app_events(&self) -> AgentClient {
+        self.client().await;
+        let mut client = AgentClient::connect(&self.paths, ClientKind::Desktop)
+            .await
+            .unwrap();
         client.subscribe().await.unwrap();
         client
     }

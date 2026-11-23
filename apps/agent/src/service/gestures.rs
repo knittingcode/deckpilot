@@ -339,9 +339,12 @@ impl Agent {
                 self.run_detached(action, Some(overrides), Some(device), origin, context, None);
                 return;
             }
+            // Refused starts are told to the user (missing, another
+            // profile's, the Workflows plugin off, invalid, inputs needed,
+            // running, the limit), not only logged.
             Ok(RuntimeOutcome::WorkflowRequested { workflow }) => {
                 if let Err(error) = self.start_execution(workflow, workflow_trigger(origin)) {
-                    warn!(%error, "cannot start the workflow");
+                    self.workflow_not_started(device, shown, control, workflow, &error);
                 }
             }
             Ok(RuntimeOutcome::Navigated { .. }) => {
@@ -372,6 +375,20 @@ impl Agent {
                 return;
             }
             Ok(_) => {}
+            // A workflow this profile does not have: deleted, or another
+            // profile's in a shared layout. The key stays as it is.
+            Err(deckpilot_core::EngineError::UnknownWorkflow(workflow)) => {
+                let refusal = self
+                    .key_refusal(device, workflow)
+                    .unwrap_or(deckpilot_core::WorkflowRefusal::Missing);
+                let error = deckpilot_ipc::IpcError::new(
+                    deckpilot_ipc::ErrorCode::NotFound,
+                    refusal.message(),
+                )
+                .with_reason(refusal.code());
+                self.workflow_not_started(device, shown, control, workflow, &error);
+                return;
+            }
             Err(error) => warn!(%error, "input could not be handled"),
         }
         self.after_change();

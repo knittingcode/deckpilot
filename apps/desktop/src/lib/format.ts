@@ -1,6 +1,6 @@
 import { type TranslationKey, currentLanguage, i18n } from "@/i18n"
 
-import { controlLabel } from "./layout-model"
+import { controlLabel, triggerLabel } from "./layout-model"
 import type { LayoutStatus, Os, ResourceKind, Usage } from "./types"
 
 /** The operating systems' names, keys of `common.json`. */
@@ -62,14 +62,30 @@ export function describeLayout(status: LayoutStatus): string {
 
 /** Where an action is used, in the window's language. */
 export function describeUsage(usage: Usage): string {
-  return usage.type === "workflowStep"
-    ? i18n.t("settings:usage.workflowStep", {
+  switch (usage.type) {
+    case "workflowStep":
+      return i18n.t("settings:usage.workflowStep", {
         workflow: usage.workflowName,
         step: usage.position,
       })
-    : i18n.t("settings:usage.layoutControl", {
+    case "layoutBinding": {
+      const place = i18n.t("settings:usage.layoutControl", {
         layout: usage.layoutName,
         page: usage.pageName,
         control: controlLabel(usage.control),
       })
+      // A press is the plain key; gestures and dials say which.
+      return usage.trigger && usage.trigger.type !== "press"
+        ? i18n.t("settings:usage.withTrigger", { place, trigger: triggerLabel(usage.trigger) })
+        : place
+    }
+    case "workflowNode":
+      return i18n.t("settings:usage.workflowNode", { workflow: usage.workflowName })
+    case "actionParameter":
+      return i18n.t("settings:usage.actionParameter", { action: usage.actionName })
+    case "workSessionSetting":
+      return usage.setting === "startWorkflow"
+        ? i18n.t("settings:usage.workSessionStart")
+        : i18n.t("settings:usage.workSessionVerification")
+  }
 }
