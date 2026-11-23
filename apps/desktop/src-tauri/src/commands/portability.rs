@@ -350,7 +350,7 @@ pub struct PreviewResult {
 /// Decrypts and validates an export and describes what importing it would
 /// change. Nothing is written.
 #[tauri::command]
-pub fn preview_import(
+pub async fn preview_import(
     state: State<'_, AppState>,
     pending: State<'_, PendingImport>,
     path: String,
@@ -365,6 +365,19 @@ pub fn preview_import(
     let bytes = std::fs::read(&path).map_err(|e| CommandError::Invalid(e.to_string()))?;
     let content = payload::open(&bytes, &password)?;
     let mut warnings = import::validate(&content, &state.catalog)?;
+    // Key labels the importing agent knows would show a sensitive value or
+    // an identifier are refused, judged in the active profile's context.
+    let active = state.store()?.active_profile()?;
+    if let Some(profile) = active {
+        let layouts = content
+            .profiles
+            .iter()
+            .flat_map(|profile| &profile.layouts)
+            .chain(&content.library.layouts);
+        super::key_labels::check(&state.paths, profile, super::key_labels::templates(layouts))
+            .await
+            .map_err(PortabilityError::Invalid)?;
+    }
     // Bindings whose action cannot run from their control are imported as
     // they are and reported.
     warnings.extend(import::compatibility_warnings(

@@ -291,15 +291,35 @@ impl DeviceLayout {
     }
 
     /// Problems that do not make the layout invalid: pages inside folders
-    /// without a way back.
+    /// without a way back, and labels on a binding whose look is not shown
+    /// ([`LayoutIssue::DormantLook`]).
     pub fn warnings(&self) -> Vec<LayoutIssue> {
-        self.pages
+        let mut warnings: Vec<LayoutIssue> = self
+            .pages
             .iter()
             .filter(|page| !self.has_way_back(page.id))
             .map(|page| LayoutIssue::MissingBack {
                 page: page.name.clone(),
             })
-            .collect()
+            .collect();
+        for page in &self.pages {
+            for binding in &page.bindings {
+                let has_labels = binding
+                    .appearance
+                    .as_ref()
+                    .is_some_and(|look| !look.labels.is_empty());
+                let shown = crate::device_runtime::shown_binding(page, binding.control)
+                    .is_some_and(|shown| std::ptr::eq(shown, binding));
+                if has_labels && !shown {
+                    warnings.push(LayoutIssue::DormantLook {
+                        page: page.name.clone(),
+                        control: binding.control,
+                        trigger: binding.trigger,
+                    });
+                }
+            }
+        }
+        warnings
     }
 
     /// Explicit parents must exist, form no cycle and leave the home page

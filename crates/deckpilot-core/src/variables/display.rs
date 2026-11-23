@@ -66,13 +66,15 @@ pub const LEGACY_PLACEHOLDERS: [(&str, SystemVariable); 3] = [
     ("{project.name}", SystemVariable::ProjectCurrentName),
 ];
 
-/// Which text of a key a template is for. Today only the title; labels add
-/// variants (`label` with an index) without changing the rest.
+/// Which text of a key a template is for: its title, or one of its labels
+/// ([`crate::KeyLabel`]) by id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TextSlot {
     /// The key's title (the binding's label, else its action's).
     Title,
+    /// A label of the binding's look.
+    Label { id: crate::LabelId },
 }
 
 /// One text of one binding: the unit whose dependencies the agent tracks.

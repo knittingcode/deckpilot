@@ -168,6 +168,10 @@ pub(crate) enum Command {
     Execution(executions::ExecutionUpdate),
     /// A module's answer for a key's live state.
     ButtonState(states::StateUpdate),
+    /// Read the shared variables again and announce the changed ones, as
+    /// a reload does for them alone (tests: values that change in a storm).
+    #[cfg(feature = "test-hooks")]
+    ReloadVariables,
     /// A connection watches the live states of these actions' keys
     /// (`watchKeyStates`); none: it stopped or closed.
     WatchKeyStates {
@@ -280,6 +284,13 @@ impl AgentHandle {
         let _ = self
             .events
             .send(AgentEvent::SharedVariablesChanged { keys });
+    }
+
+    /// Reads the shared variables again and announces the changed ones
+    /// (tests: a value that changes, as a plugin's would).
+    #[cfg(feature = "test-hooks")]
+    pub fn reload_variables(&self) {
+        let _ = self.commands.send(Command::ReloadVariables);
     }
 
     /// How many redraws variable changes caused so far (tests).
@@ -976,6 +987,13 @@ impl Agent {
             }
             Command::ButtonState(update) => {
                 self.handle_button_state(update);
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::ReloadVariables => {
+                if let Err(error) = self.reload_variables() {
+                    warn!(%error, "cannot read the shared variables");
+                }
                 Flow::Continue
             }
             Command::WatchKeyStates {

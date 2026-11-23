@@ -13,11 +13,12 @@ mod marquee;
 mod text;
 mod vector;
 
+pub use face::labels::{Canvas, LabelBox, label_layout, label_layout_for};
 pub use face::{
     FrameCache, KeyColors, TextReport, background_preview, key_colors, marquee, render, render_for,
     render_scrolled, render_with, text_report,
 };
-pub use icons::{IconError, Icons, LibraryAsset};
+pub use icons::{IconError, Icons, LibraryAsset, SCALED_IMAGES, ScaledImageCache};
 pub use library::{
     LibraryIcon, icon_thumbnail_png, library_categories, library_icon, library_icons, search_icons,
 };

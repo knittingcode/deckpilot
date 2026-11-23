@@ -22,6 +22,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::IconId;
 use crate::assets::{AssetRef, Background};
 
+pub mod labels;
+pub use labels::{
+    KeyLabel, KeyLabelLook, LabelBackground, LabelId, LabelLayer, LabelOverflow, LabelPosition,
+    LabelVisibility, LabelWeight, MAX_LABEL_TEMPLATE, MAX_LABELS, Spot, TemplateIssue,
+    check_labels, check_labels_with, template_issues,
+};
+
 /// Largest width and height of a stored icon, in pixels.
 pub const MAX_ICON_SIZE: u32 = 256;
 /// Largest stored icon (encoded PNG), in bytes.
@@ -414,6 +421,10 @@ pub struct KeyAppearance {
     /// Underlined title. `None`: not underlined.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub underline: Option<bool>,
+    /// Further texts on the key ([`labels`]): at most [`MAX_LABELS`], in
+    /// paint order within their layer. Empty: none (not written).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<KeyLabel>,
 }
 
 impl KeyAppearance {
@@ -427,6 +438,10 @@ impl KeyAppearance {
     /// a text appearance that sets nothing is dropped too.
     pub fn normalized(mut self) -> Option<Self> {
         self.text = self.text.and_then(TextAppearance::normalized);
+        self.labels = std::mem::take(&mut self.labels)
+            .into_iter()
+            .filter_map(KeyLabel::normalized)
+            .collect();
         (!self.is_default()).then_some(self)
     }
 
@@ -435,15 +450,16 @@ impl KeyAppearance {
         self.text.unwrap_or_default()
     }
 
-    /// Checks the text appearance's values (see [`TextAppearance::check`])
-    /// and the font.
+    /// Checks the text appearance's values (see [`TextAppearance::check`]),
+    /// the font and the labels ([`check_labels`]).
     pub fn check(&self) -> Result<(), String> {
         if let Some(family) = &self.font_family
             && family.font().is_none()
         {
             return Err(format!("`{}` is not a title font", family.as_str()));
         }
-        self.text.as_ref().map_or(Ok(()), TextAppearance::check)
+        self.text.as_ref().map_or(Ok(()), TextAppearance::check)?;
+        check_labels(&self.labels)
     }
 
     pub fn is_bold(&self) -> bool {
