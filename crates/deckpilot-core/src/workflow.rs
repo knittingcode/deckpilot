@@ -278,7 +278,11 @@ impl Workflow {
         }
         {
             for issue in self.graph_issues(profile, registry) {
-                if issue.severity == crate::graph::IssueSeverity::Error {
+                // A node that needs configuration is saved; it keeps the
+                // graph from running until it is filled in.
+                if issue.severity == crate::graph::IssueSeverity::Error
+                    && issue.code.as_deref() != Some(crate::CONFIGURATION_INCOMPLETE)
+                {
                     issues.push(match issue.node {
                         Some(node) => format!("{node}: {}", issue.message),
                         None => issue.message,
@@ -294,29 +298,40 @@ impl Workflow {
                 ));
                 continue;
             };
-            let Some(handler) = registry.handler(&action.action_type) else {
+            if registry.handler(&action.action_type).is_none() {
                 let reason = registry
                     .unavailable_reason(&action.action_type)
                     .unwrap_or("its action type is not available");
                 issues.push(format!("step {position} ({}): {reason}", action.name));
                 continue;
-            };
-            if let Ok(parameters) = handler
-                .definition()
-                .normalize(&action.parameters.overlay(&step.overrides))
-            {
-                for problem in registry.check_parameters(&action.action_type, &parameters, profile)
-                {
-                    issues.push(format!("step {position} ({}): {problem}", action.name));
-                }
             }
-            if !step.overrides.is_empty()
-                && let Err(error) = registry.normalize(
-                    &action.action_type,
-                    &action.parameters.overlay(&step.overrides),
-                )
-            {
-                issues.push(format!("step {position} ({}): {error}", action.name));
+            // The step may use a draft (`crate::completeness`): what it
+            // leaves missing is saved and refused when the step runs. A
+            // blank override of a required parameter is still refused, as
+            // for a key's binding.
+            let merged = action.parameters.overlay(&step.overrides);
+            match registry.normalize_draft(&action.action_type, &merged) {
+                Ok(draft) => {
+                    for problem in
+                        registry.check_parameters(&action.action_type, &draft.parameters, profile)
+                    {
+                        issues.push(format!("step {position} ({}): {problem}", action.name));
+                    }
+                    for key in draft
+                        .missing
+                        .iter()
+                        .filter(|key| step.overrides.get(key).is_some())
+                    {
+                        issues.push(format!(
+                            "step {position} ({}): parameter `{key}` is required",
+                            action.name
+                        ));
+                    }
+                }
+                Err(error) if !step.overrides.is_empty() => {
+                    issues.push(format!("step {position} ({}): {error}", action.name));
+                }
+                Err(_) => {}
             }
             if let StepCondition::ActiveProject { project } = step.condition
                 && profile.project(project).is_none()

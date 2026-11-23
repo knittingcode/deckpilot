@@ -63,6 +63,11 @@ pub struct SavedWorkflow {
     workflow: Workflow,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     context_issues: Vec<ContextIssue>,
+    /// Steps or nodes that need configuration
+    /// (`deckpilot_core::completeness`): saved, refused when they run.
+    /// Left out when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    incomplete: Vec<deckpilot_core::IncompleteUse>,
 }
 
 /// Creates or replaces a workflow after validating it. Returns once the
@@ -95,6 +100,8 @@ pub async fn save_workflow(
         }
         let context_issues =
             workflow.context_issues(profile.workflow(workflow.id), profile, &actions);
+        let incomplete =
+            deckpilot_core::completeness::workflow_incomplete(&workflow, profile, &actions);
         match profile.workflows.iter_mut().find(|w| w.id == workflow.id) {
             Some(existing) => *existing = workflow.clone(),
             None => profile.workflows.push(workflow.clone()),
@@ -102,6 +109,7 @@ pub async fn save_workflow(
         Ok(SavedWorkflow {
             workflow,
             context_issues,
+            incomplete,
         })
     })
     .await
@@ -176,6 +184,7 @@ mod tests {
             value: SavedWorkflow {
                 workflow: workflow.clone(),
                 context_issues: Vec::new(),
+                incomplete: Vec::new(),
             },
             agent_reload: AgentReload::Applied,
         })
@@ -197,6 +206,7 @@ mod tests {
                     },
                     stored: false,
                 }],
+                incomplete: Vec::new(),
             },
             agent_reload: AgentReload::Applied,
         })

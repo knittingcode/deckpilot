@@ -12,6 +12,7 @@ pub mod appearance;
 pub mod assets;
 pub mod button_state;
 pub mod cancel;
+pub mod completeness;
 pub mod contexts;
 pub mod controls;
 pub mod credentials;
@@ -52,8 +53,9 @@ pub mod workflow;
 pub(crate) mod testing;
 
 pub use action::{
-    ActionInstance, ActionParameters, ActionType, ActionTypeId, MAX_LABEL_CHARS, ParameterError,
-    ParameterKind, ParameterSpec, ParameterValue, lines_of, looks_secret, validate_presentation,
+    ActionInstance, ActionParameters, ActionType, ActionTypeId, DraftParameters, MAX_LABEL_CHARS,
+    ParameterError, ParameterKind, ParameterSpec, ParameterValue, lines_of, looks_secret,
+    validate_presentation,
 };
 pub use alias::{
     ACTION_ALIASES, ActionAlias, AliasOutcome, AliasStatus, FIRST_PARTY_PUBLISHER, LegacyRoute,
@@ -75,6 +77,7 @@ pub use button_state::{
     MIN_REFRESH_INTERVAL, RefreshPolicy, StateError, StateSnapshot,
 };
 pub use cancel::{CancelReason, CancellationToken};
+pub use completeness::{CONFIGURATION_INCOMPLETE, IncompleteSite, IncompleteUse};
 pub use contexts::{
     ActionContext, ActionContexts, ContextGuard, ContextIssue, ContextSite, ContextWarning,
     ContextWarnings, NoContextWarnings, context_compatibility,
