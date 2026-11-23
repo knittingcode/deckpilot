@@ -90,9 +90,13 @@ impl AppId {
         }
         if value.contains(['/', '\\']) {
             let path = PathBuf::from(value);
-            let absolute = path.is_absolute()
-                // A Windows path read on another system, e.g. in tests.
-                || (platform == Platform::Windows && windows_absolute(value));
+            // Absolute as the platform the value is read for defines it,
+            // also when read on another system (tests).
+            let absolute = match platform {
+                Platform::Windows => windows_absolute(value),
+                Platform::MacOs | Platform::Linux => value.starts_with('/'),
+                Platform::Other => path.is_absolute(),
+            };
             if !absolute {
                 return Err(invalid(format!(
                     "“{value}” must be an absolute path, an application identifier or a program \
