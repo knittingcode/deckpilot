@@ -1,5 +1,7 @@
 import { createContext, useContext } from "react"
 
+import type { LabelBox } from "@/lib/key-labels"
+
 import type {
   ActionType,
   ControlId,
@@ -37,6 +39,10 @@ export interface KeyLook {
   symbols?: Map<string, string | null | undefined>
   /** How each key's title comes out on the device. */
   reports?: Map<string, TextLayoutReport>
+  /** Where the renderer put each key's labels (lib/key-labels.ts). */
+  labelBoxes?: Map<string, LabelBox[]>
+  /** The agent draws labels (capability `keyLabels`); without it they are kept, not shown. */
+  keyLabels?: boolean
   icons: IconState
   /** DeckPilot's icons and gradients and the plugins' assets. */
   library: VisualLibrary

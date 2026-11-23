@@ -33,6 +33,7 @@ import { KeyMenu } from "./icon-menu"
 import { type KeyLook, useKeyLook } from "./key-look-context"
 import { TitleFormatButton } from "./title-appearance-editor"
 import { suggestionsOf } from "./title-look"
+import { LabelsOfSelection, LabelsSection } from "./labels-section"
 import { TitlePreview, TitleVariablePicker } from "./title-variables"
 
 /**
@@ -218,6 +219,7 @@ export function KeyAppearanceEditor({
       )}
       <ShowTitle look={look} shared={shared} controls={[control]} />
       <Problem message={look.problem ?? look.icons.problem} />
+      {folder === undefined && <LabelsSection look={look} control={control} />}
     </div>
   )
 }
@@ -263,6 +265,7 @@ export function KeysAppearanceEditor({ controls }: { controls: ControlId[] }) {
       </div>
       <ShowTitle look={look} shared={shared} controls={styled} />
       <Problem message={pasteProblem ?? look.icons.problem} />
+      {styled.length > 1 && <LabelsOfSelection look={look} controls={styled} />}
     </div>
   )
 }

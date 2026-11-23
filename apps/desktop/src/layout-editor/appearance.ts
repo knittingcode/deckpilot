@@ -119,6 +119,9 @@ export function normalizeAppearance(appearance: KeyAppearance): KeyAppearance | 
     const value = appearance[field]
     if (typeof value === "boolean") result[field] = value
   }
+  // Labels are kept as they are (the backend checks them): a change of any
+  // other part of the look never drops them.
+  if (appearance.labels && appearance.labels.length > 0) result.labels = appearance.labels
   return Object.keys(result).length > 0 ? result : null
 }
 

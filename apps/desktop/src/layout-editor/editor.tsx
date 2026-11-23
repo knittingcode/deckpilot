@@ -412,7 +412,7 @@ export function LayoutEditor({
     countdown: FolderCountdown
   } | null>(null)
   const shownCountdown = deviceCountdown?.page === pageId ? deviceCountdown.countdown : null
-  const { faces, images, incompatible, reports, navigation } = usePreviewFaces(
+  const { faces, images, incompatible, reports, labelBoxes, navigation } = usePreviewFaces(
     profileId,
     draft,
     pageId,
@@ -458,6 +458,8 @@ export function LayoutEditor({
     animations,
     faces,
     reports,
+    labelBoxes,
+    keyLabels: agent?.capabilities?.includes("keyLabels") === true,
     icons: iconState,
     library: visualLibrary,
     typeOf: (control) => {
