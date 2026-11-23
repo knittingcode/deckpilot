@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from "react"
 
 import { ActionEditor } from "@/components/action-editor"
 import { ActionTypeChooser } from "@/components/action-type-chooser"
-import { EmptyState, ErrorNotice, Loading, Page } from "@/components/page"
+import { EmptyState, ErrorNotice, Loading } from "@/components/page"
 import { RequireProfile } from "@/components/require-profile"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select"
 import { useEditingProfile } from "@/hooks/use-profile"
 import { useTranslation } from "@/i18n"
+import { actionCategoryLabel } from "@/lib/action-category"
 import { useTitlebar } from "@/hooks/use-titlebar"
 import { actionReferences, isDirect, referenceTarget } from "@/lib/action-references"
 import { useActionModules, useAppContext } from "@/lib/app-context"
@@ -26,19 +27,6 @@ import { typeAvailability } from "@/lib/plugin-actions"
 import { ActionIcon } from "@/components/action-icon"
 import type { ActionInstance, ActionReference, ActionType, ProfileView } from "@/lib/types"
 import { cn } from "@/lib/utils"
-
-export function ActionsPage() {
-  const { t } = useTranslation()
-  return (
-    <Page
-      title={t("navigation:pages.actions")}
-      description={t("actions:library.description")}
-      profileScoped
-    >
-      <RequireProfile>{() => <ActionLibrary />}</RequireProfile>
-    </Page>
-  )
-}
 
 /** The category of actions whose type names none. */
 const OTHER = "Other"
@@ -139,8 +127,9 @@ function Library({
   const categories = [
     ...new Set(view.profile.actions.map((a) => typeOf(a.actionType)?.category ?? OTHER)),
   ].sort()
-  // The fallback category is the app's; plugin categories are shown as they are.
-  const categoryLabel = (c: string) => (c === OTHER ? t("actions:library.otherCategory") : c)
+  // The app's categories in the window's language; plugin categories as they are.
+  const categoryLabel = (c: string) =>
+    c === OTHER ? t("actions:library.otherCategory") : actionCategoryLabel(c)
 
   const groups = useMemo(() => {
     const needle = query.trim().toLowerCase()

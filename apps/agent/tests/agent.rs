@@ -3272,6 +3272,13 @@ async fn a_folder_shows_its_protected_back_key_and_exits_by_itself() {
     let key = |index| ControlId::Key { index };
     let page = |status: &AgentStatus| status.devices[0].page.clone();
     let system_back = key_image(&deckpilot_core::device_runtime::system_back_face());
+    // With Auto Exit, the Back key shows the seconds left (1 s here).
+    let counting = key_image(&deckpilot_core::device_runtime::folder_back_face(Some(
+        deckpilot_core::FolderCountdown {
+            seconds: 1,
+            paused: false,
+        },
+    )));
     assert!(agent.mock.wait_for(&agent.device, TIMEOUT, |frames, _| {
         frames.get(&key(5)).is_some()
     }));
@@ -3280,6 +3287,7 @@ async fn a_folder_shows_its_protected_back_key_and_exits_by_itself() {
         .await;
     let home_frames = agent.mock.frames(&agent.device);
     assert_ne!(home_frames.get(&key(0)), Some(&system_back));
+    assert_ne!(home_frames.get(&key(0)), Some(&counting));
 
     // The protected Back: drawn on key 0, one level up when pressed.
     agent.mock.tap(&agent.device, key(5));
@@ -3287,7 +3295,7 @@ async fn a_folder_shows_its_protected_back_key_and_exits_by_itself() {
         .wait_for_status(|s| page(s).as_deref() == Some("Folder"))
         .await;
     assert!(agent.mock.wait_for(&agent.device, TIMEOUT, |frames, _| {
-        frames.get(&key(0)) == Some(&system_back)
+        frames.get(&key(0)) == Some(&counting)
     }));
     agent.mock.tap(&agent.device, key(0));
     agent

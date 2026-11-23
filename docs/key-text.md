@@ -218,6 +218,68 @@ shown disabled. A plugin's default icon is its action's `node.icon`, under
 the key's own icon. The editor is always DeckPilot's: a plugin cannot
 replace it or draw its keys itself.
 
+### Keys whose plugin is missing
+
+A key keeps its assignment when the plugin behind its action is not
+installed, disabled, incompatible, failed verification, was withdrawn by
+the registry, is briefly away (updating, starting) or waits for a
+permission: the action's id, parameters, gesture bindings, title, icon,
+background and look stay stored as they are. Nothing is rewritten and no
+fallback is ever saved.
+
+The key then shows the **compact missing-plugin face**
+(`KeyFace::unavailable`, `KeyFace::unavailable_action`): the Lucide `plug`
+icon (`symbols::PLUGIN_MISSING`), a little softer than the title, in place
+of any icon (the action's, the type's or the key's own, which is only not
+drawn), the key's title (the user's, else the action's name) and the key's
+colours, title placement and background. There is no warning text on the
+key and nothing red; it reads at 72 × 72 on an MK.2. The face is made by
+the core (`device_runtime::page_faces`) and drawn by `deckpilot-render`, so
+the Canvas, the Inspector's key preview, the simulated and the physical
+device show the same pixels. Live state is not asked for.
+
+**Which keys show it** (one rule, from the key's bindings on the page
+shown): the face comes from the key's shown binding (press, else single
+press, else the first). It is the missing-plugin face when that binding's
+action cannot run (its type is unknown to the registry) **and** no other
+binding of the key can run. A binding can run when it is an action whose
+type the registry knows and that runs from the control, a workflow of the
+profile, a page, Back or a stateful key. So a key whose long press still
+works keeps its normal look (its title, look and the action's own icon);
+only the affected gesture's card in the Inspector says what is missing. A
+binding that cannot run from its control (`docs/device-controls.md`) is a
+different state and keeps its own face.
+
+**Why, and the way back**, in the Inspector (`lib/action-availability.ts`,
+`components/missing-action-note.tsx`), from what the agent reports:
+
+| State (`MissingReason`) | Where it comes from | Recovery |
+| --- | --- | --- |
+| `notInstalled` | the plugin is not (any more) installed | Install plugin (Marketplace, at the plugin) |
+| `disabled` | the user turned the plugin off or withdrew a migrated module | Enable plugin (Settings › Plugins) |
+| `incompatible` | the installed version does not provide the action | Update plugin |
+| `integrity` | the plugin's files do not match their record (`broken`) | Update plugin |
+| `revoked` | the registry revoked the installed version (`quarantined`) | Update plugin |
+| `busy` | installing, updating, rolling back, or the host is away | none: it comes back by itself |
+| `permission` | an action's permission is not granted | Review permissions (Settings › Plugins) |
+| `moduleDisabled` | a built-in module is turned off | Turn on module (Settings › Modules) |
+
+Every card also offers **Replace action** and **Remove assignment** (that
+gesture only, one undo step). Nothing is installed, enabled or granted
+from the Inspector: the existing Marketplace and plugin settings ask as
+they always do. The note names the action and the plugin by name, lists
+the kept title and settings (values of secret-bearing kinds are only
+counted) and never shows a plugin id or the agent's raw reason.
+
+**Coming back**: when the plugin can run the action again, the registry
+knows its type again and the key is drawn from the stored binding as it
+was, with nothing to reassign. Legacy action types of built-ins that moved
+to a plugin (`projects.next`, `git.status`, …) follow the plugin that
+serves them, in the agent and in the app (`plugin_actions.rs`,
+`extend_legacy`). The editor asks for its key faces again whenever what
+the plugins can run changes (`catalogSignature`), so it never keeps a stale
+missing-plugin face.
+
 ## Dynamic text
 
 Templates (`{project.key}`, `{project.name}`, `{profile}`, `{page.…}`) are

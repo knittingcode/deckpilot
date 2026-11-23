@@ -1,4 +1,5 @@
 import { ClipboardCopy, ScrollText } from "lucide-react"
+import { lazy, Suspense } from "react"
 import { toast } from "sonner"
 
 import { AgentStopped } from "@/components/agent"
@@ -84,6 +85,23 @@ export function DiagnosticsSettings() {
           </p>
         )}
       </SettingsSection>
+      {/* Builds with plugins: their diagnostics, from the same plugin client as the Marketplace. */}
+      {import.meta.env.VITE_DECKPILOT_PLUGINS === "1" && (
+        <SettingsSection
+          id="plugin-diagnostics"
+          title={t("settings:diagnostics.pluginsTitle")}
+          description={t("settings:diagnostics.pluginsDescription")}
+        >
+          <Suspense fallback={<Loading />}>
+            <PluginDiagnostics />
+          </Suspense>
+        </SettingsSection>
+      )}
     </>
   )
 }
+
+/** Loaded only when it renders, so builds without plugins never load plugin code. */
+const PluginDiagnostics = lazy(() =>
+  import("@/plugins/marketplace").then((m) => ({ default: m.PluginDiagnostics })),
+)

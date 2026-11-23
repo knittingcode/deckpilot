@@ -6,6 +6,7 @@ import type { SettingsPageId } from "./navigation"
 
 import { withPluginModules } from "./plugin-actions"
 import type { AgentConnection, ModuleInfo, ProfilesView, UpdateState } from "./types"
+import { useMockContexts, withProposedContexts } from "@/dev/action-context-mock"
 
 export interface AppContextValue {
   profiles: ProfilesView
@@ -40,7 +41,7 @@ export interface AppContextValue {
 /** Pages of the core application. */
 /** Pages of the core application; `profiles` opens Settings › Profiles. */
 export type CorePageId =
-  "dashboard" | "actions" | "workflows" | "profiles" | "designer" | "layouts" | "marketplace"
+  "workflows" | "profiles" | "designer" | "layouts" | "marketplace"
 
 /** A core page or a page contributed by a module (`module/page`). */
 export type PageId = CorePageId | ModulePageId
@@ -60,5 +61,11 @@ export function useAppContext(): AppContextValue {
  */
 export function useActionModules(): ModuleInfo[] {
   const { modules, pluginModules } = useAppContext()
-  return useMemo(() => withPluginModules(modules, pluginModules ?? []), [modules, pluginModules])
+  // Development only: the audit's proposed contexts, when switched on
+  // (dev/action-context-mock.ts). Builds always use the agent's data.
+  const mock = useMockContexts()
+  return useMemo(() => {
+    const all = withPluginModules(modules, pluginModules ?? [])
+    return import.meta.env.DEV && mock ? withProposedContexts(all) : all
+  }, [modules, pluginModules, mock])
 }

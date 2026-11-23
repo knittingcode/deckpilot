@@ -290,7 +290,12 @@ describe("the Page Navigator (the dock the page counter unfolds)", () => {
       })
       expect(outline).toHaveAttribute("aria-hidden")
       expect(outline).toHaveAttribute("height", "170")
-      expect(outline.querySelector("path")).toHaveClass("fill-card", "stroke-border")
+      // A frosted, translucent surface: the glass is clipped to the same silhouette.
+      expect(outline.querySelector("path")).toHaveClass("page-dock-surface")
+      const glass = document.querySelector<HTMLElement>("[data-slot=page-dock-glass]")
+      expect(glass).toHaveClass("page-dock-glass", "pointer-events-none")
+      expect(glass).toHaveAttribute("aria-hidden")
+      expect(glass?.style.height).toBe("170px")
       // The toolbar keeps its size and place; the outline is its border now.
       expect(bar()).toHaveClass("rounded-lg", "border", "p-0.5", "border-transparent")
       expect(bar()).not.toHaveClass("w-full")
@@ -443,7 +448,9 @@ describe("the Page Navigator (the dock the page counter unfolds)", () => {
         .map((i) => i.textContent),
     ).toEqual(["Rename", "Duplicate", "Delete page"])
     // Its one setting, a checkbox.
-    expect(within(menu).getByRole("menuitemcheckbox")).toHaveTextContent("Close after a key runs")
+    expect(within(menu).getByRole("menuitemcheckbox")).toHaveTextContent(
+      "Exit after action completes",
+    )
     // Destructive colour on Delete only; nothing disabled, no notes under the items.
     expect(within(menu).getByRole("menuitem", { name: "Delete page" })).toHaveAttribute(
       "data-variant",
@@ -659,7 +666,7 @@ describe("a folder that closes after use", () => {
   it("is offered for pages inside a folder only, and saved with the layout", async () => {
     api.saveLayout.mockResolvedValue({ ...main, agentReload: { state: "applied" } })
     const user = renderEditor()
-    const name = /Close after a key runs/
+    const name = /Exit after action completes/
     const toggle = async (page: string) => {
       const menu = await rowMenu(user, page)
       return within(menu).queryByRole("menuitemcheckbox", { name })

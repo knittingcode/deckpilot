@@ -150,6 +150,9 @@ pub fn render(face: &KeyFace, width: u32, height: u32) -> Frame {
 
 /// Largest icon above a title, as a share of the key's shorter side.
 pub(crate) const MARK_WITH_TEXT: f32 = 0.42;
+/// How far the missing-plugin icon of [`KeyFace::unavailable`] is mixed
+/// towards the key's background.
+const UNAVAILABLE_MARK_FADE: f32 = 0.3;
 /// Largest icon on a key without text.
 pub(crate) const MARK_ALONE: f32 = 0.54;
 
@@ -704,6 +707,22 @@ fn own_icon<'a>(look: &'a KeyAppearance, icons: &'a Icons) -> Option<OwnIcon<'a>
     }
 }
 
+/// The key's own icon as this face draws it: none on the compact face of
+/// a key whose action cannot run ([`KeyFace::unavailable`]), which shows
+/// the missing-plugin icon instead. The icon stays the binding's: it is
+/// drawn again once the action can run.
+fn shown_own_icon<'a>(
+    face: &KeyFace,
+    look: &'a KeyAppearance,
+    icons: &'a Icons,
+) -> Option<OwnIcon<'a>> {
+    if face.unavailable {
+        None
+    } else {
+        own_icon(look, icons)
+    }
+}
+
 /// The mark a face is drawn with: what the layout depends on besides the
 /// face and whether it is drawn over a picture.
 fn mark_of<'a>(face: &'a KeyFace, own: Option<OwnIcon<'a>>) -> Option<Mark<'a>> {
@@ -735,7 +754,7 @@ pub fn text_report(face: &KeyFace, width: u32, height: u32, icons: &Icons) -> Op
     let default_look = KeyAppearance::default();
     let look = face.appearance.as_ref().unwrap_or(&default_look);
     // As drawn: an icon that is not in `icons` is not drawn.
-    let own = own_icon(look, icons);
+    let own = shown_own_icon(face, look, icons);
     let over_icon = matches!(own, Some(OwnIcon::Image(..)));
     layout(
         &Request {
@@ -772,12 +791,19 @@ pub fn marquee(face: &KeyFace, width: u32, height: u32, icons: &Icons) -> Option
 }
 
 /// Whether `face` is the folder's protected Back key: its own vector icon
-/// (`assets/icons/folder-back.svg`), centred, without text, on the
-/// model's default background like every other key.
+/// (`assets/icons/folder-back.svg`), on the model's default background
+/// like every other key. Alone it is centred; with its Auto Exit countdown
+/// (`deckpilot_core::device_runtime::folder_back_face`) the seconds are its
+/// title under the icon, placed as any key's icon and title, and the pause
+/// glyph, while a run holds the countdown, is a small mark in the top
+/// right corner.
 fn is_folder_back(face: &KeyFace) -> bool {
     face.symbol.as_deref() == Some(deckpilot_core::device_runtime::symbols::FOLDER_BACK)
-        && face.glyph.is_none()
+        && face.glyph.is_none_or(|glyph| glyph == Glyph::Pause)
 }
+
+/// Share of the key's shorter side the folder Back's pause mark takes.
+const PAUSE_MARK: f32 = 0.2;
 
 fn draw_face(
     face: &KeyFace,
@@ -789,7 +815,7 @@ fn draw_face(
 ) -> Frame {
     let default_look = KeyAppearance::default();
     let look = face.appearance.as_ref().unwrap_or(&default_look);
-    let own = own_icon(look, icons);
+    let own = shown_own_icon(face, look, icons);
     let folder_back = is_folder_back(face) && own.is_none();
     let colors = key_colors(face, defaults);
     let fill = colors.background;
@@ -814,7 +840,12 @@ fn draw_face(
     if let Some(series) = &face.series {
         marks::draw_series(&mut frame, series, marks::lighten(fill, 35));
     }
-    if folder_back && let Some(back) = crate::vector::folder_back() {
+    // The folder's Back with its countdown: the icon above the seconds.
+    let back_titled = folder_back && !face.title.is_empty();
+    if folder_back
+        && !back_titled
+        && let Some(back) = crate::vector::folder_back()
+    {
         // Drawn from the vector at this size: sharp on every key.
         let side = width.min(height) as f32 * MARK_ALONE;
         let (left, top) = ((width as f32 - side) / 2.0, (height as f32 - side) / 2.0);
@@ -826,16 +857,38 @@ fn draw_face(
             face,
             look,
             colors,
-            has_mark: mark.is_some(),
+            has_mark: mark.is_some() || back_titled,
             over_icon: image.is_some(),
         },
         width,
         height,
         scroll,
     );
+    if back_titled
+        && let (Some(back), Some((left, top, side))) = (crate::vector::folder_back(), placed.mark)
+    {
+        back.draw(&mut frame, left, top, side, ink);
+    }
+    if folder_back && face.glyph == Some(Glyph::Pause) {
+        let short = width.min(height) as f32;
+        let side = short * PAUSE_MARK;
+        let margin = short * 0.06;
+        let left = width as f32 - side - margin;
+        marks::draw_glyph_in(&mut frame, Glyph::Pause, (left, margin, side), ink);
+    }
     if let (Some(mark), Some((left, top, side))) = (mark, placed.mark) {
         match mark {
             Mark::Glyph(glyph) => marks::draw_glyph_in(&mut frame, glyph, (left, top, side), ink),
+            // The missing-plugin icon is drawn a little softer than the
+            // title: a neutral mark, not an alarm.
+            Mark::Symbol(name) if face.unavailable => text::draw_icon(
+                &mut frame,
+                name,
+                left,
+                top,
+                side,
+                text::mix(ink, fill, UNAVAILABLE_MARK_FADE),
+            ),
             Mark::Symbol(name) => text::draw_icon(&mut frame, name, left, top, side, ink),
         }
     }

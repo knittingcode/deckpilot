@@ -1,16 +1,21 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest"
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { LayoutEditor } from "@/layout-editor/editor"
 import type { ActionType, DeviceLayout, DeviceModel, ProfileView } from "@/lib/types"
 import { api, resetApi } from "@/test/api-mock"
+import { drop, dnd, resetDnd } from "@/test/dnd"
 import { savedByAgent } from "@/test/fixtures"
 
 vi.mock("@/lib/api", async () => (await import("@/test/api-mock")).apiModule)
+// Actions are chosen by dragging them from the Action Library.
+vi.mock("@dnd-kit/core", async (original) =>
+  (await import("@/test/dnd")).dndModule(await original()),
+)
 vi.mock("sonner", async () => (await import("@/test/toast")).sonnerModule)
 // The real module (with `AppContext`, which the variable picker reads), but a
 // fixed `useAppContext` for the editor.
@@ -19,8 +24,36 @@ vi.mock("sonner", async () => (await import("@/test/toast")).sonnerModule)
 const enabledModules = vi.hoisted(() => ({ workSession: true, noPlugins: false }))
 vi.mock("@/lib/app-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/app-context")>()),
-  useActionModules: () =>
-    enabledModules.workSession ? [{ id: "work-session", enabled: true, actionTypes: [] }] : [],
+  // The library lists types: Log message (whose action "Mail" is exactly a
+  // new one, complete with the declared default, so placing the type uses
+  // it; an incomplete one would be a draft of its own on every drop).
+  useActionModules: () => [
+    {
+      id: "general",
+      name: "General",
+      enabled: true,
+      supported: true,
+      actionTypes: [
+        {
+          id: "general.log",
+          name: "Log message",
+          description: "",
+          category: "general",
+          requiresProject: false,
+          parameters: [
+            {
+              key: "message",
+              label: "Message",
+              kind: { type: "text", multiline: false },
+              required: true,
+              default: { type: "text", value: "mail" },
+            },
+          ],
+        },
+      ],
+    },
+    ...(enabledModules.workSession ? [{ id: "work-session", enabled: true, actionTypes: [] }] : []),
+  ],
   useAppContext: () => ({
     profiles: { activeProfileId: null, profiles: [] },
     refresh: vi.fn(),
@@ -139,7 +172,12 @@ const view = {
         actionType: logType.id,
         parameters: { message: { type: "text", value: "shop" } },
       },
-      { id: "mail", name: "Mail", actionType: logType.id, parameters: {} },
+      {
+        id: "mail",
+        name: "Mail",
+        actionType: logType.id,
+        parameters: { message: { type: "text", value: "mail" } },
+      },
     ],
     workflows: [{ id: "deploy", name: "Deploy", steps: [] }],
     projects: [],
@@ -164,15 +202,51 @@ function renderEditor(saved: DeviceLayout = layout) {
 
 const key = (name: string) => screen.getByRole("button", { name })
 const describes = (name: string) => key(name).getAttribute("title")
-/** A gesture's chooser; an empty gesture's is named "Assign an action to: …". */
-const row = (name: string) =>
-  screen.getByRole("combobox", {
-    name: (accessible) => accessible === name || accessible === `Assign an action to: ${name}`,
-  })
+/** What a gesture's card shows it does: its action's name, never a chooser. */
+const row = (name: string) => {
+  const card = screen.getByRole("group", { name })
+  const shown = card.querySelector<HTMLElement>(
+    "[data-slot=gesture-card-action], [data-slot=gesture-card-empty]",
+  )
+  if (!shown) throw new Error(`no card for ${name}`)
+  return shown
+}
 
+const SLOTS: Record<string, string> = {
+  "Single press": "click",
+  "Double click": "doubleClick",
+  "Long press": "longPress",
+  Release: "release",
+}
+
+/** The library's drag id of what is named `option`. */
+const LIBRARY: Record<string, string> = {
+  // A type: its action that is exactly a new one ("Mail") is used.
+  Mail: "library:type:general.log",
+  Back: "library:back",
+  Deploy: "library:workflow:deploy",
+  Multi: "library:workflow:multi",
+  "Work Session controller": "library:stateful:workSession",
+}
+
+/**
+ * Assigns `option` to `gesture` of the selected control as the user does:
+ * dragged from the Action Library onto the gesture's card ("Nothing": the
+ * card's X).
+ */
 async function choose(user: ReturnType<typeof userEvent.setup>, gesture: string, option: string) {
-  await user.click(row(gesture))
-  await user.click(await screen.findByRole("option", { name: option }))
+  if (option === "Nothing") {
+    await user.click(screen.getByRole("button", { name: `Remove ${gesture}` }))
+    return
+  }
+  const slot = [...dnd.droppables].find(
+    (id) => id.startsWith("gesture-slot:") && id.endsWith(`:${SLOTS[gesture] ?? gesture}`),
+  )
+  drop(LIBRARY[option] ?? option, slot ?? `no slot for ${gesture}`)
+  // The drop resolves what was dragged before it assigns it.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
 }
 
 async function save(user: ReturnType<typeof userEvent.setup>): Promise<DeviceLayout> {
@@ -190,6 +264,7 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = () => undefined
 })
 beforeEach(() => {
+  resetDnd()
   resetApi()
   api.previewLayout.mockResolvedValue([])
   api.listIcons.mockResolvedValue([])
@@ -236,14 +311,17 @@ describe("gesture editor without the Workflows plugin", () => {
     expect(
       screen.getByText(/^Read-only: the Workflows plugin is off\. This workflow still runs/),
     ).toBeInTheDocument()
-    // Not offered for another gesture; the Multi Action is.
+    // Not offered for another gesture (the library does not let it be
+    // dragged, and a drop is refused); the Multi Action is.
     await user.click(key("Key 3"))
-    await user.click(row("Double click"))
-    expect(await screen.findByRole("option", { name: "Multi" })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    )
-    expect(screen.queryByRole("option", { name: /^Deploy/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Drag Multi onto a control" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Drag Deploy onto a control" })).toBeNull()
+    await choose(user, "Double click", "Deploy")
+    expect(describes("Key 3")).toBe("Key 3")
+    await choose(user, "Double click", "Multi")
+    await waitFor(() => {
+      expect(describes("Key 3")).toBe("Key 3: Double click: Multi")
+    })
   })
 })
 
@@ -259,8 +337,8 @@ describe("gesture editor", () => {
     await choose(user, "Double click", "Deploy")
     expect(describes("Key 3")).toBe("Key 3: Double click: Deploy")
     await choose(user, "Long press", "Mail")
-    await choose(user, "Single press", "Shop")
-    expect(describes("Key 3")).toBe("Key 3: Double click: Deploy · Long press: Mail · Click: Shop")
+    await choose(user, "Single press", "Back")
+    expect(describes("Key 3")).toBe("Key 3: Double click: Deploy · Long press: Mail · Click: Back")
     expect(screen.getByRole("note")).toHaveTextContent("after the double-click window (350 ms)")
     expect(screen.getByLabelText("Double-click window (ms)")).toHaveAttribute(
       "placeholder",
@@ -322,6 +400,121 @@ describe("gesture editor", () => {
     ])
   })
 
+  it("removes one gesture with its X, keeping the others, the title and the look", async () => {
+    const keyThree = { kind: "key", index: 2 } as const
+    const look = { background: "#112233", iconId: "icon-1", showTitle: true }
+    const withGestures: DeviceLayout = {
+      ...layout,
+      pages: layout.pages.map((page) =>
+        page.id !== "home"
+          ? page
+          : {
+              ...page,
+              bindings: [
+                ...page.bindings,
+                {
+                  control: keyThree,
+                  trigger: { type: "click" },
+                  target: { type: "action", action: "shop" },
+                  label: "Shop now",
+                  appearance: look,
+                },
+                {
+                  control: keyThree,
+                  trigger: { type: "doubleClick" },
+                  target: { type: "workflow", workflow: "deploy" },
+                },
+                {
+                  control: keyThree,
+                  trigger: { type: "longPress" },
+                  target: { type: "action", action: "mail" },
+                },
+              ],
+            },
+      ),
+    }
+    const user = renderEditor(withGestures)
+    await user.click(key("Key 3"))
+    // No "Clear control" in the Inspector: each gesture's X removes its action.
+    expect(screen.queryByRole("button", { name: /Clear control/ })).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: "Remove Single press" }))
+    // The key keeps its title: the double click, now the shown binding, carries it.
+    expect(describes("Key 3")).toBe("Key 3: Double click: Shop now · Long press: Mail")
+    // The emptied card is a drop target again.
+    expect(row("Single press")).toHaveAccessibleName("Nothing assigned to Single press")
+    expect(row("Single press")).toHaveTextContent("Drag an action here")
+
+    await user.click(screen.getByRole("button", { name: "Remove Long press" }))
+    // Undo brings the long press back; redo removes it again.
+    await user.click(screen.getByRole("button", { name: "Undo" }))
+    expect(describes("Key 3")).toBe("Key 3: Double click: Shop now · Long press: Mail")
+    await user.click(screen.getByRole("button", { name: "Redo" }))
+    expect(describes("Key 3")).toBe("Key 3: Double click: Shop now")
+
+    const saved = await save(user)
+    // The double click now carries the key's title and look.
+    expect(saved.pages[0]?.bindings.filter((b) => b.control.index === 2)).toEqual([
+      {
+        control: keyThree,
+        trigger: { type: "doubleClick" },
+        target: { type: "workflow", workflow: "deploy" },
+        label: "Shop now",
+        appearance: look,
+      },
+    ])
+  })
+
+  it("replaces one gesture's action by a drop, previews it, and saves or reverts it", async () => {
+    const user = renderEditor()
+    await user.click(key("Key 2"))
+    expect(row("Single press")).toHaveTextContent("Shop")
+    await choose(user, "Single press", "Mail")
+    expect(describes("Key 2")).toBe(
+      "Key 2: Click: Mail · Double click: Deploy · Long press: Open “Tools”",
+    )
+    expect(row("Single press")).toHaveTextContent("Mail")
+    expect(row("Double click")).toHaveTextContent("Deploy")
+    // The preview is asked for the replaced action.
+    await waitFor(() => {
+      const draft = api.previewLayout.mock.calls.at(-1)?.[1]
+      expect(draft?.pages[0]?.bindings.find((b) => b.control.index === 1)?.target).toEqual({
+        type: "action",
+        action: "mail",
+      })
+    })
+    // Revert brings the saved one back; nothing is saved.
+    await user.click(screen.getByRole("button", { name: /Revert/ }))
+    await waitFor(() => {
+      expect(row("Single press")).toHaveTextContent("Shop")
+    })
+    expect(api.saveLayout).not.toHaveBeenCalled()
+
+    await choose(user, "Single press", "Mail")
+    const saved = await save(user)
+    // Only the single press changed: its old overrides go with its old
+    // action, the key's look stays, the other gestures are as they were.
+    expect(saved.pages[0]?.bindings.filter((b) => b.control.index === 1)).toEqual([
+      {
+        control: { kind: "key", index: 1 },
+        trigger: { type: "click" },
+        target: { type: "action", action: "mail" },
+        label: null,
+        appearance: { background: "#204060" },
+      },
+      {
+        control: { kind: "key", index: 1 },
+        trigger: { type: "doubleClick" },
+        target: { type: "workflow", workflow: "deploy" },
+      },
+      {
+        control: { kind: "key", index: 1 },
+        trigger: { type: "longPress" },
+        target: { type: "openPage", page: "tools" },
+      },
+    ])
+  })
+
   it("asks before turning a press into a click and changes nothing on cancel", async () => {
     const user = renderEditor()
     await user.click(key("Key 1"))
@@ -367,10 +560,8 @@ describe("gesture editor", () => {
     await user.click(key("Key 3"))
 
     // Not on the raw release: a stateful key needs gestures.
-    await user.click(row("Release"))
-    expect(await screen.findByRole("option", { name: "Mail" })).toBeInTheDocument()
-    expect(screen.queryByRole("option", { name: "Work Session controller" })).toBeNull()
-    await user.keyboard("{Escape}")
+    await choose(user, "Release", "Work Session controller")
+    expect(describes("Key 3")).toBe("Key 3")
 
     await choose(user, "Single press", "Work Session controller")
     expect(describes("Key 3")).toBe("Key 3: Click: Work Session")
@@ -402,10 +593,12 @@ describe("gesture editor", () => {
     try {
       const user = renderEditor()
       await user.click(key("Key 3"))
-      await user.click(row("Single press"))
-      expect(await screen.findByRole("option", { name: "Mail" })).toBeInTheDocument()
-      expect(screen.queryByRole("option", { name: "Work Session controller" })).toBeNull()
-      await user.keyboard("{Escape}")
+      expect(
+        screen.getByRole("button", { name: "Drag Log message onto a control" }),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole("button", { name: "Drag Work Session controller onto a control" }),
+      ).toBeNull()
     } finally {
       enabledModules.workSession = true
     }
@@ -448,8 +641,9 @@ describe("gesture editor", () => {
   it("overrides parameters per gesture and saves a variable reference as a reference", async () => {
     const user = renderEditor()
     await user.click(key("Key 2"))
+    // Overrides are this key's or gesture's only, apart from the action's definition.
     const toggle = screen.getByRole("button", {
-      name: /Parameters for this gesture \(1 overridden\)/,
+      name: /Parameters for this key\/gesture only \(1 overridden\)/,
     })
     expect(toggle).toHaveAttribute("aria-expanded", "false")
     await user.click(toggle)

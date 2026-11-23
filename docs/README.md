@@ -11,6 +11,9 @@ led to it; where the code differs, the code and the tests win.
 - [Device controls](device-controls.md): which controls and inputs an
   action can be bound to, and what happens to a binding that cannot run.
   *Design record, sections 1–3 implemented.*
+- [Action contexts](action-contexts.md): where an action makes sense (a
+  key, a gesture, a key's display, a Multi Action step, a workflow node);
+  reported, not yet enforced.
 - [Security](security.md): what is protected, the encrypted configuration,
   key handling, locking, exports and the threat model.
 - [Updates](updates.md): update channels, signed updates, the automatic

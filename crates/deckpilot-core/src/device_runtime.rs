@@ -21,11 +21,11 @@ use crate::gesture::{BoundGestures, Gesture, GestureTimings};
 use crate::i18n::SystemText;
 use crate::stateful::StatefulBinding;
 use crate::{
-    ActionInstanceId, ActionParameters, ActionRegistry, ActionResult, ActiveProjectContext,
-    BindingTarget, ControlBinding, CycleDirection, DeviceLayout, Engine, EngineError, FaceStyle,
-    FolderExit, FolderTimers, KeyFace, LayoutId, MachineConfig, PageId, PageLabel, Profile,
-    ProfileId, Project, ProjectId, Trigger, WorkflowId, WorkflowReport, render_label,
-    render_page_label,
+    ActionContext, ActionInstanceId, ActionParameters, ActionRegistry, ActionResult,
+    ActiveProjectContext, BindingTarget, ControlBinding, CycleDirection, DeviceLayout, Engine,
+    EngineError, FaceStyle, FolderExit, FolderTimers, KeyFace, LayoutId, MachineConfig, PageId,
+    PageLabel, Profile, ProfileId, Project, ProjectId, Trigger, WorkflowId, WorkflowReport,
+    render_label, render_page_label,
 };
 
 /// The clock Auto Exit countdowns ([`crate::FolderTimers`]) are measured
@@ -112,6 +112,10 @@ pub enum RuntimeOutcome {
         overrides: ActionParameters,
         /// The device whose control asked.
         device: DeviceId,
+        /// Where it runs ([`crate::contexts`]): `key` or `gesture`, by the
+        /// binding's trigger. Hand it to [`Runtime::detached_action`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<ActionContext>,
     },
     /// A control is bound to this workflow. Workflows can run for a long
     /// time, so the runtime does not run them itself: the caller starts
@@ -511,7 +515,12 @@ impl Runtime {
             Some(BindingTarget::Stateful(binding)) => {
                 Ok(RuntimeOutcome::StatefulRequested { binding, gesture })
             }
-            Some(target) => self.dispatch(device, target, origin),
+            Some(target) => self.dispatch(
+                device,
+                target,
+                origin,
+                ActionContext::of_trigger(Trigger::from(gesture)),
+            ),
         }
     }
 
@@ -707,13 +716,15 @@ impl Runtime {
     /// thread: the engine, and copies of the profile, the machine and the
     /// project context as they are now. `overrides` and `device` are a
     /// key binding's, as for a press; `origin` says what started it (a
-    /// key, a gesture, the app).
+    /// key, a gesture, the app), and `context` where it runs (that of
+    /// [`RuntimeOutcome::ActionRequested`]; `None` from the app).
     pub fn detached_action(
         &self,
         action: ActionInstanceId,
         overrides: Option<ActionParameters>,
         device: Option<DeviceId>,
         origin: crate::RunOrigin,
+        context: Option<ActionContext>,
     ) -> Result<DetachedAction, EngineError> {
         let session = self.session.as_ref().ok_or(EngineError::NoActiveProfile)?;
         if session.profile.action(action).is_none() {
@@ -726,12 +737,15 @@ impl Runtime {
             projects: session.projects.clone(),
             action,
             overrides: overrides.filter(|o| !o.is_empty()),
-            invocation: device
-                .map_or_else(
-                    crate::resolution::Invocation::default,
-                    crate::resolution::Invocation::from_device,
-                )
-                .with_origin(origin),
+            invocation: crate::resolution::Invocation {
+                context,
+                ..device
+                    .map_or_else(
+                        crate::resolution::Invocation::default,
+                        crate::resolution::Invocation::from_device,
+                    )
+                    .with_origin(origin)
+            },
         })
     }
 
@@ -950,16 +964,6 @@ impl Runtime {
             None => {}
         }
         stack.last().copied()
-    }
-
-    /// Whether the page `device` shows is a folder that closes after one of
-    /// its keys ran something ([`crate::LayoutPage::auto_return`]).
-    fn closes_after_use(&self, device: &DeviceId) -> bool {
-        self.layout_of(device)
-            .zip(self.current_page(device))
-            .is_some_and(|(layout, page)| {
-                layout.page(page).is_some_and(|p| p.auto_return) && layout.parent_of(page).is_some()
-            })
     }
 
     /// Applies the page request of an action's `result` to `device` and
@@ -1205,6 +1209,7 @@ impl Runtime {
                 }
             }
         }
+        self.show_folder_countdown(device, &mut faces);
         faces
     }
 
@@ -1405,9 +1410,10 @@ impl Runtime {
                         target = Some(BindingTarget::Back);
                     }
                 }
+                // A raw input (press, release, rotation, touch) is a key's.
                 match target {
                     None => ignored("control is not bound"),
-                    Some(target) => self.dispatch(device, target, origin),
+                    Some(target) => self.dispatch(device, target, origin, ActionContext::Key),
                 }
             }
         }
@@ -1441,7 +1447,9 @@ impl Runtime {
             )
         };
         Some(match input {
-            deckpilot_device::ControlInput::Press => self.dispatch(device, target, origin),
+            deckpilot_device::ControlInput::Press => {
+                self.dispatch(device, target, origin, ActionContext::Key)
+            }
             _ => Ok(RuntimeOutcome::Ignored {
                 reason: refusal.into(),
             }),
@@ -1453,30 +1461,22 @@ impl Runtime {
         device: &DeviceId,
         target: BindingTarget,
         origin: crate::RunOrigin,
+        context: ActionContext,
     ) -> Result<RuntimeOutcome, EngineError> {
-        // A folder that closes by itself returns once one of its keys ran
-        // an action or started a workflow, whatever came of it.
-        let closes = self.closes_after_use(device);
-        let shown = self.current_page(device);
-        let outcome = self.dispatch_target(device, target, origin)?;
-        if closes
-            && self.current_page(device) == shown
-            && matches!(
-                outcome,
-                RuntimeOutcome::Action { .. }
-                    | RuntimeOutcome::ActionRequested { .. }
-                    | RuntimeOutcome::WorkflowRequested { .. }
-            )
-        {
-            self.go_back(device);
-        }
+        // A folder that exits after its actions complete is left when what
+        // the key started is over, not here: the caller holds the folder
+        // for the key's runs and releases it when they end
+        // (`folder_activity.rs`).
+        let outcome = self.dispatch_target(device, target, origin, context)?;
         self.follow_folders(device, false);
         Ok(outcome)
     }
 
     /// Runs `target` for `device` as a key bound to it would, without
-    /// closing a folder after it: what a Random Action picked. The pick ran
-    /// from a key of the page, which already closed it if it closes.
+    /// closing a folder after it: what a Random Action picked (or a Multi
+    /// Action Switch's state). The pick ran from a key of the page, which
+    /// already closed it if it closes. It runs in the `key` context,
+    /// whatever gesture ran the Random Action.
     ///
     /// # Errors
     ///
@@ -1488,7 +1488,7 @@ impl Runtime {
         target: BindingTarget,
         origin: crate::RunOrigin,
     ) -> Result<RuntimeOutcome, EngineError> {
-        let outcome = self.dispatch_target(device, target, origin);
+        let outcome = self.dispatch_target(device, target, origin, ActionContext::Key);
         self.follow_folders(device, false);
         outcome
     }
@@ -1498,6 +1498,7 @@ impl Runtime {
         device: &DeviceId,
         target: BindingTarget,
         origin: crate::RunOrigin,
+        context: ActionContext,
     ) -> Result<RuntimeOutcome, EngineError> {
         match target {
             BindingTarget::Action { action, overrides } => {
@@ -1506,6 +1507,7 @@ impl Runtime {
                         action,
                         overrides,
                         device: device.clone(),
+                        context: Some(context),
                     });
                 }
                 // The key's device is part of the context its references
@@ -1518,7 +1520,9 @@ impl Runtime {
                     &mut session.projects,
                     action,
                     Some(&overrides),
-                    &crate::resolution::Invocation::from_device(device.clone()).with_origin(origin),
+                    &crate::resolution::Invocation::from_device(device.clone())
+                        .with_origin(origin)
+                        .with_context(context),
                 )?;
                 self.apply_page_request(device, &mut result);
                 Ok(RuntimeOutcome::Action { action, result })
@@ -1625,7 +1629,18 @@ pub fn page_faces(
                         if incompatible {
                             unavailable_face(binding, profile, project)
                         } else {
-                            face_for(registry, binding, layout, profile, project)
+                            // Another gesture of the key that can run keeps
+                            // the key from looking unavailable
+                            // (docs/key-text.md, "Keys whose plugin is
+                            // missing").
+                            let other_runs = page
+                                .bindings
+                                .iter()
+                                .filter(|other| {
+                                    other.control == *control && !std::ptr::eq(*other, binding)
+                                })
+                                .any(|other| binding_runs(registry, other, profile, capabilities));
+                            face_for(registry, binding, layout, profile, project, other_runs)
                         }
                         .with_appearance(binding.appearance.as_ref())
                         .with_title_suggestions(title_suggestions(registry, binding, profile))
@@ -1750,12 +1765,55 @@ fn open_page_title(
     binding.label.clone().or_else(name)
 }
 
+/// Whether `binding` can run now: its action's type is known to
+/// `registry` and runs from its control, its workflow is in the profile.
+/// Navigation and stateful keys always can.
+fn binding_runs(
+    registry: &ActionRegistry,
+    binding: &ControlBinding,
+    profile: &Profile,
+    capabilities: Option<&DeviceCapabilities>,
+) -> bool {
+    let compatible = || {
+        capabilities.is_none_or(|capabilities| {
+            crate::binding_incompatibility(binding, capabilities, registry, profile).is_none()
+        })
+    };
+    match &binding.target {
+        BindingTarget::Action { action, .. } => profile.action(*action).is_some_and(|instance| {
+            registry.definition(&instance.action_type).is_some() && compatible()
+        }),
+        BindingTarget::Workflow { workflow } => {
+            profile.workflow(*workflow).is_some() && compatible()
+        }
+        BindingTarget::OpenPage { .. } | BindingTarget::Back | BindingTarget::Stateful(_) => true,
+    }
+}
+
+/// The face of an action whose type cannot run now: the compact
+/// missing-plugin face, or with `another_gesture_runs` the key's plain look
+/// with the action's own icon.
+fn not_running_face(label: String, icon: Option<String>, another_gesture_runs: bool) -> KeyFace {
+    if another_gesture_runs {
+        KeyFace::new(FaceStyle::Action, label).with_symbol(icon)
+    } else {
+        KeyFace::unavailable_action(label)
+    }
+}
+
+/// The face of `binding`. An action whose type cannot run now (its plugin
+/// or module is missing, disabled, incompatible, unverified or waits for a
+/// permission) shows the compact missing-plugin face
+/// ([`KeyFace::unavailable_action`]) with its title, unless
+/// `another_gesture_runs`: then the key keeps its plain look and only the
+/// affected gesture says what is missing (in the app's Inspector).
 fn face_for(
     registry: &ActionRegistry,
     binding: &ControlBinding,
     layout: &DeviceLayout,
     profile: &Profile,
     project: Option<&Project>,
+    another_gesture_runs: bool,
 ) -> KeyFace {
     match &binding.target {
         BindingTarget::Action { action, overrides } => {
@@ -1814,8 +1872,7 @@ fn face_for(
                         project,
                     )
                     .unwrap_or_else(|| {
-                        KeyFace::new(FaceStyle::Notice, label)
-                            .with_system_detail(SystemText::Unavailable)
+                        not_running_face(label, instance.icon.clone(), another_gesture_runs)
                     }),
             )
         }
@@ -1877,13 +1934,22 @@ pub mod symbols {
     pub const FOLDER_BACK: &str = "folder-back";
     pub const WORKFLOW: &str = "list-ordered";
     pub const WORK_SESSION: &str = "timer";
+    /// A key whose action cannot run now (its plugin is missing, disabled
+    /// or unavailable, [`crate::KeyFace::unavailable`]): Lucide's `plug`.
+    pub const PLUGIN_MISSING: &str = "plug";
 }
+
+mod folder_activity;
+pub use folder_activity::folder_back_face;
 
 mod working;
 pub use working::{EditorTarget, NavigationError, NavigationState};
 
 #[cfg(test)]
 mod compat_tests;
+
+#[cfg(test)]
+mod context_tests;
 
 #[cfg(test)]
 mod working_tests;
@@ -1899,6 +1965,9 @@ mod folder_tests;
 
 #[cfg(test)]
 mod title_tests;
+
+#[cfg(test)]
+mod missing_plugin_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2094,13 +2163,21 @@ mod tests {
             action,
             overrides,
             device: from,
+            context,
         } = outcome
         else {
             panic!("expected a request, got {outcome:?}");
         };
         assert_eq!((action, from.clone()), (later_id, device()));
+        assert_eq!(context, Some(ActionContext::Key));
         let run = runtime
-            .detached_action(action, Some(overrides), Some(from), crate::RunOrigin::Key)
+            .detached_action(
+                action,
+                Some(overrides),
+                Some(from),
+                crate::RunOrigin::Key,
+                context,
+            )
             .unwrap();
         assert_eq!(run.name(), "Later");
         // Runs on another thread, from copies.
@@ -2111,7 +2188,13 @@ mod tests {
         assert!(result.is_success(), "{result:?}");
         assert_eq!(result.message, "later");
         assert!(matches!(
-            runtime.detached_action(ActionInstanceId::new(), None, None, crate::RunOrigin::App),
+            runtime.detached_action(
+                ActionInstanceId::new(),
+                None,
+                None,
+                crate::RunOrigin::App,
+                None
+            ),
             Err(EngineError::UnknownAction(_))
         ));
         // Other keys still run in place.
@@ -2785,6 +2868,71 @@ mod tests {
             RuntimeOutcome::Ignored { .. }
         ));
         assert_eq!(runtime.key_gestures(&device(), key), None);
+    }
+
+    /// A draft (an action whose required parameter has no value yet) on a
+    /// key's click and, completed by its override, on the double click:
+    /// the layout stays compatible, the click is refused as incomplete
+    /// before anything runs, and the double click runs.
+    #[test]
+    fn a_draft_on_a_gesture_is_refused_and_its_completed_override_runs() {
+        let (mut f, _) = gesture_fixture();
+        let draft = registry()
+            .create_instance(
+                "Echo",
+                crate::testing::echo_type(),
+                &ActionParameters::new(),
+            )
+            .unwrap();
+        let draft_id = draft.id;
+        f.profile.actions.push(draft);
+        let key = ControlId::Key { index: 4 };
+        let home = f.profile.layouts[0].home_page;
+        f.profile.layouts[0]
+            .page_mut(home)
+            .unwrap()
+            .bindings
+            .extend([
+                ControlBinding::new(key, Trigger::Click, BindingTarget::action(draft_id)),
+                ControlBinding::new(
+                    key,
+                    Trigger::DoubleClick,
+                    BindingTarget::Action {
+                        action: draft_id,
+                        overrides: ActionParameters::new()
+                            .with("message", ParameterValue::Text("hello".into())),
+                    },
+                ),
+            ]);
+        let mut runtime = runtime();
+        runtime.set_profile(Some(f.profile.clone()), None);
+        connect(&mut runtime, &device());
+        assert!(matches!(
+            runtime.device_layout_status(&device()),
+            LayoutStatus::Compatible { .. }
+        ));
+        let RuntimeOutcome::Action { result, .. } = runtime
+            .dispatch_gesture(&device(), key, Gesture::Click)
+            .unwrap()
+        else {
+            panic!("the click runs its binding");
+        };
+        assert_eq!(
+            result.code.as_deref(),
+            Some(crate::CONFIGURATION_INCOMPLETE)
+        );
+        assert_eq!(
+            result.data.get("missing").map(String::as_str),
+            Some("message")
+        );
+        let RuntimeOutcome::Action { result, .. } = runtime
+            .dispatch_gesture(&device(), key, Gesture::DoubleClick)
+            .unwrap()
+        else {
+            panic!("the double click runs its binding");
+        };
+        assert!(result.is_success(), "{result:?}");
+        assert_eq!(result.message, "hello");
     }
 
     #[test]

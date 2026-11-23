@@ -9,6 +9,7 @@ import { NotificationsButton } from "@/components/notifications"
 import { AppStatusBar } from "@/components/status-bar"
 import { CoreStatusItems } from "@/components/status-sources"
 import { StatusContext, createStatusStores } from "@/hooks/use-status"
+import { i18n } from "@/i18n"
 import { NOTIFICATION_EVENT } from "@/lib/api"
 import { AppContext } from "@/lib/app-context"
 import { SecurityContext } from "@/lib/security-context"
@@ -101,4 +102,67 @@ describe("toolbar notifications", () => {
     expect(screen.getByText("No notifications")).toBeInTheDocument()
     expect(stores.notifications.getSnapshot()).toEqual([])
   })
+
+  for (const [language, pattern, listName] of [
+    ["en", /^\d{2}\/\d{2}\/\d{4}, \d{2}:\d{2}\s?[AP]M$/, "Notifications"],
+    ["pl", /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$/, "Powiadomienia"],
+  ] as const) {
+    it(`shows the time at the right of the title row, once (${language})`, async () => {
+      await act(async () => {
+        await i18n.changeLanguage(language)
+      })
+      try {
+        const user = userEvent.setup()
+        await renderStatusBar()
+        notify({
+          title: "A rather long title of a notification that has to wrap beside its time",
+          body: "The devices stay blank until the agent is started again.",
+          severity: "warning",
+        })
+        notify({ title: "Short", severity: "info" })
+        await user.click(screen.getByRole("button", { name: /^(Notifications|Powiadomienia)/ }))
+        const list = within(screen.getByRole("list", { name: listName }))
+        for (const item of list.getAllByRole("listitem")) {
+          const times = item.querySelectorAll("time")
+          // One time per notification, in the title row, after the title.
+          expect(times).toHaveLength(1)
+          const time = times[0] as HTMLTimeElement
+          const heading = time.parentElement as HTMLElement
+          expect(heading).toHaveAttribute("data-slot", "notification-heading")
+          expect(heading).toHaveClass("flex", "flex-wrap", "items-baseline")
+          expect(heading.firstElementChild).toHaveClass(
+            "min-w-[min(100%,10rem)]",
+            "flex-1",
+            "break-words",
+          )
+          expect(heading.lastElementChild).toBe(time)
+          // At the right, never shrunk or wrapped, small and muted, tabular.
+          expect(time).toHaveClass(
+            "ml-auto",
+            "shrink-0",
+            "whitespace-nowrap",
+            "text-xs",
+            "text-muted-foreground",
+            "tabular-nums",
+          )
+          expect(time.textContent).toMatch(pattern)
+          // Machine-readable and with seconds on hover; screen readers read it.
+          expect(Number.isNaN(Date.parse(time.dateTime))).toBe(false)
+          expect(time).not.toHaveAttribute("aria-hidden")
+          expect(item.textContent).toContain(time.textContent)
+        }
+        // The description directly under the title row.
+        const first = list.getAllByRole("listitem")[1] as HTMLElement
+        const heading = first.querySelector("[data-slot=notification-heading]") as HTMLElement
+        expect(heading.nextElementSibling?.textContent).toBe(
+          "The devices stay blank until the agent is started again.",
+        )
+        expect(heading.parentElement?.children).toHaveLength(2)
+      } finally {
+        await act(async () => {
+          await i18n.changeLanguage("en")
+        })
+      }
+    })
+  }
 })

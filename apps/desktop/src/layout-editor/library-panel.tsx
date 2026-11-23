@@ -7,15 +7,17 @@ import {
   FolderPlus,
   ListOrdered,
   ListPlus,
+  Loader2,
+  Timer,
 } from "lucide-react"
 import { useState, type ReactNode } from "react"
 
 import { ActionIcon } from "@/components/action-icon"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { useTranslation } from "@/i18n"
+import { actionCategoryId, actionCategoryLabel } from "@/lib/action-category"
 import type { ActionType } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -27,7 +29,6 @@ import {
   type CatalogGroup,
 } from "./catalog"
 import type { ActionPreset, DragSource } from "./editing"
-import { loadCompatibleOnly, saveCompatibleOnly } from "./library-sidebar"
 import type { TargetGroup, TargetOption } from "./targets"
 
 /** A 16px icon in a small neutral square, the same for every row. */
@@ -45,6 +46,7 @@ function EntryIcon({ children }: { children: ReactNode }) {
 function OptionIcon({ option }: { option: TargetOption }) {
   if (option.kind === "action") return <ActionIcon name={option.icon} />
   if (option.kind === "workflow") return <ListOrdered aria-hidden />
+  if (option.kind === "stateful") return <Timer aria-hidden />
   if (option.target.type === "back") return <ArrowLeft aria-hidden />
   return <Folder aria-hidden />
 }
@@ -220,8 +222,36 @@ function CatalogItem({ entry, incompatible }: { entry: CatalogEntry; incompatibl
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: catalogDragId(entry.type.id),
     data: source,
-    disabled: incompatible !== undefined,
+    disabled: incompatible !== undefined || entry.unavailable !== undefined,
   })
+  // A plugin's type it cannot run now (e.g. a permission it lacks): listed,
+  // not placeable, with why.
+  if (entry.unavailable !== undefined && entry.grant) {
+    return <GrantEntry entry={entry} grant={entry.grant} />
+  }
+  if (entry.unavailable !== undefined) {
+    return (
+      <li
+        className={DISABLED_ENTRY}
+        aria-label={t("editor:library.unavailable", {
+          name: entry.type.name,
+          reason: entry.unavailable,
+        })}
+        aria-disabled
+        data-compatibility="unavailable"
+      >
+        <span className="flex h-6 min-w-0 items-center gap-2">
+          <EntryIcon>
+            <ActionIcon name={entry.type.node?.icon} />
+          </EntryIcon>
+          <span className="min-w-0 flex-1 truncate" title={entry.type.name}>
+            {entry.type.name}
+          </span>
+        </span>
+        <span className="pl-8 text-xs">{entry.unavailable}</span>
+      </li>
+    )
+  }
   if (incompatible !== undefined) {
     return (
       <IncompatibleEntry
@@ -247,6 +277,64 @@ function CatalogItem({ entry, incompatible }: { entry: CatalogEntry; incompatibl
         <ActionIcon name={entry.type.node?.icon} />
       </EntryIcon>
       <span className="min-w-0 flex-1 truncate">{entry.type.name}</span>
+    </li>
+  )
+}
+
+/** Stops an event at the Grant button: no drag, no selection, nothing else. */
+const isolate = (event: { stopPropagation: () => void }) => {
+  event.stopPropagation()
+}
+
+/**
+ * A type that only waits for permissions the user can grant: listed, not
+ * placeable, with "Permission required" and a Grant button (the permission
+ * dialog asks before anything is granted). Permission ids are not shown.
+ */
+function GrantEntry({
+  entry,
+  grant,
+}: {
+  entry: CatalogEntry
+  grant: NonNullable<CatalogEntry["grant"]>
+}) {
+  const { t } = useTranslation()
+  return (
+    <li
+      className={DISABLED_ENTRY}
+      aria-label={t("editor:library.unavailable", {
+        name: entry.type.name,
+        reason: entry.unavailable,
+      })}
+      data-compatibility="unavailable"
+      data-slot="grant-entry"
+    >
+      <span className="flex h-6 min-w-0 items-center gap-2">
+        <EntryIcon>
+          <ActionIcon name={entry.type.node?.icon} />
+        </EntryIcon>
+        <span className="min-w-0 flex-1 truncate" title={entry.type.name}>
+          {entry.type.name}
+        </span>
+        <Button
+          variant="outline"
+          size="xs"
+          className="shrink-0"
+          aria-label={grant.label}
+          disabled={grant.pending}
+          onPointerDown={isolate}
+          onMouseDown={isolate}
+          onKeyDown={isolate}
+          onClick={(event) => {
+            event.stopPropagation()
+            grant.onGrant()
+          }}
+        >
+          {grant.pending && <Loader2 className="animate-spin" aria-hidden />}
+          {t("editor:grant.button")}
+        </Button>
+      </span>
+      <span className="pl-8 text-xs">{entry.unavailable}</span>
     </li>
   )
 }
@@ -336,8 +424,10 @@ const matches = (text: string, needle: string) => text.toLowerCase().includes(ne
 
 /**
  * What can be dragged onto controls, in one searchable list: the
- * profile's actions and workflows, navigation (pages, Back, a new folder)
- * and, under "New: …", the action types that need no settings.
+ * profile's actions and workflows, navigation (pages, Back, a new folder,
+ * and the navigation action types), sequences (Multi Action) and the
+ * action types that need no settings, under their category's name in the
+ * window's language (`lib/action-category.ts`), one section per category.
  */
 export function LibraryPanel({
   groups,
@@ -346,6 +436,7 @@ export function LibraryPanel({
   multiAction = false,
   variant = "card",
   compatibility,
+  displays,
 }: {
   groups: TargetGroup[]
   /** Action types that can be placed directly; see `catalogGroups`. */
@@ -361,24 +452,22 @@ export function LibraryPanel({
   variant?: "card" | "plain"
   /**
    * The control the library is for (docs/device-controls.md): entries that
-   * cannot go on it are disabled with the reason (`incompatible` of the
-   * groups' options, `catalog` for action types), and "Compatible only"
-   * hides them.
+   * cannot go on it stay listed, disabled with the reason (`incompatible`
+   * of the groups' options, `catalog` for action types).
    */
   compatibility?: {
     /** The selected control, e.g. "Key 3"; `null` when none is. */
     control: string | null
     catalog: (type: ActionType) => string | null
   }
+  /**
+   * Actions and types that only show something on a key (their press does
+   * nothing; `lib/action-context.ts`), listed in a section of their own.
+   */
+  displays?: { options: TargetOption[]; catalog: CatalogEntry[] }
 }) {
   const { t } = useTranslation()
   const [query, setQuery] = useState("")
-  const [compatibleOnly, setCompatibleOnlyState] = useState(loadCompatibleOnly)
-  const setCompatibleOnly = (on: boolean) => {
-    setCompatibleOnlyState(on)
-    saveCompatibleOnly(on)
-  }
-  const hiding = Boolean(compatibility?.control) && compatibleOnly
   const whyNot = (type: ActionType) =>
     compatibility?.control ? (compatibility.catalog(type) ?? undefined) : undefined
   const [closed, setClosed] = useState<Set<string>>(new Set())
@@ -387,28 +476,26 @@ export function LibraryPanel({
   const shown = groups
     .map((group) => ({
       ...group,
-      options: group.options.filter(
-        (o) =>
-          matches(`${o.label} ${group.label}`, needle) && !(hiding && o.incompatible !== undefined),
-      ),
+      options: group.options.filter((o) => matches(`${o.label} ${group.label}`, needle)),
     }))
     .filter((group) => group.options.length > 0 || (group.id === "navigation" && !searching))
-  const types = filterCatalog(catalog, query)
-    .map((group) => ({
-      ...group,
-      entries: hiding ? group.entries.filter((e) => whyNot(e.type) === undefined) : group.entries,
-    }))
-    .filter((group) => group.entries.length > 0)
-  const shownPresets = presets.filter(
-    (p) =>
-      matches(`${p.label} ${p.description} ${p.category}`, needle) &&
-      !(hiding && whyNot(p.type) !== undefined),
+  const types = filterCatalog(catalog, query, actionCategoryLabel).filter(
+    (group) => group.entries.length > 0,
   )
-  const presetsOf = (category: string) => shownPresets.filter((p) => p.category === category)
+  const shownPresets = presets.filter((p) =>
+    matches(`${p.label} ${p.description} ${p.category} ${actionCategoryLabel(p.category)}`, needle),
+  )
+  const presetsOf = (category: string) =>
+    shownPresets.filter((p) => actionCategoryId(p.category) === actionCategoryId(category))
   for (const category of new Set(shownPresets.map((p) => p.category))) {
-    if (!types.some((group) => group.label === category))
+    if (!types.some((group) => actionCategoryId(group.label) === actionCategoryId(category)))
       types.push({ label: category, entries: [] })
   }
+  // The navigation action types are listed with the pages and Back, in one
+  // Navigation section; every other category is a section of its own.
+  const isNavigation = (category: string) => actionCategoryId(category) === "navigation"
+  const navigationTypes = types.find((group) => isNavigation(group.label))
+  const otherTypes = types.filter((group) => !isNavigation(group.label))
   // Found by the English words too, whatever the language.
   const folder =
     !searching ||
@@ -432,9 +519,32 @@ export function LibraryPanel({
       return next
     })
   }
-  const nothing = searching && shown.length === 0 && types.length === 0 && !folder && !multi
+  const navigationCount =
+    (navigation?.options.length ?? 0) +
+    (folder ? 1 : 0) +
+    (navigationTypes ? navigationTypes.entries.length + presetsOf(navigationTypes.label).length : 0)
+  const shownDisplays = {
+    options: (displays?.options ?? []).filter((o) => matches(o.label, needle)),
+    catalog: (displays?.catalog ?? []).filter((e) =>
+      matches(`${e.type.name} ${e.type.description} ${e.type.category}`, needle),
+    ),
+  }
+  const displayCount = shownDisplays.options.length + shownDisplays.catalog.length
+  const nothing =
+    searching && shown.length === 0 && types.length === 0 && displayCount === 0 && !folder && !multi
 
-  const hint = t("editor:library.hint")
+  /** A category's action types and presets. */
+  const catalogEntries = (group: CatalogGroup) => (
+    <>
+      {group.entries.map((entry) => (
+        <CatalogItem key={entry.type.id} entry={entry} incompatible={whyNot(entry.type)} />
+      ))}
+      {presetsOf(group.label).map((entry) => (
+        <PresetItem key={entry.key} entry={entry} incompatible={whyNot(entry.type)} />
+      ))}
+    </>
+  )
+
   const content = (
     <>
       <Input
@@ -447,26 +557,6 @@ export function LibraryPanel({
           setQuery(event.target.value)
         }}
       />
-      {compatibility && (
-        <div className="grid gap-1">
-          <div className="flex items-center gap-2">
-            <Switch
-              id="library-compatible-only"
-              size="sm"
-              checked={compatibleOnly}
-              onCheckedChange={setCompatibleOnly}
-            />
-            <Label htmlFor="library-compatible-only" className="text-xs font-normal">
-              {t("editor:library.compatibleOnly")}
-            </Label>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {compatibility.control
-              ? t("editor:library.showingFits", { control: compatibility.control })
-              : t("editor:library.selectControl")}
-          </p>
-        </div>
-      )}
       <div className={cn("grid gap-2", variant === "card" && "max-h-[28rem] overflow-y-auto")}>
         {!hasItems && !searching && catalog.length === 0 && (
           <p className="text-sm text-muted-foreground">{t("editor:library.empty")}</p>
@@ -474,6 +564,68 @@ export function LibraryPanel({
         {nothing && (
           <p className="text-sm text-muted-foreground">{t("editor:library.noMatches")}</p>
         )}
+        {displayCount > 0 && (
+          <Section
+            label={t("editor:library.displays")}
+            count={displayCount}
+            open={isOpen("displays")}
+            onToggle={() => {
+              toggle("displays")
+            }}
+          >
+            {shownDisplays.options.map((option) => (
+              <LibraryEntry key={option.value} option={option} />
+            ))}
+            {shownDisplays.catalog.map((entry) => (
+              <CatalogItem key={entry.type.id} entry={entry} incompatible={whyNot(entry.type)} />
+            ))}
+          </Section>
+        )}
+        {navigationCount > 0 && (
+          <Section
+            label={t("editor:library.navigation")}
+            count={navigationCount}
+            open={isOpen("navigation")}
+            onToggle={() => {
+              toggle("navigation")
+            }}
+          >
+            {folder && <NewFolderEntry />}
+            {navigation?.options.map((option) => (
+              <LibraryEntry key={option.value} option={option} />
+            ))}
+            {navigationTypes && catalogEntries(navigationTypes)}
+          </Section>
+        )}
+        {multi && (
+          <Section
+            label={t("editor:library.sequences")}
+            count={1}
+            open={isOpen("sequences")}
+            onToggle={() => {
+              toggle("sequences")
+            }}
+          >
+            <NewMultiActionEntry />
+          </Section>
+        )}
+        {otherTypes.map((group) => {
+          const id = `category:${actionCategoryId(group.label)}`
+          return (
+            <Section
+              key={id}
+              label={actionCategoryLabel(group.label)}
+              count={group.entries.length + presetsOf(group.label).length}
+              open={isOpen(id)}
+              onToggle={() => {
+                toggle(id)
+              }}
+            >
+              {catalogEntries(group)}
+            </Section>
+          )
+        })}
+        {/* What is not a type comes after the types: workflows and the like. */}
         {shown
           .filter((group) => group.id !== "navigation")
           .map((group) => (
@@ -491,70 +643,17 @@ export function LibraryPanel({
               ))}
             </Section>
           ))}
-        {(folder || navigation) && (
-          <Section
-            label={t("editor:library.navigation")}
-            count={(navigation?.options.length ?? 0) + (folder ? 1 : 0)}
-            open={isOpen("navigation")}
-            onToggle={() => {
-              toggle("navigation")
-            }}
-          >
-            {folder && <NewFolderEntry />}
-            {navigation?.options.map((option) => (
-              <LibraryEntry key={option.value} option={option} />
-            ))}
-          </Section>
-        )}
-        {multi && (
-          <Section
-            label={t("editor:library.newSequence")}
-            count={1}
-            open={isOpen("new:sequence")}
-            onToggle={() => {
-              toggle("new:sequence")
-            }}
-          >
-            <NewMultiActionEntry />
-          </Section>
-        )}
-        {types.map((group) => {
-          const id = `new:${group.label}`
-          return (
-            <Section
-              key={id}
-              label={t("editor:library.newCategory", { category: group.label })}
-              count={group.entries.length + presetsOf(group.label).length}
-              open={isOpen(id)}
-              onToggle={() => {
-                toggle(id)
-              }}
-            >
-              {group.entries.map((entry) => (
-                <CatalogItem key={entry.type.id} entry={entry} incompatible={whyNot(entry.type)} />
-              ))}
-              {presetsOf(group.label).map((entry) => (
-                <PresetItem key={entry.key} entry={entry} incompatible={whyNot(entry.type)} />
-              ))}
-            </Section>
-          )
-        })}
       </div>
     </>
   )
+  // The search first, then the sections: no instructions above them.
   if (variant === "plain") {
-    return (
-      <div className="grid gap-3">
-        <p className="text-xs text-muted-foreground">{hint}</p>
-        {content}
-      </div>
-    )
+    return <div className="grid gap-3">{content}</div>
   }
   return (
     <Card className="h-fit">
       <CardHeader>
         <CardTitle className="text-sm">{t("editor:library.title")}</CardTitle>
-        <CardDescription>{hint}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">{content}</CardContent>
     </Card>

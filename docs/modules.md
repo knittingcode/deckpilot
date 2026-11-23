@@ -57,13 +57,18 @@ and nothing is added to the Action Library automatically.
 | `deck.random` | `candidates` (one `action:<id>` or `workflow:<id>` per line, optional weight 1–100, at most 32), `noRepeat` (default off) | picks one candidate at random (the operating system's random source, weighted) and runs it as a key bound to it would; output `picked`. Fails with `no-candidates`, `invalid-candidate`, `candidate-not-found` or `nested-random` (a candidate that is a Random Action itself) |
 | `deck.multi-switch` | `states` (2–8 lines of `action:<id>` or `workflow:<id>`, optionally ` \| <title>` and ` \| <glyph>`), `advanceOnFailure` (default off) | runs the current state's target as a key bound to it would, then moves to the next state when that run succeeded (a workflow: when its execution finished as succeeded), after the last back to the first. The key shows the state's title, glyph and `n/m` as its live state. Fails with `too-few-states`, `invalid-state`, `state-not-found` or `nested-switch` (a state that runs a Random Action or another switch) |
 | `general.log` | `message` | the rendered message |
-| `general.wait` | `seconds` (1–300) | waits; output `waitedMs`; stops at once when cancelled (the reference workflow node) |
+| `general.wait` | `seconds` (1–300) | **deprecated**, replaced by `general.delay`: waits; output `waitedMs`; stops at once when cancelled. Saved Waits keep working; it is not offered for new actions |
 | `general.delay` | `milliseconds` (10–300000, default 500) | waits; output `waitedMs`; stops at once when cancelled. The delay row of a Multi Action's step list: the step sets its own `milliseconds` as an override |
 
 A type marked `deprecated` (`ActionType.deprecated`, sent to the app only
 when true) is replaced by another one. Saved actions, workflow nodes and
 keys of that type keep working and can still be edited, but the Action
 Library and the workflow builder no longer offer it for new ones.
+
+Every built-in type also declares where it makes sense (`ActionType.contexts`:
+a key, a gesture, a key's display, a Multi Action step, a workflow node);
+see [action contexts](action-contexts.md). For now contexts are reported,
+never enforced.
 
 ### Deck actions
 
@@ -287,8 +292,9 @@ types that predate a field keep working (`cancellable` defaults to `false`,
 the honest value). Stored graphs carry a format version
 (`WorkflowGraph::version`); workflows without a graph run as steps.
 
-**Reference implementation.** `general.wait` (`modules/general/src/lib.rs`)
-implements the whole contract: a bounded integer parameter with a default,
+**Reference implementation.** `general.wait` (`modules/general/src/lib.rs`,
+deprecated for `general.delay`, which follows the same contract in
+milliseconds) implements the whole contract: a bounded integer parameter with a default,
 a declared typed output, its own timeout, `retrySafe`, `idempotent`,
 `cancellable`, cooperative waiting through the context and progress
 reports. Its tests show each part.

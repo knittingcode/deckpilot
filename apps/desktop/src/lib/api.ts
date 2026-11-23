@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core"
 
+import type { IncompleteUse, SavedAction } from "./action-completeness"
 import { errorCode, rawErrorMessage } from "./backend-error"
 
 import type {
   ActionInstance,
+  ContextIssue,
   ActionReference,
   ActionParameters,
   ActionResult,
@@ -13,6 +15,7 @@ import type {
   CatalogFilter,
   ControlFace,
   ControlId,
+  FolderCountdown,
   IconInfo,
   VisualLibrary,
   LivePreview,
@@ -220,11 +223,11 @@ export const api = {
     invoke<ProfileLayoutEntry[]>("profile_layouts", { profileId }),
 
   createAction: (profileId: string, action: ActionInput) =>
-    invoke<ActionInstance>("create_action", { profileId, action }),
+    invoke<SavedAction>("create_action", { profileId, action }),
   updateAction: (profileId: string, action: ActionInstance) =>
-    invoke<ActionInstance>("update_action", { profileId, action }),
+    invoke<SavedAction>("update_action", { profileId, action }),
   duplicateAction: (profileId: string, actionId: string, name: string) =>
-    invoke<ActionInstance>("duplicate_action", { profileId, actionId, name }),
+    invoke<SavedAction>("duplicate_action", { profileId, actionId, name }),
   deleteAction: (profileId: string, actionId: string) =>
     invoke<null>("delete_action", { profileId, actionId }),
   runAction: (profileId: string, actionId: string) =>
@@ -272,9 +275,18 @@ export const api = {
   unbindActionReferences: (profileId: string, actionId: string, selection: ReferenceSelection) =>
     invoke<ReferenceChangeResult>("unbind_action_references", { profileId, actionId, selection }),
 
-  /** Resolves once the agent has read the workflow, so it can be started right away. */
+  /**
+   * Resolves once the agent has read the workflow, so it can be started right away.
+   * `contextIssues`: steps or nodes whose action is not meant for them; reported only.
+   */
   saveWorkflow: (profileId: string, workflow: Workflow) =>
-    invoke<Saved<Workflow>>("save_workflow", { profileId, workflow }),
+    invoke<Saved<Workflow & { contextIssues?: ContextIssue[]; incomplete?: IncompleteUse[] }>>(
+      "save_workflow",
+      {
+        profileId,
+        workflow,
+      },
+    ),
   duplicateWorkflow: (profileId: string, workflowId: string, name: string) =>
     invoke<Workflow>("duplicate_workflow", { profileId, workflowId, name }),
   deleteWorkflow: (profileId: string, workflowId: string) =>
@@ -338,10 +350,20 @@ export const api = {
   /**
    * Resolves once the agent has read the layout, so its keys work right away.
    * `incompatible`: stored bindings kept although their action cannot run
-   * from their control (new ones are refused).
+   * from their control (new ones are refused). `contextIssues`: bindings
+   * whose action is not meant for their context; reported only, they are
+   * saved and run.
    */
   saveLayout: (profileId: string, layout: DeviceLayout) =>
-    invoke<Saved<DeviceLayout & { incompatible?: string[] }>>("save_layout", {
+    invoke<
+      Saved<
+        DeviceLayout & {
+          incompatible?: string[]
+          contextIssues?: ContextIssue[]
+          incomplete?: IncompleteUse[]
+        }
+      >
+    >("save_layout", {
       profileId,
       layout,
     }),
@@ -365,6 +387,11 @@ export const api = {
      * size. Without it, at the device's own size.
      */
     keyPixels?: number | null,
+    /**
+     * The agent's Auto Exit countdown of this page (live preview: the
+     * device shows it): drawn on the folder's protected Back key.
+     */
+    folderCountdown?: FolderCountdown | null,
   ) =>
     invoke<ControlFace[]>("preview_layout", {
       profileId,
@@ -374,6 +401,7 @@ export const api = {
       render,
       live: live ?? null,
       keyPixels: keyPixels ?? null,
+      folderCountdown: folderCountdown ?? null,
     }),
   /**
    * One cycle of the scrolling title of `control` as the device shows it,

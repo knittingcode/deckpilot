@@ -1,3 +1,5 @@
+import { NeedsConfiguration } from "@/components/needs-configuration"
+import { missingParameters } from "@/lib/action-completeness"
 import {
   DndContext,
   KeyboardSensor,
@@ -54,7 +56,7 @@ import { EXECUTION_STATE_LABEL, ExecutionStore } from "@/lib/executions"
 import { useTitlebar } from "@/hooks/use-titlebar"
 import { type TranslationKey, useTranslation } from "@/i18n"
 import { useActionModules, useAppContext } from "@/lib/app-context"
-import { pluginActionUnavailable } from "@/lib/plugin-actions"
+import { unavailableText } from "@/components/missing-action-text"
 import { PROJECTS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
 import { ActionIcon } from "@/components/action-icon"
 import { initialValue } from "@/lib/parameters"
@@ -79,6 +81,9 @@ import {
 
 const NO_EXECUTIONS = new ExecutionStore()
 import { cn } from "@/lib/utils"
+import { supportsContext } from "@/lib/action-context"
+import { contextReason } from "@/lib/action-context-text"
+import { ContextMigrations } from "@/components/context-migrations"
 import {
   conditionAllowed,
   moveStep,
@@ -113,6 +118,18 @@ function parseCondition(value: string): StepCondition {
  * instead of the titlebar's, and without duplicate, delete and the usage
  * list, which belong to the Workflows page.
  */
+/**
+ * Whether an action works as a Multi Action step (its type's contexts;
+ * without a declaration it works everywhere). An action whose type is not
+ * known here stays listed: the other checks say why it cannot run.
+ */
+function asStep(types: ActionType[]) {
+  return (action: ActionInstance) => {
+    const type = types.find((t) => t.id === action.actionType)
+    return !type || supportsContext(type, "sequence") === true
+  }
+}
+
 export function StepEditor({
   view,
   types,
@@ -311,8 +328,8 @@ export function StepEditor({
               <SelectValue placeholder={t("workflows:steps.chooseAction")} />
             </SelectTrigger>
             <SelectContent>
-              {actions.map((action) => {
-                const why = pluginActionUnavailable(modules, action.actionType)
+              {actions.filter(asStep(types)).map((action) => {
+                const why = unavailableText(modules, action.actionType, t)
                 const usable = !why && types.some((t) => t.id === action.actionType)
                 return (
                   <SelectItem
@@ -468,7 +485,14 @@ function SortableStep({
   const action = actions.find((a) => a.id === step.action)
   const type = types.find((t) => t.id === action?.actionType)
   const modules = useActionModules()
-  const unavailable = action ? pluginActionUnavailable(modules, action.actionType) : null
+  const unavailable = action ? unavailableText(modules, action.actionType, t) : null
+  // What the step still needs: its action's values with its own overrides.
+  const missing =
+    action && type ? missingParameters(type, { ...action.parameters, ...(step.overrides ?? {}) }) : []
+  // A saved step whose action does not work as a step (its contexts): kept
+  // as saved, marked, with the choice to remove it.
+  const asSequence = type ? supportsContext(type, "sequence") : true
+  const notHere = asSequence === true ? null : asSequence
   // A delay row: only its duration is edited; the step keeps whatever else
   // it has.
   const delay = delayAction(step, actions)
@@ -526,11 +550,14 @@ function SortableStep({
                 <SelectValue placeholder={t("workflows:steps.missingAction")} />
               </SelectTrigger>
               <SelectContent>
-                {actions.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.name}
-                  </SelectItem>
-                ))}
+                {/* What works as a step, and the step's own action whatever it is. */}
+                {actions
+                  .filter((a) => a.id === step.action || asStep(types)(a))
+                  .map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </>
@@ -571,6 +598,29 @@ function SortableStep({
         <p className="text-xs text-destructive" role="note">
           {t("workflows:steps.unavailableStep", { reason: unavailable })}
         </p>
+      )}
+      {missing.length > 0 && type && (
+        // A draft step: kept and saved, it does not run until its action's
+        // required settings (or this step's own) are filled in.
+        <div className="grid gap-1" data-slot="step-incomplete">
+          <NeedsConfiguration name={action?.name ?? type.name} className="w-fit" />
+          <p className="text-xs text-muted-foreground">
+            {t("actions:completeness.missing", {
+              parameters: missing
+                .map((key) => type.parameters.find((p) => p.key === key)?.label ?? key)
+                .join(", "),
+            })}
+          </p>
+        </div>
+      )}
+      {notHere && (
+        <div className="grid gap-1.5" data-slot="step-not-here">
+          <p className="text-xs text-destructive" role="note">
+            <span className="font-medium">{t("editor:context.notHere")}.</span>{" "}
+            {contextReason(notHere)} {t("editor:context.kept")}
+          </p>
+          <ContextMigrations offer={{ name: action?.name ?? step.action, remove: onRemove }} />
+        </div>
       )}
       {!delay && (
         <div className="grid gap-2 sm:grid-cols-2">

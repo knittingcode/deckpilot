@@ -16,9 +16,9 @@ use crate::resolution::{
 };
 use crate::variables::{ExecutionDependencies, ProjectResolver, VariableResolver};
 use crate::{
-    ActionInstance, ActionInstanceId, ActionParameters, ActionRegistry, ActionResult, ActionStatus,
-    ActiveProjectContext, ContextEffect, ExecutionContext, MachineConfig, OnFailure, Profile,
-    ProjectContextError, StepCondition, WorkflowId,
+    ActionContext, ActionInstance, ActionInstanceId, ActionParameters, ActionRegistry,
+    ActionResult, ActionStatus, ActiveProjectContext, ContextEffect, ExecutionContext,
+    MachineConfig, OnFailure, Profile, ProjectContextError, StepCondition, WorkflowId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -72,6 +72,9 @@ pub struct Engine {
     variable_registry: std::sync::Arc<crate::variables::VariableRegistry>,
     /// Live values outside the context (the agent's work session).
     live: std::sync::Arc<dyn crate::variables::LiveState>,
+    /// Runs in a context their type does not declare: warned about once,
+    /// still run ([`crate::contexts::ContextGuard`]).
+    contexts: crate::contexts::ContextGuard,
 }
 
 impl std::fmt::Debug for Engine {
@@ -99,6 +102,20 @@ impl Engine {
             variable_registry: std::sync::Arc::new(crate::variables::VariableRegistry::new()),
             // Devices described by the built-in catalog; no work session.
             live: std::sync::Arc::new(deckpilot_device::ModelCatalog::builtin()),
+            contexts: crate::contexts::ContextGuard::default(),
+        }
+    }
+
+    /// The engine with a place to report runs in a context their type does
+    /// not declare (the agent's log). They run either way.
+    #[must_use]
+    pub fn with_context_warnings(
+        self,
+        sink: std::sync::Arc<dyn crate::contexts::ContextWarnings>,
+    ) -> Self {
+        Self {
+            contexts: crate::contexts::ContextGuard::new(sink),
+            ..self
         }
     }
 
@@ -324,7 +341,9 @@ impl Engine {
             )?;
             return Ok(report.into_steps());
         }
-        let invocation = Invocation::default().with_workflow(workflow);
+        let invocation = Invocation::default()
+            .with_workflow(workflow)
+            .with_context(ActionContext::Sequence);
         let mut report = WorkflowReport {
             workflow,
             status: ActionStatus::Succeeded,
@@ -547,6 +566,8 @@ impl Engine {
         let definition = profile
             .workflow(workflow)
             .ok_or(EngineError::UnknownWorkflow(workflow))?;
+        // Every step runs as a step, whatever started the Multi Action.
+        let invocation = &invocation.clone().with_context(ActionContext::Sequence);
         let start = std::time::Instant::now();
         let elapsed = |since: std::time::Instant| {
             u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
@@ -716,6 +737,7 @@ impl Engine {
                 workflow: Some(workflow),
                 execution: services.execution,
                 origin: None,
+                context: None,
             },
         )
     }
@@ -746,6 +768,8 @@ impl Engine {
                 "workflows are nested too deeply".into(),
             ));
         }
+        // An action node runs as a workflow node.
+        let node_invocation = invocation.clone().with_context(ActionContext::Workflow);
         let run_action = |instance: &ActionInstance,
                           overrides: &ActionParameters,
                           context: &mut ActiveProjectContext,
@@ -761,7 +785,7 @@ impl Engine {
                 instance,
                 overrides,
                 Some(control),
-                invocation,
+                &node_invocation,
                 Some(outputs),
             )
         };
@@ -864,7 +888,7 @@ impl Engine {
 
     /// [`Engine::execute`] with the outputs of the run so far, for `steps.`
     /// references in the instance's parameters.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     pub(crate) fn execute_with_outputs(
         &self,
         profile: &Profile,
@@ -898,15 +922,32 @@ impl Engine {
                 .registry
                 .dispatch(&instance.action_type, &instance.parameters, &base));
         };
+        // The single entry point of every action run: a use outside the
+        // type's contexts is reported once and runs anyway (warn-only, D1).
+        // A deck action in a workflow still fails as before, with
+        // `not-from-a-key` (`settle_request`).
+        self.contexts
+            .check(handler.definition(), instance, invocation);
+        let configured = match overrides {
+            Some(overrides) => instance.parameters.overlay(overrides),
+            None => instance.parameters.clone(),
+        };
+        // An action that needs configuration says so before anything else
+        // about the run (`crate::completeness`); `resolve_parameters`
+        // checks again after resolving references.
+        let missing = handler.definition().missing(&configured);
+        if !missing.is_empty() {
+            return Ok(crate::resolution::ResolutionFailure::Incomplete {
+                missing,
+                other: Vec::new(),
+            }
+            .into_result());
+        }
         if handler.definition().requires_project && project.is_none() {
             return Ok(ActionResult::failure(
                 "this action requires an active project",
             ));
         }
-        let configured = match overrides {
-            Some(overrides) => instance.parameters.overlay(overrides),
-            None => instance.parameters.clone(),
-        };
         let Resolved {
             parameters,
             redactor,
@@ -1486,7 +1527,16 @@ mod tests {
             .run_action(&f.profile, &machine(), &mut context, id)
             .unwrap();
         assert!(!result.is_success());
-        assert!(result.message.contains("invalid configuration"));
+        // A stored instance without its required value needs configuration.
+        assert_eq!(
+            result.code.as_deref(),
+            Some(crate::CONFIGURATION_INCOMPLETE)
+        );
+        assert_eq!(
+            result.data.get("missing").map(String::as_str),
+            Some("message")
+        );
+        assert!(result.message.contains("parameter `message` is required"));
     }
 
     #[test]

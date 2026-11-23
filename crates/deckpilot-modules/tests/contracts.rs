@@ -28,11 +28,11 @@ use std::time::{Duration, Instant};
 use deckpilot_core::graph::{ActionEffect, MAX_TIMEOUT_MS};
 use deckpilot_core::launch::{Launcher, RecordingLauncher};
 use deckpilot_core::{
-    ActionHandler, ActionParameters, ActionResult, ActionType, ActionTypeId, CancellationToken,
-    Capability, CredentialId, ExecutionContext, ExecutionControl, FeatureModule, MachineConfig,
-    MemoryCredentials, ModuleId, ModuleManifest, Os, ParameterKind, ParameterSpec, ParameterValue,
-    Profile, Progress, Project, ProjectId, ProjectKey, ResourceKey, ResourceRef, Secret,
-    SettingScope,
+    ActionContext, ActionHandler, ActionParameters, ActionResult, ActionType, ActionTypeId,
+    CancellationToken, Capability, CredentialId, ExecutionContext, ExecutionControl, FeatureModule,
+    MachineConfig, MemoryCredentials, ModuleId, ModuleManifest, Os, ParameterKind, ParameterSpec,
+    ParameterValue, Profile, Progress, Project, ProjectId, ProjectKey, ResourceKey, ResourceRef,
+    Secret, SettingScope,
 };
 use deckpilot_modules::{builtin, deck, general, http, notifications, system, work_session};
 
@@ -184,6 +184,7 @@ fn modules(launcher: &Arc<RecordingLauncher>) -> Vec<Box<dyn FeatureModule>> {
 
 fn schema(id: &str, parameters: Vec<ParameterSpec>) -> ActionType {
     ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new(format!("{id}.config")).unwrap(),
@@ -1092,6 +1093,7 @@ mod broken {
             ];
         }
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new(id).unwrap(),
@@ -1533,6 +1535,7 @@ mod first_party {
             .map_or(30_000, |n| u32::try_from(n.timeout_ms()).unwrap())
             .clamp(1, MAX_TIMEOUT_MS);
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new(format!("{plugin}.{}", action.id)).unwrap(),
@@ -1605,6 +1608,10 @@ mod first_party {
             builtin.id
         );
         expected.controls = None;
+        // Manifests cannot declare contexts yet (planned for plugin API
+        // 1.11): the plugin's type keeps the legacy default, all five,
+        // which covers whatever the built-in declares.
+        expected.contexts = None;
         expected
     }
 
@@ -2099,6 +2106,10 @@ mod first_party {
             let old = &builtin[alias.legacy];
             let new = &plugin[alias.target];
             for problem in alias::incompatibilities(alias, old, new) {
+                problems.push(format!("{}: {problem}", alias.legacy));
+            }
+            // The legacy id keeps every context the built-in declares.
+            for problem in alias::context_incompatibilities(old, new) {
                 problems.push(format!("{}: {problem}", alias.legacy));
             }
             if *new != expected(alias, old) {
@@ -2597,4 +2608,115 @@ fn every_builtin_action_declares_its_controls() {
         }
     }
     assert!(table.len() > 25, "{} built-in action types", table.len());
+}
+
+/// Where each built-in action makes sense (`docs/action-contexts.md`):
+/// deck requests on keys and gestures, waits, logs and queries as steps
+/// and nodes, monitors as displays and nodes, the run summary in graphs.
+const CONTEXTS: &[(&str, &[ActionContext])] = {
+    use ActionContext::{Display, Gesture, Key, Sequence, Workflow};
+    const KEYS: &[ActionContext] = &[Key, Gesture];
+    const STEPS: &[ActionContext] = &[Sequence, Workflow];
+    const ANYWHERE: &[ActionContext] = &[Key, Gesture, Sequence, Workflow];
+    const MONITOR: &[ActionContext] = &[Display, Workflow];
+    &[
+        ("general.log", STEPS),
+        ("general.wait", STEPS),
+        ("general.delay", STEPS),
+        ("deck.next-page", KEYS),
+        ("deck.previous-page", KEYS),
+        ("deck.switch-profile", KEYS),
+        ("deck.brightness", KEYS),
+        ("deck.random", KEYS),
+        ("deck.switch-layout", KEYS),
+        ("deck.previous-layout", KEYS),
+        ("deck.multi-switch", &[Key, Gesture, Display]),
+        ("deck.page-indicator", &[Display]),
+        ("system.open-app", ANYWHERE),
+        ("system.open-url", ANYWHERE),
+        ("system.open-file", ANYWHERE),
+        ("system.open-directory", ANYWHERE),
+        ("system.run-command", ANYWHERE),
+        ("http.request", ANYWHERE),
+        ("notifications.show", ANYWHERE),
+        ("system.process-status", STEPS),
+        ("http.health-check", STEPS),
+        ("system.cpu", MONITOR),
+        ("system.memory", MONITOR),
+        ("system.network", MONITOR),
+        ("system.disk", MONITOR),
+        ("notifications.workflow-summary", &[Workflow]),
+    ]
+};
+
+/// Built-ins whose live face the agent draws itself rather than through
+/// `state_policy` or `decorate_face`: the Multi Action Switch's state
+/// (`apps/agent/src/service/switch.rs`).
+const AGENT_DRAWN_FACES: &[&str] = &["deck.multi-switch"];
+
+#[test]
+fn every_builtin_action_declares_its_contexts() {
+    use deckpilot_core::KeyFace;
+
+    let launcher = Arc::new(RecordingLauncher::new());
+    let mut seen = Vec::new();
+    for module in modules(&launcher) {
+        let config = safe_config(module.manifest());
+        for handler in module.action_handlers(&config) {
+            let definition = handler.definition();
+            let id = definition.id.to_string();
+            let contexts = definition
+                .contexts
+                .clone()
+                .unwrap_or_else(|| panic!("{id} declares no contexts"));
+            // Valid with its controls, which contexts leave as they were.
+            assert_eq!(definition.context_issues(), Vec::<String>::new(), "{id}");
+            let expected = CONTEXTS
+                .iter()
+                .find(|(listed, _)| *listed == id)
+                .unwrap_or_else(|| panic!("{id} is not in the table"))
+                .1;
+            assert_eq!(contexts.to_vec(), expected, "{id}");
+            // `display` needs a live face.
+            if contexts.contains(ActionContext::Display) {
+                let parameters = definition
+                    .normalize(&ActionParameters::new())
+                    .unwrap_or_default();
+                let face = KeyFace::empty();
+                let live = handler.state_policy(&parameters).is_some()
+                    || handler.decorate_face(face.clone(), &parameters, "", None) != face
+                    || AGENT_DRAWN_FACES.contains(&id.as_str());
+                assert!(live, "{id} declares `display` without a live face");
+            }
+            seen.push(id);
+        }
+    }
+    seen.sort();
+    let mut listed: Vec<String> = CONTEXTS.iter().map(|(id, _)| (*id).to_owned()).collect();
+    listed.sort();
+    assert_eq!(seen, listed);
+    // The registries the agent and the app build, on every platform, hold
+    // only types that declare contexts; Wait is deprecated, hidden from new
+    // actions, and still runs.
+    for os in [Os::Linux, Os::MacOs, Os::Windows, Os::Other] {
+        let mut registry = builtin(os);
+        for info in registry.modules() {
+            let _ = registry.set_enabled(&info.manifest.id, true);
+        }
+        let actions = registry.action_registry();
+        for definition in actions.action_types() {
+            assert!(
+                definition.contexts.is_some(),
+                "{} on {os:?} declares no contexts",
+                definition.id
+            );
+            assert_eq!(
+                definition.deprecated,
+                definition.id.as_str() == general::WAIT,
+                "{}",
+                definition.id
+            );
+        }
+        assert!(actions.definition(&general::wait_id()).is_some());
+    }
 }

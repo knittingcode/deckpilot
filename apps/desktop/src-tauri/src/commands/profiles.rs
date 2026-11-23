@@ -36,6 +36,15 @@ pub struct ProfileView {
     issues: Vec<String>,
     action_usages: BTreeMap<ActionInstanceId, Vec<Usage>>,
     workflow_usages: BTreeMap<WorkflowId, Vec<Usage>>,
+    /// Actions that need configuration, with their missing parameters
+    /// (`deckpilot_core::completeness`). Left out when there are none, so
+    /// the frontend reads the answer as before.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    incomplete_actions: BTreeMap<ActionInstanceId, Vec<String>>,
+    /// Bindings, Multi Action steps and workflow nodes whose effective
+    /// parameters leave required ones without a value. Left out when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    incomplete_uses: Vec<deckpilot_core::IncompleteUse>,
 }
 
 #[tauri::command]
@@ -89,7 +98,12 @@ pub fn get_profile(
         .iter()
         .map(|w| (w.id, profile.workflow_usages(w.id)))
         .collect();
+    let actions = state.actions();
+    let incomplete_actions = deckpilot_core::completeness::incomplete_actions(&profile, &actions);
+    let incomplete_uses = deckpilot_core::completeness::incomplete_uses(&profile, &actions);
     Ok(ProfileView {
+        incomplete_actions,
+        incomplete_uses,
         active_project_id: context.project_id(),
         issues,
         action_usages,

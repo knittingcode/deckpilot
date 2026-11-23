@@ -6,6 +6,7 @@ import type {
   ControlFace,
   ControlNavigation,
   DeviceLayout,
+  FolderCountdown,
   KeyFace,
   LivePreview,
   TextLayoutReport,
@@ -28,6 +29,10 @@ import type {
  * `reports` says how each key's title comes out on the device (measured at
  * the device's own size, docs/key-text.md): whether it fits, at which size,
  * whether it scrolls.
+ *
+ * `folderCountdown` is the agent's Auto Exit countdown of this page while
+ * the device shows it in the live preview: the folder's Back key is drawn
+ * with it, as on the device.
  */
 export function usePreviewFaces(
   profileId: string,
@@ -37,7 +42,17 @@ export function usePreviewFaces(
   iconsVersion: string,
   live: LivePreview | null = null,
   keyPixels: number | null = null,
+  /**
+   * Changes when what the action types can do changes (a plugin was
+   * installed, enabled, disabled, removed, or got a permission): keys whose
+   * plugin was missing are drawn again as their action, and the other way
+   * round, without waiting for an edit.
+   */
+  catalogVersion = "",
+  folderCountdown: FolderCountdown | null = null,
 ) {
+  const countdownSeconds = folderCountdown?.seconds ?? null
+  const countdownPaused = folderCountdown?.paused === true
   const [preview, setPreview] = useState({
     faces: new Map<string, KeyFace>(),
     images: new Map<string, string>(),
@@ -54,7 +69,9 @@ export function usePreviewFaces(
   useEffect(() => {
     let cancelled = false
     const timer = setTimeout(() => {
-      api.previewLayout(profileId, draft, pageId, null, true, live, keyPixels).then(
+      const countdown =
+        countdownSeconds === null ? null : { seconds: countdownSeconds, paused: countdownPaused }
+      api.previewLayout(profileId, draft, pageId, null, true, live, keyPixels, countdown).then(
         (result) => {
           if (cancelled) return
           setPreview({
@@ -84,6 +101,16 @@ export function usePreviewFaces(
       cancelled = true
       clearTimeout(timer)
     }
-  }, [profileId, draft, pageId, iconsVersion, live, keyPixels])
+  }, [
+    profileId,
+    draft,
+    pageId,
+    iconsVersion,
+    live,
+    keyPixels,
+    catalogVersion,
+    countdownSeconds,
+    countdownPaused,
+  ])
   return preview
 }

@@ -11,7 +11,8 @@
     "low": {
       "label": "Niskie ryzyko",
       "description": "Ograniczone do własnych zasobów wtyczki."
-    }
+    },
+    "tools": "Uruchamianie narzędzi w Twoim systemie w zakresie tej wtyczki."
   },
   "host": {
     "wildcard": "dowolna subdomena {{domain}} (https://*.{{domain}})"
@@ -81,6 +82,12 @@
       "titleIcons": "Stream Deck: używanie własnych ikon na klawiszach",
       "titleState": "Stream Deck: zmiana tego, co pokazują jej własne klawisze",
       "detail": "Tylko klawisze przypisane do własnych akcji wtyczki."
+    },
+    "tools": {
+      "title": "Uruchamianie poleceń narzędzia {{tool}}, które tylko odczytują",
+      "detail": "Tylko polecenia narzędzia {{tool}} zadeklarowane przez wtyczkę, z zadeklarowanymi opcjami; niczego nie zmieniają.",
+      "titleModify": "Uruchamianie, zatrzymywanie i modyfikowanie zasobów narzędzia {{tool}}",
+      "detailModify": "Zezwala wtyczce na uruchamianie, zatrzymywanie i modyfikowanie zasobów narzędzia {{tool}} w zakresie obsługiwanym przez tę wtyczkę."
     }
   },
   "list": {
@@ -92,22 +99,29 @@
     "title": {
       "install": "Zainstalować {{name}} {{version}}?",
       "update": "Uaktualnić {{name}} do wersji {{version}}?",
-      "enable": "Włączyć {{name}}?"
+      "enable": "Włączyć {{name}}?",
+      "grant": "Nadać uprawnienia wtyczce {{name}}?"
     },
     "intro": {
       "install": "Sprawdź, co ta wtyczka może robić. Zaznacz każde uprawnienie, aby wyrazić na nie zgodę; później możesz odebrać uprawnienia w sekcji Zainstalowane.",
       "update": "Ta wersja prosi o więcej, niż przyznano. Zaznacz każde nowe lub rozszerzone uprawnienie, aby wyrazić na nie zgodę, odrzuć aktualizację albo anuluj, aby zdecydować później.",
-      "enable": "Wtyczka działa tylko ze wszystkimi uprawnieniami, których potrzebuje. Zaznacz każde, które nie zostało jeszcze przyznane; opcjonalne jest potrzebne tylko akcjom, które je wymieniają."
+      "enable": "Wtyczka działa tylko ze wszystkimi uprawnieniami, których potrzebuje. Zaznacz każde, które nie zostało jeszcze przyznane; opcjonalne jest potrzebne tylko akcjom, które je wymieniają.",
+      "grant": "Ta akcja wymaga uprawnień, których wtyczka jeszcze nie ma. Zaznacz każde, na które się zgadzasz; możesz je później odebrać na stronie wtyczki lub w Ustawieniach › Uprawnienia."
     },
     "confirm": {
       "install": "Zainstaluj",
       "update": "Uaktualnij",
-      "enable": "Włącz"
+      "enable": "Włącz",
+      "grant": "Zezwól"
     },
     "status": {
       "allGranted": "Przyznano wszystkie uprawnienia.",
       "consented": "Wyrażono zgodę na wszystkie uprawnienia.",
-      "missing": "Uprawnienia oczekujące na Twoją zgodę: {{missing}} z {{total}}."
+      "missing": "Uprawnienia oczekujące na Twoją zgodę: {{missing}} z {{total}}.",
+      "grantChecked_one": "Zaznaczono {{count}} z {{total}}",
+      "grantChecked_few": "Zaznaczono {{count}} z {{total}}",
+      "grantChecked_many": "Zaznaczono {{count}} z {{total}}",
+      "grantChecked_other": "Zaznaczono {{count}} z {{total}}"
     },
     "decline": "Odrzuć aktualizację",
     "enforced": "Agent egzekwuje te uprawnienia przy każdym wywołaniu wykonywanym przez wtyczkę. Środowisko wykonawcze wtyczek jest eksperymentalne; instaluj tylko wtyczki, którym ufasz.",

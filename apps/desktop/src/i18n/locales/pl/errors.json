@@ -219,6 +219,7 @@
     "locked": "konfiguracja jest zablokowana"
   },
   "pluginAction": {
+    "configuration-incomplete": "akcja wymaga konfiguracji",
     "not-permitted": "nie przyznano uprawnienia",
     "throttled": "osiągnięto limit częstotliwości; spróbuj ponownie później",
     "bad-request": "żądanie jest nieprawidłowo sformułowane",

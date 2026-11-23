@@ -43,7 +43,6 @@ import { IS_MAC } from "@/hooks/use-navigation"
 import { useTranslation } from "@/i18n"
 import { api, errorMessage } from "@/lib/api"
 import { toastSaved } from "@/lib/agent-reload"
-import { initialValue } from "@/lib/parameters"
 import type {
   ActionType,
   GraphEdge,
@@ -74,6 +73,7 @@ import {
   PORT_LABEL,
   addNode,
   autoLayout,
+  blockingIssues,
   connect,
   connectionProblem,
   copy,
@@ -374,7 +374,7 @@ function Builder({
     }
   }, [profileId, workflow])
 
-  const errors = issues.filter((i) => i.severity === "error")
+  const errors = blockingIssues(issues)
   const graphIssues = issues.filter((i) => !i.node)
   const canSave = dirty && errors.length === 0 && workflow.name.length > 0 && !saving
 
@@ -432,7 +432,11 @@ function Builder({
   }
 
   const createAction = (type: ActionType) => {
-    const parameters = Object.fromEntries(type.parameters.map((p) => [p.key, initialValue(p)]))
+    // Declared defaults only: a required setting without one stays absent
+    // (the node is a draft that needs configuration), never blank.
+    const parameters = Object.fromEntries(
+      type.parameters.flatMap((p) => (p.default === undefined ? [] : [[p.key, p.default]])),
+    )
     api
       .createAction(profileId, {
         name: type.name,

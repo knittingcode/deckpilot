@@ -22,10 +22,9 @@
  * - selecting the same key again gives the same heights (nothing
  *   accumulates);
  * - scrolling the library does not move the inspector, and the reverse;
- * - with a key selected, the inspector's deselect button sits at its
- *   top-right below the divider, clear of the page navigation and the
- *   form, also when the inspector is scrolled, and the first section
- *   starts right below the page navigation;
+ * - with a key selected, the inspector has no deselect button (Escape
+ *   deselects), and the first section starts right below the page
+ *   navigation;
  * - with a key selected, its key header fits the inspector, and its title
  *   appearance popover opens inside the window, above the inspector and its
  *   curtain, without scrolling, without changing the inspector;
@@ -34,6 +33,9 @@
  *   menu and every picker open inside the window, above the inspector and
  *   its curtain, scrolling only in a library's grid; Escape returns focus to
  *   the preview;
+ * - with a key selected, its preview sits in the Inspector's fixed left
+ *   column, outside the settings' scroll container, and does not move while
+ *   the settings scroll; nothing overflows sideways, no scroller nests;
  * - with a key selected, the gesture cards never scroll horizontally, show
  *   only whole cards of equal size and rails only when they overflow;
  *   moving them keeps their height and the inspector's scroll position.
@@ -524,37 +526,16 @@ function controlsClear(m, step) {
 }
 
 /**
- * The inspector's top with a control selected: its deselect button (X) is
- * 4–12px below the divider and 12–16px (±1) from the inspector's right
- * edge (left of a scrollbar), inside the inspector, clear of the page
- * navigation and of every form control; the first section starts at most
- * 16px below the page navigation's lower half (no heading band above it).
- * `scrolled`: the inspector is scrolled down, the X must still be there.
+ * The inspector's top with a control selected: no deselect button (X) any
+ * more (Escape deselects, escape.ts) and no room kept for one; the first
+ * section starts at most 16px below the page navigation's lower half (no
+ * heading band above it).
  */
 function inspectorTopClear(m, step, { scrolled = false } = {}) {
   const top = m.inspectorTop
   if (!top) return // an older app without the measurement
-  const x = top.deselect?.rect
-  expect(x, `${step}: no deselect button in the inspector`)
-  if (!x || top.dividerY === null) return
-  const below = Math.round((x.top - top.dividerY) * 10) / 10
-  expect(below >= 4 && below <= 12, `${step}: the X is ${below}px below the divider (needs 4–12)`)
-  const right = Math.round((top.clientRight - x.right) * 10) / 10
-  expect(
-    right >= 12 - 1 && right <= 16 + 1,
-    `${step}: the X is ${right}px from the inspector's right edge (needs 12–16)`,
-  )
-  const s = top.scroll
-  expect(
-    x.left >= s.left && x.right <= top.clientRight && x.top >= s.top && x.bottom <= s.bottom,
-    `${step}: the X is not inside the inspector (${JSON.stringify(x)} in ${JSON.stringify(s)})`,
-  )
-  expect(!top.nav || !intersects(x, top.nav), `${step}: the X overlaps the page navigation`)
-  expect(
-    top.covered.length === 0,
-    `${step}: the X covers ${top.covered.length} form control(s): ${JSON.stringify(top.covered[0])}`,
-  )
-  expect(top.deselect.label, `${step}: the X has no accessible name`)
+  expect(!top.deselect, `${step}: the inspector still has a deselect button`)
+  if (top.dividerY === null) return
   if (!scrolled && top.firstSection && top.nav) {
     const lowerHalf = (top.nav.bottom - top.nav.top) / 2
     const gap = Math.round((top.firstSection.rect.top - top.dividerY) * 10) / 10
@@ -709,11 +690,6 @@ for (const to of ["next", "previous"]) {
       panel.bottom <= open.viewport.height && panel.left >= 0 && panel.right <= open.viewport.width,
       `dock: the panel is cut off (${JSON.stringify(panel)})`,
     )
-    const x = open.inspectorTop?.deselect?.rect
-    if (x) {
-      expect(!intersects(x, panel), "dock: the panel covers the inspector's X")
-      expect(x.left - panel.right >= 0, "dock: the panel reaches into the X's column")
-    }
     if (dock.library)
       expect(!intersects(dock.library, panel), "dock: the panel covers the Action Library")
     if (dock.zoom) expect(!intersects(dock.zoom, panel), "dock: the panel covers the zoom toolbar")
@@ -864,7 +840,7 @@ expect(
 )
 
 // The inspector curtain: hidden at the top, shown once scrolled, anchored
-// under the divider, under the dock and the deselect button, and clicks pass
+// under the divider, under the dock, and clicks pass
 // through it.
 await probe("select", { control: keys[Math.min(8, keys.length - 1)] })
 await probe("scroll", { slot: "inspector-scroll", to: "top" })
@@ -935,6 +911,46 @@ for (const key of keys) {
     )
   }
   await probe("scroll", { slot: "inspector-scroll", to: "top" })
+}
+
+// The Inspector's two columns (fixed key preview, scrolling settings), for
+// every key: one preview, outside the scroll container, left of the
+// settings, never moved by scrolling the settings; nothing overflows
+// sideways and no vertical scroller nests inside the settings column.
+for (const key of keys) {
+  await probe("select", { control: key })
+  await probe("scroll", { slot: "inspector-scroll", to: "top" })
+  const top = (await probe("measure")).inspectorColumns
+  const step = `two columns of ${key}`
+  if (!top) {
+    expect(false, `${step}: the Inspector has no columns`)
+    continue
+  }
+  expect(top.previews <= 1, `${step}: ${top.previews} key previews`)
+  expect(!top.previewInScroll, `${step}: the preview is inside the settings' scroll container`)
+  expect(!top.overflowX, `${step}: the Inspector overflows sideways`)
+  expect(top.nested.length === 0, `${step}: nested scrollers ${top.nested.join(", ")}`)
+  expect(top.overscroll === "contain", `${step}: the settings chain their scrolling`)
+  expect(top.gutter.includes("stable"), `${step}: the settings' scrollbar gutter is not stable`)
+  if (top.preview) {
+    expect(
+      top.preview.right <= top.scroll.left + 0.5,
+      `${step}: the preview is not left of the settings`,
+    )
+    expect(
+      top.preview.right - top.preview.left >= 40,
+      `${step}: the preview is too small (${top.preview.right - top.preview.left})`,
+    )
+    await probe("scroll", { slot: "inspector-scroll", to: "bottom" })
+    const bottom = (await probe("measure")).inspectorColumns
+    expect(
+      bottom?.preview &&
+        Math.abs(bottom.preview.top - top.preview.top) <= 0.5 &&
+        Math.abs(bottom.preview.left - top.preview.left) <= 0.5,
+      `${step}: the preview moved while the settings scrolled`,
+    )
+    await probe("scroll", { slot: "inspector-scroll", to: "top" })
+  }
 }
 
 // Independent scrolling: the library and the inspector move only themselves.

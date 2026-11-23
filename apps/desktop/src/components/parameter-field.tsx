@@ -53,11 +53,17 @@ export function ParameterField({
   actionType,
   targets,
   onChange,
+  idPrefix = "parameter",
+  error,
 }: {
   spec: ParameterSpec
   value: ParameterValue
   projects?: Project[]
   actionType?: string
+  /** Makes the field's ids unique when several forms are on screen. */
+  idPrefix?: string
+  /** Shown under the control, which is marked invalid and described by it. */
+  error?: string | undefined
   targets?: {
     actions: Pick<ActionInstance, "id" | "name" | "actionType">[]
     workflows: Pick<Workflow, "id" | "name">[]
@@ -65,7 +71,8 @@ export function ParameterField({
   onChange: (value: ParameterValue) => void
 }) {
   const { t } = useTranslation()
-  const id = `parameter-${spec.key}`
+  const id = `${idPrefix}-${spec.key}`
+  const errorId = error ? `${id}-error` : undefined
   const labelId = `${id}-label`
   const profile =
     actionType === SWITCH_PROFILE_TYPE && spec.key === PROFILE_PARAMETER && value.type === "text"
@@ -80,7 +87,14 @@ export function ParameterField({
     spec.key === STATES_PARAMETER &&
     value.type === "text"
   return (
-    <div className="grid gap-2">
+    <div
+      className="grid gap-2"
+      data-invalid={error ? true : undefined}
+      // The control inside is marked once rendered (see `useInvalid`).
+      ref={(element) => {
+        markInvalid(element, id, errorId, spec.required)
+      }}
+    >
       <Label id={labelId} htmlFor={id}>
         {spec.label}
         {spec.required && <span className="text-destructive">*</span>}
@@ -143,6 +157,11 @@ export function ParameterField({
             }}
           />
         </div>
+      )}
+      {error && (
+        <p id={errorId} className="text-xs text-destructive" data-slot="field-error">
+          {error}
+        </p>
       )}
       {spec.description && <p className="text-xs text-muted-foreground">{spec.description}</p>}
     </div>
@@ -414,14 +433,19 @@ function ResourceControl({
     onChange({ type: "resource", value: reference })
   }
   return (
-    <div className="grid grid-cols-[14rem_1fr] gap-2">
+    // Side by side where there is room, the field under the source in a
+    // narrow column (the Inspector), never squeezed.
+    <div className="flex min-w-0 flex-wrap gap-2">
       <Select
         value={value.type}
         onValueChange={(type) => {
           set(type === "fixed" ? { type: "fixed", key: text } : { type: "projectRole", role: text })
         }}
       >
-        <SelectTrigger aria-label={t("actions:parameters.resource.source")}>
+        <SelectTrigger
+          aria-label={t("actions:parameters.resource.source")}
+          className="w-56 max-w-full shrink-0"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -433,6 +457,7 @@ function ResourceControl({
       </Select>
       <Input
         id={id}
+        className="min-w-40 flex-1"
         value={text}
         placeholder={value.type === "fixed" ? "shop.repository" : "repository"}
         onChange={(e) => {
@@ -445,4 +470,27 @@ function ResourceControl({
       />
     </div>
   )
+}
+
+/**
+ * Marks the field's control (`#id`, whatever kind it is) as required and,
+ * with an error, invalid and described by it: one place for every control
+ * kind (inputs, selects, pickers).
+ */
+function markInvalid(
+  container: HTMLElement | null,
+  id: string,
+  errorId: string | undefined,
+  required: boolean,
+) {
+  const control = container?.querySelector<HTMLElement>(`[id="${id}"]`)
+  if (!control) return
+  if (required) control.setAttribute("aria-required", "true")
+  if (errorId) {
+    control.setAttribute("aria-invalid", "true")
+    control.setAttribute("aria-describedby", errorId)
+  } else if (control.getAttribute("aria-describedby")?.endsWith("-error")) {
+    control.removeAttribute("aria-invalid")
+    control.removeAttribute("aria-describedby")
+  }
 }

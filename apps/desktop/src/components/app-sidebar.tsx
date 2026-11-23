@@ -1,4 +1,4 @@
-import { LayoutDashboard, LayoutGrid, LayoutTemplate, Library, type LucideIcon } from "lucide-react"
+import { LayoutGrid, LayoutTemplate, type LucideIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -13,6 +13,7 @@ import {
 import { type TranslationKey, useTranslation } from "@/i18n"
 import { type PageId, useAppContext } from "@/lib/app-context"
 import { usePluginFeatures } from "@/lib/plugin-features"
+import { railGroups } from "@/lib/rail"
 import { moduleNavigation } from "@/modules"
 import { hostPages } from "@/modules/host-views"
 
@@ -22,10 +23,13 @@ interface NavGroup {
   items: { id: PageId; label: TranslationKey; icon: LucideIcon }[]
 }
 
+/** The group of the pages that plugins and modules contribute. */
+const CONTRIBUTED_GROUP = "configure"
+
 /**
  * The workspace pages besides the device editor. The Workflows and Projects
- * screens (while their plugins activate them) and module pages are added to
- * "Configure". Profiles, devices and everything else to set up are in the
+ * screens (while their plugins activate them) and module pages are in a
+ * group of their own, "Configure" (`CONTRIBUTED_GROUP`). Profiles, devices and everything else to set up are in the
  * settings window; device and profile are chosen in the toolbar.
  */
 const RAIL_GROUPS: NavGroup[] = [
@@ -35,13 +39,7 @@ const RAIL_GROUPS: NavGroup[] = [
     items: [
       { id: "designer", label: "navigation:pages.designer", icon: LayoutGrid },
       { id: "layouts", label: "navigation:pages.layouts", icon: LayoutTemplate },
-      { id: "dashboard", label: "navigation:pages.dashboard", icon: LayoutDashboard },
     ],
-  },
-  {
-    id: "configure",
-    label: "navigation:rail.configure",
-    items: [{ id: "actions", label: "navigation:pages.actions", icon: Library }],
   },
 ]
 
@@ -69,14 +67,19 @@ export function AppSidebar({
     label: t(page.label),
     icon: page.icon,
   }))
-  const groups = RAIL_GROUPS.map((group) => {
-    const items = group.items.map((item) => ({ ...item, label: t(item.label) }))
-    return {
+  // Pages that plugins and modules contribute are a group of their own,
+  // never part of a built-in group: removing or changing a built-in page
+  // cannot take them away (an earlier version appended them to the group
+  // of the Action Library page and lost them with it).
+  const contributed = [...fromPlugins, ...fromModules]
+  const groups = railGroups(
+    RAIL_GROUPS.map((group) => ({
       id: group.id,
       label: t(group.label),
-      items: group.id === "configure" ? [...items, ...fromPlugins, ...fromModules] : items,
-    }
-  })
+      items: group.items.map((item) => ({ ...item, label: t(item.label) })),
+    })),
+    { id: CONTRIBUTED_GROUP, label: t("navigation:rail.configure"), items: contributed },
+  )
   return (
     <Sidebar collapsible="icon" aria-label={t("navigation:rail.label")}>
       <SidebarContent>

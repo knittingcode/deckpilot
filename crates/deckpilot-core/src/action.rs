@@ -356,6 +356,13 @@ pub struct ActionType {
     /// declares its controls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controls: Option<crate::ActionControls>,
+    /// Where the action makes sense ([`crate::contexts`]): a key's press,
+    /// a gesture, a key's display, a Multi Action step, a workflow node.
+    /// `None`, and not sent, for a type without a declaration (plugins,
+    /// older definitions): it gets [`crate::ActionContexts::legacy`], all
+    /// five. Every built-in type declares its contexts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<crate::ActionContexts>,
     /// What running the action does to the page or layout a device shows,
     /// for the editor's interactive preview
     /// ([`crate::editor_navigation`]): data only, never run by the editor.
@@ -370,13 +377,100 @@ pub struct ActionType {
     pub title: Option<crate::ActionTitle>,
 }
 
+impl ParameterError {
+    /// The parameter the problem is about.
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Unknown(key)
+            | Self::Missing(key)
+            | Self::WrongType { key, .. }
+            | Self::Invalid { key, .. } => key,
+        }
+    }
+}
+
+/// Parameters that passed every check but completeness
+/// ([`ActionType::normalize_draft`]): what may be saved for an action, a
+/// binding, a step or a node that is not configured yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DraftParameters {
+    /// The values, with defaults filled in. A missing value is absent, or
+    /// blank as it was given.
+    pub parameters: ActionParameters,
+    /// Required parameters without a value, in the schema's order. Empty:
+    /// the parameters are complete and [`ActionType::normalize`] accepts
+    /// them.
+    pub missing: Vec<String>,
+}
+
+impl DraftParameters {
+    pub fn is_complete(&self) -> bool {
+        self.missing.is_empty()
+    }
+}
+
 impl ActionType {
     /// Validates `parameters` against the schema and returns them with
     /// defaults filled in. All problems are reported, not only the first one.
+    /// This is the check before a run: a required parameter without a value
+    /// is a problem ([`ParameterError::Missing`]).
     pub fn normalize(
         &self,
         parameters: &ActionParameters,
     ) -> Result<ActionParameters, Vec<ParameterError>> {
+        let (normalized, errors) = self.check_all(parameters);
+        if errors.is_empty() {
+            Ok(normalized)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// [`ActionType::normalize`] for saving a configuration that may not
+    /// be finished: a required parameter without a value (absent with no
+    /// default, or blank) is listed in [`DraftParameters::missing`] instead
+    /// of refused. Every other problem (unknown parameters, wrong types,
+    /// lengths, ranges, choices) is still refused. No value is invented
+    /// for a missing parameter, and a blank value is kept as it was typed:
+    /// it is not replaced by the declared default, and stays missing until
+    /// it is filled in.
+    pub fn normalize_draft(
+        &self,
+        parameters: &ActionParameters,
+    ) -> Result<DraftParameters, Vec<ParameterError>> {
+        let (mut normalized, errors) = self.check_all(parameters);
+        let (missing, errors): (Vec<_>, Vec<_>) = errors
+            .into_iter()
+            .partition(|error| matches!(error, ParameterError::Missing(_)));
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        let missing: Vec<String> = missing.iter().map(|e| e.key().to_owned()).collect();
+        for key in &missing {
+            if let Some(blank) = parameters.get(key) {
+                normalized.0.insert(key.clone(), blank.clone());
+            }
+        }
+        Ok(DraftParameters {
+            parameters: normalized,
+            missing,
+        })
+    }
+
+    /// The required parameters `parameters` leave without a value, in the
+    /// schema's order: the action is incomplete and does not run. A
+    /// reference counts as a value until it is resolved.
+    pub fn missing(&self, parameters: &ActionParameters) -> Vec<String> {
+        self.check_all(parameters)
+            .1
+            .iter()
+            .filter(|error| matches!(error, ParameterError::Missing(_)))
+            .map(|error| error.key().to_owned())
+            .collect()
+    }
+
+    /// The normalized values that pass, and every problem.
+    fn check_all(&self, parameters: &ActionParameters) -> (ActionParameters, Vec<ParameterError>) {
         let mut errors: Vec<ParameterError> = parameters
             .0
             .keys()
@@ -397,12 +491,7 @@ impl ActionType {
                 None => {}
             }
         }
-
-        if errors.is_empty() {
-            Ok(normalized)
-        } else {
-            Err(errors)
-        }
+        (normalized, errors)
     }
 }
 
@@ -471,7 +560,11 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
         }
         (ParameterKind::Resource { .. }, ParameterValue::Resource(reference)) => match reference {
             ResourceRef::ProjectRole { role } if role.trim().is_empty() => {
-                Err(invalid("project role must not be empty".into()))
+                if spec.required {
+                    Err(ParameterError::Missing(key()))
+                } else {
+                    Err(invalid("project role must not be empty".into()))
+                }
             }
             _ => Ok(()),
         },
@@ -727,6 +820,7 @@ mod tests {
 
     fn action_type() -> ActionType {
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new("test.action").unwrap(),
@@ -853,6 +947,7 @@ mod structured_text_tests {
 
     fn spec(kind: ParameterKind) -> ActionType {
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new("test.structured").unwrap(),
@@ -971,6 +1066,7 @@ mod reference_tests {
 
     fn action_type() -> ActionType {
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new("test.references").unwrap(),

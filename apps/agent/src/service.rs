@@ -193,6 +193,8 @@ pub(crate) enum Command {
         name: String,
         result: Result<ActionResult, deckpilot_core::EngineError>,
         reply: Option<oneshot::Sender<Result<Response, IpcError>>>,
+        /// The folder the key that started it is in (`folders.rs`).
+        hold: Option<deckpilot_core::FolderHold>,
     },
     /// A plugin's project operation or profile read (plugin API 1.9, X6
     /// and X9), which the broker allowed, from its lane thread.
@@ -587,6 +589,8 @@ pub struct Agent {
     /// Detached actions (plugin actions from keys and `runAction`) running
     /// on their own threads.
     detached: Arc<AtomicUsize>,
+    /// The runs keys of folders started and their folders (`folders.rs`).
+    folder_runs: folders::FolderRuns,
     /// The editor's live preview sessions (protocol 16).
     live_previews: live_preview::LivePreviews,
     handle: AgentHandle,
@@ -713,6 +717,7 @@ impl Agent {
             plugins: crate::plugins::PluginRuntime::default(),
             locale: None,
             detached: Arc::default(),
+            folder_runs: folders::FolderRuns::default(),
             live_previews: live_preview::LivePreviews::default(),
             handle,
             commands,
@@ -732,6 +737,17 @@ impl Agent {
     #[must_use]
     pub fn with_marquee_clock(mut self, clock: crate::marquee::MarqueeClock) -> Self {
         self.marquee_clock = clock;
+        self
+    }
+
+    /// Measures folders' Auto Exit countdowns with `clock` instead of the
+    /// system's monotonic clock (before [`Agent::run`]; tests move it).
+    #[must_use]
+    pub fn with_folder_clock(
+        mut self,
+        clock: impl Fn() -> std::time::Instant + Send + Sync + 'static,
+    ) -> Self {
+        self.runtime.set_clock(clock);
         self
     }
 
@@ -796,11 +812,10 @@ impl Agent {
                 || tokio::time::Instant::now() + Duration::from_secs(3600),
                 tokio::time::Instant::from_std,
             );
-            // Sleeps until the next folder's Auto Exit, if a countdown runs.
-            let folder_due = self.next_folder_exit().map_or_else(
-                || tokio::time::Instant::now() + Duration::from_secs(3600),
-                tokio::time::Instant::from_std,
-            );
+            // Sleeps until the next folder's Auto Exit, or until the
+            // seconds its Back key shows change, if a countdown runs.
+            let folder_due = tokio::time::Instant::now()
+                + self.next_folder_wake().unwrap_or(Duration::from_secs(3600));
             // Sleeps until the elapsed time on a shown work session key
             // changes, if any.
             let face_due = self.next_work_session_face_due().map_or_else(
@@ -836,7 +851,7 @@ impl Agent {
                     Flow::Continue
                 }
                 () = tokio::time::sleep_until(folder_due) => {
-                    self.on_folder_exit_due();
+                    self.on_folder_wake();
                     Flow::Continue
                 }
                 () = tokio::time::sleep_until(face_due) => {
@@ -948,7 +963,16 @@ impl Agent {
                 name,
                 result,
                 reply,
+                hold,
             } => {
+                // Over: a result (success or a handled failure) ran; an
+                // engine error means it could not run at all.
+                let end = if result.is_ok() {
+                    deckpilot_core::HoldEnd::Ran
+                } else {
+                    deckpilot_core::HoldEnd::NotRun
+                };
+                self.release_folder_run(hold, end);
                 self.detached_finished(action, &name, result, reply);
                 Flow::Continue
             }
@@ -967,11 +991,13 @@ impl Agent {
             } if self.security == SecurityState::Unlocked && self.runtime.runs_detached(action) => {
                 // Answered when the action finished on its own thread.
                 self.last_activity = self.now_seconds();
+                // From the app: no context, never checked.
                 self.run_detached(
                     action,
                     None,
                     None,
                     deckpilot_core::RunOrigin::App,
+                    None,
                     Some(reply),
                 );
                 Flow::Continue
@@ -1577,7 +1603,8 @@ impl Agent {
                 .with_variables(self.variables.clone())
                 .with_live_state(self.variables.clone())
                 .with_variable_registry(Arc::new(self.modules.variables().clone()))
-                .with_projects(self.active_projects.clone()),
+                .with_projects(self.active_projects.clone())
+                .with_context_warnings(Arc::new(ContextLog)),
         );
         // Actions, their modules or bindings may have changed: running
         // state calls are cancelled and cached states dropped, and pending
@@ -1676,11 +1703,12 @@ impl Agent {
         overrides: Option<deckpilot_core::ActionParameters>,
         device: Option<DeviceId>,
         origin: deckpilot_core::RunOrigin,
+        context: Option<deckpilot_core::ActionContext>,
         reply: Option<oneshot::Sender<Result<Response, IpcError>>>,
     ) {
         let run = match self
             .runtime
-            .detached_action(action, overrides, device, origin)
+            .detached_action(action, overrides, device, origin, context)
         {
             Ok(run) => run,
             Err(error) => {
@@ -1695,6 +1723,7 @@ impl Agent {
         let running = self.detached.clone();
         if running.fetch_add(1, Ordering::SeqCst) >= MAX_DETACHED {
             running.fetch_sub(1, Ordering::SeqCst);
+            // Refused before it started: a key's folder is not held.
             let result = Ok(ActionResult::error(
                 "busy",
                 format!("{MAX_DETACHED} actions of plugins are already running; try again later"),
@@ -1703,11 +1732,14 @@ impl Agent {
             return;
         }
         let commands = self.handle.commands.clone();
+        // A key of a folder started it: the folder waits for its end.
+        let hold = self.hold_folder_for_run();
         let spawned = std::thread::Builder::new()
             .name("detached action".into())
             .spawn({
                 let running = running.clone();
                 let name = name.clone();
+                let hold = hold.clone();
                 move || {
                     let result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run()))
@@ -1723,12 +1755,14 @@ impl Agent {
                         name,
                         result,
                         reply,
+                        hold,
                     });
                 }
             });
         if let Err(error) = spawned {
             running.fetch_sub(1, Ordering::SeqCst);
             warn!(%error, "no thread for the action");
+            self.release_folder_run(hold, deckpilot_core::HoldEnd::NotRun);
         }
     }
 
@@ -2210,6 +2244,25 @@ fn security_state(path: &std::path::Path) -> Result<SecurityState, StorageError>
 /// app waits a few seconds for a reload after a save, and nothing else is
 /// answered while one runs.
 const SLOW_RELOAD: Duration = Duration::from_millis(500);
+
+/// The agent's log of runs outside their action's contexts
+/// (`deckpilot_core::contexts`, decision D1: warn, do not refuse). The
+/// engine reports the first run of each binding, step or node since the
+/// configuration was loaded; it ran.
+struct ContextLog;
+
+impl deckpilot_core::ContextWarnings for ContextLog {
+    fn warn(&self, warning: &deckpilot_core::ContextWarning) {
+        warn!(
+            action = %warning.name,
+            action_type = %warning.action_type,
+            workflow = ?warning.workflow,
+            device = ?warning.device.as_ref().map(ToString::to_string),
+            reason = %warning.reason,
+            "an action ran where it is not meant to run; it still runs (contexts are advisory)"
+        );
+    }
+}
 
 /// How long each stage of a configuration reload took, so a slow one says
 /// where the time went (the database, the plugin worker, rendering).

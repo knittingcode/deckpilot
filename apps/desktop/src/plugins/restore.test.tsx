@@ -7,6 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { i18n } from "@/i18n"
 import { installDomStubs } from "@/test/dom"
 import { HELLO, createFakePluginClient, readyRuntime, type FakeOptions } from "@/test/plugins"
+import { openSection } from "@/test/marketplace"
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
@@ -41,19 +42,25 @@ const removed: KnownPlugin = {
   restorable: true,
 }
 
-function renderInstalled(options: FakeOptions) {
+/** The Marketplace, at Installed. */
+async function renderInstalled(options: FakeOptions) {
   const client = createFakePluginClient(options)
   const result = renderWithApp(
     <PluginClientContext value={client}>
-      <PluginsSettings initialTab="installed" />
+      <PluginsSettings />
     </PluginClientContext>,
   )
+  await screen.findByRole("heading", { level: 2 })
+  await openSection(installedLabel())
   return { ...result, client }
 }
 
+/** The sidebar's label of Installed, in the window's language. */
+const installedLabel = () => i18n.t("marketplace:nav.installed")
+
 describe("removed DeckPilot plugins", () => {
   it("lists a removed bundled plugin and restores it from DeckPilot's own copy", async () => {
-    const { user, client } = renderInstalled({ runtime: restoring, known: [removed] })
+    const { user, client } = await renderInstalled({ runtime: restoring, known: [removed] })
     const list = await screen.findByRole("list", { name: "Removed DeckPilot plugins" })
     expect(screen.getByText("No plugins installed")).toBeInTheDocument()
     expect(within(list).getByText("Hello Weather")).toBeInTheDocument()
@@ -74,7 +81,7 @@ describe("removed DeckPilot plugins", () => {
   })
 
   it("offers nothing to restore with an agent that cannot restore", async () => {
-    renderInstalled({ runtime: readyRuntime(), known: [removed] })
+    await renderInstalled({ runtime: readyRuntime(), known: [removed] })
     await screen.findByText("No plugins installed")
     expect(
       screen.queryByRole("list", { name: "Removed DeckPilot plugins" }),
@@ -82,7 +89,7 @@ describe("removed DeckPilot plugins", () => {
   })
 
   it("lists only plugins the agent can restore", async () => {
-    renderInstalled({
+    await renderInstalled({
       runtime: restoring,
       known: [{ ...removed, restorable: false }],
     })
@@ -91,7 +98,7 @@ describe("removed DeckPilot plugins", () => {
   })
 
   it("reports a refused restore with what it means", async () => {
-    const { user, client } = renderInstalled({ runtime: restoring, known: [removed] })
+    const { user, client } = await renderInstalled({ runtime: restoring, known: [removed] })
     vi.mocked(client.restoreBundledPlugin).mockRejectedValueOnce(
       new PluginError("invalidPackage", "the bundled copy failed verification"),
     )
@@ -118,7 +125,7 @@ describe("a broken bundled plugin", () => {
   }
 
   it("is reinstalled from DeckPilot's own copy", async () => {
-    const { user, client } = renderInstalled(broken)
+    const { user, client } = await renderInstalled(broken)
     const reinstall = await screen.findByRole("button", { name: "Reinstall Hello Weather" })
     expect(
       screen.getByText(
@@ -139,11 +146,14 @@ describe("a broken bundled plugin", () => {
   })
 
   it("is not offered for a plugin from the registry or an older agent", async () => {
-    renderInstalled({ ...broken, helloOrigin: { type: "registry", registry: "/tmp/registry" } })
+    await renderInstalled({
+      ...broken,
+      helloOrigin: { type: "registry", registry: "/tmp/registry" },
+    })
     await screen.findByText("Hello Weather is broken")
     expect(screen.queryByRole("button", { name: /Reinstall/ })).not.toBeInTheDocument()
     cleanup()
-    renderInstalled({ ...broken, runtime: readyRuntime() })
+    await renderInstalled({ ...broken, runtime: readyRuntime() })
     await screen.findByText("Hello Weather is broken")
     expect(screen.queryByRole("button", { name: /Reinstall/ })).not.toBeInTheDocument()
     expect(
@@ -166,7 +176,7 @@ describe("in Polish", () => {
   })
 
   it("restores a removed plugin with Przywróć", async () => {
-    const { user, client } = renderInstalled({ runtime: restoring, known: [removed] })
+    const { user, client } = await renderInstalled({ runtime: restoring, known: [removed] })
     const list = await screen.findByRole("list", { name: "Usunięte wtyczki DeckPilot" })
     expect(screen.getByRole("heading", { name: "Usunięte wtyczki DeckPilot" })).toBeInTheDocument()
     expect(within(list).getByText("Ostatnio zainstalowana wersja: 1.0.0")).toBeInTheDocument()
@@ -180,7 +190,7 @@ describe("in Polish", () => {
   })
 
   it("reinstalls a broken plugin with Zainstaluj ponownie", async () => {
-    const { user } = renderInstalled({
+    const { user } = await renderInstalled({
       runtime: restoring,
       helloInstalled: true,
       helloState: "broken",

@@ -1,5 +1,8 @@
 // TypeScript mirrors of the serialized Rust types (camelCase serde names).
 
+import type { ActionContext, ContextIncompatibility } from "./action-context"
+import type { ProfileCompleteness } from "./action-completeness"
+
 export type Os = "linux" | "macOs" | "windows" | "other"
 
 export type ResourceKind =
@@ -82,6 +85,12 @@ export interface ActionType {
    * click, double click and long press.
    */
   controls?: ActionControls
+  /**
+   * Where the type can run: a key's press, a Multi Action step, a workflow
+   * node, a key's display, a gesture (`lib/action-context.ts`). Omitted:
+   * everywhere, as before contexts existed.
+   */
+  contexts?: ActionContext[]
 }
 
 /** An input a control can produce, as actions declare them. */
@@ -119,6 +128,22 @@ export type IncompatibilityReason =
       supported: InputCapability[]
     }
   | { type: "inputUnsupportedByControl"; kind: ControlId["kind"]; input: InputCapability }
+
+/**
+ * A use of an action outside its type's contexts, as `save_layout` and
+ * `save_workflow` report it (`ContextIssue` of deckpilot-core). Reported
+ * only: the save went through and the use still runs. `stored`: the same
+ * use was saved before.
+ */
+export interface ContextIssue {
+  site:
+    | { kind: "binding"; page: string; pageName: string; control: ControlId; trigger: Trigger }
+    | { kind: "step"; index: number }
+    | { kind: "node"; node: string }
+  action: string
+  reason: ContextIncompatibility
+  stored: boolean
+}
 
 export interface ActionInstance {
   id: string
@@ -322,6 +347,13 @@ export interface GraphIssue {
   node?: string
   severity: "error" | "warning"
   message: string
+  /**
+   * `configuration-incomplete`: a required parameter of the node has no
+   * value yet (`parameter`). The workflow can be saved but does not run
+   * until it is filled in (`lib/action-completeness.ts`).
+   */
+  code?: "configuration-incomplete"
+  parameter?: string
 }
 
 /** The graph form of a step workflow, with notes where it behaves differently. */
@@ -609,9 +641,11 @@ export interface LayoutPage {
   /** Gesture timings of controls that differ from the machine's defaults. */
   gestures?: KeyGestureSettings[]
   /**
-   * A folder that closes by itself: after one of its keys ran an action or
-   * started a workflow, the device returns to the folder's parent. Not
-   * stored when off.
+   * "Exit after action completes": once what one of its keys ran (an
+   * action, a plugin's action, a workflow or Multi Action) reached its end
+   * — succeeded, failed or cancelled — the device returns to the folder's
+   * parent; a run that could not start leaves it in the folder. Runs pause
+   * the folder's Auto Exit countdown either way. Not stored when off.
    */
   autoReturn?: boolean
   /**
@@ -778,7 +812,7 @@ export interface ProfilesView {
   activeProfileId: string | null
 }
 
-export interface ProfileView {
+export interface ProfileView extends ProfileCompleteness {
   profile: Profile
   activeProjectId: string | null
   issues: string[]
@@ -976,6 +1010,14 @@ export interface PluginModuleState {
    * Types without an entry are available.
    */
   unavailable: Record<string, string>
+  /**
+   * Of the unavailable types, those that only wait for permissions the
+   * user can grant: the plugin's declared optional permissions naming the
+   * action and not granted, by action type id. Read from the agent's
+   * structured grants (`getPlugin`), never from `unavailable`'s words;
+   * absent when they were not read.
+   */
+  grantable?: Record<string, string[]>
   /** The legacy action types of the built-in module this plugin replaces. */
   aliases?: LegacyAlias[]
   /**
@@ -1121,6 +1163,13 @@ export interface KeyFace {
   series?: number[] | null
   /** The key's icon by name (lib/icons.ts), drawn by the renderer. */
   symbol?: string | null
+  /**
+   * The key's action cannot run now (its plugin is missing, disabled or
+   * unavailable): the compact missing-plugin face, with the `plug` icon in
+   * place of any icon and the key's title. Never stored; the Inspector
+   * says why (lib/action-availability.ts).
+   */
+  unavailable?: boolean
 }
 
 /** What the agent knows about a key's live state (`StateSnapshot`). */
@@ -1222,6 +1271,19 @@ export interface DeviceNavigation {
   inScope: boolean
   /** Grows with every state reported: the higher of two is newer. */
   seq: number
+  /**
+   * The Auto Exit countdown of the folder shown, as its protected Back key
+   * shows it; absent without one (and from older agents).
+   */
+  folderCountdown?: FolderCountdown
+}
+
+/** A folder's Auto Exit countdown on its Back key (`deckpilot_core::FolderCountdown`). */
+export interface FolderCountdown {
+  /** Whole seconds left, rounded up. */
+  seconds: number
+  /** Paused while a run started from the folder is not over. */
+  paused?: boolean
 }
 
 /** What the live preview session reports (`commands/live_preview.rs`). */

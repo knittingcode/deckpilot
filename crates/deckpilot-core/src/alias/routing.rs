@@ -809,3 +809,50 @@ fn a_capped_parameter_passes_up_to_its_bound_and_is_never_clamped() {
         1
     );
 }
+
+#[test]
+fn a_legacy_id_inherits_the_plugins_contexts_and_the_context_rule_only_reports() {
+    use crate::{ActionContext, ActionContexts};
+    // The plugin declares contexts the built-in (no declaration: all five)
+    // does not all keep.
+    let narrowed = ActionType {
+        contexts: Some(ActionContexts::of([
+            ActionContext::Sequence,
+            ActionContext::Workflow,
+        ])),
+        ..plugin_fetch()
+    };
+    let registry = modules(
+        true,
+        Some(PluginFixture::providing(narrowed.clone())),
+        migrated(),
+    );
+    let actions = registry.action_registry();
+    // The legacy id takes the plugin's definition, contexts included.
+    assert_eq!(
+        actions.definition(&fetch()).unwrap().contexts,
+        narrowed.contexts
+    );
+    // The rule is reported, and the routing is unchanged: the plugin still
+    // serves the legacy type.
+    let statuses = registry.action_aliases();
+    let status = statuses.iter().find(|s| s.legacy == fetch()).unwrap();
+    assert_eq!(status.outcome, AliasOutcome::Plugin);
+    assert_eq!(
+        status.context_issues,
+        [
+            "context `key` is no longer supported",
+            "context `gesture` is no longer supported",
+            "context `display` is no longer supported",
+        ]
+    );
+    assert_eq!(registry.availability(&fetch()), Availability::Available);
+    // A plugin without a declaration keeps everything: nothing to report.
+    let registry = modules(true, Some(PluginFixture::new()), migrated());
+    assert!(
+        registry
+            .action_aliases()
+            .iter()
+            .all(|s| s.context_issues.is_empty())
+    );
+}

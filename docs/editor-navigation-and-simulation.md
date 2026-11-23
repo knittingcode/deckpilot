@@ -230,7 +230,11 @@ key, the protected Back, a page key, Switch layout, Back to previous layout,
 Auto Exit, a reload or revert that removed the page shown, a profile switch)
 and `ended {session, reason}` (`locked`, `replaced`). A navigation carries
 `profile`, `layout`, the page `stack`, `connected`, `inScope` (the device
-shows the session's layout: otherwise the preview is suspended) and `seq`,
+shows the session's layout: otherwise the preview is suspended), optional
+`folderCountdown {seconds, paused}` (the Auto Exit countdown of the folder
+shown, which the Canvas draws on the protected Back key with the device's
+renderer, `preview_layout`'s `folderCountdown`; it changes once a second,
+so it is pushed then; older apps ignore it) and `seq`,
 which grows with every state reported, so an answer and an event that cross
 each other can be ordered. Refusal reasons are in
 `deckpilot_ipc::live_preview::reason` (`staleRevision`, `unknownSession`,
@@ -328,6 +332,26 @@ ones, so a plugin's update never brings back an older title or look.
 a hash of its frame and how often it was written. `scripts/live-check.mjs`
 uses it with the layout probe (`live`, `dblclick`, `edit` commands) against
 a running development session.
+
+## Escape
+
+The Inspector has no deselect button: **Escape** clears the selection from
+anywhere in the Device Editor (a Canvas key, the Inspector, the Action
+Library, or with the focus nowhere), never from another view of the window
+(the settings hide the editor). One press has one effect, in this order
+(`apps/desktop/src/layout-editor/escape.ts`):
+
+1. An open menu, popover, picker or dialog closes; nothing else happens.
+2. A drag in progress (pointer or keyboard) is cancelled; the selection stays.
+3. In a text field (the key's title, a parameter, a search) the focus leaves
+   the field and what was typed stays: it is already in the draft, as its
+   own undo step. A field that handles Escape itself keeps doing so
+   (renaming a page or folder cancels the rename). The next press deselects.
+4. Otherwise the selection (a multi-selection too) is cleared and the
+   Inspector shows its empty state.
+
+Deselecting is not an edit: the draft, Undo/Redo, Save/Revert, the page,
+the Canvas's zoom and pan and the live preview session stay as they are.
 
 ## Compatibility
 

@@ -295,7 +295,7 @@ describe("the page navigation under the device", { timeout: 20_000 }, () => {
     await user.click(within(pages).getByRole("button", { name: "Actions for “Git”" }))
     expect(
       within(await screen.findByRole("menu")).getByRole("menuitemcheckbox", {
-        name: /Close after a key runs/,
+        name: /Exit after action completes/,
       }),
     ).toHaveAttribute("aria-checked", "false")
     await user.keyboard("{Escape}")
@@ -546,5 +546,112 @@ describe("one size for every control of the page navigation", () => {
     const counter = document.querySelector("[data-slot=page-counter]") as HTMLElement
     expect(counter).toHaveAttribute("data-size", "nav")
     expect(counter.querySelector("[aria-hidden]")?.textContent).toBe("1/1")
+  })
+})
+
+describe("the expanded dock's measurements", () => {
+  it("follow the canvas footer, also once its layout settles in the next frame", () => {
+    const observed: Element[] = []
+    const callbacks: ResizeObserverCallback[] = []
+    class Observer {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback)
+      }
+      observe(element: Element) {
+        observed.push(element)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal("ResizeObserver", Observer)
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.stubGlobal("cancelAnimationFrame", () => {})
+    let footerRight = 1000
+    const rects = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const slot = this.dataset.slot
+        const r =
+          slot === "page-nav"
+            ? { left: 400, right: 580, top: 0, bottom: 30 }
+            : slot === "canvas-footer"
+              ? { left: 0, right: footerRight, top: 0, bottom: 30 }
+              : slot === "device-editor-main"
+                ? { left: 0, right: 1000, top: 0, bottom: 600 }
+                : { left: 0, right: 0, top: 0, bottom: 0 }
+        return {
+          ...r,
+          x: r.left,
+          y: r.top,
+          width: r.right - r.left,
+          height: r.bottom - r.top,
+          toJSON: () => r,
+        }
+      })
+    const width = vi
+      .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.dataset.slot === "page-nav" ? 180 : 0
+      })
+    try {
+      render(
+        <div data-slot="device-editor-main">
+          <div data-slot="canvas-footer">
+            <PageNavigationDock
+              draft={{
+                id: "l",
+                name: "Main",
+                model: "m",
+                homePage: "home",
+                pages: [{ id: "home", name: "Home", bindings: [] }],
+              }}
+              pageId="home"
+              trail={[]}
+              onOpen={vi.fn()}
+              onNavigate={vi.fn()}
+              onAdd={vi.fn()}
+              onRename={vi.fn()}
+              navigator={() => null}
+            />
+          </div>
+        </div>,
+      )
+      act(() => {
+        screen.getByRole("button", { name: /^Page 1 of 1/ }).click()
+      })
+      const panel = () => document.querySelector<HTMLElement>("[data-slot=page-navigator-panel]")
+      expect(panel()?.style.width).toBe("416px")
+      // The central area and the editor are observed, not only the toolbar and the tree.
+      const slots = observed.map((e) => (e as HTMLElement).dataset.slot)
+      expect(slots).toEqual(
+        expect.arrayContaining([
+          "page-nav",
+          "page-navigator-panel",
+          "canvas-footer",
+          "device-editor-main",
+        ]),
+      )
+      // The footer narrows (the library opens): measured again at once.
+      footerRight = 652
+      act(() => {
+        for (const callback of callbacks) callback([], {} as ResizeObserver)
+      })
+      expect(panel()?.style.width).toBe("300px")
+      // Something else moves in the same frame, after this observer ran:
+      // measured again once that layout has settled.
+      footerRight = 1000
+      act(() => {
+        for (const frame of frames.splice(0)) frame(0)
+      })
+      expect(panel()?.style.width).toBe("416px")
+    } finally {
+      rects.mockRestore()
+      width.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 })

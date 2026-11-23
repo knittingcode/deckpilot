@@ -11,7 +11,8 @@
     "low": {
       "label": "Low risk",
       "description": "Limited to the plugin's own resources."
-    }
+    },
+    "tools": "Running tools on your system, within what this plugin supports."
   },
   "host": {
     "wildcard": "any subdomain of {{domain}} (https://*.{{domain}})"
@@ -77,6 +78,12 @@
       "titleIcons": "Stream Deck: use its own icons on keys",
       "titleState": "Stream Deck: change what its own keys show",
       "detail": "Only keys bound to the plugin's own actions."
+    },
+    "tools": {
+      "title": "Running {{tool}} commands that read",
+      "detail": "Only the {{tool}} commands the plugin declares, each with its declared options; they read and change nothing.",
+      "titleModify": "Starting, stopping and changing {{tool}} resources",
+      "detailModify": "Allows the plugin to start, stop and change {{tool}} resources, within what this plugin supports."
     }
   },
   "list": {
@@ -88,22 +95,27 @@
     "title": {
       "install": "Install {{name}} {{version}}?",
       "update": "Update {{name}} to {{version}}?",
-      "enable": "Enable {{name}}?"
+      "enable": "Enable {{name}}?",
+      "grant": "Grant permissions to {{name}}?"
     },
     "intro": {
       "install": "Review what this plugin may do. Check each permission to consent to it; you can revoke permissions later in Installed.",
       "update": "This version asks for more than you granted. Check each new or broadened permission to consent, decline the update, or cancel to decide later.",
-      "enable": "A plugin runs only with every permission it needs. Check each one that is not granted yet; an optional one is needed only by the actions it names."
+      "enable": "A plugin runs only with every permission it needs. Check each one that is not granted yet; an optional one is needed only by the actions it names.",
+      "grant": "This action needs permissions the plugin does not have yet. Check each one you allow; you can revoke them later in the plugin's page or Settings › Permissions."
     },
     "confirm": {
       "install": "Install",
       "update": "Update",
-      "enable": "Enable"
+      "enable": "Enable",
+      "grant": "Allow"
     },
     "status": {
       "allGranted": "Every permission is granted.",
       "consented": "You consented to every permission.",
-      "missing": "{{missing}} of {{total}} permissions still need your consent."
+      "missing": "{{missing}} of {{total}} permissions still need your consent.",
+      "grantChecked_one": "{{count}} of {{total}} checked",
+      "grantChecked_other": "{{count}} of {{total}} checked"
     },
     "decline": "Decline update",
     "enforced": "The agent enforces these permissions on every call the plugin makes. The plugin runtime is experimental; only install plugins you trust.",

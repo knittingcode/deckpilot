@@ -144,7 +144,7 @@ describe("the Device Editor in Polish", { timeout: 20_000 }, () => {
     expect(
       screen.getByRole("region", { name: "Ustawienia 3 elementów sterujących" }),
     ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Odznacz elementy sterujące" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Odznacz/ })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Wyczyść 3 elementy sterujące/ })).toBeInTheDocument()
   })
 

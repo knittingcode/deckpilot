@@ -76,6 +76,14 @@ fn definition(
         requires_project: false,
         deprecated: false,
         controls: Some(deckpilot_core::ActionControls::keys()),
+        // Opening and running things makes sense everywhere but as a
+        // display; the queries and monitors narrow this below.
+        contexts: Some(deckpilot_core::ActionContexts::of([
+            deckpilot_core::ActionContext::Key,
+            deckpilot_core::ActionContext::Gesture,
+            deckpilot_core::ActionContext::Sequence,
+            deckpilot_core::ActionContext::Workflow,
+        ])),
         node,
     }
 }
@@ -615,7 +623,7 @@ pub struct ProcessStatus {
 
 impl ProcessStatus {
     pub fn new() -> Self {
-        Self {
+        let status = Self {
             definition: definition(
                 PROCESS_STATUS,
                 "Program status",
@@ -639,6 +647,17 @@ impl ProcessStatus {
                     ..NodeSpec::default()
                 },
             ),
+        };
+        // A query: its result drives a step condition or later nodes,
+        // and is invisible on a key.
+        Self {
+            definition: ActionType {
+                contexts: Some(deckpilot_core::ActionContexts::of([
+                    deckpilot_core::ActionContext::Sequence,
+                    deckpilot_core::ActionContext::Workflow,
+                ])),
+                ..status.definition
+            },
         }
     }
 }
@@ -798,6 +817,17 @@ fn level_output() -> OutputSpec {
 }
 
 fn monitor_definition(metric: Metric) -> ActionType {
+    ActionType {
+        // A live reading on a key's face, or a value for a workflow.
+        contexts: Some(deckpilot_core::ActionContexts::of([
+            deckpilot_core::ActionContext::Display,
+            deckpilot_core::ActionContext::Workflow,
+        ])),
+        ..monitor_type(metric)
+    }
+}
+
+fn monitor_type(metric: Metric) -> ActionType {
     match metric {
         Metric::Cpu => definition(
             CPU,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import type { ModuleInfo } from "@/lib/types"
 
-import { dashboardCards, isModulePageAvailable, moduleNavigation } from "."
+import { isModulePageAvailable, moduleNavigation } from "."
 
 function module(id: string, enabled: boolean, pages: ModuleInfo["pages"]): ModuleInfo {
   return {
@@ -40,7 +40,6 @@ describe("module navigation", () => {
     ])
     expect(isModulePageAvailable(modules, "work-session/work-session")).toBe(true)
     expect(isModulePageAvailable(modules, "projects/projects")).toBe(false)
-    expect(dashboardCards(modules)).toEqual([])
   })
 
   it("removes pages and cards of disabled modules", () => {
@@ -50,6 +49,5 @@ describe("module navigation", () => {
     expect(
       isModulePageAvailable([module("work-session", true, [sessionPage])], "work-session/x"),
     ).toBe(false)
-    expect(dashboardCards(modules)).toEqual([])
   })
 })

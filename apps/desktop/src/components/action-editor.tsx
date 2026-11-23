@@ -1,3 +1,4 @@
+import { isIncompleteRefusal, runResultText } from "@/components/run-result-text"
 import { Ban, Copy, Play, Save, Trash2, TriangleAlert } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -25,7 +26,9 @@ import { failureMessage, toastFailure } from "@/lib/failure"
 import { creatableTypes } from "@/lib/modules"
 import { pluginTypeUnavailable, typeAvailability } from "@/lib/plugin-actions"
 import { PROJECTS_PLUGIN, pluginFeatures } from "@/lib/plugin-features"
-import { buildParameters, initialValue, missingRequired } from "@/lib/parameters"
+import { NeedsConfiguration } from "@/components/needs-configuration"
+import { missingParameters } from "@/lib/action-completeness"
+import { buildParameters, initialValue } from "@/lib/parameters"
 import type {
   ActionInstance,
   ActionReference,
@@ -132,13 +135,16 @@ export function ActionEditor({
   const [result, setResult] = useState<ActionResult | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const missing = type ? missingRequired(type.parameters, values) : []
+  // Required settings not filled in: the action is saved as a draft that
+  // needs configuration (`lib/action-completeness.ts`) and does not run
+  // until they are; the same rule as the agent's.
+  const missing = type ? missingParameters(type, buildParameters(type.parameters, values)) : []
   const nameMissing = !name.trim()
 
   const save = async (event: React.SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
     setSubmitted(true)
-    if (!type || unavailable || nameMissing || missing.length > 0) return
+    if (!type || unavailable || nameMissing) return
     setError(null)
     const fields = {
       name,
@@ -372,6 +378,9 @@ export function ActionEditor({
         <>
           <Separator />
           <div className="grid gap-4">
+            {missing.length > 0 && (
+              <NeedsConfiguration name={name || type.name} className="w-fit" />
+            )}
             {type.parameters.map((spec) => (
               <div key={`${type.id}:${spec.key}`} className="grid gap-1">
                 <ParameterField
@@ -380,15 +389,14 @@ export function ActionEditor({
                   projects={projects}
                   actionType={type.id}
                   targets={workflows ? { actions: candidates, workflows } : undefined}
+                  idPrefix={`editor-${action?.id ?? "new"}`}
+                  error={
+                    missing.includes(spec.key) ? t("actions:completeness.fieldRequired") : undefined
+                  }
                   onChange={(next) => {
                     setValues((current) => ({ ...current, [spec.key]: next }))
                   }}
                 />
-                {submitted && missing.includes(spec.key) && (
-                  <p className="text-xs text-destructive">
-                    {t("actions:editor.parameterRequired", { label: spec.label })}
-                  </p>
-                )}
               </div>
             ))}
           </div>
@@ -451,11 +459,13 @@ export function ActionEditor({
       {result && (
         <p
           className="rounded-md bg-muted px-3 py-2 font-mono text-xs data-[status=failed]:text-destructive"
+          id="action-run-result"
           data-status={result.status}
           role="status"
         >
-          {result.status === "succeeded" ? "✓" : "✗"} {result.message}
-          {result.data && Object.keys(result.data).length > 0 && (
+          {result.status === "succeeded" ? "✓" : "✗"}{" "}
+          {runResultText(result, action?.name ?? type?.name ?? "", type)}
+          {!isIncompleteRefusal(result) && result.data && Object.keys(result.data).length > 0 && (
             <span className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 text-muted-foreground">
               {Object.entries(result.data).map(([key, value]) => (
                 <span key={key} className="contents">

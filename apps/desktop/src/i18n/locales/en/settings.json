@@ -15,11 +15,11 @@
   "pages": {
     "language": {
       "title": "Language",
-      "description": "The language of DeckPilot on this computer"
+      "description": "Choose the language of DeckPilot's interface. The change applies to every window and profile on this computer."
     },
     "profiles": {
       "title": "Profiles",
-      "description": "Profiles and the one active on the device"
+      "description": "Manage your profiles and their settings."
     },
     "updates": {
       "title": "Updates",
@@ -51,27 +51,23 @@
     },
     "modules": {
       "title": "Modules",
-      "description": "Features of DeckPilot you can enable or disable"
+      "description": "Native features built into DeckPilot that you can enable or disable"
     },
     "permissions": {
       "title": "Permissions",
-      "description": "What each module is allowed to access"
+      "description": "What modules and plugins are allowed to access"
     },
     "diagnostics": {
       "title": "Logs & Diagnostics",
-      "description": "Logs and technical details for troubleshooting"
+      "description": "Logs, plugin diagnostics and technical details for troubleshooting"
     },
     "about": {
       "title": "About",
-      "description": "Version, license and system"
+      "description": "Stream Deck management for macOS, Windows and Linux. Open source under the Apache License 2.0."
     },
     "devDialogs": {
       "title": "Dialog showcase",
       "description": "Development only: every dialog template in its states"
-    },
-    "plugins": {
-      "title": "Plugins",
-      "description": "Experimental: installed plugins, their permissions, settings and updates"
     },
     "module": {
       "description": "Settings of the {{module}} module"
@@ -82,10 +78,7 @@
     }
   },
   "language": {
-    "sectionTitle": "Language",
-    "sectionDescription": "Applies to every window and profile on this computer, right away.",
-    "system": "System default (recommended)",
-    "systemHint": "System default follows the language order of your operating system. When none of its languages is available, DeckPilot is shown in English."
+    "system": "System default (recommended)"
   },
   "shared": {
     "close": "Close",
@@ -117,7 +110,6 @@
     "note": "Not run from this control: {{reason}} It stays assigned but is not run."
   },
   "about": {
-    "description": "Stream Deck management for macOS, Windows and Linux. Open source under the Apache License 2.0.",
     "version": "Version",
     "development": "(development session)",
     "previousVersion": "Previous version",
@@ -129,7 +121,7 @@
     "statusUnreadable": "The agent status could not be read",
     "statusUnreadableNext": "Try again; if the agent does not respond, restart it",
     "status": "Status",
-    "description": "The agent owns device communication and action execution and keeps running when this window is closed.",
+    "description": "It keeps running when this window is closed.",
     "process": "Process",
     "processValue": "PID {{pid}}, started {{time}}",
     "backend": "Device backend",
@@ -155,17 +147,22 @@
     "copied": "Diagnostics copied",
     "notCopied": "The diagnostics were not copied",
     "copyByHand": "Select the report and copy it by hand",
-    "reportInEnglish": "The report is always in English, so that anyone who helps you can read it."
+    "reportInEnglish": "The report is always in English, so that anyone who helps you can read it.",
+    "pluginsTitle": "Plugins",
+    "pluginsDescription": "Built-in modules moving to plugins, what DeckPilot is made of and the plugin registry this computer verified."
   },
   "moduleSettings": {
     "saved": "{{module}} settings saved",
     "notSaved": "{{module}} settings were not saved"
   },
   "permissions": {
+    "modulesTitle": "Modules",
     "intro": "Every module declares what it may access. A disabled module has no access. To withdraw a permission, disable the module under <page>Modules</page>.",
     "unused": "No module uses this permission.",
     "granted": "Granted",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "pluginsTitle": "Plugins",
+    "pluginsIntro": "What each installed plugin may do, as you allowed it. Revoke a permission here or on the plugin’s page in the Marketplace; both show the same grants."
   },
   "storage": {
     "title": "Configuration database",
@@ -199,7 +196,7 @@
       "notEnabled": "{{module}} was not enabled",
       "notDisabled": "{{module}} was not disabled"
     },
-    "intro": "Disabling a module hides its pages and action types. Actions, workflows and layouts that use it are kept and shown as unavailable until you enable it again. All modules are built into DeckPilot; installing modules from other sources is not supported.",
+    "intro": "Disabling a module hides its pages and action types. Actions, workflows and layouts that use it are kept and shown as unavailable until you enable it again.",
     "search": "Search modules",
     "show": "Show modules",
     "emptyTitle": "No modules found",
@@ -234,7 +231,9 @@
       "notInstalled_other": "Requires {{modules}}, which are not installed.",
       "requires_one": "Requires {{modules}}. Enable it first.",
       "requires_other": "Requires {{modules}}. Enable them first."
-    }
+    },
+    "pluginsNote": "Separately packaged plugins, such as GitHub, Docker or Pomodoro, are not modules: install and manage them in the Marketplace.",
+    "openMarketplace": "Open Marketplace"
   },
   "backup": {
     "windowFailed": "The window did not open",

@@ -102,6 +102,7 @@ pub fn whoami_type() -> ActionType {
     };
     node.icon = Some("user".into());
     ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new(ACTION).expect("a valid id"),

@@ -271,7 +271,7 @@ describe("the key header", { timeout: 20_000 }, () => {
       )
     })
     // Drawn for the size the key is shown at: 72 CSS px less its border.
-    expect(api.previewLayout).toHaveBeenCalledWith("p", layout, "home", null, true, null, 64)
+    expect(api.previewLayout).toHaveBeenCalledWith("p", layout, "home", null, true, null, 64, null)
     await user.click(control("Key 1"))
     // The same image as the Canvas's: one renderer, one preview.
     expect(preview("Key 1").querySelector("img")).toHaveAttribute(
@@ -303,7 +303,9 @@ describe("the key header", { timeout: 20_000 }, () => {
     await menu(user, "Key 2")
     await user.keyboard("{Escape}")
     await user.dblClick(preview("Key 2"))
-    await user.keyboard("{Escape}")
+    // Closes the menu if the double click left it open (with nothing open,
+    // Escape would deselect the key).
+    if (screen.queryByRole("menu")) await user.keyboard("{Escape}")
     expect(api.simulatePress).not.toHaveBeenCalled()
     expect(api.runAction).not.toHaveBeenCalled()
     expect(api.runWorkflow).not.toHaveBeenCalled()
@@ -815,6 +817,117 @@ describe("the Background Library", { timeout: 20_000 }, () => {
       await act(async () => {
         await i18n.changeLanguage("en")
       })
+    }
+  })
+})
+
+describe("the Inspector's two columns", { timeout: 20_000 }, () => {
+  const slot = (name: string) => document.querySelector<HTMLElement>(`[data-slot=${name}]`)
+  const scroller = () => {
+    const element = slot("inspector-scroll")
+    if (!element) throw new Error("no settings column")
+    return element
+  }
+  const column = () => slot("inspector-preview-column")
+
+  it("keeps the key preview in a fixed column outside the scrolling settings", async () => {
+    const user = renderEditor()
+    await user.click(control("Key 1"))
+    // One preview, in its own column, never inside the scroll container.
+    expect(document.querySelectorAll("[data-slot=key-preview]")).toHaveLength(1)
+    expect(column()).toContainElement(preview("Key 1"))
+    expect(scroller()).not.toContainElement(column())
+    expect(scroller()).not.toContainElement(preview("Key 1"))
+    // Both columns side by side in one row of the Inspector.
+    const columns = slot("inspector-columns")
+    expect(columns).toHaveClass("flex")
+    expect(columns).toContainElement(column())
+    expect(columns).toContainElement(scroller())
+    // The preview column does not scroll, nor shrink.
+    expect(column()).toHaveClass("shrink-0", "self-start")
+    expect(column()?.className).not.toMatch(/overflow/)
+    // Only the settings column scrolls: vertical, contained, with a stable gutter.
+    expect(scroller()).toHaveClass("overflow-y-auto", "overscroll-contain", "min-h-0", "min-w-0")
+    expect(scroller().className).toContain("[scrollbar-gutter:stable]")
+    expect(scroller().className).not.toMatch(/overflow-x-auto|overflow-auto/)
+    // No other vertical scroll container inside it.
+    expect(scroller().querySelector(".overflow-y-auto, .overflow-auto")).toBeNull()
+    // Every setting is in the settings column: title, Show title, gestures.
+    expect(scroller()).toContainElement(slot("key-appearance"))
+    expect(scroller()).toContainElement(slot("show-title"))
+    expect(scroller()).toContainElement(screen.getByRole("textbox", { name: "Key title" }))
+  })
+
+  it("follows the selection: the preview updates and the settings start at the top", async () => {
+    const user = renderEditor()
+    await user.click(control("Key 1"))
+    scroller().scrollTop = 120
+    await user.click(control("Key 2"))
+    expect(scroller().scrollTop).toBe(0)
+    expect(column()).toContainElement(preview("Key 2"))
+    await waitFor(() => {
+      expect(preview("Key 2").querySelector("img")).toHaveAttribute(
+        "src",
+        "data:image/png;base64,key1-none-noicon",
+      )
+    })
+    // A dial has no display: no preview column, the settings take the width.
+    await user.click(control("Dial 1"))
+    expect(column()).toBeNull()
+    expect(slot("key-preview")).toBeNull()
+  })
+
+  it("shows the edited look in the preview, through undo and redo", async () => {
+    const user = renderEditor()
+    await user.click(control("Key 2"))
+    await user.type(screen.getByRole("textbox", { name: "Key title" }), "Mail")
+    await user.click(screen.getByRole("switch", { name: "Show title" }))
+    await waitFor(() => {
+      const draft = api.previewLayout.mock.calls.at(-1)?.[1] as DeviceLayout | undefined
+      expect(draft?.pages[0]?.bindings.find((b) => b.control.index === 1)?.label).toBe("Mail")
+    })
+    await user.click(screen.getByRole("button", { name: "Undo" }))
+    await user.click(screen.getByRole("button", { name: "Redo" }))
+    // Still one preview, in its column.
+    expect(document.querySelectorAll("[data-slot=key-preview]")).toHaveLength(1)
+    expect(column()).toContainElement(preview("Key 2"))
+    // The Canvas's image of the key: one rendering, shown in both places.
+    await waitFor(() => {
+      expect(preview("Key 2").querySelector("img")?.getAttribute("src")).toBe(
+        control("Key 2").querySelector("img")?.getAttribute("src"),
+      )
+    })
+  })
+
+  it("opens the key menu in a portal, never clipped by the settings column", async () => {
+    const user = renderEditor()
+    await user.click(control("Key 1"))
+    await user.click(preview("Key 1"))
+    const opened = await screen.findByRole("menu")
+    expect(scroller()).not.toContainElement(opened)
+    expect(column()).not.toContainElement(opened)
+    await user.keyboard("{Escape}")
+  })
+
+  it("has no preview column for a multi-selection", async () => {
+    const user = renderEditor()
+    await user.click(control("Key 2"))
+    await user.keyboard("{Control>}")
+    await user.click(control("Key 3"))
+    await user.keyboard("{/Control}")
+    expect(header().getByText("Applies to 2 keys")).toBeInTheDocument()
+    expect(column()).toBeNull()
+    expect(slot("key-preview")).toBeNull()
+  })
+
+  it("names the preview in Polish", async () => {
+    await i18n.changeLanguage("pl")
+    try {
+      const user = renderEditor()
+      await user.click(screen.getByRole("button", { name: "Klawisz 1" }))
+      expect(column()?.querySelector("[data-slot=key-preview]")).toHaveAccessibleName(/Klawisz 1/)
+    } finally {
+      await i18n.changeLanguage("en")
     }
   })
 })

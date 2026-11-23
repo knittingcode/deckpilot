@@ -18,7 +18,7 @@ import {
   withPluginTypes,
 } from "@/lib/plugin-actions"
 import type { ActionType, ModuleInfo } from "@/lib/types"
-import { ActionsPage } from "@/pages/actions"
+import { ActionLibraryView } from "@/pages/actions"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { action, builtInModules, moduleInfo, profileView } from "@/test/fixtures"
@@ -28,10 +28,13 @@ import {
   githubMigration,
   type FakeOptions,
 } from "@/test/plugins"
+import { DiagnosticsSettings } from "@/settings/pages/diagnostics"
+import { findSettingsPage, searchSettings, settingsPages } from "@/settings/registry"
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
 import { PluginClientContext } from "./api"
+import { takeFocusedMigrations } from "./focus"
 import { PluginsSettings } from "./marketplace"
 import { MigrationConsentDialog } from "./migration-dialog"
 import { isBundledPlugin } from "./model"
@@ -57,11 +60,18 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-function renderMarketplace(options: FakeOptions) {
+/**
+ * The plugin diagnostics of Settings › Logs & Diagnostics, which list the
+ * migrations (or the Marketplace, with `variant`).
+ */
+function renderMarketplace(
+  options: FakeOptions,
+  variant: "marketplace" | "diagnostics" = "diagnostics",
+) {
   const client = createFakePluginClient(options)
   const result = renderWithApp(
     <PluginClientContext value={client}>
-      <PluginsSettings />
+      <PluginsSettings variant={variant} />
     </PluginClientContext>,
   )
   return { ...result, client }
@@ -164,8 +174,90 @@ describe("the migration notice", () => {
   it("shows nothing when no module moves, and survives an agent without migrations", async () => {
     const { client } = renderMarketplace({})
     client.listModuleMigrations.mockRejectedValue(new Error("unknown variant"))
-    await screen.findByRole("list", { name: "Plugins" })
+    expect(
+      await screen.findByText("No built-in module is moving to a plugin on this computer."),
+    ).toBeInTheDocument()
     expect(screen.queryByRole("list", { name: "Module migrations" })).not.toBeInTheDocument()
+  })
+
+  it("names the plugin, never a raw locale key of its manifest (t:plugin.name)", async () => {
+    renderMarketplace({
+      migrations: [
+        { ...githubMigration({ phase: "cutOver", route: "plugin" }), pluginName: "t:plugin.name" },
+        {
+          ...githubMigration({ phase: "cutOver", route: "plugin" }),
+          module: "jira",
+          moduleName: "Jira",
+          plugin: "deckpilot.jira",
+          pluginName: "t:plugin.name",
+        },
+      ],
+      // The registry knows GitHub's name; nothing knows Jira's.
+      available: [
+        {
+          id: "deckpilot.github",
+          name: "GitHub",
+          summary: "Pull requests.",
+          publisher: "deckpilot",
+          latest: "0.2.1",
+          versions: [{ version: "0.2.1", permissions: [] }],
+        },
+      ],
+    })
+    const list = await notice()
+    expect(list).not.toHaveTextContent("t:plugin.name")
+    expect(
+      (await entry("GitHub")).getByText(/plugin GitHub \(deckpilot\.github\)/),
+    ).toBeInTheDocument()
+    expect(
+      (await entry("Jira")).getByText(/plugin deckpilot\.jira \(deckpilot\.jira\)/),
+    ).toBeInTheDocument()
+  })
+
+  it("says on the Marketplace when a migration waits for consent, and links to Settings", async () => {
+    const { user, context } = renderMarketplace({ migrations: [githubMigration()] }, "marketplace")
+    await screen.findByRole("heading", { name: "Discover plugins" })
+    // The technical list is not in the Marketplace.
+    expect(screen.queryByRole("list", { name: "Module migrations" })).not.toBeInTheDocument()
+    expect(
+      screen.getByText("GitHub is moving to a plugin and waits for your consent."),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Review in Settings" }))
+    expect(context.openSettings).toHaveBeenCalledWith("diagnostics")
+    // …which opens at the migrations.
+    expect(takeFocusedMigrations()).toBe(true)
+  })
+
+  it("lists the migrations, what DeckPilot is made of and the registry in the diagnostics", async () => {
+    const { user } = renderMarketplace({ migrations: [githubMigration()] })
+    expect(await screen.findByRole("list", { name: "Module migrations" })).toBeInTheDocument()
+    expect(screen.getByRole("region", { name: "What DeckPilot includes" })).toBeInTheDocument()
+    expect(screen.getByRole("region", { name: "Registry" })).toBeInTheDocument()
+    // No catalog and no sidebar here: discovering plugins is the Marketplace's.
+    expect(screen.queryByRole("heading", { name: "Discover plugins" })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-slot="marketplace-sidebar"]')).toBeNull()
+    const scrolled = vi.fn()
+    Element.prototype.scrollIntoView = scrolled
+    await user.click(screen.getAllByRole("button", { name: "Review" })[0] as HTMLElement)
+    expect(scrolled).toHaveBeenCalled()
+  })
+
+  it("is in Settings › Logs & Diagnostics, also found by searching for migration", async () => {
+    vi.stubEnv("VITE_DECKPILOT_PLUGINS", "1")
+    expect(searchSettings(settingsPages([]), "migration").map((p) => p.id)).toContain("diagnostics")
+    expect(findSettingsPage([], "plugins")).toBeUndefined()
+    const client = createFakePluginClient({ migrations: [githubMigration()] })
+    // The page's diagnostics report is not what this is about: it stays loading.
+    api.getOverview.mockReturnValue(new Promise(() => undefined))
+    renderWithApp(
+      <PluginClientContext value={client}>
+        <DiagnosticsSettings />
+      </PluginClientContext>,
+    )
+    // Its plugin section (loaded on demand; its content is the diagnostics
+    // view the tests above render directly).
+    const plugins = await screen.findByRole("region", { name: "Plugins" })
+    expect(plugins).toHaveTextContent("Built-in modules moving to plugins")
   })
 
   it("explains actions that are unavailable because the user withdrew the plugin", async () => {
@@ -510,7 +602,7 @@ describe("legacy action types a plugin replaces", () => {
     })
     api.getProfile.mockResolvedValue(profileView({ actions: [pr] }))
     const modules = [...builtInModules(), github()]
-    const { user, titlebarAction } = renderWithApp(<ActionsPage />, {
+    const { user, titlebarAction } = renderWithApp(<ActionLibraryView />, {
       modules,
       pluginModules: pluginModules([githubPlugin()], [], [githubMigration({ phase: "cutOver" })]),
     })

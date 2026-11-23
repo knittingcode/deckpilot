@@ -5,39 +5,22 @@
     "selector": "Układ: {{layout}}",
     "selectorDefault": "Układ: {{layout}}, domyślny",
     "profileLayouts": "Układy tego profilu",
-    "noneForModel": "Nie ma jeszcze układów dla {{model}}",
-    "noneForDevice": "Nie ma jeszcze układów dla tego urządzenia",
-    "forModel": "Układy dla {{model}}",
-    "forDevice": "Układy dla tego urządzenia",
+    "empty": "Brak układów dla tego urządzenia w tym profilu",
     "defaultMark": "domyślny",
-    "sharedProfiles_one": "współdzielony · {{count}} profil",
-    "sharedProfiles_few": "współdzielony · {{count}} profile",
-    "sharedProfiles_many": "współdzielony · {{count}} profili",
-    "sharedProfiles_other": "współdzielony · {{count}} profilu",
     "onDevice": "Wyświetlany na urządzeniu",
-    "otherLayouts": "Inne układy dla {{model}}",
-    "useLayout": "Użyj układu {{layout}} w tym profilu",
-    "unused": "Nieużywany przez żaden profil",
-    "usedBy": "Używany przez: {{profiles}}",
-    "use": "Użyj w tym profilu",
-    "otherModels": "Układy dla innych modeli",
-    "notForDevice": "Nie dla tego urządzenia",
-    "madeFor": "Utworzony dla {{model}}; wybierz to urządzenie, aby go edytować",
-    "anotherModel": "inny model",
     "manageGroup": "Zarządzanie układami",
     "new": "Nowy układ…",
-    "duplicate": "Duplikuj układ…",
-    "rename": "Zmień nazwę układu…",
     "defaultHint": "Układ profilu dla {{model}}: wyświetlają go urządzenia tego modelu",
-    "isDefault": "Domyślny dla tego modelu",
-    "setDefault": "Ustaw jako domyślny",
-    "delete": "Usuń układ…",
     "manage": "Zarządzaj układami…",
     "toast": {
-      "assigned": "Układ {{layout}} jest używany w tym profilu",
-      "assignFailed": "Nie dodano układu „{{layout}}” do tego profilu",
       "madeDefault": "Układ {{layout}} jest używany dla {{model}}",
       "defaultFailed": "Nie ustawiono układu „{{layout}}” jako domyślnego"
+    },
+    "star": {
+      "set": "Ustaw jako domyślny",
+      "default": "Układ domyślny",
+      "setDefaultLabel": "Ustaw „{{layout}}” jako domyślny",
+      "isDefaultLabel": "„{{layout}}” jest układem domyślnym"
     }
   },
   "open": {
@@ -159,7 +142,10 @@
     "menu": {
       "rename": "Zmień nazwę…",
       "duplicate": "Duplikuj…",
-      "delete": "Usuń…"
+      "delete": "Usuń…",
+      "duplicateIn": "Duplikuj w profilu „{{profile}}”…",
+      "setDefaultIn": "Ustaw jako domyślny w profilu „{{profile}}”",
+      "defaultIn": "Domyślny w profilu „{{profile}}”"
     },
     "notUsed": "Nieużywany",
     "profilesUsing": "Profile używające układu {{layout}}",
@@ -190,21 +176,18 @@
       "experimental": "(eksperymentalny)",
       "profile": "Przypisz do profilu",
       "noProfile": "Bez profilu (nieprzypisany)"
+    },
+    "filter": {
+      "label": "Wyświetlane",
+      "profile": "Profil: {{profile}}",
+      "clear": "Pokaż układy wszystkich profili, nie tylko {{profile}}",
+      "title": "Układy profilu {{profile}}"
     }
   },
   "management": {
     "duplicateTitle": "Duplikuj „{{layout}}”",
     "duplicateDescription": "Kopia zostanie dodana do tego profilu. Oryginał pozostanie bez zmian.",
     "copyName": "{{layout}} (kopia)",
-    "duplicateFailed": "Nie zduplikowano „{{layout}}”",
-    "renameTitle": "Zmień nazwę „{{layout}}”",
-    "renameShared": "Układ jest współdzielony: każdy profil, który go używa, pokaże nową nazwę.",
-    "renameFailed": "Nie zmieniono nazwy „{{layout}}”",
-    "deleteShared": "Inne profile również używają tego układu, więc nie można go tutaj usunąć. Usuń go z tego profilu w Ustawieniach › Profile albo usuń go dla wszystkich profili na stronie Układy.",
-    "deleteOwn": "Układ i jego strony zostaną usunięte. Akcje i przepływy pracy pozostaną w bibliotece.",
-    "deleting": "Usuwanie…",
-    "deleteFailed": "Nie usunięto „{{layout}}”",
-    "deleteFailedHint": "Układ używany przez inne profile usuwa się na stronie Układy lub usuwa z tego profilu w Ustawieniach › Profile",
     "newTitle": "Nowy układ dla {{model}}",
     "newPlaceholder": "Układ {{model}}",
     "createFailed": "Nie utworzono „{{layout}}”",

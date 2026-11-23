@@ -129,21 +129,38 @@ describe("device options", () => {
   const plus = deviceModel({ id: "elgato.streamdeck.plus", name: "Stream Deck +" })
   const mini = deviceModel({ id: "elgato.streamdeck.mini", name: "Stream Deck Mini" })
 
-  it("lists connected devices first, then the models without one", () => {
+  it("groups by connection state: connected devices, then known devices and models that are not", () => {
     const options = deviceOptions(
       [mk2, plus, mini],
       [
         deviceInfo({ id: { model: plus.id, serial: "A1" }, modelName: "Stream Deck +" }),
         deviceInfo({ id: { model: "vendor.unknown", serial: "X9" }, modelName: "Unknown deck" }),
-        deviceInfo({ id: { model: mini.id, serial: "OFF" }, state: "disconnected" }),
+        deviceInfo({
+          id: { model: mini.id, serial: "OFF" },
+          modelName: "Stream Deck Mini",
+          state: "disconnected",
+        }),
       ],
     )
-    expect(options.map((o) => [o.label, o.detail, o.available])).toEqual([
-      ["Stream Deck +", "Connected · A1", true],
-      ["Unknown deck", "Connected · X9 · not in the device catalog", false],
-      ["Stream Deck MK.2", "Not connected", true],
-      ["Stream Deck Mini", "Not connected", true],
+    expect(options.map((o) => [o.label, o.detail, o.connected, o.available])).toEqual([
+      ["Stream Deck +", "Connected · A1", true, true],
+      ["Unknown deck", "Connected · X9 · not in the device catalog", true, false],
+      // A known device that is not connected: by its serial, never "Not connected".
+      ["Stream Deck Mini", "OFF", false, true],
+      // A model no known device has: no subtitle at all (its Mini is listed as the device).
+      ["Stream Deck MK.2", undefined, false, true],
     ])
+    // A disconnected device is chosen as its model, as before.
+    expect(options[2]?.device).toBeNull()
+  })
+
+  it("moves a device between the groups as it connects and disconnects", () => {
+    const device = (state: "connected" | "disconnected") =>
+      deviceInfo({ id: { model: mk2.id, serial: "M1" }, state })
+    expect(deviceOptions([mk2], [device("connected")]).map((o) => o.connected)).toEqual([true])
+    expect(
+      deviceOptions([mk2], [device("disconnected")]).map((o) => [o.connected, o.detail]),
+    ).toEqual([[false, "M1"]])
   })
 
   it("names devices as their descriptor does", () => {

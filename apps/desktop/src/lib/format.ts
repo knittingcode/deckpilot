@@ -36,6 +36,20 @@ export function formatTimestamp(seconds: number): string {
   return new Date(seconds * 1000).toLocaleString(currentLanguage())
 }
 
+/**
+ * Numeric date and time without seconds, e.g. "21.11.2026, 10:35" (Polish),
+ * "11/21/2026, 10:35 AM" (English): beside a title, where room is short.
+ */
+export function formatCompactTimestamp(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleString(currentLanguage(), {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 /** Date and time without seconds, e.g. "Nov 18, 2026, 1:30 PM": for table columns. */
 export function formatShortTimestamp(seconds: number): string {
   return new Date(seconds * 1000).toLocaleString(currentLanguage(), {

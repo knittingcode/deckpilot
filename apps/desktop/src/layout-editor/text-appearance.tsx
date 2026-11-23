@@ -5,6 +5,8 @@
 import { useId, useState } from "react"
 
 import { FieldError } from "@/components/field-error"
+import { useInlineNumber } from "@/components/inline-number"
+import { InlineNumberInput } from "@/components/inline-number-input"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useTranslation } from "@/i18n"
@@ -44,14 +46,12 @@ export function TextModeSettings({
     }
   if (mode === "mixed") return null
   const lines = (
-    <NumberField
-      label={t("editor:text.maxLines.label")}
+    <LinesField
       value={text.maxLines}
-      range={TEXT_LIMITS.maxLines}
-      placeholder={t("editor:text.auto")}
       disabled={disabled}
+      // Stored with Enter or on leaving the field: one undo step each.
       onCommit={(value) => {
-        set("maxLines")(value, "text-lines")
+        set("maxLines")(value)
       }}
     />
   )
@@ -197,6 +197,58 @@ export function ReportNotice({
  * empty uses the default (the placeholder); values outside `range` are
  * explained and not applied.
  */
+/**
+ * Maximum lines in one row, "Maximum lines [Auto]" or "Maximum lines [3]":
+ * the compact inline field of Automatic exit (`InlineNumberInput`). Empty
+ * (or the word for automatic) is automatic; a whole number in
+ * `TEXT_LIMITS.maxLines` is stored with Enter or when the field is left
+ * (one undo step), anything else never, with why while typed.
+ */
+function LinesField({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: Shared<number>
+  disabled?: boolean
+  onCommit: (value: number | null) => void
+}) {
+  const { t } = useTranslation()
+  const format = useFormat()
+  const id = useId()
+  const [least, most] = TEXT_LIMITS.maxLines
+  const auto = t("editor:text.auto")
+  const lines = useInlineNumber({
+    stored: value ?? null,
+    auto,
+    check: (text) => {
+      const number = /^\d+$/.test(text) ? Number(text) : Number.NaN
+      return number >= least && number <= most
+        ? null
+        : t("editor:text.wholeNumber", { min: format.number(least), max: format.number(most) })
+    },
+    onCommit,
+  })
+  return (
+    <div data-slot="text-max-lines" className="grid min-w-0 gap-1">
+      <div className="flex items-center gap-1.5">
+        <label htmlFor={id} className="text-xs whitespace-nowrap text-muted-foreground">
+          {t("editor:text.maxLines.label")}
+        </label>
+        <InlineNumberInput
+          id={id}
+          field={lines}
+          auto={auto}
+          mixed={value === "mixed" ? t("editor:text.mixed") : undefined}
+          disabled={disabled}
+          aria-describedby={lines.error ? `${id}-error` : undefined}
+        />
+      </div>
+      <FieldError id={`${id}-error`} message={lines.error} />
+    </div>
+  )
+}
+
 export function NumberField({
   label,
   value,

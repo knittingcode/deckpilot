@@ -115,7 +115,10 @@ function renderLayout(plugins: ModuleInfo[]) {
   )
 }
 
-const library = () => screen.getByRole("region", { name: "Actions" })
+/** The library: its search and sections (types only; no saved actions). */
+const library = () =>
+  screen.getByRole("searchbox", { name: "Search the library" }).parentElement
+    ?.parentElement as HTMLElement
 
 describe("pluginActionUnavailable", () => {
   it("says why a plugin action cannot be placed, and nothing for built-in types", async () => {
@@ -145,7 +148,7 @@ describe("pluginActionUnavailable", () => {
       "home",
       (type) => (type === GREET ? "the plugin is disabled" : null),
     )
-    const actions = groups.find((g) => g.label === "Actions")?.options ?? []
+    const actions = groups.find((g) => g.label === "My actions")?.options ?? []
     expect(actions.map((o) => [o.label, o.unavailable])).toEqual([
       ["Open docs", undefined],
       ["Greet Ada", "the plugin is disabled"],
@@ -156,6 +159,22 @@ describe("pluginActionUnavailable", () => {
   })
 })
 
+/** What a gesture's card shows it does. */
+function assignedIn(name: string): HTMLElement {
+  const header = screen
+    .getByRole("group", { name })
+    .querySelector<HTMLElement>("[data-slot=gesture-card-action]")
+  if (!header) throw new Error(`nothing assigned to ${name}`)
+  return header
+}
+
+/** The Inspector's explanation of an assignment whose plugin is missing. */
+function missingNote(): HTMLElement {
+  const note = document.querySelector<HTMLElement>("[data-slot=missing-action-note]")
+  if (!note) throw new Error("no missing-plugin note")
+  return note
+}
+
 describe("the layout editor with plugins", () => {
   beforeEach(() => {
     vi.stubEnv("VITE_DECKPILOT_PLUGINS", "1")
@@ -163,46 +182,56 @@ describe("the layout editor with plugins", () => {
 
   it("offers an enabled plugin action like any other, with its parameters on gestures", async () => {
     const { user } = renderLayout(await helloModules("enabled"))
+    // The plugin's type, like a built-in one; not the profile's saved action.
     expect(
-      within(library()).getByRole("button", { name: "Drag Greet Ada onto a control" }),
+      within(library()).getByRole("button", { name: "Drag Greet onto a control" }),
     ).toBeInTheDocument()
+    expect(
+      within(library()).queryByRole("button", { name: "Drag Greet Ada onto a control" }),
+    ).toBeNull()
     await user.click(screen.getByRole("button", { name: "Key 1" }))
     // The backend's list has no plugin types yet; the editor knows them
     // from the plugins the app read, so the manifest's parameters show.
     expect(
-      await screen.findByRole("button", { name: "Override parameters for this gesture" }),
+      await screen.findByRole("button", {
+        name: "Override parameters for this key/gesture only",
+      }),
     ).toBeInTheDocument()
     expect(screen.queryByText(/^Unavailable:/)).not.toBeInTheDocument()
   })
 
   it("does not let a disabled plugin's action be placed, and keeps the keys that use it", async () => {
     const { user } = renderLayout(await helloModules("disabled"))
-    const entry = within(library()).getByRole("listitem", {
-      name: "Greet Ada: unavailable, Hello Weather (acme.hello-weather): the plugin is disabled",
-    })
-    expect(entry).toHaveAttribute("aria-disabled", "true")
+    // A turned-off plugin's types are not offered (as a disabled module's);
+    // built-in types are.
+    expect(within(library()).queryByRole("button", { name: /Drag Greet/ })).toBeNull()
+    expect(within(library()).queryByText("Greet")).not.toBeInTheDocument()
     expect(
-      within(library()).queryByRole("button", { name: "Drag Greet Ada onto a control" }),
-    ).not.toBeInTheDocument()
-    expect(
-      within(library()).getByRole("button", { name: "Drag Open docs onto a control" }),
+      within(library()).getByRole("button", {
+        name: `Drag ${ACTION_TYPES.httpRequest.name} onto a control`,
+      }),
     ).toBeInTheDocument()
 
     // The key that uses it keeps it and says why it does not run.
     await user.click(screen.getByRole("button", { name: "Key 1" }))
-    expect(
-      screen.getByText(
-        /Unavailable: Hello Weather \(acme\.hello-weather\): the plugin is disabled\. It stays assigned/,
-      ),
-    ).toBeInTheDocument()
-    expect(screen.getByRole("combobox", { name: "Single press" })).toHaveTextContent("Greet Ada")
+    // The gesture says why in words (no plugin id, no raw reason) and
+    // offers the way back; the assignment stays.
+    const note = missingNote()
+    expect(note).toHaveAttribute("data-reason", "disabled")
+    expect(note).toHaveTextContent("Plugin turned off")
+    expect(note).toHaveTextContent(
+      "\u201cGreet Ada\u201d comes from Hello Weather, which is turned off.",
+    )
+    expect(note).not.toHaveTextContent("acme.hello-weather")
+    expect(within(note).getByRole("button", { name: "Enable plugin" })).toBeInTheDocument()
+    expect(assignedIn("Single press")).toHaveTextContent("Greet Ada")
+    // Replacing it is a drop from the library; removing it, its X.
+    expect(note).toHaveTextContent("drag it from the Action Library onto this gesture")
+    expect(screen.getByRole("button", { name: "Remove Single press" })).toBeInTheDocument()
 
-    // Another key cannot choose it: it is not offered there.
+    // Another key cannot get it: the library does not offer it.
     await user.click(screen.getByRole("button", { name: "Key 2" }))
-    await user.click(screen.getByRole("combobox", { name: "Assign an action to: Single press" }))
-    await screen.findByRole("listbox")
-    expect(screen.queryByRole("option", { name: /Greet Ada/ })).toBeNull()
-    await user.keyboard("{Escape}")
+    expect(within(library()).queryByRole("button", { name: /Drag Greet/ })).toBeNull()
 
     // Saving keeps the reference as it was.
     await user.click(screen.getByRole("button", { name: /Save/ }))
@@ -215,23 +244,29 @@ describe("the layout editor with plugins", () => {
   it("keeps a key whose plugin was uninstalled and says so", async () => {
     const { user } = renderLayout(await helloModules("uninstalled"))
     await user.click(screen.getByRole("button", { name: "Key 1" }))
-    expect(
-      screen.getByText(/Unavailable: The plugin acme\.hello-weather is not installed/),
-    ).toBeInTheDocument()
-    expect(screen.getByRole("combobox", { name: "Single press" })).toHaveTextContent("Greet Ada")
+    const note = missingNote()
+    expect(note).toHaveAttribute("data-reason", "notInstalled")
+    expect(note).toHaveTextContent("Plugin not installed")
+    // The plugin's name is not known any more: never its id.
+    expect(note).not.toHaveTextContent("acme.hello-weather")
+    expect(within(note).getByRole("button", { name: "Install plugin" })).toBeInTheDocument()
+    expect(assignedIn("Single press")).toHaveTextContent("Greet Ada")
   })
 })
 
 describe("the layout editor without the flag", () => {
   it("is what it was: no plugin reasons, every action placeable", async () => {
     const { user } = renderLayout([])
+    // Built-in types are placeable; no plugin, so no plugin type.
     expect(
-      within(library()).getByRole("button", { name: "Drag Greet Ada onto a control" }),
+      within(library()).getByRole("button", {
+        name: `Drag ${ACTION_TYPES.httpRequest.name} onto a control`,
+      }),
     ).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Key 1" }))
     expect(screen.queryByText(/^Unavailable:/)).not.toBeInTheDocument()
     expect(
-      screen.queryByRole("button", { name: "Override parameters for this gesture" }),
+      screen.queryByRole("button", { name: "Override parameters for this key/gesture only" }),
     ).toBeNull()
   })
 })
@@ -273,14 +308,10 @@ describe("the step-workflow editor with plugins", () => {
     expect(screen.getByRole("combobox", { name: "Action of step 1" })).toHaveTextContent(
       "Greet Ada",
     )
-    expect(
-      screen.getByText(
-        /Unavailable: Hello Weather \(acme\.hello-weather\): the plugin is disabled\. The step stays/,
-      ),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/Unavailable: Plugin turned off\. The step stays/)).toBeInTheDocument()
     await user.click(screen.getByRole("combobox", { name: "Action to add" }))
     const option = await screen.findByRole("option", {
-      name: "Greet Ada (unavailable: Hello Weather (acme.hello-weather): the plugin is disabled)",
+      name: "Greet Ada (unavailable: Plugin turned off)",
     })
     expect(option).toHaveAttribute("aria-disabled", "true")
     expect(screen.getByRole("option", { name: "Open docs" })).not.toHaveAttribute("aria-disabled")
@@ -288,9 +319,7 @@ describe("the step-workflow editor with plugins", () => {
 
   it("says that a step's plugin is not installed", async () => {
     renderSteps(await helloModules("uninstalled"))
-    expect(
-      await screen.findByText(/Unavailable: The plugin acme\.hello-weather is not installed/),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/Unavailable: Plugin not installed/)).toBeInTheDocument()
   })
 })
 

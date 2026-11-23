@@ -224,7 +224,8 @@ describe("LayoutEditor", { timeout: 20_000 }, () => {
     await user.keyboard("{/Shift}")
     expect(screen.getByRole("region", { name: "Settings of 4 controls" })).toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: "Deselect controls" }))
+    // Escape clears the whole selection.
+    await user.keyboard("{Escape}")
     // The canvas draws its keys again after the selection clears; on a slow
     // machine that is still under way here.
     await vi.waitFor(() => {
@@ -232,7 +233,7 @@ describe("LayoutEditor", { timeout: 20_000 }, () => {
     })
   })
 
-  it("heads the inspector with no title, only a deselect button that keeps the draft", async () => {
+  it("heads the inspector with no title and no deselect button; Escape deselects, keeping the draft", async () => {
     const user = renderEditor()
     await user.click(control("Key 1"))
     const inspector = screen.getByRole("region", { name: "Key 1 settings" })
@@ -241,34 +242,35 @@ describe("LayoutEditor", { timeout: 20_000 }, () => {
     expect(within(inspector).queryByRole("heading", { name: "Key 1" })).not.toBeInTheDocument()
     expect(within(inspector).queryByText("Key 1")).not.toBeInTheDocument()
     expect(document.querySelector("[data-slot=inspector-title]")).toBeNull()
+    // No deselect button, nor room kept for one.
+    expect(screen.queryByRole("button", { name: /^Deselect/ })).not.toBeInTheDocument()
+    expect(document.querySelector("[data-slot=inspector-deselect]")).toBeNull()
+    expect(document.querySelector("[data-slot=inspector-scroll] .pr-9")).toBeNull()
 
-    // A dirty draft stays dirty: deselecting neither saves nor discards.
+    // A dirty draft stays dirty: deselecting neither saves nor discards,
+    // and it is no undo step.
     await user.keyboard("{Delete}")
     expect(screen.getByText("Unsaved")).toBeInTheDocument()
     await user.click(control("Key 2"))
-    const deselect = screen.getByRole("button", { name: "Deselect key" })
-    expect(deselect.closest("[data-slot=inspector-deselect]")).not.toBeNull()
-    // Its tooltip (Radix positions it with the ResizeObserver of the test
-    // setup, src/test/setup.ts).
-    await user.hover(deselect)
-    expect(await screen.findByRole("tooltip", { name: "Deselect key" })).toBeInTheDocument()
-    await user.click(deselect)
+    await user.keyboard("{Escape}")
     expect(control("Key 2")).toHaveAttribute("aria-pressed", "false")
     expect(screen.getByRole("region", { name: "Inspector" }).textContent).toBe("")
-    expect(screen.queryByRole("button", { name: /^Deselect/ })).not.toBeInTheDocument()
     expect(screen.getByText("Unsaved")).toBeInTheDocument()
     expect(describes("Key 1")).toBe("Key 1")
     expect(describes("Key 4")).toBe("Key 4: Press: Open “Tools”")
     expect(saveLayout).not.toHaveBeenCalled()
     for (const run of Object.values(executes)) expect(run).not.toHaveBeenCalled()
+    await user.click(screen.getByRole("button", { name: "Undo" }))
+    expect(describes("Key 1")).not.toBe("Key 1")
 
+    // From the Inspector too (a switch has the focus), and for dials.
     await user.click(control("Dial 1"))
-    expect(screen.getByRole("button", { name: "Deselect dial" })).toBeInTheDocument()
-    await user.click(control("Touch zone 1"))
-    expect(screen.getByRole("button", { name: "Deselect touch zone" })).toBeInTheDocument()
+    expect(control("Dial 1")).toHaveAttribute("aria-pressed", "true")
+    await user.keyboard("{Escape}")
+    expect(control("Dial 1")).toHaveAttribute("aria-pressed", "false")
   })
 
-  it("names the inspector and its deselect button in Polish", async () => {
+  it("deselects with Escape in Polish too", async () => {
     await act(async () => {
       await i18n.changeLanguage("pl")
     })
@@ -278,7 +280,8 @@ describe("LayoutEditor", { timeout: 20_000 }, () => {
       await user.click(await screen.findByRole("button", { name: "Klawisz 1" }))
       const inspector = screen.getByRole("region", { name: "Klawisz 1 – ustawienia" })
       expect(within(inspector).queryByText("Klawisz 1")).not.toBeInTheDocument()
-      await user.click(screen.getByRole("button", { name: "Odznacz klawisz" }))
+      expect(screen.queryByRole("button", { name: /^Odznacz/ })).not.toBeInTheDocument()
+      await user.keyboard("{Escape}")
       expect(control("Klawisz 1")).toHaveAttribute("aria-pressed", "false")
     } finally {
       await act(async () => {

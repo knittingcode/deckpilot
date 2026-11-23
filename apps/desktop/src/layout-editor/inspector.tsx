@@ -1,9 +1,8 @@
 import type { ReactNode } from "react"
-import { Eraser, X } from "lucide-react"
+import { Eraser } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -17,6 +16,9 @@ import {
 } from "@/components/ui/select"
 import { GestureEditor } from "@/components/gesture-editor/gesture-editor"
 import { IncompatibleNote } from "@/components/incompatible-note"
+import { MissingActionNote } from "@/components/missing-action-note"
+import { ContextMigrations, type MigrationOffer } from "@/components/context-migrations"
+import { contextOf, isDisplayOnly } from "@/lib/action-context"
 import { DEFAULT_TIMINGS, controlIssues } from "@/components/gesture-editor/model"
 import {
   acceptsGestures,
@@ -31,8 +33,7 @@ import {
   triggerKey,
   triggerLabel,
 } from "@/lib/layout-model"
-import { useTranslation, type TranslationKey } from "@/i18n"
-import { cn } from "@/lib/utils"
+import { useTranslation } from "@/i18n"
 import { useActionModules } from "@/lib/app-context"
 import { SWITCH_LAYOUT, layoutSwitchOf } from "@/lib/layout-navigation"
 import type {
@@ -62,6 +63,7 @@ import {
   gestureOnlyGroups,
   readOnlyTarget,
   unavailableTarget,
+  missingTarget,
   type TargetGroup,
 } from "./targets"
 
@@ -94,21 +96,16 @@ interface InspectorProps {
    * Why `target` cannot run from `control` for `trigger`, in words; `null`
    * when it can. Such targets are offered disabled with the reason.
    */
+  /** The saved action `id` a binding runs: shared with whom, and its definition. */
+  actionSettings?: (id: string) => ReactNode
   incompatible?: (control: ControlId, target: BindingTarget, trigger: Trigger) => string | null
   /**
    * Bindings of the focused control that are kept although their action
    * cannot run from it, with the reason (`preview_layout`).
    */
-  notRun?: { trigger: Trigger; reason: string }[]
+  notRun?: { trigger: Trigger; reason: string; migrate?: MigrationOffer | undefined }[]
   /** For keys that switch layouts or go back to the previous one. */
   layoutNavigation?: LayoutNavigationContext
-}
-
-/** What the deselect button of the inspector says, by what is selected. */
-const DESELECT: Record<ControlId["kind"], TranslationKey> = {
-  key: "editor:inspector.deselect.key",
-  encoder: "editor:inspector.deselect.encoder",
-  touchZone: "editor:inspector.deselect.touchZone",
 }
 
 /**
@@ -138,61 +135,6 @@ function InspectorSection({
   )
 }
 
-/**
- * The inspector's deselect button (X): rendered first in the inspector's
- * scroll region (editor.tsx), at its top-right 8px below the divider, and
- * kept there while the region scrolls. A zero-height sticky row holds it,
- * so it adds no band: the row stays at the top of the region's content
- * (a sticky box keeps clear of its scroll container's padding, which is
- * the page navigation's lower half and 12px), and the button is moved up
- * from there into that padding.
- * The first row of the inspector keeps its width free (`DESELECT_ROOM`).
- * It only clears the selection: nothing is deleted or run, and the
- * draft's edits stay.
- */
-export function InspectorDeselect({
-  selection,
-  focus,
-  onClose,
-}: {
-  selection: ControlId[]
-  focus: ControlId | null
-  /** Clears the selection. */
-  onClose: () => void
-}) {
-  const { t } = useTranslation()
-  if (selection.length === 0 || !focus) return null
-  const label = selection.length > 1 ? t("editor:inspector.deselect.many") : t(DESELECT[focus.kind])
-  return (
-    <div data-slot="inspector-deselect" className="pointer-events-none sticky top-0 z-10 h-0">
-      {/* Its own provider: the editor is also rendered without the app's. */}
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-compact"
-              aria-label={label}
-              className="pointer-events-auto absolute top-[calc(0.5rem-var(--canvas-divider-half,0px)-0.75rem)] -right-0.5 bg-background/80 backdrop-blur-sm"
-              onClick={onClose}
-            >
-              <X />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{label}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    </div>
-  )
-}
-
-/**
- * Keeps the deselect button's width (28px and a gap) free at the right of
- * the first row of the inspector's content: of the gestures section its
- * heading, else the first element itself.
- */
-const DESELECT_ROOM = "[&>:first-child:not(section)]:pr-9 [&>section:first-child>:first-child]:pr-9"
-
 /** Settings of the selected control, or a summary of a multi-selection. */
 export function Inspector(props: InspectorProps) {
   const { t } = useTranslation()
@@ -207,7 +149,7 @@ export function Inspector(props: InspectorProps) {
         label={t("editor:inspector.regionMany", { count: selection.length })}
         target="multiple"
       >
-        <div className={cn("grid gap-3 text-sm", DESELECT_ROOM)}>
+        <div className="grid gap-3 text-sm">
           <p className="text-muted-foreground">
             {t("editor:inspector.multiHint", { controls: selection.map(controlLabel).join(", ") })}
           </p>
@@ -233,7 +175,7 @@ export function Inspector(props: InspectorProps) {
         label={t("editor:inspector.region", { control: controlLabel(focus) })}
         target={controlKey(focus)}
       >
-        <div data-slot="folder-control" className={cn("grid gap-4", DESELECT_ROOM)}>
+        <div data-slot="folder-control" className="grid gap-4">
           {/* The key's look and visible title; the folder's name is its own. */}
           <KeyAppearanceEditor
             control={focus}
@@ -288,7 +230,6 @@ function ControlInspector({
   groups,
   folder,
   onChange: commit,
-  onClear,
   profile,
   types = [],
   gestureDefaults = DEFAULT_TIMINGS,
@@ -298,6 +239,7 @@ function ControlInspector({
   incompatible,
   notRun = [],
   layoutNavigation,
+  actionSettings,
 }: InspectorProps & { control: ControlId }) {
   const { t } = useTranslation()
   // A folder opens from a key of its own (`lib/folder-control.ts`): an edit
@@ -333,6 +275,15 @@ function ControlInspector({
     .filter((group) => group.options.length > 0)
   const page = findPage(draft, pageId)
   const controlMessages = page ? controlIssues(issues, page, control) : []
+  /** A press bound to an action that only shows something on the key (its contexts). */
+  const displayOnly = (binding: ControlBinding) => {
+    const target = binding.target
+    if (target.type !== "action") return false
+    if (contextOf({ kind: "binding", trigger: binding.trigger }) !== "key") return false
+    const action = profile?.actions.find((a) => a.id === target.action)
+    const type = types.find((ty) => ty.id === action?.actionType)
+    return type !== undefined && isDisplayOnly(type)
+  }
   const why = incompatible
     ? (target: BindingTarget, trigger: Trigger) => incompatible(control, target, trigger)
     : undefined
@@ -356,7 +307,7 @@ function ControlInspector({
       label={t("editor:inspector.region", { control: controlLabel(control) })}
       target={controlKey(control)}
     >
-      <div className={cn("grid gap-4", DESELECT_ROOM)}>
+      <div className="grid gap-4">
         <KeyAppearanceEditor
           control={control}
           defaultTitle={shown ? labelPlaceholder(shown) : undefined}
@@ -369,7 +320,9 @@ function ControlInspector({
             pageId={pageId}
             control={control}
             profile={profile ?? { actions: [], workflows: [], projects: [] }}
-            groups={offered}
+            // Every target, so a drop of one that cannot be placed now is
+            // refused with its reason (the cards choose nothing themselves).
+            groups={groups}
             gestureGroups={gestureOnlyGroups(workSession)}
             encode={encodeTarget}
             decode={decodeTarget}
@@ -383,6 +336,7 @@ function ControlInspector({
             notRun={notRun}
             labelPlaceholder={labelPlaceholder}
             titleInHeader={titleInHeader}
+            actionSettings={actionSettings}
           />
         )}
         {!gestures && controlMessages.length > 0 && (
@@ -395,6 +349,7 @@ function ControlInspector({
         {triggers.map((trigger) => {
           const binding = bindings.find((b) => sameTrigger(b.trigger, trigger))
           const id = `${controlKey(control)}-${triggerKey(trigger)}`
+          const lost = binding ? missingTarget(groups, encodeTarget(binding.target)) : undefined
           return (
             <div key={triggerKey(trigger)} className="grid gap-2">
               <Label htmlFor={id}>{triggerLabel(trigger)}</Label>
@@ -451,12 +406,29 @@ function ControlInspector({
                   ))}
                 </SelectContent>
               </Select>
-              <UnavailableNote
-                reason={
-                  binding ? unavailableTarget(groups, encodeTarget(binding.target)) : undefined
-                }
-                readOnly={binding ? readOnlyTarget(groups, encodeTarget(binding.target)) : false}
-              />
+              {binding && lost ? (
+                <MissingActionNote
+                  missing={lost}
+                  target={binding.target}
+                  actions={profile?.actions ?? []}
+                  types={types}
+                  projects={profile?.projects ?? []}
+                  title={binding.label}
+                  onReplace={() => {
+                    document.getElementById(id)?.focus()
+                  }}
+                  onRemove={() => {
+                    onChange(removeBinding(draft, pageId, control, trigger))
+                  }}
+                />
+              ) : (
+                <UnavailableNote
+                  reason={
+                    binding ? unavailableTarget(groups, encodeTarget(binding.target)) : undefined
+                  }
+                  readOnly={binding ? readOnlyTarget(groups, encodeTarget(binding.target)) : false}
+                />
+              )}
               <IncompatibleNote
                 reason={
                   binding
@@ -464,6 +436,17 @@ function ControlInspector({
                     : undefined
                 }
               />
+              {binding && (
+                <ContextMigrations
+                  offer={notRun.find((n) => sameTrigger(n.trigger, binding.trigger))?.migrate}
+                />
+              )}
+              {binding?.target.type === "action" && actionSettings?.(binding.target.action)}
+              {binding && displayOnly(binding) && (
+                <p className="text-xs text-muted-foreground" role="note">
+                  {t("editor:context.displayOnly")}
+                </p>
+              )}
               {binding && !titleInHeader(binding) && (
                 <Input
                   aria-label={t("editor:inspector.labelFor", { trigger: triggerLabel(trigger) })}
@@ -481,13 +464,6 @@ function ControlInspector({
             </div>
           )
         })}
-        {bindings.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" size="sm" onClick={onClear}>
-              <Eraser /> {t("editor:inspector.clearControl")}
-            </Button>
-          </div>
-        )}
         {/*
           The folder this key opens: its settings live here, on the key
           that opens it (Auto Exit; Move Back for a legacy folder).

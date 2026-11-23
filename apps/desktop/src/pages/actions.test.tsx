@@ -6,7 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import { clearFocus, peekFocus } from "@/lib/focus"
 import type { DeviceLayout, ReferenceSite, Workflow } from "@/lib/types"
-import { ActionLibraryView, ActionsPage } from "@/pages/actions"
+import { ActionLibraryView } from "@/pages/actions"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { ACTION_TYPES, action, builtInModules, profileView, stepWorkflow } from "@/test/fixtures"
@@ -39,7 +39,7 @@ afterEach(cleanup)
 
 async function renderLibrary(view = library()) {
   api.getProfile.mockResolvedValue(view)
-  const rendered = renderWithApp(<ActionsPage />, { modules })
+  const rendered = renderWithApp(<ActionLibraryView />, { modules })
   await screen.findByRole("textbox", { name: "Search actions" })
   return rendered
 }
@@ -93,7 +93,11 @@ describe("Action Library", () => {
     expect(screen.getByText(/System › Run command/)).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Create action" }))
     expect(screen.getByText("Enter a name.")).toBeInTheDocument()
-    expect(screen.getByText("Command is required.")).toBeInTheDocument()
+    // A required setting not filled in is said next to it; it would be
+    // saved as a draft, but the name is still needed.
+    expect(
+      screen.getByText("Required: fill this in before the action can run."),
+    ).toBeInTheDocument()
     expect(api.createAction).not.toHaveBeenCalled()
 
     await user.type(screen.getByLabelText("Name"), "Build")
@@ -132,7 +136,7 @@ describe("Action Library", () => {
       general: { actionTypes: [ACTION_TYPES.log, next] },
     })
     api.getProfile.mockResolvedValue(library())
-    const { user, titlebarAction } = renderWithApp(<ActionsPage />, { modules: withDeprecated })
+    const { user, titlebarAction } = renderWithApp(<ActionLibraryView />, { modules: withDeprecated })
     await screen.findByRole("textbox", { name: "Search actions" })
     titlebarAction("actions.new")
     const chooser = screen.getByRole("group", { name: "Action types" })
@@ -145,7 +149,7 @@ describe("Action Library", () => {
 
   it("points to the module settings when no module offers action types", async () => {
     api.getProfile.mockResolvedValue(library([]))
-    const { user, context } = renderWithApp(<ActionsPage />, { modules: [] })
+    const { user, context } = renderWithApp(<ActionLibraryView />, { modules: [] })
     await user.click(await screen.findByRole("button", { name: "Create action" }))
     expect(screen.getByText("No action types available")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Open module settings" }))
@@ -204,7 +208,7 @@ describe("Action Library", () => {
   })
 
   it("asks for a profile first", async () => {
-    const { user, context } = renderWithApp(<ActionsPage />, { editingProfileId: null, modules })
+    const { user, context } = renderWithApp(<ActionLibraryView />, { editingProfileId: null, modules })
     await user.click(screen.getByRole("button", { name: "Create a profile" }))
     expect(context.navigate).toHaveBeenCalledWith("profiles")
   })

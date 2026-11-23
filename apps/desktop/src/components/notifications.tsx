@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useSnapshot } from "@/hooks/use-status"
 import { type TranslationKey, useTranslation } from "@/i18n"
-import { formatTimestamp } from "@/lib/format"
+import { formatCompactTimestamp, formatTimestamp } from "@/lib/format"
 import { NotificationStore, type Severity } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
@@ -128,20 +128,33 @@ export function NotificationsButton({
                     aria-label={t(SEVERITY_LABEL[n.severity])}
                   />
                   <div className="grid min-w-0 flex-1 gap-0.5">
-                    <span className="font-medium">
-                      {n.title}
-                      {n.count > 1 && (
-                        <span className="ml-1 text-xs font-normal text-muted-foreground">
-                          ×{n.count}
-                        </span>
-                      )}
-                    </span>
+                    {/* Title and time in one row, the time at the right; a
+                        long title wraps beside it, and only in a very narrow
+                        popover does the time move under the title. */}
+                    <div
+                      data-slot="notification-heading"
+                      className="flex flex-wrap items-baseline gap-x-3"
+                    >
+                      <span className="min-w-[min(100%,10rem)] flex-1 font-medium break-words">
+                        {n.title}
+                        {n.count > 1 && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            ×{n.count}
+                          </span>
+                        )}
+                      </span>
+                      <time
+                        data-slot="notification-time"
+                        dateTime={new Date(n.at).toISOString()}
+                        title={formatTimestamp(Math.floor(n.at / 1000))}
+                        className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
+                      >
+                        {formatCompactTimestamp(Math.floor(n.at / 1000))}
+                      </time>
+                    </div>
                     {n.message && (
                       <span className="text-xs text-muted-foreground">{n.message}</span>
                     )}
-                    <span className="text-xs text-muted-foreground">
-                      {formatTimestamp(Math.floor(n.at / 1000))}
-                    </span>
                   </div>
                 </li>
               )

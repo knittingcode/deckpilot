@@ -202,6 +202,11 @@ impl RandomAction {
                 requires_project: false,
                 deprecated: false,
                 controls: Some(deckpilot_core::ActionControls::keys()),
+                // A deck request: applied for a key or gesture, refused in any workflow.
+                contexts: Some(deckpilot_core::ActionContexts::of([
+                    deckpilot_core::ActionContext::Key,
+                    deckpilot_core::ActionContext::Gesture,
+                ])),
                 node: NodeSpec {
                     icon: Some("shuffle".into()),
                     outputs: vec![output("picked", "Picked")],

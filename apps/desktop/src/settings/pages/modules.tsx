@@ -1,8 +1,9 @@
-import { ChevronDown, Search, Settings2 } from "lucide-react"
+import { ChevronDown, Search, Settings2, Store } from "lucide-react"
 import { createElement, useState } from "react"
 import { toast } from "sonner"
 
 import { EmptyState } from "@/components/page"
+import { SettingsNote } from "@/components/settings-layout"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +15,7 @@ import { CAPABILITIES } from "@/lib/capabilities"
 import { useAppContext } from "@/lib/app-context"
 import { osLabel } from "@/lib/format"
 import { type ModuleFilter, moduleMatches, moduleToggle } from "@/lib/modules"
+import { isPluginId } from "@/lib/plugin-actions"
 import type { ModuleInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { moduleIcon, moduleSettingsPages } from "@/modules"
@@ -35,7 +37,11 @@ const FILTERS: { value: ModuleFilter; label: TranslationKey }[] = [
 export function ModulesSettings() {
   const { t } = useTranslation()
   const format = useFormat()
-  const { modules, setModules, refresh } = useAppContext()
+  const { modules: registered, setModules, refresh, navigate } = useAppContext()
+  // Only DeckPilot's native modules (the agent's module registry). Plugins,
+  // even the ones a built-in module moved to, are the Marketplace's; their
+  // ids are always namespaced (`publisher.name`).
+  const modules = registered.filter((m) => !isPluginId(m.id))
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<ModuleFilter>("all")
   const [pending, setPending] = useState<string | null>(null)
@@ -76,9 +82,21 @@ export function ModulesSettings() {
 
   return (
     <>
-      <p className="text-sm text-muted-foreground">
-        <span>{t("settings:modules.intro")}</span>
-      </p>
+      <SettingsNote>{t("settings:modules.intro")}</SettingsNote>
+      {import.meta.env.VITE_DECKPILOT_PLUGINS === "1" && (
+        <div className="flex flex-wrap items-center gap-3 text-caption text-muted-foreground">
+          <p className="min-w-0 flex-1">{t("settings:modules.pluginsNote")}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              navigate("marketplace")
+            }}
+          >
+            <Store /> {t("settings:modules.openMarketplace")}
+          </Button>
+        </div>
+      )}
       <div className="grid gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
@@ -255,7 +273,12 @@ function ModuleItem({
             ) : (
               <ul className="grid gap-0.5">
                 {module.capabilities.map((capability) => (
-                  <li key={capability}>{t(CAPABILITIES[capability].title)}</li>
+                  <li key={capability}>
+                    {/* A capability of a newer agent: its id rather than a crash. */}
+                    {(capability as string) in CAPABILITIES
+                      ? t(CAPABILITIES[capability].title)
+                      : capability}
+                  </li>
                 ))}
               </ul>
             )}

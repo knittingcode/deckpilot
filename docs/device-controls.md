@@ -63,6 +63,13 @@ Every binding `Trigger` maps to exactly one input
 
 ## 2. Action compatibility (`deckpilot-core`)
 
+> **Companion: [action contexts](action-contexts.md).** Controls say
+> which control and input an action can be bound to; contexts say whether
+> the use makes sense (a key, a gesture, a display, a step, a node).
+> Contexts are independent of controls and, for now, only reported: a
+> binding refused here is refused for its controls, never for its
+> context.
+
 `ActionType` has an optional `controls` field (serde default, not sent
 when `None`), so stored definitions, plugin definitions and IPC payloads
 from before it decode unchanged:

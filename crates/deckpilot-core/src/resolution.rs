@@ -55,6 +55,11 @@ pub struct Invocation {
     /// cause). `None` when the caller did not say: such a run counts as
     /// not started by the user.
     pub origin: Option<crate::RunOrigin>,
+    /// Where the action runs ([`crate::contexts`]): a key's press or a
+    /// gesture (by the binding's trigger), a Multi Action step, a workflow
+    /// node. `None` for a run from the app or a plugin's Test run, which is
+    /// never checked.
+    pub context: Option<crate::ActionContext>,
 }
 
 impl Invocation {
@@ -77,6 +82,15 @@ impl Invocation {
     #[must_use]
     pub fn with_execution(self, execution: Option<ExecutionId>) -> Self {
         Self { execution, ..self }
+    }
+
+    /// The same invocation, running in `context`.
+    #[must_use]
+    pub fn with_context(self, context: crate::ActionContext) -> Self {
+        Self {
+            context: Some(context),
+            ..self
+        }
     }
 
     /// The same invocation, started by `origin`.
@@ -447,6 +461,14 @@ pub enum ResolutionFailure {
     /// The resolved values do not fit the schema (ranges, lengths,
     /// choices); sensitive values are redacted from the messages.
     Invalid(Vec<String>),
+    /// Required parameters have no value (`missing`, their keys in the
+    /// schema's order): the action needs configuration
+    /// ([`crate::completeness`]). `other` holds any further problems,
+    /// redacted.
+    Incomplete {
+        missing: Vec<String>,
+        other: Vec<String>,
+    },
 }
 
 impl ResolutionFailure {
@@ -463,6 +485,18 @@ impl ResolutionFailure {
             Self::Invalid(details) => {
                 ActionResult::failure(format!("invalid configuration: {}", details.join("; ")))
             }
+            Self::Incomplete { missing, other } => {
+                let mut problems: Vec<String> = missing
+                    .iter()
+                    .map(|key| format!("parameter `{key}` is required"))
+                    .collect();
+                problems.extend(other);
+                ActionResult::error(
+                    crate::CONFIGURATION_INCOMPLETE,
+                    format!("configuration incomplete: {}", problems.join("; ")),
+                )
+                .with_data("missing", missing.join(","))
+            }
         }
     }
 }
@@ -477,6 +511,16 @@ pub fn resolve_parameters(
     context: &ResolutionContext,
     profile: &Profile,
 ) -> Result<Resolved, ResolutionFailure> {
+    // Completeness first, on the configured values (a reference counts as
+    // a value until it is resolved): an action that needs configuration
+    // resolves nothing and never reaches its handler.
+    let missing = definition.missing(configured);
+    if !missing.is_empty() {
+        return Err(ResolutionFailure::Incomplete {
+            missing,
+            other: Vec::new(),
+        });
+    }
     let mut redactor = Redactor::default();
     let mut errors = Vec::new();
     let mut literal = configured.clone();
@@ -531,13 +575,24 @@ pub fn resolve_parameters(
     if !errors.is_empty() {
         return Err(ResolutionFailure::References(errors));
     }
+    // A reference or template that resolved to nothing leaves a required
+    // parameter without a value: incomplete as well.
     let parameters = definition.normalize(&literal).map_err(|problems| {
-        ResolutionFailure::Invalid(
-            problems
-                .iter()
-                .map(|problem| redactor.redact(&problem.to_string()))
-                .collect(),
-        )
+        let (missing, other): (Vec<_>, Vec<_>) = problems
+            .iter()
+            .partition(|problem| matches!(problem, crate::ParameterError::Missing(_)));
+        let other: Vec<String> = other
+            .iter()
+            .map(|problem| redactor.redact(&problem.to_string()))
+            .collect();
+        if missing.is_empty() {
+            ResolutionFailure::Invalid(other)
+        } else {
+            ResolutionFailure::Incomplete {
+                missing: missing.iter().map(|p| p.key().to_owned()).collect(),
+                other,
+            }
+        }
     })?;
     debug_assert!(parameters.is_resolved());
     Ok(Resolved {

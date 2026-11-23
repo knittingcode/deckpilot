@@ -42,6 +42,7 @@ fn spec(key: &str, kind: ParameterKind) -> ParameterSpec {
 impl Probe {
     fn new() -> Self {
         Self(ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: probe_type(),

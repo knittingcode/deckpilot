@@ -6,11 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import tauriConfig from "../../src-tauri/tauri.conf.json?raw"
 import { LIBRARY_BESIDE_FROM, LibraryDock } from "./library-dock"
-import {
-  LIBRARY_COMPATIBLE_ONLY_KEY,
-  OBSOLETE_LIBRARY_KEYS,
-  removeObsoleteLibraryKeys,
-} from "./library-sidebar"
+import { OBSOLETE_LIBRARY_KEYS, removeObsoleteLibraryKeys } from "./library-sidebar"
 
 function renderDock() {
   render(
@@ -61,13 +57,13 @@ describe("library dock", () => {
   it("ignores and removes the width and collapsed state earlier versions kept", () => {
     localStorage.setItem("deckpilot.editor.libraryWidth", "120")
     localStorage.setItem("deckpilot.editor.libraryCollapsed", "true")
-    localStorage.setItem(LIBRARY_COMPATIBLE_ONLY_KEY, "true")
+    localStorage.setItem("deckpilot.editor.compatibleOnly", "true")
     const library = renderDock()
     expect(library.style.width).toBe("")
     expect(within(library).getByLabelText("Search the library")).toBeVisible()
     removeObsoleteLibraryKeys()
     for (const key of OBSOLETE_LIBRARY_KEYS) expect(localStorage.getItem(key)).toBeNull()
-    // The library's other preference stays.
-    expect(localStorage.getItem(LIBRARY_COMPATIBLE_ONLY_KEY)).toBe("true")
+    // The "Compatible only" switch is gone; what it remembered goes too.
+    expect(localStorage.getItem("deckpilot.editor.compatibleOnly")).toBeNull()
   })
 })

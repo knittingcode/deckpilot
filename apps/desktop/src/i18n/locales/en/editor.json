@@ -123,16 +123,11 @@
   "library": {
     "title": "Library",
     "dock": "Action Library",
-    "hint": "Drag onto a control, or select a control and choose in the inspector.",
     "search": "Search the library",
-    "compatibleOnly": "Compatible only",
-    "showingFits": "Showing what fits {{control}}.",
-    "selectControl": "Select a control to see what fits it.",
-    "empty": "No actions or workflows yet. Create them in the Action Library.",
+    "empty": "Nothing to place: no module or plugin offers actions.",
     "noMatches": "Nothing matches.",
     "navigation": "Navigation",
-    "newSequence": "New: Sequence",
-    "newCategory": "New: {{category}}",
+    "sequences": "Sequences",
     "drag": "Drag {{name}} onto a control",
     "unavailable": "{{name}}: unavailable, {{reason}}",
     "incompatible": "{{name}}: not for the selected control. {{reason}}",
@@ -144,10 +139,12 @@
     "multiActionDrag": "Drag Multi Action onto a control",
     "multiActionTitle": "Runs several actions in order, with delays between them. Drop it on a key, then add its steps.",
     "searchFolder": "new folder folders navigation",
-    "searchMulti": "new multi action sequence steps workflow"
+    "searchMulti": "new multi action sequence steps workflow",
+    "gestureOnly": "It goes on a gesture: drag it onto a single press, double click or long press in the Inspector.",
+    "displays": "Displays"
   },
   "targets": {
-    "actions": "Actions",
+    "actions": "My actions",
     "workflows": "Workflows",
     "navigation": "Navigation",
     "back": "Back",
@@ -225,17 +222,12 @@
     "release": "Release",
     "help": "Help: {{gesture}}",
     "releaseHint": "Runs without delay when the key is released. Keys with a double click or long press can't use it.",
-    "nothing": "Nothing",
-    "optionUnavailable": "(unavailable)",
-    "optionNotHere": "(not on this control)",
     "remove": "Remove {{gesture}}",
     "removeTitle": "Remove what {{gesture}} does",
     "empty": {
       "drop": "Drag an action here",
-      "choose": "Choose an action",
-      "assign": "Assign an action to: {{gesture}}",
-      "description": "Drop an action, a workflow or a page on this card, or press Enter to choose one.",
-      "chooseDescription": "Press Enter to choose an action, a workflow or a page."
+      "description": "Drag an action, a workflow or a page from the Action Library onto this card.",
+      "label": "Nothing assigned to {{gesture}}"
     },
     "carousel": {
       "role": "carousel",
@@ -247,9 +239,9 @@
     "editSteps": "Edit steps ({{count}})",
     "overrides": {
       "hide": "Hide parameters",
-      "some_one": "Parameters for this gesture ({{count}} overridden)",
-      "some_other": "Parameters for this gesture ({{count}} overridden)",
-      "none": "Override parameters for this gesture",
+      "some_one": "Parameters for this key/gesture only ({{count}} overridden)",
+      "some_other": "Parameters for this key/gesture only ({{count}} overridden)",
+      "none": "Override parameters for this key/gesture only",
       "hint": "Overrides apply to this {{gesture}} only; “{{action}}” itself stays unchanged.",
       "override": "Override “{{label}}”"
     },
@@ -312,7 +304,6 @@
     "save": "Save"
   },
   "live": {
-    "live": "Live on the device",
     "suspended": "Device shows another layout",
     "connecting": "Connecting to the device…",
     "disconnected": "Device shows the saved layout (agent not connected)",
@@ -331,16 +322,9 @@
     "optionNotHere": "{{option}} (not on this control)",
     "labelFor": "Label for {{trigger}}",
     "labelPlaceholder": "Label (optional)",
-    "clearControl": "Clear control",
     "region": "{{control}} settings",
     "regionMany_one": "Settings of {{count}} control",
     "regionMany_other": "Settings of {{count}} controls",
-    "deselect": {
-      "key": "Deselect key",
-      "encoder": "Deselect dial",
-      "touchZone": "Deselect touch zone",
-      "many": "Deselect controls"
-    },
     "readOnly": "Read-only: {{reason}}. This workflow still runs from this key; it can be chosen or changed again once the plugin is on (Settings › Plugins)."
   },
   "pageNav": {
@@ -363,7 +347,7 @@
   "pageSettings": {
     "name": "Page name",
     "delete": "Delete page",
-    "autoReturn": "Close after a key runs",
+    "autoReturn": "Exit after action completes",
     "sheetTitle": "Pages"
   },
   "deletePage": {
@@ -804,10 +788,11 @@
   },
   "folderSettings": {
     "title": "Folder settings",
-    "autoExit": "Auto Exit",
-    "exitAfter": "Exit after",
-    "seconds_one": "second",
-    "seconds_other": "seconds",
+    "autoExit": "Automatic exit",
+    "autoExitAfter_one": "Automatic exit after <field/> second",
+    "autoExitAfter_other": "Automatic exit after <field/> seconds",
+    "timeout": "Automatic exit time in seconds",
+    "exitAfterCompletion": "Exit after action completes",
     "invalid": {
       "whole": "Enter a whole number of seconds.",
       "range": "Enter between {{min}} and {{max}} seconds."
@@ -946,5 +931,83 @@
     "noPluginBackgrounds": "No installed plugin adds backgrounds.",
     "backgroundDisabled": "This key's background belongs to a disabled plugin: the key shows the device default until the plugin is enabled again.",
     "backgroundMissing": "This key's background is not available here (its plugin is not installed): the key shows the device default until it is."
+  },
+  "missing": {
+    "title": {
+      "notInstalled": "Plugin not installed",
+      "disabled": "Plugin turned off",
+      "incompatible": "Plugin version doesn't fit",
+      "integrity": "Plugin failed verification",
+      "revoked": "Plugin version withdrawn",
+      "busy": "Plugin temporarily unavailable",
+      "permission": "Permission needed",
+      "moduleDisabled": "Module turned off"
+    },
+    "body": {
+      "notInstalled": "“{{action}}” comes from {{plugin}}, which isn't installed. Install it and this assignment works again as it was.",
+      "disabled": "“{{action}}” comes from {{plugin}}, which is turned off. Turn it on and this assignment works again as it was.",
+      "incompatible": "The installed version of {{plugin}} doesn't provide “{{action}}” as it was set up. A version that does brings it back.",
+      "integrity": "The files of {{plugin}} changed after it was installed, so DeckPilot doesn't run it. Reinstalling or updating it brings “{{action}}” back.",
+      "revoked": "The Marketplace withdrew the installed version of {{plugin}}, so DeckPilot doesn't run it. An update brings “{{action}}” back.",
+      "busy": "{{plugin}} can't run “{{action}}” at the moment (it may be updating or starting). It comes back by itself.",
+      "permission": "{{plugin}} is installed, but “{{action}}” needs a permission you haven't allowed. Nothing is deleted while it waits.",
+      "moduleDisabled": "“{{action}}” belongs to the {{plugin}} module, which is turned off. Turn it on and this assignment works again."
+    },
+    "kept": "Kept for when it's back:",
+    "keptTitle": "Title “{{title}}”",
+    "keptSetting": "{{label}}: {{value}}",
+    "keptHidden_one": "{{count}} more setting",
+    "keptHidden_other": "{{count}} more settings",
+    "keptLook": "The key's look and its other gestures",
+    "thisAction": "This action",
+    "itsPlugin": "its plugin",
+    "recovery": {
+      "install": "Install plugin",
+      "enable": "Enable plugin",
+      "update": "Update plugin",
+      "permissions": "Review permissions",
+      "enableModule": "Turn on module",
+      "replace": "Replace action",
+      "remove": "Remove assignment"
+    },
+    "replaceByDrop": "To use another action, drag it from the Action Library onto this gesture."
+  },
+  "context": {
+    "unsupported": "This action does not work here: {{where}}. It works as: {{supported}}.",
+    "displayOnly": "Display only — pressing does nothing.",
+    "kept": "Kept from the saved configuration; it will not run here.",
+    "notHere": "Not available here"
+  },
+  "migrate": {
+    "wrapSequence": "Wrap in a Multi Action",
+    "moveWorkflow": "Move to a workflow",
+    "removeStep": "Remove step",
+    "keep": "Keep",
+    "wrapTitle": "Wrap {{name}} in a Multi Action?",
+    "wrapText": "A new Multi Action runs {{name}} as its only step, and this control runs the Multi Action. Nothing else changes.",
+    "moveTitle": "Move {{name}} to a workflow?",
+    "moveText": "A new workflow runs {{name}} when it is started, and this control starts the workflow. Nothing else changes.",
+    "removeTitle": "Remove the step {{name}}?",
+    "removeText": "The step is removed from this Multi Action when you save it. The action itself stays in the Action Library.",
+    "wrapped": "{{name}} now runs in a Multi Action",
+    "moved": "{{name}} now runs in a workflow",
+    "failed": "Could not change {{name}}"
+  },
+  "savedAction": {
+    "menu": "Settings of “{{name}}”",
+    "edit": "Edit action…",
+    "editShared": "Edit shared definition…",
+    "usages": "Where used…",
+    "usagesTitle": "Where “{{name}}” is used",
+    "shared_one": "Used in {{count}} place",
+    "shared_other": "Used in {{count}} places",
+    "sharedEdit_one": "Shared by {{count}} place: changes here apply to every one of them.",
+    "sharedEdit_other": "Shared by {{count}} places: changes here apply to every one of them."
+  },
+  "grant": {
+    "required": "Permission required",
+    "button": "Grant",
+    "label": "Grant permission for {{action}} ({{plugin}})",
+    "granted": "Permission granted"
   }
 }

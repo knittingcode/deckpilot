@@ -176,6 +176,94 @@ impl Workflow {
         issues
     }
 
+    /// The uses of actions in a context their type does not declare
+    /// ([`crate::contexts`]): with a graph, its action nodes (`workflow`);
+    /// without one, its steps (`sequence`). Each is marked `stored` when
+    /// the same use is in `stored`, the saved version of this workflow
+    /// (`None`: a new one): a step whose action is a step of `stored` (at
+    /// the same index or elsewhere, counted as a multiset), a node with the
+    /// same id and action. Steps or nodes whose action is missing or whose
+    /// type is unavailable get no verdict. Reported only: saving refuses
+    /// none of them.
+    pub fn context_issues(
+        &self,
+        stored: Option<&Workflow>,
+        profile: &Profile,
+        registry: &ActionRegistry,
+    ) -> Vec<crate::ContextIssue> {
+        let verdict = |action: ActionInstanceId, context: crate::ActionContext| {
+            let instance = profile.action(action)?;
+            let definition = registry.definition(&instance.action_type)?;
+            crate::context_compatibility(definition, context)
+                .reason()
+                .cloned()
+        };
+        let mut issues = Vec::new();
+        if let Some(graph) = &self.graph {
+            let stored_node = |id: &crate::graph::NodeId, action: ActionInstanceId| {
+                stored
+                    .and_then(|w| w.graph.as_ref())
+                    .and_then(|g| g.nodes.iter().find(|n| &n.id == id))
+                    .is_some_and(|n| match &n.kind {
+                        crate::graph::NodeKind::Action { action: was, .. } => *was == action,
+                        _ => false,
+                    })
+            };
+            for node in &graph.nodes {
+                if let crate::graph::NodeKind::Action { action, .. } = &node.kind
+                    && let Some(reason) = verdict(*action, crate::ActionContext::Workflow)
+                {
+                    issues.push(crate::ContextIssue {
+                        site: crate::ContextSite::Node {
+                            node: node.id.clone(),
+                        },
+                        action: *action,
+                        reason,
+                        stored: stored_node(&node.id, *action),
+                    });
+                }
+            }
+            return issues;
+        }
+        // The steps of the saved Multi Action, as a multiset; those at the
+        // same index are matched first.
+        let earlier: &[WorkflowStep] = stored
+            .filter(|w| w.graph.is_none())
+            .map_or(&[], |w| &w.steps);
+        let mut left: std::collections::BTreeMap<ActionInstanceId, usize> =
+            std::collections::BTreeMap::new();
+        for step in earlier {
+            *left.entry(step.action).or_default() += 1;
+        }
+        let mut found = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            if let Some(reason) = verdict(step.action, crate::ActionContext::Sequence) {
+                let same_place = earlier.get(index).is_some_and(|s| s.action == step.action);
+                if same_place && let Some(count) = left.get_mut(&step.action) {
+                    *count -= 1;
+                }
+                found.push((index, step.action, reason, same_place));
+            }
+        }
+        for (index, action, reason, same_place) in found {
+            let stored = same_place
+                || left.get_mut(&action).is_some_and(|count| {
+                    let some = *count > 0;
+                    if some {
+                        *count -= 1;
+                    }
+                    some
+                });
+            issues.push(crate::ContextIssue {
+                site: crate::ContextSite::Step { index },
+                action,
+                reason,
+                stored,
+            });
+        }
+        issues
+    }
+
     #[must_use]
     pub fn step(mut self, action: ActionInstanceId, on_failure: OnFailure) -> Self {
         self.steps.push(WorkflowStep::new(action, on_failure));
@@ -190,7 +278,11 @@ impl Workflow {
         }
         {
             for issue in self.graph_issues(profile, registry) {
-                if issue.severity == crate::graph::IssueSeverity::Error {
+                // A node that needs configuration is saved; it keeps the
+                // graph from running until it is filled in.
+                if issue.severity == crate::graph::IssueSeverity::Error
+                    && issue.code.as_deref() != Some(crate::CONFIGURATION_INCOMPLETE)
+                {
                     issues.push(match issue.node {
                         Some(node) => format!("{node}: {}", issue.message),
                         None => issue.message,
@@ -206,29 +298,40 @@ impl Workflow {
                 ));
                 continue;
             };
-            let Some(handler) = registry.handler(&action.action_type) else {
+            if registry.handler(&action.action_type).is_none() {
                 let reason = registry
                     .unavailable_reason(&action.action_type)
                     .unwrap_or("its action type is not available");
                 issues.push(format!("step {position} ({}): {reason}", action.name));
                 continue;
-            };
-            if let Ok(parameters) = handler
-                .definition()
-                .normalize(&action.parameters.overlay(&step.overrides))
-            {
-                for problem in registry.check_parameters(&action.action_type, &parameters, profile)
-                {
-                    issues.push(format!("step {position} ({}): {problem}", action.name));
-                }
             }
-            if !step.overrides.is_empty()
-                && let Err(error) = registry.normalize(
-                    &action.action_type,
-                    &action.parameters.overlay(&step.overrides),
-                )
-            {
-                issues.push(format!("step {position} ({}): {error}", action.name));
+            // The step may use a draft (`crate::completeness`): what it
+            // leaves missing is saved and refused when the step runs. A
+            // blank override of a required parameter is still refused, as
+            // for a key's binding.
+            let merged = action.parameters.overlay(&step.overrides);
+            match registry.normalize_draft(&action.action_type, &merged) {
+                Ok(draft) => {
+                    for problem in
+                        registry.check_parameters(&action.action_type, &draft.parameters, profile)
+                    {
+                        issues.push(format!("step {position} ({}): {problem}", action.name));
+                    }
+                    for key in draft
+                        .missing
+                        .iter()
+                        .filter(|key| step.overrides.get(key).is_some())
+                    {
+                        issues.push(format!(
+                            "step {position} ({}): parameter `{key}` is required",
+                            action.name
+                        ));
+                    }
+                }
+                Err(error) if !step.overrides.is_empty() => {
+                    issues.push(format!("step {position} ({}): {error}", action.name));
+                }
+                Err(_) => {}
             }
             if let StepCondition::ActiveProject { project } = step.condition
                 && profile.project(project).is_none()

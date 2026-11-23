@@ -174,6 +174,51 @@ describe("Workflows page", () => {
   })
 })
 
+describe("Multi Action steps by context", () => {
+  it("offers only what works as a step, marks a saved step that does not, and removes it only on confirmation", async () => {
+    // Say hello works only as a workflow node; Open docs anywhere.
+    api.getProfile.mockResolvedValue(
+      profileView({
+        actions: [log, url, git],
+        workflows: [stepWorkflow("w-two", "Two", ["a-log", "a-url"])],
+      }),
+    )
+    api.listActionTypes.mockResolvedValue([
+      { ...ACTION_TYPES.log, contexts: ["workflow"] },
+      ACTION_TYPES.openUrl,
+    ])
+    const { user } = renderWithApp(<WorkflowsPage />)
+    await screen.findByRole("combobox", { name: "Workflow" })
+
+    // Kept as saved, marked with the reason in words.
+    const note = await screen.findByText(
+      /This action does not work here: Multi Action step\. It works as: Workflow node\./,
+    )
+    expect(note).toHaveTextContent("Not available here.")
+    expect(note).toHaveTextContent("Kept from the saved configuration")
+    expect(screen.getByRole("combobox", { name: "Action of step 1" })).toHaveTextContent(
+      "Say hello",
+    )
+
+    // Not offered for new steps; no switch to show it.
+    await user.click(screen.getByRole("combobox", { name: "Action to add" }))
+    expect(screen.queryByRole("option", { name: /Say hello/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Open docs" })).toBeInTheDocument()
+    await user.keyboard("{Escape}")
+
+    const offer = within(screen.getByRole("group", { name: "Not available here" }))
+    await user.click(offer.getByRole("button", { name: "Remove step" }))
+    const confirm = await screen.findByRole("alertdialog", { name: "Remove the step Say hello?" })
+    await user.click(within(confirm).getByRole("button", { name: "Remove step" }))
+    expect(screen.getByRole("combobox", { name: "Action of step 1" })).toHaveTextContent(
+      "Open docs",
+    )
+    expect(screen.queryByRole("combobox", { name: "Action of step 2" })).not.toBeInTheDocument()
+    // Saved only with Save, through the normal workflow save.
+    expect(api.saveWorkflow).not.toHaveBeenCalled()
+  })
+})
+
 describe("Workflows page in Polish", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("pl")
