@@ -212,6 +212,7 @@ describe("import window", () => {
           {
             profile: "p1",
             profileName: "Work",
+            inLibrary: false,
             action: "a-quit",
             name: "Quit Editor",
             application: "app.editor",
@@ -221,11 +222,23 @@ describe("import window", () => {
           {
             profile: "p1",
             profileName: "Work",
+            inLibrary: false,
             action: "a-quit-chat",
             name: "Quit Chat",
             application: "app.chat",
             boundHere: false,
             force: false,
+          },
+          // The same action's copy in the layout library: one confirmation.
+          {
+            profile: null,
+            profileName: null,
+            inLibrary: true,
+            action: "a-quit",
+            name: "Quit Editor",
+            application: "app.editor",
+            boundHere: true,
+            force: true,
           },
         ],
       },
@@ -246,9 +259,13 @@ describe("import window", () => {
     await user.click(screen.getByRole("button", { name: "Choose file…" }))
     await user.type(await screen.findByLabelText("Export password"), "right{Enter}")
     expect(await screen.findByText("Close Application actions")).toBeInTheDocument()
-    expect(screen.getByText(/It force-quits/)).toBeInTheDocument()
-    expect(screen.getByText(/bound on this computer/)).toBeInTheDocument()
+    expect(screen.getAllByText(/It force-quits/)).toHaveLength(2)
+    expect(screen.getAllByText(/bound on this computer/)).toHaveLength(2)
+    const library = /Allow “Quit Editor” \(in the layout library\) to close app\.editor/
+    expect(screen.getByLabelText(library)).not.toBeChecked()
     await user.click(screen.getByLabelText(/Allow “Quit Editor” \(Work\) to close app\.editor/))
+    // Allowing the action allows every copy of it.
+    expect(screen.getByLabelText(library)).toBeChecked()
     await user.click(screen.getByRole("button", { name: "Import" }))
     expect(api.applyImport).toHaveBeenCalledWith(9, {
       mode: "merge",

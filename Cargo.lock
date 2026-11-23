@@ -1081,6 +1081,7 @@ dependencies = [
 name = "deckpilot-apps"
 version = "0.13.0"
 dependencies = [
+ "deckpilot-core",
  "libc",
  "objc2-app-kit",
  "objc2-foundation",

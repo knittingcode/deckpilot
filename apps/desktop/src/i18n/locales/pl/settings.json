@@ -535,7 +535,8 @@
       "closeDescription": "Te akcje zamykają aplikacje. Jeśli nie zezwolisz tu na którąś, zostanie zaimportowana bez powiązania i niczego nie zamknie, dopóki ponownie nie wybierzesz jej aplikacji na tym komputerze.",
       "closeAllow": "Zezwól, aby „{{action}}” ({{profile}}) zamykała {{application}} na tym komputerze",
       "closeForce": "Wymusza zamknięcie: niezapisana praca w tej aplikacji przepada.",
-      "closeBound": "Ten klucz jest powiązany na tym komputerze, więc zezwolenie zamknie tu prawdziwą aplikację."
+      "closeBound": "Ten klucz jest powiązany na tym komputerze, więc zezwolenie zamknie tu prawdziwą aplikację.",
+      "closeLibrary": "w bibliotece układów"
     },
     "variables": {
       "title": "Zmienne współdzielone",

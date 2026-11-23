@@ -497,7 +497,8 @@
       "closeDescription": "These actions quit applications. Unless you allow one here, it is imported unbound and closes nothing until you choose its application again on this computer.",
       "closeAllow": "Allow “{{action}}” ({{profile}}) to close {{application}} on this computer",
       "closeForce": "It force-quits: unsaved work in that application is lost.",
-      "closeBound": "This key is bound on this computer, so allowing it closes a real application here."
+      "closeBound": "This key is bound on this computer, so allowing it closes a real application here.",
+      "closeLibrary": "in the layout library"
     },
     "variables": {
       "title": "Shared variables",

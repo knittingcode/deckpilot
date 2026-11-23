@@ -429,7 +429,10 @@ function ImportChoices({
   const [appSettings, setAppSettings] = useState(false)
   // Close Application actions close nothing until confirmed one by one.
   const [confirmedCloses, setConfirmedCloses] = useState<string[]>([])
-  const closes = (preview.closeActions ?? []).filter((c) => selected.includes(c.profile))
+  // The layout library is always imported; a profile's copy with its profile.
+  const closes = (preview.closeActions ?? []).filter(
+    (c) => c.profile === null || selected.includes(c.profile),
+  )
   const [busy, setBusy] = useState(false)
   // Set synchronously, so a second click before React re-renders the busy
   // button cannot submit the same preview again.
@@ -689,7 +692,7 @@ function ImportChoices({
             <p>{t("settings:portability.import.closeDescription")}</p>
             <ul className="grid gap-1.5">
               {closes.map((close) => (
-                <li key={close.action}>
+                <li key={`${close.action}:${close.profile ?? "library"}`}>
                   <label className="flex items-start gap-2 text-sm text-foreground">
                     <Checkbox
                       className="mt-0.5"
@@ -706,7 +709,9 @@ function ImportChoices({
                       <span>
                         {t("settings:portability.import.closeAllow", {
                           action: close.name,
-                          profile: close.profileName,
+                          profile: close.inLibrary
+                            ? t("settings:portability.import.closeLibrary")
+                            : (close.profileName ?? ""),
                           application: close.application ?? "—",
                         })}
                       </span>

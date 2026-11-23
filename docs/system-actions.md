@@ -211,11 +211,15 @@ Windows) is the agent's child, and closing it is the point.
 
 **Imports.** A resource key is predictable only until it is bound: the
 pickers add a random suffix (`app.safari-k3x9q2`). An import lists every
-Close Application action (`ImportPreview.close_actions`, with whether it
-forces and whether its key is bound here) and imports each one unbound
-(`import.close-<id>`, `force` off, its `application` and `force`
-overrides removed) unless the user allows it in the review
-(`ImportOptions.confirmed_close_actions`).
+Close Application action (`ImportPreview.close_actions`), the profiles'
+and the layout library's (actions of layouts no profile uses), one entry
+per copy, with whether it forces and whether its key is bound here. Before
+anything is planned, every Close Application action whose id the user did
+not allow in the review (`ImportOptions.confirmed_close_actions`) is made
+unbound in every copy, by id (`import.close-<id>`, `force` off, its
+`application` and `force` overrides and mappings removed in profiles and
+library layouts alike), so the library's copies, stored after the
+profiles', cannot restore it. Allowing an id allows every copy of it.
 
 Outputs: `instances` (matched), `closed` (all gone), `forced`. Not running
 is a success with `instances` 0.

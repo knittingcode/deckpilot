@@ -605,6 +605,20 @@ mod tests {
     }
 
     #[test]
+    fn windows_programs_are_named_by_full_path_only() {
+        for good in [r"C:\Windows", "D:/Win"] {
+            assert!(windows_absolute(good), "{good}");
+        }
+        // Drive-relative, relative and UNC-less values never root a path.
+        for bad in ["C:Windows", "C:", "Windows", r"\Windows", ""] {
+            assert!(!windows_absolute(bad), "{bad}");
+        }
+        let program = windows_program("explorer.exe");
+        assert!(windows_absolute(&program), "{program}");
+        assert!(program.ends_with(r"\explorer.exe"), "{program}");
+    }
+
+    #[test]
     fn windows_never_goes_through_cmd() {
         let url = plan(Os::Windows, &OpenTarget::Url("https://example.com".into())).unwrap();
         assert!(

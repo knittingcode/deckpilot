@@ -1156,8 +1156,9 @@ fn imported_close_actions_are_flagged_and_unbound_until_confirmed() {
     assert_eq!(
         preview.close_actions,
         [CloseActionPreview {
-            profile: payload.profiles[0].id,
-            profile_name: "Imported".into(),
+            profile: Some(payload.profiles[0].id),
+            profile_name: Some("Imported".into()),
+            in_library: false,
             action: id,
             name: "Quit Editor".into(),
             application: Some("app.editor".into()),
@@ -1210,4 +1211,163 @@ fn a_confirmed_close_action_is_imported_as_it_is() {
         saved.workflows[0].steps[0].overrides.boolean("force"),
         Some(true)
     );
+}
+
+/// A forced Close Application of `app.editor` that exists only in the
+/// export's layout library (actions of layouts no profile uses).
+fn library_close(id: ActionInstanceId) -> ActionInstance {
+    ActionInstance {
+        id,
+        name: "Library Quit".into(),
+        action_type: ActionTypeId::new(CLOSE_APP).unwrap(),
+        parameters: ActionParameters::new()
+            .with(
+                "application",
+                ParameterValue::Resource(ResourceRef::Fixed {
+                    key: ResourceKey::new("app.editor").unwrap(),
+                }),
+            )
+            .with("force", ParameterValue::Boolean(true)),
+        description: String::new(),
+        icon: None,
+        label: None,
+    }
+}
+
+/// A layout no profile uses, whose first key runs `id` with `force`
+/// overridden to on.
+fn library_layout(id: ActionInstanceId) -> deckpilot_core::DeviceLayout {
+    use deckpilot_core::{BindingTarget, ControlBinding, DeviceLayout, Trigger};
+    use deckpilot_device::DeviceModelId;
+    let mut layout = DeviceLayout::new(
+        "Library",
+        DeviceModelId::new(deckpilot_device::models::STREAM_DECK_MK2_ID),
+    );
+    let home = layout.home_page;
+    layout
+        .page_mut(home)
+        .unwrap()
+        .bindings
+        .push(ControlBinding::new(
+            deckpilot_device::ControlId::Key { index: 0 },
+            Trigger::Press,
+            BindingTarget::Action {
+                action: id,
+                overrides: ActionParameters::new().with("force", ParameterValue::Boolean(true)),
+            },
+        ));
+    layout
+}
+
+fn unbound_key(id: ActionInstanceId) -> ResourceRef {
+    ResourceRef::Fixed {
+        key: ResourceKey::new(format!("import.close-{id}")).unwrap(),
+    }
+}
+
+/// The stored copy of action `id` (profiles and the library share it).
+fn stored_action(store: &SqliteStore, id: ActionInstanceId) -> ActionInstance {
+    let raw = store
+        .stored_item(deckpilot_storage::ItemKind::Action, &id.to_string())
+        .unwrap()
+        .expect("the action is stored");
+    serde_json::from_str(&raw).unwrap()
+}
+
+#[test]
+fn a_library_copy_of_a_profiles_close_action_cannot_restore_it() {
+    // Bypass 1: the profile's copy is unbound, and a forced copy with the
+    // same id in the library (stored after the profiles) must not bring
+    // it back.
+    let (store, mut payload, id) = close_export();
+    payload.library.actions.push(library_close(id));
+    let preview = preview(&payload, &store, &modules(), Vec::new()).unwrap();
+    let copies: Vec<_> = preview
+        .close_actions
+        .iter()
+        .map(|c| (c.action, c.in_library, c.force))
+        .collect();
+    assert_eq!(copies, [(id, false, true), (id, true, true)]);
+    let options = ImportOptions {
+        profiles: vec![payload.profiles[0].id],
+        ..ImportOptions::default()
+    };
+    let summary = apply(&store, &payload, &options);
+    assert_eq!(summary.unbound_close_actions, ["Quit Editor"]);
+    let stored = stored_action(&store, id);
+    assert_eq!(
+        stored.parameters.resource("application"),
+        Some(&unbound_key(id))
+    );
+    assert_eq!(stored.parameters.boolean("force"), Some(false));
+    let saved = store.load_profile(payload.profiles[0].id).unwrap().unwrap();
+    let action = saved.actions.iter().find(|a| a.id == id).unwrap();
+    assert_eq!(action.parameters.boolean("force"), Some(false));
+}
+
+#[test]
+fn a_close_action_only_in_the_library_is_listed_and_unbound() {
+    // Bypass 2: an action of the layout library alone.
+    let (store, mut payload, _) = close_export();
+    let id = ActionInstanceId::new();
+    payload.library.actions.push(library_close(id));
+    payload.library.layouts.push(library_layout(id));
+    let preview = preview(&payload, &store, &modules(), Vec::new()).unwrap();
+    let listed = preview
+        .close_actions
+        .iter()
+        .find(|c| c.action == id)
+        .expect("the library's Close Application is listed");
+    assert!(listed.in_library && listed.force && listed.bound_here);
+    assert_eq!(
+        (listed.profile, listed.profile_name.as_deref()),
+        (None, None)
+    );
+
+    let options = ImportOptions {
+        profiles: vec![payload.profiles[0].id],
+        ..ImportOptions::default()
+    };
+    let summary = apply(&store, &payload, &options);
+    assert!(
+        summary
+            .unbound_close_actions
+            .contains(&"Library Quit".to_owned())
+    );
+    let stored = stored_action(&store, id);
+    assert_eq!(
+        stored.parameters.resource("application"),
+        Some(&unbound_key(id))
+    );
+    assert_eq!(stored.parameters.boolean("force"), Some(false));
+    // The library layout's key no longer forces it.
+    let layouts = store.shared_layouts().unwrap();
+    let layout = &layouts
+        .iter()
+        .find(|l| l.layout.name == "Library")
+        .expect("imported")
+        .layout;
+    let binding = &layout.pages[0].bindings[0];
+    assert_eq!(
+        binding.target,
+        deckpilot_core::BindingTarget::Action {
+            action: id,
+            overrides: ActionParameters::new(),
+        }
+    );
+}
+
+#[test]
+fn confirming_an_id_keeps_every_copy_as_it_is() {
+    let (store, mut payload, id) = close_export();
+    payload.library.actions.push(library_close(id));
+    let options = ImportOptions {
+        profiles: vec![payload.profiles[0].id],
+        confirmed_close_actions: vec![id],
+        ..ImportOptions::default()
+    };
+    let summary = apply(&store, &payload, &options);
+    assert_eq!(summary.unbound_close_actions, Vec::<String>::new());
+    // The library's copy is the one stored last, unchanged.
+    assert_eq!(stored_action(&store, id), library_close(id));
 }

@@ -1579,10 +1579,16 @@ export interface ImportPreview {
   closeActions?: ImportCloseAction[]
 }
 
-/** A Close Application action an import brings (deckpilot_portability::CloseActionPreview). */
+/**
+ * A Close Application action an import brings (deckpilot_portability::CloseActionPreview):
+ * one entry per copy, a profile's or the layout library's. Confirmation is by
+ * `action` id and covers every copy.
+ */
 export interface ImportCloseAction {
-  profile: string
-  profileName: string
+  /** Its profile; `null` for a copy in the layout library. */
+  profile: string | null
+  profileName: string | null
+  inLibrary: boolean
   /** Its id in the export. */
   action: string
   name: string

@@ -9,6 +9,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The Windows folder's programs by full path, as the launch plans name them.
+deckpilot-core.workspace = true
 # macOS bundles' Info.plist (XML or binary), read on every platform so
 # that the fixtures are tested everywhere.
 plist = { version = "1", default-features = false }
