@@ -198,7 +198,7 @@ impl Setup {
             .await
             .unwrap();
         let json = serde_json::to_string(&response).unwrap();
-        assert!(!json.contains("s3cr3t"), "a secret left the agent: {json}");
+        assert!(!json.contains("s3cr3t"), "a secret left the agent");
         let Response::DisplayTemplates { texts } = response else {
             panic!("display templates expected, got {response:?}");
         };

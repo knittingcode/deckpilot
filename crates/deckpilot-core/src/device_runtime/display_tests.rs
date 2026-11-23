@@ -179,7 +179,7 @@ fn device_faces_resolve_titles_through_the_engine() {
     // The secret is in no face and no recorded text.
     let payload = serde_json::to_string(&faces).unwrap()
         + &serde_json::to_string(&texts.iter().map(|(_, t)| t).collect::<Vec<_>>()).unwrap();
-    assert!(!payload.contains("s3cr3t"), "{payload}");
+    assert!(!payload.contains("s3cr3t"), "a secret reached a face");
     // The stored templates are untouched.
     let stored: Vec<_> = profile.layouts[0].pages[0]
         .bindings

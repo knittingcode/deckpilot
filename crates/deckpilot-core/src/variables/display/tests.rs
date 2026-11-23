@@ -375,11 +375,13 @@ fn secrets_and_unsafe_sources_never_resolve() {
     );
     let json = serde_json::to_string(&all).unwrap();
     let debug = format!("{all:?}");
-    for secret in ["s3cr3t-pin", "github-token", "plugin-secret"] {
-        assert!(
-            !json.contains(secret) && !debug.contains(secret),
-            "{secret}"
-        );
+    // The message names the case by its position, never the secret.
+    for (case, secret) in ["s3cr3t-pin", "github-token", "plugin-secret"]
+        .into_iter()
+        .enumerate()
+    {
+        let leaked = json.contains(secret) || debug.contains(secret);
+        assert!(!leaked, "secret case {case} reached the output");
     }
 }
 
