@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use deckpilot_core::variables::{ScopeKey, VariableDefinition, VariableKey, VariableValue};
 use deckpilot_core::{
-    ActionRegistry, Availability, LayoutIssue, ModuleId, ModuleRegistry, ModuleSettings, Profile,
-    ProfileId, ProfileIssue, ProjectId, ResourceKey, ResourceKind,
+    ActionInstanceId, ActionRegistry, Availability, LayoutIssue, ModuleId, ModuleRegistry,
+    ModuleSettings, ParameterValue, Profile, ProfileId, ProfileIssue, ProjectId, ResourceKey,
+    ResourceKind, ResourceRef,
 };
 use deckpilot_device::ModelCatalog;
 use deckpilot_storage::{ConfigChanges, ConfigStore, SqliteStore};
@@ -404,6 +405,158 @@ pub struct ImportPreview {
     pub variables: VariablesPreview,
     /// Names of the layouts in the export that no exported profile uses.
     pub unassigned_layouts: Vec<String>,
+    /// Every Close Application action of the selected profiles. Each is
+    /// imported unbound (it closes nothing) unless the user confirms it
+    /// ([`ImportOptions::confirmed_close_actions`]): its application key
+    /// could name an application bound on this computer.
+    pub close_actions: Vec<CloseActionPreview>,
+}
+
+/// The Close Application action type (`system.close-app`).
+pub const CLOSE_APP: &str = "system.close-app";
+
+/// A Close Application action an import brings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseActionPreview {
+    pub profile: ProfileId,
+    pub profile_name: String,
+    /// Its id in the export, as [`ImportOptions::confirmed_close_actions`]
+    /// names it.
+    pub action: ActionInstanceId,
+    pub name: String,
+    /// The application it would close: a resource key, or a project role
+    /// as `role:<name>`.
+    pub application: Option<String>,
+    /// That key is bound on this computer, so confirming it closes a real
+    /// application here.
+    pub bound_here: bool,
+    /// It force-quits: its own `force`, or an override of a key, step or
+    /// node that runs it.
+    pub force: bool,
+}
+
+/// The overrides of `action` in `value` (bindings, steps, nodes): every
+/// object with `"action": <id>`, its `overrides` and `mappings`.
+fn for_each_use(
+    value: &mut serde_json::Value,
+    action: &str,
+    visit: &mut dyn FnMut(&mut serde_json::Map<String, serde_json::Value>),
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.get("action").and_then(serde_json::Value::as_str) == Some(action) {
+                visit(map);
+            }
+            for child in map.values_mut() {
+                for_each_use(child, action, visit);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                for_each_use(item, action, visit);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn forces(map: &serde_json::Map<String, serde_json::Value>) -> bool {
+    map.get("overrides")
+        .and_then(|o| o.get("force"))
+        .is_some_and(|f| f.get("value") == Some(&serde_json::Value::Bool(true)))
+}
+
+/// The Close Application actions of `profile`, as the preview lists them.
+fn close_actions(
+    profile: &Profile,
+    machine: Option<&deckpilot_core::MachineConfig>,
+) -> Vec<CloseActionPreview> {
+    let mut whole = serde_json::to_value(profile).unwrap_or_default();
+    profile
+        .actions
+        .iter()
+        .filter(|a| a.action_type.as_str() == CLOSE_APP)
+        .map(|action| {
+            let (application, key) = match action.parameters.resource("application") {
+                Some(ResourceRef::Fixed { key }) => (Some(key.to_string()), Some(key.clone())),
+                Some(ResourceRef::ProjectRole { role }) => (
+                    Some(format!("role:{role}")),
+                    profile
+                        .projects
+                        .iter()
+                        .find_map(|p| p.resources.get(role).cloned()),
+                ),
+                None => (None, None),
+            };
+            let bound_here = key
+                .as_ref()
+                .is_some_and(|k| machine.is_some_and(|m| m.binding(k).is_some()))
+                // A role may name a different key in each project.
+                || matches!(action.parameters.resource("application"), Some(ResourceRef::ProjectRole { .. }));
+            let mut force = action.parameters.boolean("force") == Some(true);
+            for_each_use(&mut whole, &action.id.to_string(), &mut |map| {
+                force |= forces(map);
+            });
+            CloseActionPreview {
+                profile: profile.id,
+                profile_name: profile.name.clone(),
+                action: action.id,
+                name: action.name.clone(),
+                application,
+                bound_here,
+                force,
+            }
+        })
+        .collect()
+}
+
+/// `profile` with every Close Application action that is not in
+/// `confirmed` made harmless: its application points at a key of its own
+/// that nothing binds (`import.close-<id>`), `force` is off, and the
+/// `application` and `force` overrides and mappings of the keys, steps and
+/// nodes that run it are removed. Returns the names of those actions.
+pub fn unbind_unconfirmed_closes(
+    profile: &mut Profile,
+    confirmed: &[ActionInstanceId],
+) -> Result<Vec<String>, PortabilityError> {
+    let unconfirmed: Vec<ActionInstanceId> = profile
+        .actions
+        .iter()
+        .filter(|a| a.action_type.as_str() == CLOSE_APP && !confirmed.contains(&a.id))
+        .map(|a| a.id)
+        .collect();
+    if unconfirmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut names = Vec::new();
+    for action in &mut profile.actions {
+        if !unconfirmed.contains(&action.id) {
+            continue;
+        }
+        let key = ResourceKey::new(format!("import.close-{}", action.id))
+            .map_err(|e| PortabilityError::Invalid(e.to_string()))?;
+        action.parameters = std::mem::take(&mut action.parameters)
+            .with(
+                "application",
+                ParameterValue::Resource(ResourceRef::Fixed { key }),
+            )
+            .with("force", ParameterValue::Boolean(false));
+        names.push(action.name.clone());
+    }
+    let mut whole = serde_json::to_value(&*profile)?;
+    for id in &unconfirmed {
+        for_each_use(&mut whole, &id.to_string(), &mut |map| {
+            for field in ["overrides", "mappings"] {
+                if let Some(serde_json::Value::Object(values)) = map.get_mut(field) {
+                    values.remove("application");
+                    values.remove("force");
+                }
+            }
+        });
+    }
+    *profile = serde_json::from_value(whole)?;
+    Ok(names)
 }
 
 /// The shared variables an import brings.
@@ -460,7 +613,9 @@ pub fn preview(
     let mut unknown = BTreeSet::new();
     let mut profiles = Vec::new();
     let mut missing: BTreeMap<ResourceKey, MissingResource> = BTreeMap::new();
+    let mut closes = Vec::new();
     for profile in &payload.profiles {
+        closes.extend(close_actions(profile, machine.as_ref()));
         let conflict = if let Some(same) = local.iter().find(|l| l.id == profile.id) {
             Some(Conflict::SameId {
                 name: same.name.clone(),
@@ -530,6 +685,7 @@ pub fn preview(
             .iter()
             .map(|l| l.name.clone())
             .collect(),
+        close_actions: closes,
     })
 }
 
@@ -613,6 +769,11 @@ pub struct ImportOptions {
     /// Apply the exported application settings.
     #[serde(default)]
     pub app_settings: bool,
+    /// Close Application actions (ids as in the export) the user confirmed
+    /// in the preview; every other one is imported unbound
+    /// ([`unbind_unconfirmed_closes`]).
+    #[serde(default)]
+    pub confirmed_close_actions: Vec<ActionInstanceId>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -635,6 +796,9 @@ pub struct ImportSummary {
     pub skipped_values: Vec<String>,
     /// Layouts of no profile that were imported.
     pub layouts: Vec<String>,
+    /// Close Application actions imported unbound because they were not
+    /// confirmed.
+    pub unbound_close_actions: Vec<String>,
 }
 
 /// How the layouts, actions and icons of an import relate to the shared
@@ -938,6 +1102,16 @@ pub fn plan(
             .projects
             .iter()
             .any(|p| remaining_projects.contains(&p.id));
+        // Close Application actions close nothing until confirmed: an
+        // imported one could name an application bound here.
+        let mut profile = profile.clone();
+        summary
+            .unbound_close_actions
+            .extend(unbind_unconfirmed_closes(
+                &mut profile,
+                &options.confirmed_close_actions,
+            )?);
+        let profile = &profile;
         let imported = if exists || clashes {
             // New identifiers for the profile and everything in it.
             let name = unique_name(&profile.name, &names);

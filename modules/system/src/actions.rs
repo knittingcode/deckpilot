@@ -742,6 +742,16 @@ impl CloseApp {
             .close(&target, options, &wait)
             .map_err(app_failure)?;
         let name = target.describe();
+        if report.interrupted {
+            return Err(fail(
+                deckpilot_apps::codes::INTERRUPTED,
+                format!(
+                    "the run was cancelled or ran out of time while {name} had time to quit; \
+                     nothing was forced, and {} instance(s) may still be running",
+                    report.remaining
+                ),
+            ));
+        }
         let closed = report.remaining == 0;
         let left_alone = if report.skipped > 0 {
             format!(

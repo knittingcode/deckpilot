@@ -2,11 +2,13 @@
 //! crate:
 //!
 //! - [`close_windows`]: `WM_CLOSE` to a process's visible, unowned
-//!   top-level windows (what clicking their close button does);
+//!   top-level windows (what clicking their close button does), while a
+//!   handle whose executable was checked pins the process id;
 //! - [`terminate`]: `TerminateProcess`, on a handle whose executable is
 //!   checked first, so a reused process id is never ended;
 //! - [`aumid_of`]: a packaged application's `AppUserModelID`;
-//! - [`session_of`]: the login session of a process.
+//! - [`session_of`]: the login session of a process;
+//! - [`elevated`]: whether this process runs elevated.
 //!
 //! Every handle is closed by [`Handle`]'s `Drop`.
 #![allow(unsafe_code)]
@@ -14,11 +16,15 @@
 use std::path::PathBuf;
 
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND, LPARAM};
+use windows_sys::Win32::Security::{
+    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+};
 use windows_sys::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-    QueryFullProcessImageNameW, TerminateProcess,
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, QueryFullProcessImageNameW,
+    TerminateProcess,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GetWindow, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
@@ -119,9 +125,50 @@ unsafe extern "system" fn collect(window: HWND, data: LPARAM) -> i32 {
     1
 }
 
-/// Posts `WM_CLOSE` to the visible, unowned top-level windows of `pid`.
-/// `Ok(false)` when it has none (only force can end it).
-pub fn close_windows(pid: u32) -> Result<bool, AppError> {
+/// This process runs elevated (as an administrator with UAC's full
+/// token); `false` when that cannot be read.
+pub fn elevated() -> bool {
+    let mut token: HANDLE = std::ptr::null_mut();
+    // SAFETY: the pseudo handle of this process needs no closing; `token`
+    // is a valid place for the opened token.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+        return false;
+    }
+    let token = Handle(token);
+    let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut length = 0u32;
+    let size = u32::try_from(std::mem::size_of::<TOKEN_ELEVATION>()).unwrap_or(4);
+    // SAFETY: `elevation` is a TOKEN_ELEVATION of `size` bytes that
+    // outlives the call.
+    let ok = unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenElevation,
+            (&raw mut elevation).cast(),
+            size,
+            &raw mut length,
+        )
+    };
+    ok != 0 && elevation.TokenIsElevated != 0
+}
+
+/// Posts `WM_CLOSE` to the visible, unowned top-level windows of
+/// `process`. A handle to it is opened first and its executable checked,
+/// and it stays open while the windows are found and asked, so the process
+/// id cannot be given to another program meanwhile. `Ok(false)` when it
+/// has no window (only force can end it) or is no longer that program.
+pub fn close_windows(process: &ProcessInfo) -> Result<bool, AppError> {
+    let pid = process.pid;
+    let Some(pinned) = Handle::open(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
+        return Ok(false);
+    };
+    let same = match (pinned.image(), &process.exe) {
+        (Some(image), Some(exe)) => crate::process::same_file(&image, exe),
+        _ => false,
+    };
+    if !same {
+        return Ok(false);
+    }
     let mut search = Search {
         pid,
         windows: Vec::new(),
@@ -137,6 +184,7 @@ pub fn close_windows(pid: u32) -> Result<bool, AppError> {
             posted += 1;
         }
     }
+    drop(pinned);
     if search.windows.is_empty() {
         Ok(false)
     } else if posted == 0 {
@@ -195,5 +243,7 @@ mod tests {
             &image,
             &std::env::current_exe().unwrap()
         ));
+        // Whatever the runner's account, the answer is read without failing.
+        let _ = elevated();
     }
 }

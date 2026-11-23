@@ -57,6 +57,11 @@ pub mod codes {
     pub const CLOSE_FAILED: &str = "close-failed";
     /// Closing is not available on this operating system.
     pub const UNSUPPORTED: &str = "unsupported-target";
+    /// The run was cancelled or ran out of time during the grace period:
+    /// nothing was forced.
+    pub const INTERRUPTED: &str = "interrupted";
+    /// DeckPilot runs as root or elevated, so it does not close anything.
+    pub const ELEVATED: &str = "elevated";
 }
 
 /// A refusal with its code and a message for the user.

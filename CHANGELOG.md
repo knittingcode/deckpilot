@@ -23,6 +23,12 @@ released either. 0.6.0 is the first version intended for publication.
   what still runs after 5 seconds is ended. Every instance you run of
   exactly that application is closed, never another user's programs, the
   system's or DeckPilot itself, and never from a schedule or an event.
+  A run that is cancelled or runs out of time while the application has
+  time to quit never forces it, and DeckPilot running as root or as an
+  administrator (elevated) closes nothing.
+- Importing a configuration lists its Close Application actions, marks
+  those that force-quit, and imports each one unbound (it closes nothing)
+  unless you allow it in the import review.
 - Open Application, Open, Website and Close Application offer the
   applications installed on this computer and the system's file picker in
   the inspector and the Action Library, instead of a typed resource key. A
@@ -44,8 +50,15 @@ released either. 0.6.0 is the first version intended for publication.
 - Open URL is now called Website, Open file is Open, and Open
   application is Open Application; their saved actions keep working
   unchanged.
-- Website refuses addresses with a user name or password. Saved mail
-  addresses (`mailto:`) still open.
+- Website refuses addresses with a user name or password
+  (`https://user:pass@…`) or with a backslash, which earlier versions
+  opened. Saved mail addresses (`mailto:`) still open.
+- Linux: a desktop entry with `Terminal=true` is no longer opened by Open
+  Application (earlier versions started it with `gtk-launch`, which opens
+  it in a terminal). Bind the program itself, or your terminal with the
+  program as its argument.
+- Windows: pages, files and folders open through `rundll32.exe` and
+  `explorer.exe` by their full path in the Windows folder.
 - Built-in actions now declare where they make sense; nothing changes yet
   for existing setups. Each built-in says whether it belongs on a key, on
   a double click or long press, on a key's live display, in a Multi Action

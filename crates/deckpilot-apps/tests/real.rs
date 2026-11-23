@@ -10,11 +10,43 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use deckpilot_apps::AppError;
 use deckpilot_apps::Platform;
-use deckpilot_apps::close::{self, Options, SystemControl, Target};
+use deckpilot_apps::close::{self, Control, Options, SystemControl, Target};
+use deckpilot_apps::process::{ProcessInfo, Snapshot};
 use deckpilot_apps::xdg::XdgDirs;
 
 const HELPER: &str = env!("CARGO_BIN_EXE_deckpilot-apps-test-helper");
+
+/// The real platform, except that the test may run elevated: CI's Windows
+/// runners are administrators, and closing refuses to run elevated
+/// (`codes::ELEVATED`, tested with a fake). Every other call is real.
+#[derive(Debug)]
+struct Real;
+
+impl Control for Real {
+    fn snapshot(&self) -> Snapshot {
+        SystemControl.snapshot()
+    }
+    fn bundle_pids(&self, id: &str) -> Vec<u32> {
+        SystemControl.bundle_pids(id)
+    }
+    fn aumid(&self, pid: u32) -> Option<String> {
+        SystemControl.aumid(pid)
+    }
+    fn request_quit(&self, target: &Target, process: &ProcessInfo) -> Result<bool, AppError> {
+        SystemControl.request_quit(target, process)
+    }
+    fn force_quit(&self, target: &Target, process: &ProcessInfo) -> Result<(), AppError> {
+        SystemControl.force_quit(target, process)
+    }
+    fn running(&self, process: &ProcessInfo) -> bool {
+        SystemControl.running(process)
+    }
+    fn elevated(&self) -> bool {
+        false
+    }
+}
 
 /// A started helper: its process id, and a channel that receives once it
 /// has exited (it is reaped at once, so it never lingers as a zombie).
@@ -75,7 +107,17 @@ fn serial() -> Serial {
 
 impl Drop for Serial {
     fn drop(&mut self) {
-        let _ = close::close(&SystemControl, &helper_target(), quick(true));
+        let _ = close::close(&Real, &helper_target(), quick(true));
+    }
+}
+
+#[test]
+fn whether_this_process_is_elevated_is_read() {
+    // Not root and not elevated on macOS and Linux CI; Windows CI runs as
+    // an administrator, where the answer is only read.
+    let elevated = SystemControl.elevated();
+    if !cfg!(windows) {
+        assert!(!elevated);
     }
 }
 
@@ -92,7 +134,7 @@ fn the_helper_is_matched_by_its_exact_executable_only() {
 fn closing_without_force_never_kills_a_program_that_stays() {
     let _serial = serial();
     let started = start(PathBuf::from(HELPER).as_path(), &["stubborn".to_owned()]);
-    let control = SystemControl;
+    let control = Real;
     let (instances, _) = close::instances(&control, &helper_target());
     assert!(
         instances.iter().any(|p| p.pid == started.pid),
@@ -116,7 +158,7 @@ fn closing_without_force_never_kills_a_program_that_stays() {
 fn a_graceful_close_ends_a_program_that_quits_when_asked() {
     let _serial = serial();
     let started = start(PathBuf::from(HELPER).as_path(), &["sleep".to_owned()]);
-    let report = close::close(&SystemControl, &helper_target(), quick(false)).unwrap();
+    let report = close::close(&Real, &helper_target(), quick(false)).unwrap();
     assert!(report.asked >= 1, "{report:?}");
     assert_eq!(report.forced, 0);
     assert!(has_exited(&started));
@@ -127,7 +169,7 @@ fn a_graceful_close_ends_a_program_that_quits_when_asked() {
 fn a_graceful_close_sends_wm_close_to_the_window() {
     let _serial = serial();
     let started = start(PathBuf::from(HELPER).as_path(), &["window".to_owned()]);
-    let report = close::close(&SystemControl, &helper_target(), quick(false)).unwrap();
+    let report = close::close(&Real, &helper_target(), quick(false)).unwrap();
     assert!(report.asked >= 1, "{report:?}");
     assert_eq!(report.forced, 0);
     assert!(has_exited(&started));
@@ -160,7 +202,7 @@ fn a_desktop_entry_is_launched_and_closed_by_its_id() {
     let started = start(&program, &arguments);
     let target = close::target(Platform::Linux, id, &dirs).unwrap();
     assert_eq!(target, helper_target());
-    let report = close::close(&SystemControl, &target, quick(false)).unwrap();
+    let report = close::close(&Real, &target, quick(false)).unwrap();
     assert!(report.asked >= 1, "{report:?}");
     assert!(has_exited(&started));
 }
@@ -182,6 +224,6 @@ fn nothing_is_closed_when_the_helper_is_not_running() {
         &XdgDirs::only(&[]),
     )
     .unwrap();
-    let report = close::close(&SystemControl, &target, quick(true)).unwrap();
+    let report = close::close(&Real, &target, quick(true)).unwrap();
     assert_eq!(report, close::Report::default());
 }

@@ -1572,6 +1572,26 @@ export interface ImportPreview {
   settings: AppSettings
   /** Shared variables in the export (deckpilot_portability::VariablesPreview). */
   variables: ImportVariablesPreview
+  /**
+   * Close Application actions of the export. Each is imported unbound (it
+   * closes nothing) unless confirmed in `ImportOptions.confirmedCloseActions`.
+   */
+  closeActions?: ImportCloseAction[]
+}
+
+/** A Close Application action an import brings (deckpilot_portability::CloseActionPreview). */
+export interface ImportCloseAction {
+  profile: string
+  profileName: string
+  /** Its id in the export. */
+  action: string
+  name: string
+  /** A resource key, or `role:<name>` for a project role. */
+  application: string | null
+  /** The key is bound on this computer: confirming it closes a real application here. */
+  boundHere: boolean
+  /** It force-quits (its own setting or an override). */
+  force: boolean
 }
 
 /** The shared variables an import brings. */
@@ -1597,6 +1617,8 @@ export interface ImportOptions {
   conflicts: Record<string, ConflictResolution>
   moduleSettings: boolean
   appSettings: boolean
+  /** Close Application actions (ids as in the export) the user confirmed. */
+  confirmedCloseActions?: string[]
 }
 
 /** Application settings that mean the same on every computer. */
@@ -1625,6 +1647,8 @@ export interface ImportSummary {
   variableValues: number
   /** Values that were not imported, and why. */
   skippedValues: string[]
+  /** Close Application actions imported unbound because they were not confirmed. */
+  unboundCloseActions?: string[]
   /**
    * The import was committed, but the app could not reload the imported
    * module settings; they take effect when it starts next.

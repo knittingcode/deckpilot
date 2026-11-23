@@ -199,6 +199,68 @@ describe("import window", () => {
     expect(emitTo).toHaveBeenCalledWith("main", "deckpilot://navigate", "projects/projects")
   })
 
+  it("imports Close Application actions unbound unless each is allowed", async () => {
+    const user = userEvent.setup()
+    dialog.open.mockResolvedValue("/tmp/in.deckpilot")
+    api.previewImport.mockResolvedValue({
+      token: 9,
+      preview: {
+        ...preview,
+        missingResources: [],
+        settings: {},
+        closeActions: [
+          {
+            profile: "p1",
+            profileName: "Work",
+            action: "a-quit",
+            name: "Quit Editor",
+            application: "app.editor",
+            boundHere: true,
+            force: true,
+          },
+          {
+            profile: "p1",
+            profileName: "Work",
+            action: "a-quit-chat",
+            name: "Quit Chat",
+            application: "app.chat",
+            boundHere: false,
+            force: false,
+          },
+        ],
+      },
+    })
+    api.applyImport.mockResolvedValue({
+      imported: [["p1", "Work"]],
+      removed: [],
+      skipped: [],
+      renamed: [],
+      modules: [],
+      settings: [],
+      variables: [],
+      variableValues: 0,
+      skippedValues: [],
+      unboundCloseActions: ["Quit Chat"],
+    })
+    inWindow(<ImportWindow />)
+    await user.click(screen.getByRole("button", { name: "Choose file…" }))
+    await user.type(await screen.findByLabelText("Export password"), "right{Enter}")
+    expect(await screen.findByText("Close Application actions")).toBeInTheDocument()
+    expect(screen.getByText(/It force-quits/)).toBeInTheDocument()
+    expect(screen.getByText(/bound on this computer/)).toBeInTheDocument()
+    await user.click(screen.getByLabelText(/Allow “Quit Editor” \(Work\) to close app\.editor/))
+    await user.click(screen.getByRole("button", { name: "Import" }))
+    expect(api.applyImport).toHaveBeenCalledWith(9, {
+      mode: "merge",
+      profiles: ["p1"],
+      conflicts: {},
+      moduleSettings: false,
+      appSettings: false,
+      confirmedCloseActions: ["a-quit"],
+    })
+    expect(await screen.findByText(/close nothing yet: Quit Chat/)).toBeInTheDocument()
+  })
+
   it("shows the shared variables an import brings and the values it skipped", async () => {
     const user = userEvent.setup()
     dialog.open.mockResolvedValue("/tmp/in.deckpilot")

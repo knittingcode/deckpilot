@@ -1099,3 +1099,115 @@ fn a_binding_on_the_reserved_back_key_is_imported_with_a_warning() {
         "{warnings:?}"
     );
 }
+
+/// An exported profile with a Close Application action of `app.editor`,
+/// forced on a step's override, while this computer binds `app.editor`.
+fn close_export() -> (SqliteStore, Payload, ActionInstanceId) {
+    let source = SqliteStore::open_in_memory().unwrap();
+    let mut profile = Profile::new("Imported");
+    let close = ActionInstance {
+        id: ActionInstanceId::new(),
+        name: "Quit Editor".into(),
+        action_type: ActionTypeId::new(CLOSE_APP).unwrap(),
+        parameters: ActionParameters::new().with(
+            "application",
+            ParameterValue::Resource(ResourceRef::Fixed {
+                key: ResourceKey::new("app.editor").unwrap(),
+            }),
+        ),
+        description: String::new(),
+        icon: None,
+        label: None,
+    };
+    let mut step = deckpilot_core::WorkflowStep {
+        action: close.id,
+        on_failure: OnFailure::Stop,
+        condition: deckpilot_core::StepCondition::default(),
+        overrides: ActionParameters::new().with("force", ParameterValue::Boolean(true)),
+    };
+    step.overrides = step.overrides.with(
+        "application",
+        ParameterValue::Resource(ResourceRef::Fixed {
+            key: ResourceKey::new("app.terminal").unwrap(),
+        }),
+    );
+    let mut workflow = Workflow::new("Quit");
+    workflow.steps.push(step);
+    profile.workflows.push(workflow);
+    profile.actions.push(close.clone());
+    source.save_profile(&profile).unwrap();
+    let payload = exported(&source);
+
+    let target = SqliteStore::open_in_memory().unwrap();
+    let mut machine = MachineConfig::new(Os::Linux);
+    machine.set_binding(MachineResourceBinding {
+        key: ResourceKey::new("app.editor").unwrap(),
+        kind: ResourceKind::Application,
+        value: "org.example.Editor.desktop".into(),
+    });
+    target.save_machine_config(&machine).unwrap();
+    (target, payload, close.id)
+}
+
+#[test]
+fn imported_close_actions_are_flagged_and_unbound_until_confirmed() {
+    let (store, payload, id) = close_export();
+    let preview = preview(&payload, &store, &modules(), Vec::new()).unwrap();
+    assert_eq!(
+        preview.close_actions,
+        [CloseActionPreview {
+            profile: payload.profiles[0].id,
+            profile_name: "Imported".into(),
+            action: id,
+            name: "Quit Editor".into(),
+            application: Some("app.editor".into()),
+            bound_here: true,
+            force: true,
+        }]
+    );
+    // Not confirmed: it closes nothing here.
+    let options = ImportOptions {
+        profiles: vec![payload.profiles[0].id],
+        ..ImportOptions::default()
+    };
+    let summary = apply(&store, &payload, &options);
+    assert_eq!(summary.unbound_close_actions, ["Quit Editor"]);
+    let saved = store.load_profile(payload.profiles[0].id).unwrap().unwrap();
+    let action = saved.actions.iter().find(|a| a.id == id).unwrap();
+    assert_eq!(
+        action.parameters.resource("application"),
+        Some(&ResourceRef::Fixed {
+            key: ResourceKey::new(format!("import.close-{id}")).unwrap()
+        })
+    );
+    assert_eq!(action.parameters.boolean("force"), Some(false));
+    let step = &saved.workflows[0].steps[0];
+    assert!(step.overrides.get("force").is_none());
+    assert!(step.overrides.get("application").is_none());
+    assert!(
+        store
+            .load_machine_config()
+            .unwrap()
+            .unwrap()
+            .binding(&ResourceKey::new(format!("import.close-{id}")).unwrap())
+            .is_none()
+    );
+}
+
+#[test]
+fn a_confirmed_close_action_is_imported_as_it_is() {
+    let (store, payload, id) = close_export();
+    let options = ImportOptions {
+        profiles: vec![payload.profiles[0].id],
+        confirmed_close_actions: vec![id],
+        ..ImportOptions::default()
+    };
+    let summary = apply(&store, &payload, &options);
+    assert_eq!(summary.unbound_close_actions, Vec::<String>::new());
+    let saved = store.load_profile(payload.profiles[0].id).unwrap().unwrap();
+    assert_eq!(saved.actions, payload.profiles[0].actions);
+    assert_eq!(
+        saved.workflows[0].steps[0].overrides.boolean("force"),
+        Some(true)
+    );
+}

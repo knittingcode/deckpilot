@@ -1069,6 +1069,26 @@ fn close_application_is_graceful_unless_force_is_on() {
 }
 
 #[test]
+fn a_cancelled_close_application_says_nothing_was_forced() {
+    let fixture = close_fixture();
+    let context = fixture.context().with_origin(Some(RunOrigin::Key));
+    let apps = Arc::new(RecordingApps::new(CloseReport {
+        instances: 1,
+        asked: 1,
+        remaining: 1,
+        interrupted: true,
+        ..CloseReport::default()
+    }));
+    let result = run(&CloseApp::new(apps), close_parameters(true), &context);
+    assert_eq!(code(&result), Some(deckpilot_apps::codes::INTERRUPTED));
+    assert!(
+        result.message.contains("nothing was forced"),
+        "{}",
+        result.message
+    );
+}
+
+#[test]
 fn close_application_refuses_what_it_cannot_identify() {
     let mut fixture = close_fixture();
     bind(

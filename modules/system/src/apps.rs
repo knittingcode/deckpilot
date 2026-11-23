@@ -72,6 +72,9 @@ impl Control for Cancellable<'_> {
     fn wait(&self, duration: Duration) -> bool {
         (self.wait)(duration)
     }
+    fn elevated(&self) -> bool {
+        SystemControl.elevated()
+    }
 }
 
 impl Apps for SystemApps {

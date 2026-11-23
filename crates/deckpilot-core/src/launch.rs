@@ -156,21 +156,21 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
         // `rundll32 url.dll,FileProtocolHandler` opens a URL or file with
         // its associated program, like double-clicking it.
         (Os::Windows, OpenTarget::Url(url)) => LaunchPlan {
-            program: "rundll32.exe".into(),
+            program: windows_program(r"System32\rundll32.exe"),
             args: vec!["url.dll,FileProtocolHandler".into(), url.clone()],
             wait: false,
         },
         (Os::Windows, OpenTarget::Path(p)) => {
             if p.is_dir() {
                 LaunchPlan {
-                    program: "explorer.exe".into(),
+                    program: windows_program("explorer.exe"),
                     args: vec![path(p)],
                     // explorer.exe exits with 1 even when it worked.
                     wait: false,
                 }
             } else {
                 LaunchPlan {
-                    program: "rundll32.exe".into(),
+                    program: windows_program(r"System32\rundll32.exe"),
                     args: vec!["url.dll,FileProtocolHandler".into(), path(p)],
                     wait: false,
                 }
@@ -200,6 +200,26 @@ fn mac_application_flag(application: &str) -> &'static str {
         && !application.contains(char::is_whitespace)
         && !application.to_ascii_lowercase().ends_with(".app");
     if by_id { "-b" } else { "-a" }
+}
+
+/// A program of the Windows folder by its full path (`%SystemRoot%`, else
+/// `%WINDIR%`, else `C:\Windows`), so a file of the same name in the
+/// current folder or on `PATH` is never started instead.
+pub fn windows_program(relative: &str) -> String {
+    let root = ["SystemRoot", "WINDIR"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok().filter(|v| windows_absolute(v)))
+        .unwrap_or_else(|| r"C:\Windows".to_owned());
+    format!("{}\\{relative}", root.trim_end_matches(['\\', '/']))
+}
+
+/// `C:\…` or `C:/…`.
+fn windows_absolute(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
 }
 
 fn launcher(program: &str, args: Vec<String>) -> LaunchPlan {
@@ -587,7 +607,12 @@ mod tests {
     #[test]
     fn windows_never_goes_through_cmd() {
         let url = plan(Os::Windows, &OpenTarget::Url("https://example.com".into())).unwrap();
-        assert_eq!(url.program, "rundll32.exe");
+        assert!(
+            url.program.ends_with(r"\System32\rundll32.exe"),
+            "{}",
+            url.program
+        );
+        assert!(windows_absolute(&url.program));
         assert_eq!(
             args(&url),
             ["url.dll,FileProtocolHandler", "https://example.com"]

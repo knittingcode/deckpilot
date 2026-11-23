@@ -258,10 +258,13 @@ describe("the machine-local pickers", () => {
     await user.click(screen.getByRole("combobox", { name: "Choose application…" }))
     await user.click(await screen.findByRole("option", { name: /TextEdit/ }))
     await waitFor(() => {
-      expect(onChange).toHaveBeenCalledWith({ type: "fixed", key: "app.textedit" })
+      expect(onChange).toHaveBeenCalledWith({
+        type: "fixed",
+        key: expect.stringMatching(/^app\.textedit-[a-z0-9]{6}$/) as unknown,
+      })
     })
     expect(api.setResourceBinding).toHaveBeenCalledWith(
-      "app.textedit",
+      expect.stringMatching(/^app\.textedit-[a-z0-9]{6}$/),
       "application",
       "com.apple.TextEdit",
     )
@@ -313,11 +316,14 @@ describe("the machine-local pickers", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("choose it again")
     await user.click(screen.getByRole("button", { name: "Choose file…" }))
     await waitFor(() => {
-      expect(onChange).toHaveBeenCalledWith({ type: "fixed", key: "file.q1-report-pdf" })
+      expect(onChange).toHaveBeenCalledWith({
+        type: "fixed",
+        key: expect.stringMatching(/^file\.q1-report-pdf-[a-z0-9]{6}$/) as unknown,
+      })
     })
     expect(dialog.open).toHaveBeenCalledWith({ directory: false, multiple: false })
     expect(api.setResourceBinding).toHaveBeenCalledWith(
-      "file.q1-report-pdf",
+      expect.stringMatching(/^file\.q1-report-pdf-[a-z0-9]{6}$/),
       "other",
       "/Users/me/Reports/Q1 report.pdf",
     )

@@ -26,6 +26,24 @@ pub enum Launchable {
     File(PathBuf),
 }
 
+/// A program of the Windows folder by its full path (`%SystemRoot%`, else
+/// `%WINDIR%`, else `C:\Windows`), as the core's launch plans start it.
+fn windows_program(relative: &str) -> PathBuf {
+    let root = ["SystemRoot", "WINDIR"]
+        .iter()
+        .find_map(|key| {
+            std::env::var(key).ok().filter(|v| {
+                let b = v.as_bytes();
+                b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+            })
+        })
+        .unwrap_or_else(|| r"C:\Windows".to_owned());
+    PathBuf::from(format!(
+        "{}\\{relative}",
+        root.trim_end_matches(['\\', '/'])
+    ))
+}
+
 fn not_found(message: impl Into<String>) -> AppError {
     AppError::new(codes::NOT_FOUND, message)
 }
@@ -96,7 +114,7 @@ pub fn launchable_in(
                 ));
             }
             Ok(Launchable::Program {
-                program: PathBuf::from("explorer.exe"),
+                program: windows_program("explorer.exe"),
                 arguments: vec![format!("shell:AppsFolder\\{aumid}")],
             })
         }
@@ -209,7 +227,7 @@ mod tests {
             )
             .unwrap(),
             Launchable::Program {
-                program: "explorer.exe".into(),
+                program: windows_program("explorer.exe"),
                 arguments: strings(&[
                     r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
                 ]),

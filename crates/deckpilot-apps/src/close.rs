@@ -267,11 +267,14 @@ pub trait Control: std::fmt::Debug {
     fn force_quit(&self, target: &Target, process: &ProcessInfo) -> Result<(), AppError>;
     /// Whether the process is still running.
     fn running(&self, process: &ProcessInfo) -> bool;
-    /// Waits `duration`; `false` when the caller cancelled.
+    /// Waits `duration`; `false` when the run was cancelled or its deadline
+    /// passed.
     fn wait(&self, duration: Duration) -> bool {
         std::thread::sleep(duration);
         true
     }
+    /// This process runs as root (Unix) or elevated (Windows).
+    fn elevated(&self) -> bool;
 }
 
 /// How to close.
@@ -304,6 +307,9 @@ pub struct Report {
     pub remaining: usize,
     /// Matching instances left alone: another user's, or protected.
     pub skipped: usize,
+    /// The run was cancelled or ran out of time while the application was
+    /// given time to quit, so nothing was forced.
+    pub interrupted: bool,
 }
 
 /// The current user's instances of `target`, and how many were skipped.
@@ -363,6 +369,13 @@ fn same_executable(exe: &Path, target: &Path) -> bool {
 /// still running. Without force, an application that keeps running (it
 /// may be asking to save) is reported in [`Report::remaining`].
 pub fn close(control: &dyn Control, target: &Target, options: Options) -> Result<Report, AppError> {
+    if control.elevated() {
+        return Err(AppError::new(
+            codes::ELEVATED,
+            "DeckPilot runs as root or as an administrator (elevated), so it does not close \
+             applications: they could belong to another account. Run DeckPilot as yourself",
+        ));
+    }
     let (instances, skipped) = instances(control, target);
     let mut report = Report {
         instances: instances.len(),
@@ -380,7 +393,14 @@ pub fn close(control: &dyn Control, target: &Target, options: Options) -> Result
             Err(error) => failure = Some(error),
         }
     }
-    let mut left = wait_for_exit(control, &instances, options.grace);
+    let (mut left, completed) = wait_for_exit(control, &instances, options.grace);
+    if !completed && !left.is_empty() {
+        // Cancelled, or out of time, while the application may be asking
+        // to save: never force then.
+        report.interrupted = true;
+        report.remaining = left.len();
+        return Ok(report);
+    }
     if options.force && !left.is_empty() {
         for process in &left {
             match control.force_quit(target, process) {
@@ -388,7 +408,7 @@ pub fn close(control: &dyn Control, target: &Target, options: Options) -> Result
                 Err(error) => failure = Some(error),
             }
         }
-        left = wait_for_exit(control, &left, FORCE_WAIT);
+        left = wait_for_exit(control, &left, FORCE_WAIT).0;
     }
     report.remaining = left.len();
     match failure {
@@ -397,11 +417,13 @@ pub fn close(control: &dyn Control, target: &Target, options: Options) -> Result
     }
 }
 
+/// The processes still running after waiting up to `limit` for them to
+/// exit, and `false` when the wait was cut short (cancelled, deadline).
 fn wait_for_exit(
     control: &dyn Control,
     processes: &[ProcessInfo],
     limit: Duration,
-) -> Vec<ProcessInfo> {
+) -> (Vec<ProcessInfo>, bool) {
     let until = Instant::now() + limit;
     loop {
         let left: Vec<ProcessInfo> = processes
@@ -409,8 +431,11 @@ fn wait_for_exit(
             .filter(|p| control.running(p))
             .cloned()
             .collect();
-        if left.is_empty() || Instant::now() >= until || !control.wait(POLL) {
-            return left;
+        if left.is_empty() || Instant::now() >= until {
+            return (left, true);
+        }
+        if !control.wait(POLL) {
+            return (left, false);
         }
     }
 }
@@ -456,7 +481,7 @@ impl Control for SystemControl {
         #[cfg(windows)]
         {
             let _ = target;
-            crate::native_windows::close_windows(process.pid)
+            crate::native_windows::close_windows(process)
         }
         #[cfg(unix)]
         {
@@ -501,6 +526,21 @@ impl Control for SystemControl {
     fn running(&self, process: &ProcessInfo) -> bool {
         still_same(process)
     }
+
+    fn elevated(&self) -> bool {
+        #[cfg(unix)]
+        {
+            rustix::process::geteuid().is_root()
+        }
+        #[cfg(windows)]
+        {
+            crate::native_windows::elevated()
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            false
+        }
+    }
 }
 
 /// The process is still the one that was matched: same id, executable
@@ -534,24 +574,51 @@ fn still_same(process: &ProcessInfo) -> bool {
 
 /// `SIGTERM`, or `SIGKILL` when forced, after checking that the process
 /// is still the matched one.
+///
+/// On Linux the process is pinned first with a pidfd (`pidfd_open`), its
+/// identity checked, and the signal sent through it (`pidfd_send_signal`),
+/// so a process id the system reused in between is never signalled. Where
+/// pidfds are not available (macOS, Linux before 5.3) the identity is
+/// checked right before `kill`.
 #[cfg(unix)]
 fn signal(process: &ProcessInfo, force: bool) -> Result<(), AppError> {
     use rustix::process::{Pid, Signal, kill_process};
 
-    if !still_same(process) {
-        return Ok(());
-    }
     let pid = i32::try_from(process.pid)
         .ok()
         .and_then(Pid::from_raw)
         .ok_or_else(|| AppError::new(codes::CLOSE_FAILED, "invalid process id"))?;
     let sig = if force { Signal::KILL } else { Signal::TERM };
-    match kill_process(pid, sig) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(error) => Err(AppError::new(
+    let failed = |error: rustix::io::Errno| {
+        AppError::new(
             codes::CLOSE_FAILED,
             format!("process {} could not be signalled: {error}", process.pid),
-        )),
+        )
+    };
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::process::{PidfdFlags, pidfd_open, pidfd_send_signal};
+        match pidfd_open(pid, PidfdFlags::empty()) {
+            Ok(pidfd) => {
+                if !still_same(process) {
+                    return Ok(());
+                }
+                return match pidfd_send_signal(&pidfd, sig) {
+                    Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+                    Err(error) => Err(failed(error)),
+                };
+            }
+            Err(rustix::io::Errno::SRCH) => return Ok(()),
+            // No pidfds here: the check-then-kill below.
+            Err(_) => {}
+        }
+    }
+    if !still_same(process) {
+        return Ok(());
+    }
+    match kill_process(pid, sig) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+        Err(error) => Err(failed(error)),
     }
 }
 

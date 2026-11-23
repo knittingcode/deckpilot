@@ -427,6 +427,9 @@ function ImportChoices({
   // Global variable values travel with the application settings.
   const hasSettings = Boolean(preview.settings.updates) || variables.globalValues > 0
   const [appSettings, setAppSettings] = useState(false)
+  // Close Application actions close nothing until confirmed one by one.
+  const [confirmedCloses, setConfirmedCloses] = useState<string[]>([])
+  const closes = (preview.closeActions ?? []).filter((c) => selected.includes(c.profile))
   const [busy, setBusy] = useState(false)
   // Set synchronously, so a second click before React re-renders the busy
   // button cannot submit the same preview again.
@@ -451,7 +454,21 @@ function ImportChoices({
         setBusy(true)
         setError(null)
         api
-          .applyImport(token, { mode, profiles: selected, conflicts, moduleSettings, appSettings })
+          .applyImport(token, {
+            mode,
+            profiles: selected,
+            conflicts,
+            moduleSettings,
+            appSettings,
+            // Sent when the export has Close Application actions to confirm.
+            ...(closes.length > 0
+              ? {
+                  confirmedCloseActions: confirmedCloses.filter((id) =>
+                    closes.some((c) => c.action === id),
+                  ),
+                }
+              : {}),
+          })
           .then(onDone, (e: unknown) => {
             // A failure before the commit keeps the preview: the same
             // button retries it. A used-up preview cannot be retried.
@@ -664,6 +681,53 @@ function ImportChoices({
         </Alert>
       )}
 
+      {closes.length > 0 && (
+        <Alert variant={closes.some((c) => c.force) ? "destructive" : "default"}>
+          <TriangleAlert />
+          <AlertTitle>{t("settings:portability.import.closeTitle")}</AlertTitle>
+          <AlertDescription className="grid gap-2">
+            <p>{t("settings:portability.import.closeDescription")}</p>
+            <ul className="grid gap-1.5">
+              {closes.map((close) => (
+                <li key={close.action}>
+                  <label className="flex items-start gap-2 text-sm text-foreground">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={confirmedCloses.includes(close.action)}
+                      onCheckedChange={(checked) => {
+                        setConfirmedCloses((current) =>
+                          checked === true
+                            ? [...current, close.action]
+                            : current.filter((id) => id !== close.action),
+                        )
+                      }}
+                    />
+                    <span className="grid gap-0.5">
+                      <span>
+                        {t("settings:portability.import.closeAllow", {
+                          action: close.name,
+                          profile: close.profileName,
+                          application: close.application ?? "—",
+                        })}
+                      </span>
+                      {close.force && (
+                        <span className="font-medium text-destructive">
+                          {t("settings:portability.import.closeForce")}
+                        </span>
+                      )}
+                      {close.boundHere && (
+                        <span className="text-xs text-muted-foreground">
+                          {t("settings:portability.import.closeBound")}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
       {preview.unknownActionTypes.length > 0 && (
         <Alert>
           <TriangleAlert />
@@ -798,6 +862,13 @@ function ImportDone({
             ))}
           </ul>
         </div>
+      )}
+      {(summary.unboundCloseActions ?? []).length > 0 && (
+        <p className="text-sm" role="note">
+          {t("settings:portability.done.unboundCloses", {
+            actions: format.list(summary.unboundCloseActions ?? [], "unit"),
+          })}
+        </p>
       )}
       {missing.length > 0 && (
         <div className="grid gap-2">

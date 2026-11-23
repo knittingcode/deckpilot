@@ -15,6 +15,7 @@ import {
   executionError,
   machinePick,
   parameterTexts,
+  randomSuffix,
   slug,
 } from "./system-actions"
 
@@ -79,12 +80,32 @@ describe("machine-local bindings", () => {
     expect(bindingKeyFor("app", "Safari", "application", "com.apple.Safari", bindings)).toBe(
       "app.safari",
     )
-    expect(bindingKeyFor("app", "Editor", "application", "/usr/bin/editor", bindings)).toBe(
-      "app.editor-2",
+    const fixed = () => "k3x9q2"
+    expect(bindingKeyFor("file", "Report Q1.pdf", "other", "/tmp/r.pdf", bindings, fixed)).toBe(
+      "file.report-q1-pdf-k3x9q2",
     )
-    expect(bindingKeyFor("file", "Report Q1.pdf", "other", "/tmp/r.pdf", bindings)).toBe(
-      "file.report-q1-pdf",
-    )
+    // A taken key draws another suffix.
+    const draws = ["editor", "abc123"]
+    const taken = [
+      ...bindings,
+      { key: "app.editor-editor", kind: "application" as const, value: "x" },
+    ]
+    expect(
+      bindingKeyFor(
+        "app",
+        "Editor",
+        "application",
+        "/usr/bin/editor",
+        taken,
+        () => draws.shift() ?? "",
+      ),
+    ).toBe("app.editor-abc123")
+  })
+
+  it("gives new keys a random suffix", () => {
+    const key = bindingKeyFor("app", "Safari", "application", "/Applications/Safari.app", [])
+    expect(key).toMatch(/^app\.safari-[a-z0-9]{6}$/)
+    expect(randomSuffix()).not.toBe(randomSuffix())
   })
 
   it("makes valid resource keys of any name", () => {

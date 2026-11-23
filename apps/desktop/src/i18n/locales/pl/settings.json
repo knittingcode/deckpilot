@@ -530,7 +530,12 @@
       "unknownTypesTitle": "Niektóre akcje wymagają modułów, których ten DeckPilot nie ma",
       "unknownTypesDescription": "{{types}}. Zostaną zaimportowane i oznaczone jako niedostępne.",
       "missingTitle": "Zasoby do skonfigurowania na tym komputerze",
-      "missingDescription": "{{resources}}. Możesz je przypisać po imporcie."
+      "missingDescription": "{{resources}}. Możesz je przypisać po imporcie.",
+      "closeTitle": "Akcje Zamknij aplikację",
+      "closeDescription": "Te akcje zamykają aplikacje. Jeśli nie zezwolisz tu na którąś, zostanie zaimportowana bez powiązania i niczego nie zamknie, dopóki ponownie nie wybierzesz jej aplikacji na tym komputerze.",
+      "closeAllow": "Zezwól, aby „{{action}}” ({{profile}}) zamykała {{application}} na tym komputerze",
+      "closeForce": "Wymusza zamknięcie: niezapisana praca w tej aplikacji przepada.",
+      "closeBound": "Ten klucz jest powiązany na tym komputerze, więc zezwolenie zamknie tu prawdziwą aplikację."
     },
     "variables": {
       "title": "Zmienne współdzielone",
@@ -565,7 +570,8 @@
       "skippedValues": "Niezaimportowane wartości zmiennych współdzielonych",
       "skippedValuesList": "Niezaimportowane wartości",
       "setUp": "Skonfiguruj te zasoby na tym komputerze",
-      "usedBy": "— używane przez: {{profiles}}"
+      "usedBy": "— używane przez: {{profiles}}",
+      "unboundCloses": "Zaimportowano bez aplikacji, więc na razie niczego nie zamykają: {{actions}}. Wybierz ich aplikację w edytorze, aby ich używać."
     }
   }
 }

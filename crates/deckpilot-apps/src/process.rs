@@ -120,6 +120,8 @@ pub const PROTECTED_NAMES: &[&str] = &[
     "deckpilot",
     "deckpilot-agent",
     "deckpilot-desktop",
+    "deckpilot-plugin-host",
+    "deckpilot-sandbox-probe",
 ];
 
 /// macOS bundles that keep the session running, and DeckPilot's own.
@@ -158,7 +160,14 @@ pub fn protected_bundle(identifier: &str) -> bool {
 
 /// Whether `process` must never be closed: process ids 0 and 1, this
 /// process, its parent (the app or the agent that started it), anything
-/// running this process's executable, and the deny-list.
+/// running this process's executable or another executable of its
+/// installation ([`installation_root`]: the app, the agent, the plugin
+/// host), and the deny-list.
+///
+/// Descendants of this process are not protected as such: an application
+/// that Open Application starts directly (Linux, Windows) is a child of
+/// the agent, and closing it is the point. DeckPilot's own child, the
+/// plugin host, is protected by its folder and its name.
 pub fn protected(process: &ProcessInfo, snapshot: &Snapshot) -> bool {
     if process.pid <= 1 {
         return true;
@@ -168,13 +177,44 @@ pub fn protected(process: &ProcessInfo, snapshot: &Snapshot) -> bool {
             return true;
         }
         if let (Some(a), Some(b)) = (&process.exe, &me.exe)
-            && same_file(a, b)
+            && (same_file(a, b) || installation_root(b).is_some_and(|root| inside(a, &root)))
         {
             return true;
         }
     }
     PROTECTED_NAMES.contains(&plain_name(&process.name).as_str())
         || process.exe.as_deref().is_some_and(protected_executable)
+}
+
+/// The folder DeckPilot is installed in, judged from the running
+/// executable `exe`: its `.app` bundle on macOS, its own folder on Windows
+/// (`C:\Program Files\DeckPilot`). `None` elsewhere: on Linux the agent
+/// is often in `/usr/bin` next to every other program, so the names of
+/// [`PROTECTED_NAMES`] protect DeckPilot's programs there.
+pub fn installation_root(exe: &Path) -> Option<PathBuf> {
+    if let Some(bundle) = exe
+        .ancestors()
+        .find(|a| a.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")))
+    {
+        return Some(bundle.to_path_buf());
+    }
+    if cfg!(windows) {
+        let folder = exe.parent()?;
+        let name = folder.file_name()?.to_string_lossy().to_ascii_lowercase();
+        // Never the Windows folder itself.
+        if name != "system32" && name != "windows" && name != "syswow64" {
+            return Some(folder.to_path_buf());
+        }
+    }
+    None
+}
+
+fn inside(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+        || match (std::fs::canonicalize(path), std::fs::canonicalize(root)) {
+            (Ok(path), Ok(root)) => path.starts_with(root),
+            _ => false,
+        }
 }
 
 /// The same file: equal paths, or equal after resolving links.
@@ -296,6 +336,12 @@ pub(crate) mod tests {
             process(53, "gnome-shell", Some("/usr/bin/gnome-shell"), "501"),
             process(54, "renamed", Some("/usr/bin/Xwayland"), "501"),
             process(55, "copy", Some("/opt/deckpilot/deckpilot-agent"), "501"),
+            process(
+                57,
+                "deckpilot-plugin-host",
+                Some("/elsewhere/deckpilot-plugin-host"),
+                "501",
+            ),
         ] {
             assert!(protected(&protected_one, &snapshot), "{protected_one:?}");
         }
@@ -315,6 +361,44 @@ pub(crate) mod tests {
         assert!(protected_bundle("com.apple.Finder"));
         assert!(protected_bundle("io.github.knittingcode.deckpilot"));
         assert!(!protected_bundle("com.apple.Safari"));
+    }
+
+    #[test]
+    fn deckpilots_installation_is_protected_but_not_its_folder_neighbours() {
+        let agent = "/Applications/DeckPilot.app/Contents/MacOS/deckpilot-agent";
+        let me = ProcessInfo {
+            parent: Some(900),
+            ..process(1000, "deckpilot-agent", Some(agent), "501")
+        };
+        let snapshot = Snapshot {
+            processes: vec![me.clone()],
+            me: Some(me),
+        };
+        let host = process(
+            70,
+            "host",
+            Some("/Applications/DeckPilot.app/Contents/Resources/plugins/host"),
+            "501",
+        );
+        assert!(protected(&host, &snapshot));
+        let other = process(
+            71,
+            "Safari",
+            Some("/Applications/Safari.app/Contents/MacOS/Safari"),
+            "501",
+        );
+        assert!(!protected(&other, &snapshot));
+        assert_eq!(
+            installation_root(Path::new(agent)),
+            Some(PathBuf::from("/Applications/DeckPilot.app"))
+        );
+        // Linux: no folder rule (the agent may be in /usr/bin).
+        if !cfg!(windows) {
+            assert_eq!(
+                installation_root(Path::new("/usr/bin/deckpilot-agent")),
+                None
+            );
+        }
     }
 
     #[test]

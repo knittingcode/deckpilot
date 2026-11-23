@@ -21,6 +21,9 @@ struct Fake {
     refusing: Vec<u32>,
     gone: Mutex<Vec<u32>>,
     log: Mutex<Vec<String>>,
+    /// The run is cancelled (or out of time) at the first wait.
+    cancelled: bool,
+    elevated: bool,
 }
 
 impl Fake {
@@ -34,6 +37,8 @@ impl Fake {
             refusing: Vec::new(),
             gone: Mutex::new(Vec::new()),
             log: Mutex::new(Vec::new()),
+            cancelled: false,
+            elevated: false,
         }
     }
 
@@ -93,7 +98,11 @@ impl Control for Fake {
     }
 
     fn wait(&self, _duration: Duration) -> bool {
-        true
+        !self.cancelled
+    }
+
+    fn elevated(&self) -> bool {
+        self.elevated
     }
 }
 
@@ -136,6 +145,7 @@ fn every_instance_the_user_owns_is_asked_and_nothing_else() {
             forced: 0,
             remaining: 0,
             skipped: 1,
+            interrupted: false,
         }
     );
     assert_eq!(fake.log(), ["quit 10", "quit 11"]);
@@ -171,6 +181,32 @@ fn a_failure_is_reported_when_nothing_could_be_done() {
     fake.stubborn = vec![10];
     let error = close(&fake, &editor_target(), quick(false)).unwrap_err();
     assert_eq!(error.code, codes::CLOSE_FAILED);
+}
+
+#[test]
+fn a_cancelled_or_late_run_never_forces() {
+    // The application may be asking to save: the run ends, nothing is
+    // killed, and the result says so.
+    let mut fake = Fake::new(vec![process(10, "editor", Some(EDITOR), "501")]);
+    fake.stubborn = vec![10];
+    fake.cancelled = true;
+    let options = Options {
+        force: true,
+        grace: Duration::from_secs(5),
+    };
+    let report = close(&fake, &editor_target(), options).unwrap();
+    assert!(report.interrupted);
+    assert_eq!((report.asked, report.forced, report.remaining), (1, 0, 1));
+    assert_eq!(fake.log(), ["quit 10"]);
+}
+
+#[test]
+fn nothing_is_closed_when_running_as_root_or_elevated() {
+    let mut fake = Fake::new(vec![process(10, "editor", Some(EDITOR), "501")]);
+    fake.elevated = true;
+    let error = close(&fake, &editor_target(), quick(true)).unwrap_err();
+    assert_eq!(error.code, codes::ELEVATED);
+    assert_eq!(fake.log(), Vec::<String>::new());
 }
 
 #[test]

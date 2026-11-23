@@ -398,7 +398,9 @@
       "notUserInitiated": "Zamknij aplikację działa tylko wtedy, gdy uruchomisz ją sam, nigdy z harmonogramu ani zdarzenia.",
       "notPermitted": "Moduł System nie ma uprawnienia do tej czynności.",
       "programNotFound": "Program, który to otwiera, nie jest zainstalowany.",
-      "openFailed": "System nie mógł tego otworzyć."
+      "openFailed": "System nie mógł tego otworzyć.",
+      "interrupted": "Uruchomienie anulowano lub skończył się czas, gdy aplikacja miała czas na zakończenie. Niczego nie wymuszono; może nadal działać.",
+      "elevated": "DeckPilot działa jako root lub administrator, więc nie zamyka aplikacji. Uruchom DeckPilota na swoim koncie."
     }
   }
 }

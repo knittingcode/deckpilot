@@ -384,7 +384,9 @@
       "notUserInitiated": "Close Application runs only when you start it, never from a schedule or an event.",
       "notPermitted": "The System module is not allowed to do this.",
       "programNotFound": "The program that opens it is not installed.",
-      "openFailed": "The system could not open it."
+      "openFailed": "The system could not open it.",
+      "interrupted": "The run was cancelled or ran out of time while the application had time to quit. Nothing was forced; it may still be running.",
+      "elevated": "DeckPilot runs as root or as an administrator, so it does not close applications. Run DeckPilot as yourself."
     }
   }
 }

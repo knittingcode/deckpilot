@@ -104,11 +104,21 @@ export function slug(name: string): string {
   return plain === "" ? "item" : plain
 }
 
+/** A short random suffix for a new key: 6 lower-case letters or digits. */
+export function randomSuffix(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+  const bytes = new Uint8Array(6)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("")
+}
+
 /**
  * The resource key a picked application, file or folder is bound under on
- * this computer: `app.safari`, `file.report`, `folder.downloads`. A binding
- * that already holds the same value is reused; a key that holds another
- * value gets a number (`app.safari-2`), so no other action changes.
+ * this computer: `app.safari-k3x9q2`, `file.report-pdf-…`, `folder.downloads-…`.
+ * A binding that already holds the same value is reused. A new key gets a
+ * random suffix, so an imported profile cannot guess the keys this
+ * computer uses (docs/system-actions.md, import), and never changes the
+ * binding of another action.
  */
 export function bindingKeyFor(
   prefix: "app" | "file" | "folder",
@@ -116,14 +126,13 @@ export function bindingKeyFor(
   kind: ResourceKind,
   value: string,
   bindings: MachineResourceBinding[],
+  suffix: () => string = randomSuffix,
 ): string {
   const same = bindings.find((b) => b.kind === kind && b.value === value)
   if (same) return same.key
-  const base = `${prefix}.${slug(name)}`
   const taken = new Set(bindings.map((b) => b.key))
-  if (!taken.has(base)) return base
-  for (let n = 2; ; n++) {
-    const candidate = `${base}-${n}`
+  for (;;) {
+    const candidate = `${prefix}.${slug(name)}-${suffix()}`
     if (!taken.has(candidate)) return candidate
   }
 }
@@ -258,6 +267,8 @@ export const EXECUTION_ERRORS: Partial<Record<string, TranslationKey>> = {
   "not-permitted": "actions:system.errors.notPermitted",
   "program-not-found": "actions:system.errors.programNotFound",
   "open-failed": "actions:system.errors.openFailed",
+  interrupted: "actions:system.errors.interrupted",
+  elevated: "actions:system.errors.elevated",
 }
 
 /** An execution error of a System action in words, or `null` for an unknown code. */

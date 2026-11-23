@@ -187,7 +187,35 @@ Application), `force` ("Force quit if it does not close", off).
 5. **Force** only with `force` on, for the instances still running:
    macOS `forceTerminate` or `SIGKILL`, Windows `TerminateProcess`, Linux
    `SIGKILL`. Without `force` an application that keeps running (it may be
-   asking to save) is reported, never killed.
+   asking to save) is reported, never killed. When the run is cancelled or
+   its deadline passes during the grace period, nothing is forced either:
+   the result is `interrupted`.
+
+Never as root or elevated: when DeckPilot runs as root (Unix) or with an
+elevated token (Windows), Close Application refuses with `elevated`, since
+the processes it would see may belong to another account.
+
+Process ids are pinned before acting: on Linux a pidfd is opened, the
+process's identity checked and the signal sent through the pidfd
+(`pidfd_open`, `pidfd_send_signal`; a check right before `kill` where
+pidfds are missing); on Windows a handle whose executable was checked is
+held while the windows are asked to close, and `TerminateProcess` uses
+such a handle; on macOS a bundle's instance is found by its process id and
+its bundle id checked again.
+
+DeckPilot's own processes are protected by name (the app, the agent, the
+plugin host) and, on macOS and Windows, by their installation folder (the
+`.app` bundle, the program folder). Descendants of the agent are not
+protected as such: an application Open Application starts directly (Linux,
+Windows) is the agent's child, and closing it is the point.
+
+**Imports.** A resource key is predictable only until it is bound: the
+pickers add a random suffix (`app.safari-k3x9q2`). An import lists every
+Close Application action (`ImportPreview.close_actions`, with whether it
+forces and whether its key is bound here) and imports each one unbound
+(`import.close-<id>`, `force` off, its `application` and `force`
+overrides removed) unless the user allows it in the review
+(`ImportOptions.confirmed_close_actions`).
 
 Outputs: `instances` (matched), `closed` (all gone), `forced`. Not running
 is a success with `instances` 0.
@@ -232,6 +260,8 @@ with an argument list.
 | Graceful close | `terminate` (bundle) / `SIGTERM` (path) | `WM_CLOSE` to top-level windows | `SIGTERM` |
 | Force quit | `forceTerminate` / `SIGKILL` | `TerminateProcess` | `SIGKILL` |
 | Owner check | user id | SID and session | user id |
+| Multi-call binaries | — | — | an executable that serves several programs (BusyBox) matches all of them, since they run the same executable |
+| Packaged (AUMID) apps | — | matched by `AppUserModelID`; their windows usually belong to `ApplicationFrameHost.exe`, so `WM_CLOSE` does not reach them and only force closes them | — |
 
 Launching keeps the core's launch service as it was (`open`, `xdg-open`,
 `rundll32`/`explorer` or the program itself, always with an argument
@@ -243,9 +273,11 @@ plan is made (`deckpilot_apps::launchable`).
 Honest limitations:
 
 - Windows: an application without a visible top-level window cannot be
-  closed gracefully (only forced); AppUserModelIDs are not listed by the
-  picker (they can be bound by hand) and a Start-menu shortcut can be
-  opened but not closed (its target is not resolved).
+  closed gracefully (only forced), which includes most packaged (AUMID)
+  apps; AppUserModelIDs are not listed by the picker (they can be bound by
+  hand) and a Start-menu shortcut can be opened but not closed (its target
+  is not resolved). Close Application refuses to run elevated, which on a
+  Windows account without UAC means always.
 - Linux: an application started through a wrapper script, Flatpak or Snap
   cannot be closed (refused, never guessed). Some distributions start
   browsers through a script (`/usr/bin/firefox` on Debian), so those are
