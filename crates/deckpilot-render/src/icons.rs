@@ -265,6 +265,53 @@ pub(crate) enum BackgroundLayer<'a> {
 pub struct Icons {
     profile: HashMap<IconId, Arc<RgbaImage>>,
     library: HashMap<AssetId, LibraryAsset>,
+    /// Images scaled to a key, shared by clones of these icons.
+    scaled: Arc<std::sync::Mutex<ScaledImageCache>>,
+}
+
+/// What a scaled image was made from: the asset, the key's size and the fit.
+type ScaledKey = (AssetRef, u32, u32, IconFit);
+
+/// Icon and background images scaled to a key's size ([`scale`]), the most
+/// recently used [`SCALED_IMAGES`] of them: a key whose label text changes
+/// is drawn again without scaling its picture again. Kept with the
+/// [`Icons`] they were scaled from, so new icons start an empty cache.
+#[derive(Debug, Default)]
+pub struct ScaledImageCache {
+    images: HashMap<ScaledKey, Arc<RgbaImage>>,
+    order: std::collections::VecDeque<ScaledKey>,
+    scaled: usize,
+}
+
+/// How many scaled images [`ScaledImageCache`] keeps.
+pub const SCALED_IMAGES: usize = 64;
+
+impl ScaledImageCache {
+    fn get_or_scale(
+        &mut self,
+        key: ScaledKey,
+        scale_it: impl FnOnce() -> RgbaImage,
+    ) -> Arc<RgbaImage> {
+        if let Some(image) = self.images.get(&key) {
+            let image = Arc::clone(image);
+            // Most recently used last.
+            if let Some(at) = self.order.iter().position(|k| *k == key) {
+                let key = self.order.remove(at).unwrap_or_else(|| key.clone());
+                self.order.push_back(key);
+            }
+            return image;
+        }
+        let image = Arc::new(scale_it());
+        self.scaled += 1;
+        if self.images.len() >= SCALED_IMAGES
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.images.remove(&oldest);
+        }
+        self.order.push_back(key.clone());
+        self.images.insert(key, Arc::clone(&image));
+        image
+    }
 }
 
 /// The built-in gradients, kept for [`Icons::background`].
@@ -285,6 +332,7 @@ impl Icons {
                 .filter_map(|icon| Some((icon.id, Arc::new(pixels(icon).ok()?))))
                 .collect(),
             library: HashMap::new(),
+            scaled: Arc::default(),
         }
     }
 
@@ -295,7 +343,36 @@ impl Icons {
         assets: impl IntoIterator<Item = (AssetId, LibraryAsset)>,
     ) -> Self {
         self.library.extend(assets);
+        self.scaled = Arc::default();
         self
+    }
+
+    /// `image` (the asset `reference`) scaled to `width` x `height` by
+    /// `fit`, from the cache when it was scaled before ([`scale`]).
+    pub fn scaled(
+        &self,
+        reference: &AssetRef,
+        image: &RgbaImage,
+        width: u32,
+        height: u32,
+        fit: IconFit,
+    ) -> Arc<RgbaImage> {
+        let mut cache = self
+            .scaled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache.get_or_scale((reference.clone(), width, height, fit), || {
+            scale(image, width, height, fit)
+        })
+    }
+
+    /// How many images were scaled (cache misses), for tests and the
+    /// benchmark.
+    pub fn scaled_count(&self) -> usize {
+        self.scaled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .scaled
     }
 
     pub fn get(&self, id: IconId) -> Option<&RgbaImage> {

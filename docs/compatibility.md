@@ -109,6 +109,15 @@ change): a manifest with it needs `^1.7` (the validator refuses it below),
 so an agent of plugin API 1.6 reports such a version `incompatible`;
 manifests without it are unchanged.
 
+Key labels (unreleased): a key's appearance may carry `labels`, an optional
+list that older agents ignore (the key draws without them) and an older app
+drops when it saves the layout; no document version or migration. Exports
+that contain labels are written as payload version 4, which older versions
+refuse rather than import without labels; exports without labels keep
+version 2 or 3. IPC: the capability `keyLabels` (protocol 17, with
+`displayTemplates`); key faces carry `labels` and previews `labelBoxes` only
+when a key has labels ([key-text.md](key-text.md#labels)).
+
 Key title appearance (unreleased): a key's appearance may carry
 `fontFamily`, `bold`, `italic` and `underline`, optional fields that older
 agents and apps ignore (an older app drops them when it saves the layout);

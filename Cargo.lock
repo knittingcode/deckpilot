@@ -1105,6 +1105,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "unicode-segmentation",
  "url",
  "uuid",
 ]
@@ -1460,6 +1461,9 @@ dependencies = [
  "deckpilot-core",
  "deckpilot-device",
  "image",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "skrifa",
  "unicode-segmentation",
 ]
