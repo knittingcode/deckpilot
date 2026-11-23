@@ -136,8 +136,10 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo run --locked -p deckpilot-dev -- check-versions
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Windows runners can take 24+ minutes for this step on a slow evening
+      # (#419); the job's own 60-minute limit still catches a real hang.
       - run: cargo test --workspace --locked
-        timeout-minutes: 25
+        timeout-minutes: 40
       # What real application, browser and icon discovery finds on this
       # runner, printed (the tests above ran it without output).
       - name: Application discovery on this runner
