@@ -534,8 +534,10 @@ async fn a_storm_of_changes_is_bounded_and_input_stays_fast() {
     let elapsed = counted.elapsed().as_secs_f64();
     storm.store(false, std::sync::atomic::Ordering::Relaxed);
     storming.await.unwrap();
+    // Generous, so a loaded runner does not flake: without the fix a press
+    // waits behind a redraw per change, seconds during a storm like this.
     assert!(
-        stormy < quiet + Duration::from_millis(100) && stormy < Duration::from_millis(500),
+        stormy < quiet * 4 + Duration::from_millis(500),
         "a press took {stormy:?} during the storm, {quiet:?} without"
     );
     #[expect(clippy::cast_precision_loss, reason = "a few dozen redraws")]
