@@ -55,6 +55,7 @@ import { FolderControlPanel, FolderSettings } from "./folder-settings"
 import { KeyAppearanceEditor, KeysAppearanceEditor } from "./key-appearance-editor"
 import { useKeyLook } from "./key-look-context"
 import { LayoutNavigationPanels, type LayoutNavigationContext } from "./layout-switch-inspector"
+import { SystemActionPanels } from "./system-action-inspector"
 import {
   decodeTarget,
   encodeTarget,
@@ -507,6 +508,18 @@ function ControlInspector({
             pageId={pageId}
             control={control}
             actions={profile.actions}
+            context={layoutNavigation}
+            onChange={onChange}
+          />
+        )}
+        {layoutNavigation && profile && (
+          <SystemActionPanels
+            draft={draft}
+            pageId={pageId}
+            control={control}
+            actions={profile.actions}
+            types={types}
+            gestures={gestures}
             context={layoutNavigation}
             onChange={onChange}
           />

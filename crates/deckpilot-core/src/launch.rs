@@ -98,13 +98,8 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
                 arguments,
             },
         ) => {
-            // A bundle identifier such as `com.apple.Safari` has dots but
-            // no slash; a path or a name (`Safari`) is opened with `-a`.
-            let by_id = !is_path(application)
-                && application.contains('.')
-                && !application.to_ascii_lowercase().ends_with(".app");
             let mut args = vec![
-                if by_id { "-b" } else { "-a" }.to_owned(),
+                mac_application_flag(application).to_owned(),
                 application.clone(),
             ];
             if !arguments.is_empty() {
@@ -119,7 +114,14 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
                 path: p,
                 application,
             },
-        ) => launcher("open", vec!["-a".into(), application.clone(), path(p)]),
+        ) => launcher(
+            "open",
+            vec![
+                mac_application_flag(application).into(),
+                application.clone(),
+                path(p),
+            ],
+        ),
         (Os::Linux, OpenTarget::Url(url)) => launcher("xdg-open", vec![url.clone()]),
         (Os::Linux, OpenTarget::Path(p)) => launcher("xdg-open", vec![path(p)]),
         (
@@ -154,21 +156,21 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
         // `rundll32 url.dll,FileProtocolHandler` opens a URL or file with
         // its associated program, like double-clicking it.
         (Os::Windows, OpenTarget::Url(url)) => LaunchPlan {
-            program: "rundll32.exe".into(),
+            program: windows_program(r"System32\rundll32.exe"),
             args: vec!["url.dll,FileProtocolHandler".into(), url.clone()],
             wait: false,
         },
         (Os::Windows, OpenTarget::Path(p)) => {
             if p.is_dir() {
                 LaunchPlan {
-                    program: "explorer.exe".into(),
+                    program: windows_program("explorer.exe"),
                     args: vec![path(p)],
                     // explorer.exe exits with 1 even when it worked.
                     wait: false,
                 }
             } else {
                 LaunchPlan {
-                    program: "rundll32.exe".into(),
+                    program: windows_program(r"System32\rundll32.exe"),
                     args: vec!["url.dll,FileProtocolHandler".into(), path(p)],
                     wait: false,
                 }
@@ -187,6 +189,37 @@ pub fn plan(os: Os, target: &OpenTarget) -> Result<LaunchPlan, LaunchError> {
             ));
         }
     })
+}
+
+/// `open`'s flag for an application: `-b` for a bundle identifier such as
+/// `com.apple.Safari` (dots, no slash, no spaces, not an `.app`), `-a` for
+/// a path or a name (`Safari`).
+fn mac_application_flag(application: &str) -> &'static str {
+    let by_id = !is_path(application)
+        && application.contains('.')
+        && !application.contains(char::is_whitespace)
+        && !application.to_ascii_lowercase().ends_with(".app");
+    if by_id { "-b" } else { "-a" }
+}
+
+/// A program of the Windows folder by its full path (`%SystemRoot%`, else
+/// `%WINDIR%`, else `C:\Windows`), so a file of the same name in the
+/// current folder or on `PATH` is never started instead.
+pub fn windows_program(relative: &str) -> String {
+    let root = ["SystemRoot", "WINDIR"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok().filter(|v| windows_absolute(v)))
+        .unwrap_or_else(|| r"C:\Windows".to_owned());
+    format!("{}\\{relative}", root.trim_end_matches(['\\', '/']))
+}
+
+/// `C:\…` or `C:/…`.
+fn windows_absolute(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
 }
 
 fn launcher(program: &str, args: Vec<String>) -> LaunchPlan {
@@ -539,6 +572,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(args(&with), ["-a", "TextEdit", "/tmp/a.txt"]);
+        // A browser bound by its bundle identifier opens a page with `-b`.
+        let page = url_plan(Os::MacOs, "https://example.com/", Some("com.google.Chrome")).unwrap();
+        assert_eq!(
+            args(&page),
+            ["-b", "com.google.Chrome", "https://example.com/"]
+        );
+        let named = plan(Os::MacOs, &app("Visual Studio Code", &[])).unwrap();
+        assert_eq!(args(&named), ["-a", "Visual Studio Code"]);
     }
 
     #[test]
@@ -564,9 +605,28 @@ mod tests {
     }
 
     #[test]
+    fn windows_programs_are_named_by_full_path_only() {
+        for good in [r"C:\Windows", "D:/Win"] {
+            assert!(windows_absolute(good), "{good}");
+        }
+        // Drive-relative, relative and UNC-less values never root a path.
+        for bad in ["C:Windows", "C:", "Windows", r"\Windows", ""] {
+            assert!(!windows_absolute(bad), "{bad}");
+        }
+        let program = windows_program("explorer.exe");
+        assert!(windows_absolute(&program), "{program}");
+        assert!(program.ends_with(r"\explorer.exe"), "{program}");
+    }
+
+    #[test]
     fn windows_never_goes_through_cmd() {
         let url = plan(Os::Windows, &OpenTarget::Url("https://example.com".into())).unwrap();
-        assert_eq!(url.program, "rundll32.exe");
+        assert!(
+            url.program.ends_with(r"\System32\rundll32.exe"),
+            "{}",
+            url.program
+        );
+        assert!(windows_absolute(&url.program));
         assert_eq!(
             args(&url),
             ["url.dll,FileProtocolHandler", "https://example.com"]

@@ -185,6 +185,10 @@ pub enum Capability {
     /// See which programs are running, without their command lines or
     /// environment.
     ProcessInspect,
+    /// Quit applications the user runs (System › Close Application):
+    /// gracefully, or forced when the action asks; never another user's
+    /// or a protected process.
+    ProcessControl,
     /// Send requests over the network.
     Network,
     /// Show desktop notifications.
@@ -210,6 +214,7 @@ impl Capability {
             Self::OpenExternal => "Open applications, files and web pages",
             Self::ProcessExecution => "Run programs on this computer",
             Self::ProcessInspect => "See which programs are running",
+            Self::ProcessControl => "Quit applications you run",
             Self::Network => "Send network requests",
             Self::Notifications => "Show desktop notifications",
             Self::Credentials => "Use credentials stored on this computer",

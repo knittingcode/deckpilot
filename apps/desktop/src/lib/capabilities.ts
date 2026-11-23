@@ -31,6 +31,10 @@ export const CAPABILITIES: Record<
     title: "permissions:capability.processInspect.title",
     description: "permissions:capability.processInspect.description",
   },
+  "process-control": {
+    title: "permissions:capability.processControl.title",
+    description: "permissions:capability.processControl.description",
+  },
   network: {
     title: "permissions:capability.network.title",
     description: "permissions:capability.network.description",

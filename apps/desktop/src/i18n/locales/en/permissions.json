@@ -142,6 +142,10 @@
       "title": "See which programs are running",
       "description": "Reads the names of running programs, never their command lines or environment."
     },
+    "processControl": {
+      "title": "Quit applications you run",
+      "description": "Quits an application you run when an action asks: gracefully, as with its Quit command, or forced when the action says so. Never other users' programs, the system's or DeckPilot itself."
+    },
     "network": {
       "title": "Send network requests",
       "description": "Sends HTTP requests. Requests to this computer or the local network must be allowed separately."

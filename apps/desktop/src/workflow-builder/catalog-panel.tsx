@@ -8,6 +8,7 @@ import { useTranslation } from "@/i18n"
 import type { ActionType } from "@/lib/types"
 
 import { type CatalogEntry, type CatalogGroup, DRAG_TYPE, searchCatalog } from "./catalog"
+import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
 
 const FLOW_ICONS: Record<string, typeof GitBranch> = {
   condition: GitBranch,
@@ -131,13 +132,13 @@ export function CatalogPanel({
                     variant="ghost"
                     size="sm"
                     className="h-6 px-1.5 text-xs text-muted-foreground"
-                    title={type.description}
+                    title={actionTypeDescription(type)}
                     onClick={() => {
                       onCreateAction(type)
                     }}
                   >
                     <Plus className="size-3" />
-                    {type.name}
+                    {actionTypeName(type)}
                   </Button>
                 ))}
               </div>
@@ -155,7 +156,7 @@ export function CatalogPanel({
                       title={t("workflows:catalog.unavailable", { reason })}
                     >
                       <Plus className="size-3" />
-                      {type.name}
+                      {actionTypeName(type)}
                     </Button>
                   ))}
                 </div>

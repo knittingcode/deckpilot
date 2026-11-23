@@ -8,6 +8,7 @@ import { useTranslation } from "@/i18n"
 import { creatableTypes } from "@/lib/modules"
 import { pluginTypeUnavailable } from "@/lib/plugin-actions"
 import type { ActionType, ModuleInfo } from "@/lib/types"
+import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
 
 /**
  * The first step of creating an action: one of the action types the
@@ -34,7 +35,7 @@ export function ActionTypeChooser({
       .map((m) => ({
         module: m,
         types: creatableTypes(m.actionTypes).filter((type) =>
-          `${type.name} ${type.description} ${type.category} ${m.name}`
+          `${type.name} ${actionTypeName(type)} ${actionTypeDescription(type)} ${type.category} ${m.name}`
             .toLowerCase()
             .includes(needle),
         ),
@@ -96,8 +97,8 @@ export function ActionTypeChooser({
                   onChoose(type)
                 }}
               >
-                <span>{type.name}</span>
-                <span className="text-xs text-muted-foreground">{type.description}</span>
+                <span>{actionTypeName(type)}</span>
+                <span className="text-xs text-muted-foreground">{actionTypeDescription(type)}</span>
                 {unavailable !== null && (
                   <span className="text-xs text-muted-foreground">
                     {t("actions:typeChooser.unavailable", { reason: unavailable })}
