@@ -158,9 +158,7 @@ describe("a binding's saved action in the Inspector", () => {
     const url = draft.getByRole("textbox", { name: /URL/ })
     expect(url).toHaveAttribute("aria-required", "true")
     expect(url).toHaveAttribute("aria-invalid", "true")
-    expect(url).toHaveAccessibleDescription(
-      "Required: fill this in before the action can run.",
-    )
+    expect(url).toHaveAccessibleDescription("Required: fill this in before the action can run.")
     // Complete ones: nothing to configure.
     expect(line("shared").queryByText("Needs configuration")).not.toBeInTheDocument()
     expect(line("shared").queryByRole("textbox")).not.toBeInTheDocument()

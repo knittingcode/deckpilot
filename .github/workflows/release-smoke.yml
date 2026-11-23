@@ -147,7 +147,7 @@ jobs:
           sudo apt-get update -q
           timeout 1800 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
             -o Acquire::Retries=3 \
-            xvfb imagemagick x11-apps gnome-keyring dbus-x11 libfuse2t64 webkit2gtk-driver rpm rpm2cpio cpio
+            xvfb imagemagick x11-apps gnome-keyring dbus-x11 libfuse2t64 webkit2gtk-driver rpm rpm2cpio cpio python3-xlib
           echo "NATIVE_DRIVER=$(command -v WebKitWebDriver || dpkg -L webkit2gtk-driver | grep -m1 '/WebKitWebDriver$')" >> "$GITHUB_ENV"
       - name: Download the assets
         run: |

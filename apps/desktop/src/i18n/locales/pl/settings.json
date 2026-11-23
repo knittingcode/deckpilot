@@ -104,7 +104,12 @@
   "usage": {
     "none": "Nieużywane w żadnym przepływie pracy ani układzie.",
     "workflowStep": "Przepływ pracy „{{workflow}}”, krok {{step}}",
-    "layoutControl": "Układ „{{layout}}”, strona „{{page}}”, {{control}}"
+    "layoutControl": "Układ „{{layout}}”, strona „{{page}}”, {{control}}",
+    "withTrigger": "{{place}} ({{trigger}})",
+    "workflowNode": "Przepływ pracy „{{workflow}}”, węzeł podprzepływu lub pętli",
+    "actionParameter": "Akcja „{{action}}” (kandydat akcji losowej lub stan przełącznika)",
+    "workSessionStart": "Sesja pracy: przepływ rozpoczęcia",
+    "workSessionVerification": "Sesja pracy: przepływ weryfikacji"
   },
   "incompatible": {
     "note": "Nie jest uruchamiane z tego elementu sterującego: {{reason}} Pozostaje przypisane, ale nie jest uruchamiane."
@@ -511,6 +516,7 @@
       "reviewTitle": "Przejrzyj import",
       "reviewDescription": "Wyeksportowano z DeckPilot {{version}} {{date}}. Zaimportowane przepływy pracy nie są uruchamiane, a zaimportowane profile nie są aktywowane.",
       "failed": "Niczego nie zaimportowano",
+      "previewExpired": "Tego przeglądu nie można już zaimportować. Wpisz ponownie hasło eksportu, aby przejrzeć plik.",
       "importing": "Importowanie…",
       "mode": "Sposób importu",
       "merge": "Dodaj do mojej konfiguracji",
@@ -528,7 +534,13 @@
       "unknownTypesTitle": "Niektóre akcje wymagają modułów, których ten DeckPilot nie ma",
       "unknownTypesDescription": "{{types}}. Zostaną zaimportowane i oznaczone jako niedostępne.",
       "missingTitle": "Zasoby do skonfigurowania na tym komputerze",
-      "missingDescription": "{{resources}}. Możesz je przypisać po imporcie."
+      "missingDescription": "{{resources}}. Możesz je przypisać po imporcie.",
+      "closeTitle": "Akcje Zamknij aplikację",
+      "closeDescription": "Te akcje zamykają aplikacje. Jeśli nie zezwolisz tu na którąś, zostanie zaimportowana bez powiązania i niczego nie zamknie, dopóki ponownie nie wybierzesz jej aplikacji na tym komputerze.",
+      "closeAllow": "Zezwól, aby „{{action}}” ({{profile}}) zamykała {{application}} na tym komputerze",
+      "closeForce": "Wymusza zamknięcie: niezapisana praca w tej aplikacji przepada.",
+      "closeBound": "Ten klucz jest powiązany na tym komputerze, więc zezwolenie zamknie tu prawdziwą aplikację.",
+      "closeLibrary": "w bibliotece układów"
     },
     "variables": {
       "title": "Zmienne współdzielone",
@@ -555,6 +567,7 @@
       "title": "Import zakończony",
       "description": "{{outcome}}.",
       "mapResources": "Przypisz zasoby teraz",
+      "reloadFailed": "Import został zapisany, ale DeckPilot nie mógł ponownie wczytać zaimportowanych ustawień modułów. Zaczną obowiązywać przy następnym uruchomieniu DeckPilota.",
       "renamed": "Zaimportowano jako kopie: {{profiles}}.",
       "settings": "Zastosowano ustawienia aplikacji: {{settings}}.",
       "variablesCreated": "Zmienne współdzielone: utworzono {{names}}, ustawiono {{values}}.",
@@ -562,7 +575,8 @@
       "skippedValues": "Niezaimportowane wartości zmiennych współdzielonych",
       "skippedValuesList": "Niezaimportowane wartości",
       "setUp": "Skonfiguruj te zasoby na tym komputerze",
-      "usedBy": "— używane przez: {{profiles}}"
+      "usedBy": "— używane przez: {{profiles}}",
+      "unboundCloses": "Zaimportowano bez aplikacji, więc na razie niczego nie zamykają: {{actions}}. Wybierz ich aplikację w edytorze, aby ich używać."
     }
   }
 }

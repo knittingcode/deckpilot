@@ -169,17 +169,23 @@ impl Agent {
             }
             // Started here, so that its end can advance the switch.
             Ok(RuntimeOutcome::WorkflowRequested { workflow }) => {
-                self.start_switch_workflow(
+                let workflow = *workflow;
+                if let Some(error) = self.start_switch_workflow(
                     key,
                     index,
-                    *workflow,
+                    workflow,
                     super::gestures::workflow_trigger(origin),
                     advance_on_failure,
-                );
+                ) {
+                    self.workflow_not_started(device, shown, control, workflow, &error);
+                }
                 self.after_change();
                 return;
             }
             Ok(_) => self.advance_switch(key, index),
+            // A workflow the profile does not have is a permanent refusal:
+            // with "advance on failure" the switch moves past it, as past
+            // any other failure.
             Err(_) if advance_on_failure => self.advance_switch(key, index),
             Err(_) => {}
         }
@@ -194,13 +200,15 @@ impl Agent {
         advance_on_failure: bool,
     ) {
         match state.target {
-            Candidate::Workflow(workflow) => self.start_switch_workflow(
-                key,
-                index,
-                workflow,
-                ExecutionTrigger::App,
-                advance_on_failure,
-            ),
+            Candidate::Workflow(workflow) => {
+                let _ = self.start_switch_workflow(
+                    key,
+                    index,
+                    workflow,
+                    ExecutionTrigger::App,
+                    advance_on_failure,
+                );
+            }
             Candidate::Action(run) => match self.runtime.run_action(run) {
                 Ok(mut result) => {
                     let name = self.action_name(run);
@@ -227,19 +235,29 @@ impl Agent {
         workflow: deckpilot_core::WorkflowId,
         trigger: ExecutionTrigger,
         advance_on_failure: bool,
-    ) {
+    ) -> Option<deckpilot_ipc::IpcError> {
         match self.start_execution(workflow, trigger) {
             Ok(_) if advance_on_failure => self.advance_switch(key, index),
             Ok(execution) => {
                 self.switches.pending.insert(execution.id, (key, index));
             }
+            // Refused before it ran. With "advance on failure", a refusal
+            // that lasts until the user changes something (deleted,
+            // another profile's, invalid, incomplete, needing inputs)
+            // moves the switch on, as a failed run does; one that passes by
+            // itself (running already, the limit, the Workflows plugin
+            // off) keeps the state, so the next press tries it again.
             Err(error) => {
                 warn!(%error, "the switch's workflow could not start");
-                if advance_on_failure {
+                let permanent = super::workflow_keys::refusal_of(&error)
+                    .is_none_or(deckpilot_core::WorkflowRefusal::is_permanent);
+                if advance_on_failure && permanent {
                     self.advance_switch(key, index);
                 }
+                return Some(error);
             }
         }
+        None
     }
 
     /// A workflow ended: the switch that started it moves on if it

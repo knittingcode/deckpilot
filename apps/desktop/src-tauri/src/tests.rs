@@ -4518,6 +4518,214 @@ fn previews_and_the_catalog_carry_editor_navigation() {
     assert!(in_tools[1].get("navigation").is_none());
 }
 
+/// The storefront commands never fail: without an agent, or with one that
+/// does not serve the storefront (the test agent has no plugins), Discover
+/// gets `null` and shows the catalog only.
+#[test]
+fn storefront_commands_answer_null_without_a_storefront() {
+    let h = Harness::new();
+    let sha = "ab".repeat(32);
+    let calls = [
+        ("get_storefront", json!({})),
+        ("get_registry_listing", json!({ "plugin": "acme.clock" })),
+        ("get_registry_media", json!({ "sha256": sha })),
+        (
+            "get_registry_media",
+            json!({ "sha256": "../../etc/passwd" }),
+        ),
+    ];
+    for (cmd, args) in &calls {
+        assert_eq!(
+            h.ok(cmd, args.clone()),
+            Value::Null,
+            "{cmd} without an agent"
+        );
+    }
+    let (_runtime, _mock) = start_agent(&h.paths);
+    h.unlock();
+    wait_for(&h, |s| s["running"] == true);
+    for (cmd, args) in &calls {
+        assert_eq!(
+            h.ok(cmd, args.clone()),
+            Value::Null,
+            "{cmd} without plugins"
+        );
+    }
+}
+
+/// Exports `h`'s configuration to `path` (authenticating first, as the
+/// export window does).
+fn try_export(h: &Harness, path: &std::path::Path, password: &str) -> Result<Value, String> {
+    h.ok("authenticate", json!({ "password": PASSWORD }));
+    h.call(
+        "export_configuration",
+        json!({ "request": { "path": path.display().to_string(), "password": password, "confirmation": password, "profiles": null, "includeModuleSettings": false } }),
+    )
+    .map_err(|error| error.as_str().unwrap_or_default().to_owned())
+}
+
+/// The names of the files in `dir`, sorted.
+fn file_names(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Issue #402: the export stages its bytes in a file of its own, never in
+/// one that happens to have the name the old staging scheme derived from
+/// the destination (`<name>.deckpilot.tmp`).
+#[test]
+fn an_export_never_touches_an_unrelated_sibling_file() {
+    let h = Harness::new();
+    new_profile(&h, "Synthetic");
+    let dir = h.paths.data_dir.join("exports");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sibling = dir.join("backup.deckpilot.tmp");
+    std::fs::write(&sibling, b"unrelated sibling marker").unwrap();
+    let destination = dir.join("backup.deckpilot");
+    let password = generated_export_password();
+
+    try_export(&h, &destination, &password).unwrap();
+    assert_eq!(
+        std::fs::read(&sibling).unwrap(),
+        b"unrelated sibling marker"
+    );
+    let payload = deckpilot_portability::payload::open(
+        &std::fs::read(&destination).unwrap(),
+        &deckpilot_storage::crypto::Password::new(&password),
+    )
+    .unwrap();
+    assert_eq!(payload.profiles.len(), 1);
+    assert_eq!(
+        file_names(&dir),
+        ["backup.deckpilot", "backup.deckpilot.tmp"]
+    );
+
+    // A replacement that fails (the destination is a directory that holds
+    // a file) keeps the sibling, and leaves no staging file behind.
+    let blocked = dir.join("blocked.deckpilot");
+    std::fs::create_dir_all(&blocked).unwrap();
+    std::fs::write(blocked.join("inside"), b"x").unwrap();
+    let blocked_sibling = dir.join("blocked.deckpilot.tmp");
+    std::fs::write(&blocked_sibling, b"another marker").unwrap();
+    assert!(try_export(&h, &blocked, &password).is_err());
+    assert_eq!(std::fs::read(&blocked_sibling).unwrap(), b"another marker");
+    assert_eq!(
+        std::fs::read(&sibling).unwrap(),
+        b"unrelated sibling marker"
+    );
+    assert_eq!(
+        file_names(&dir),
+        [
+            "backup.deckpilot",
+            "backup.deckpilot.tmp",
+            "blocked.deckpilot",
+            "blocked.deckpilot.tmp"
+        ]
+    );
+}
+
+/// A synthetic export of `h` with one profile, previewed. Returns the
+/// preview's answer and the profile's identifier.
+fn previewed_import(h: &Harness) -> (Value, String) {
+    let profile_id = new_profile(h, "Synthetic");
+    let file = h.paths.data_dir.join("synthetic.deckpilot");
+    let password = generated_export_password();
+    export_to(h, &file, Some(PASSWORD), &password);
+    let preview = h.ok(
+        "preview_import",
+        json!({ "path": file.display().to_string(), "password": password }),
+    );
+    (preview, profile_id)
+}
+
+fn profile_count(h: &Harness) -> usize {
+    h.ok("list_profiles", json!({}))["profiles"]
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+/// Issue #403: a failure before the import's transaction commits keeps the
+/// preview, so the same review screen can submit it again.
+#[test]
+fn an_import_can_be_retried_after_a_failure_before_the_commit() {
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+
+    // The configuration is locked between preview and apply: nothing is
+    // written.
+    h.ok("lock", json!({}));
+    assert!(h.error("apply_import", apply.clone()).contains("locked"));
+    h.unlock();
+    assert_eq!(profile_count(&h), 1);
+
+    // The retry applies the preview the user saw.
+    let summary = h.ok("apply_import", apply.clone());
+    assert_eq!(summary["renamed"][0], "Synthetic (imported)");
+    assert_eq!(profile_count(&h), 2);
+}
+
+/// Issue #403: an injected failure right before the transaction, after the
+/// import was planned, keeps the preview too.
+#[test]
+fn an_import_can_be_retried_after_an_injected_failure_before_the_commit() {
+    use crate::commands::portability::{ApplyStep, PendingImport};
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+    let pending = h.window.state::<PendingImport>();
+
+    pending.fail_at(Some(ApplyStep::BeforeCommit));
+    assert!(h.error("apply_import", apply.clone()).contains("injected"));
+    assert_eq!(profile_count(&h), 1);
+    pending.fail_at(None);
+    let summary = h.ok("apply_import", apply.clone());
+    assert_eq!(summary["reloadFailed"], false);
+    assert_eq!(profile_count(&h), 2);
+}
+
+/// Issue #403: rapid repeated submissions of one preview apply it once.
+#[test]
+fn repeated_submissions_apply_an_import_once() {
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+
+    h.ok("apply_import", apply.clone());
+    for _ in 0..3 {
+        let error = h.call_raw("apply_import", apply.clone()).unwrap_err();
+        assert_eq!(error["code"], "invalid.previewAgain");
+    }
+    assert_eq!(profile_count(&h), 2);
+}
+
+/// Issue #403: after the commit, a failing refresh is reported with the
+/// summary, and the preview is used up all the same.
+#[test]
+fn a_refresh_failure_after_the_commit_never_applies_the_import_twice() {
+    use crate::commands::portability::{ApplyStep, PendingImport};
+    let h = Harness::new();
+    let (preview, profile_id) = previewed_import(&h);
+    let apply = json!({ "token": preview["token"], "options": { "profiles": [profile_id], "conflicts": { profile_id.clone(): "keepBoth" } } });
+    let pending = h.window.state::<PendingImport>();
+
+    pending.fail_at(Some(ApplyStep::AfterCommit));
+    let summary = h.ok("apply_import", apply.clone());
+    assert_eq!(summary["reloadFailed"], true);
+    assert_eq!(summary["renamed"][0], "Synthetic (imported)");
+    assert_eq!(profile_count(&h), 2);
+
+    pending.fail_at(None);
+    let error = h.call_raw("apply_import", apply.clone()).unwrap_err();
+    assert_eq!(error["code"], "invalid.previewAgain");
+    assert_eq!(profile_count(&h), 2);
+}
+
 /// Dropping a type that needs a value saves a draft at once
 /// (`deckpilot_core::completeness`): every built-in type whose required
 /// parameters have no default is accepted without them and reports what
@@ -4549,6 +4757,7 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
         "system.open-url",
         "system.open-file",
         "system.open-directory",
+        "system.close-app",
     ] {
         assert!(ids.contains(&wanted), "{wanted} needs a value: {ids:?}");
     }
@@ -4569,16 +4778,23 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
         view["incompleteActions"].as_object().unwrap().len(),
         needing.len()
     );
+    // Open's file inside a folder is optional (docs/system-actions.md).
     assert_eq!(
         drafts["system.open-file"]["incomplete"],
-        json!(["location", "path"])
+        json!(["location"])
     );
+    assert_eq!(drafts["system.open-url"]["incomplete"], json!(["url"]));
     assert_eq!(
         drafts["system.open-directory"]["incomplete"],
         json!(["location"])
     );
     assert_eq!(
         drafts["system.open-app"]["incomplete"],
+        json!(["application"])
+    );
+    // Close Application's force has a default (off): only the application.
+    assert_eq!(
+        drafts["system.close-app"]["incomplete"],
         json!(["application"])
     );
 

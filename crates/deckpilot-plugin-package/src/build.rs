@@ -33,6 +33,7 @@ pub struct PackageBuilder {
     files: Files,
     limits: Limits,
     first_party: bool,
+    reviewed_privileged: bool,
 }
 
 /// A built package and the integrity record the registry would pin for it.
@@ -54,6 +55,7 @@ impl PackageBuilder {
             files: Files::new(),
             limits,
             first_party: false,
+            reviewed_privileged: false,
         }
     }
 
@@ -65,6 +67,21 @@ impl PackageBuilder {
     /// refused.
     pub fn first_party(&mut self) -> &mut Self {
         self.first_party = true;
+        self
+    }
+
+    /// Checks the manifest with the **bundled** first-party rules
+    /// ([`Manifest::validate_bundled`]), which accept plugin API 1.9's
+    /// privileged kinds. Only for the publisher's packager
+    /// (`deckpilot-registry package --first-party`) after the reviewed
+    /// privileged policy, with its gate open, admitted exactly this
+    /// manifest (`deckpilot_plugin_registry::privileged_policy::check`).
+    /// The package says nothing about where it may be installed: a client
+    /// reads it with these rules only as a reviewed release staged into the
+    /// application bundle, never from a registry (X12).
+    pub fn reviewed_privileged(&mut self) -> &mut Self {
+        self.first_party = true;
+        self.reviewed_privileged = true;
         self
     }
 
@@ -93,7 +110,11 @@ impl PackageBuilder {
     /// Validates the contents and writes the archive.
     pub fn build(&self) -> Result<BuiltPackage, PackageError> {
         contents::check_shape(&self.files, &self.limits)?;
-        let manifest = contents::parse_manifest(&self.files, self.first_party)?;
+        let manifest = if self.reviewed_privileged {
+            contents::parse_bundled_manifest(&self.files)?
+        } else {
+            contents::parse_manifest(&self.files, self.first_party)?
+        };
         contents::check_artifact(&self.files, &manifest, &self.limits)?;
         let bytes = encode(&self.files)?;
         let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);

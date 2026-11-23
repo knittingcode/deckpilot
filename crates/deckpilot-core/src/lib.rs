@@ -48,14 +48,15 @@ pub mod trigger;
 pub mod variables;
 pub mod work_session;
 pub mod workflow;
+pub mod workflow_refs;
 
 #[cfg(test)]
 pub(crate) mod testing;
 
 pub use action::{
     ActionInstance, ActionParameters, ActionType, ActionTypeId, DraftParameters, MAX_LABEL_CHARS,
-    ParameterError, ParameterKind, ParameterSpec, ParameterValue, lines_of, looks_secret,
-    validate_presentation,
+    MAX_TITLE_TEMPLATE_CHARS, ParameterError, ParameterKind, ParameterSpec, ParameterValue,
+    lines_of, looks_secret, validate_presentation,
 };
 pub use alias::{
     ACTION_ALIASES, ActionAlias, AliasOutcome, AliasStatus, FIRST_PARTY_PUBLISHER, LegacyRoute,
@@ -91,8 +92,9 @@ pub use credentials::{
     NoCredentials, Secret,
 };
 pub use device_runtime::{
-    DetachedAction, EditorTarget, LayoutStatus, NavigationError, NavigationState, Runtime,
-    RuntimeOutcome, page_faces,
+    DetachedAction, DisplayTexts, EditorTarget, LayoutStatus, NavigationError, NavigationState,
+    Runtime, RuntimeOutcome, core_display, page_faces, page_faces_in, page_faces_scoped,
+    page_faces_with,
 };
 pub use editor_navigation::{
     ControlNavigation, EditorNavigation, NavigationOperation, control_navigation,
@@ -148,6 +150,11 @@ pub use trigger::{
     WallTime, WorkflowTrigger,
 };
 pub use workflow::{OnFailure, ProjectScope, StepCondition, Workflow, WorkflowStep};
+pub use workflow_refs::{
+    DeleteOptions, DeletedWorkflow, ReferenceFingerprint, WorkSessionSetting, WorkSessionWorkflows,
+    WorkflowBindingIssue, WorkflowBindingReason, WorkflowBlock, WorkflowBlockCode, WorkflowRefusal,
+    WorkflowScope, workflow_block,
+};
 
 /// Error returned when a textual identifier does not satisfy its format rules.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

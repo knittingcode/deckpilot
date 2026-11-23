@@ -279,5 +279,130 @@
     "workflow": "Workflow node",
     "display": "Key display",
     "gesture": "Gesture"
+  },
+  "system": {
+    "names": {
+      "website": "Website",
+      "open": "Open",
+      "openApplication": "Open Application",
+      "closeApplication": "Close Application",
+      "openFolder": "Open folder"
+    },
+    "descriptions": {
+      "website": "Opens a web page (http or https) in the default browser or in a browser chosen on this computer.",
+      "open": "Opens a file, folder or application chosen on this computer with its default application, or a file with a chosen one.",
+      "openApplication": "Starts an application installed on this computer, optionally with arguments.",
+      "closeApplication": "Quits an application chosen on this computer: every instance you run, gracefully first. Never another user's programs or the system's.",
+      "openFolder": "Opens a folder resource, or a folder inside it, in the file manager."
+    },
+    "parameters": {
+      "url": {
+        "label": "Address",
+        "description": "An http or https address; https:// is added when you write none. Other schemes are refused because they can start programs."
+      },
+      "browser": {
+        "label": "Open with",
+        "description": "A browser installed on this computer; the default browser when none is chosen."
+      },
+      "location": {
+        "label": "File, folder or application",
+        "description": "Chosen on this computer and kept there: it is never exported. A folder can also be one the file is in."
+      },
+      "path": {
+        "label": "File inside the folder",
+        "description": "Optional: a file or folder inside the chosen folder, e.g. docs/README.md. It cannot leave the folder. Empty: what you chose opens itself."
+      },
+      "openWith": {
+        "label": "Open with",
+        "description": "An application installed on this computer; the default application when none is chosen."
+      },
+      "application": {
+        "label": "Application",
+        "description": "An application installed on this computer. DeckPilot keeps its stable identifier (bundle id, App Paths name or desktop entry) on this computer only."
+      },
+      "arguments": {
+        "label": "Arguments",
+        "description": "One per line, passed as they are: nothing is split on spaces or interpreted by a shell."
+      },
+      "force": {
+        "label": "Force quit if it does not close",
+        "description": "Off: the application is asked to quit, as with its Quit command, and may ask to save first. On: what still runs after 5 seconds is ended at once, and unsaved work is lost."
+      }
+    },
+    "website": {
+      "opens": "Opens {{url}}",
+      "problems": {
+        "empty": "Enter a web address.",
+        "tooLong": "The address is longer than 2048 bytes.",
+        "control": "The address contains control characters.",
+        "backslash": "The address contains a backslash.",
+        "scheme": "Only http and https addresses open; other schemes can start programs.",
+        "invalid": "This is not a valid web address.",
+        "credentials": "Remove the user name and password from the address.",
+        "noHost": "The address has no host.",
+        "mailBrowser": "A mail address opens in the mail program, not in a browser."
+      }
+    },
+    "picker": {
+      "thisComputer": "This computer only",
+      "localNote": "Kept on this computer as {{key}} and never exported. On another computer, choose it again here or bind {{key}} in Settings › Resources.",
+      "localHint": "What you choose is kept on this computer only and never exported.",
+      "unbound": "Not chosen on this computer ({{key}})",
+      "unboundHint": "Nothing is bound to this on this computer: choose it again, or bind it in Settings › Resources.",
+      "role": "The active project's {{role}}",
+      "defaultBrowser": "Default browser",
+      "nothing": "Nothing chosen",
+      "chooseApplication": "Choose application…",
+      "chooseBrowser": "Choose browser…",
+      "chooseFile": "Choose file…",
+      "chooseFolder": "Choose folder…",
+      "useDefault": "Use the default browser",
+      "clear": "Clear",
+      "search": "Search applications",
+      "loading": "Looking for installed applications…",
+      "noMatches": "No application matches.",
+      "listFailed": "The installed applications could not be listed: {{detail}}",
+      "browsers": "Browsers",
+      "applications": "Applications",
+      "otherApplications": "Other applications",
+      "browse": "Another application…",
+      "advanced": "Resource key or project role",
+      "failed": "Your choice could not be saved"
+    },
+    "panel": {
+      "save": "Save",
+      "saved": "Action saved",
+      "saveFailed": "The action could not be saved",
+      "saveFirst": "Save the changes before testing",
+      "test": "Test",
+      "missing": "Fill in: {{fields}}",
+      "failed": "{{reason}} ({{detail}})",
+      "shared": "Other keys or workflows use “{{action}}” too; your changes apply there as well.",
+      "closeGraceful": "Graceful: the application is asked to quit and may ask you to save first. It is never ended by force.",
+      "closeForce": "Force quit is on: what is still running 5 seconds after the request is ended, and unsaved work is lost.",
+      "longPress": "On long press",
+      "longPressNone": "Nothing",
+      "longPressQuit": "Quit the application",
+      "longPressOther": "Something else",
+      "longPressHint": "Quit binds a Close Application action of this application to the key's long press; it shows in Gestures like any other.",
+      "longPressOtherHint": "The long press runs something else; change it in Gestures.",
+      "quitName": "Quit {{name}}",
+      "releaseRemoved": "The key's release action was removed: a key with a long press cannot also react to its release."
+    },
+    "errors": {
+      "invalidUrl": "The address cannot be opened: only http and https pages open.",
+      "notFound": "It was not found on this computer: it may have been moved, renamed or uninstalled. Choose it again.",
+      "unbound": "It is not chosen on this computer yet. Choose it in the action, or bind it in Settings › Resources.",
+      "invalidApplication": "This is not an application DeckPilot can open.",
+      "notIdentifiable": "This application starts through a script or a launcher, so DeckPilot cannot tell its processes apart and does not close it.",
+      "protected": "This program is part of the system or of DeckPilot and is never closed.",
+      "closeFailed": "The application could not be closed.",
+      "notUserInitiated": "Close Application runs only when you start it, never from a schedule or an event.",
+      "notPermitted": "The System module is not allowed to do this.",
+      "programNotFound": "The program that opens it is not installed.",
+      "openFailed": "The system could not open it.",
+      "interrupted": "The run was cancelled or ran out of time while the application had time to quit. Nothing was forced; it may still be running.",
+      "elevated": "DeckPilot runs as root or as an administrator, so it does not close applications. Run DeckPilot as yourself."
+    }
   }
 }

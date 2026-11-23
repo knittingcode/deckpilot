@@ -340,6 +340,55 @@ impl HttpsSource {
         Ok(bytes)
     }
 
+    /// The publisher signature file of the key `key_id` published next to
+    /// the pinned package `pinned` (`<package>.<KEYID>.minisig`, at most
+    /// [`publisher::MAX_SIGNATURE_BYTES`]), from the same place the package
+    /// comes from. Its content is checked by the publisher verifier; where
+    /// it was hosted never counts.
+    ///
+    /// [`publisher::MAX_SIGNATURE_BYTES`]: deckpilot_plugin_registry::publisher::MAX_SIGNATURE_BYTES
+    pub fn signature(&self, pinned: &str, key_id: &str) -> Result<Vec<u8>, DownloadError> {
+        if !deckpilot_plugin_registry::publisher::is_key_id(key_id) {
+            return Err(DownloadError::Refused(format!("{key_id} is not a key id")));
+        }
+        let relative = pinned
+            .strip_prefix(DOWNLOAD_PREFIX)
+            .and_then(plain_path)
+            .ok_or_else(|| {
+                DownloadError::Refused(format!("{pinned} is not a release asset of this registry"))
+            })?;
+        let base = match &self.config.releases {
+            Some(releases) => releases.clone(),
+            None => {
+                Url::parse(DOWNLOAD_PREFIX).map_err(|e| DownloadError::Refused(e.to_string()))?
+            }
+        };
+        let name = deckpilot_plugin_registry::publisher::signature_file_name(relative, key_id);
+        let url = base
+            .join(&name)
+            .map_err(|e| DownloadError::Refused(format!("{name}: {e}")))?;
+        let limit = u64::try_from(deckpilot_plugin_registry::publisher::MAX_SIGNATURE_BYTES)
+            .unwrap_or(u64::MAX);
+        self.get(
+            &url,
+            limit,
+            Redirects::OrHosts(&self.config.package_redirect_hosts),
+            DOCUMENT_TIMEOUT,
+        )
+        .map_err(|e| match e {
+            FetchError::NotFound => DownloadError::Unavailable(format!(
+                "{} (a publisher signature) was not found",
+                shown(&url)
+            )),
+            FetchError::Unavailable(m) => {
+                DownloadError::Unavailable(format!("{} could not be downloaded: {m}", shown(&url)))
+            }
+            FetchError::Refused(m) => {
+                DownloadError::Refused(format!("{} was refused: {m}", shown(&url)))
+            }
+        })
+    }
+
     /// `url`, following allowed redirects, at most `limit` bytes.
     fn get(
         &self,
@@ -458,6 +507,46 @@ async fn read_body(mut response: reqwest::Response, limit: u64) -> Result<Vec<u8
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// An [`HttpsSource`] whose document fetches each take at most `timeout`
+/// ([`HttpsSource::with_timeout`]).
+pub(super) struct TimedSource<'a> {
+    source: &'a HttpsSource,
+    timeout: Duration,
+}
+
+impl HttpsSource {
+    /// The same source with another (shorter) timeout per document, for
+    /// background work such as the storefront's icon prefetch.
+    pub(super) fn with_timeout(&self, timeout: Duration) -> TimedSource<'_> {
+        TimedSource {
+            source: self,
+            timeout,
+        }
+    }
+
+    fn document(
+        &self,
+        path: &str,
+        max_bytes: usize,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, FetchError> {
+        let relative = plain_path(path)
+            .ok_or_else(|| FetchError::Refused(format!("`{path}` is not a registry path")))?;
+        let url = self
+            .documents
+            .join(relative)
+            .map_err(|e| FetchError::Refused(format!("{path}: {e}")))?;
+        let limit = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+        self.get(&url, limit, Redirects::SameOrigin, timeout)
+    }
+}
+
+impl RegistrySource for TimedSource<'_> {
+    fn fetch(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
+        self.source.document(path, max_bytes, self.timeout)
+    }
 }
 
 impl RegistrySource for HttpsSource {

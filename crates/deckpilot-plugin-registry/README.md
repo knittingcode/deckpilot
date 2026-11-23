@@ -158,13 +158,21 @@ feature the library has no signing code and no extra dependencies.
    running unless a `disable` revocation stops them (`installed_verdict`
    counts revocations only). Every other reserved publisher stays refused
    by the package reader whatever the pins say. The agent additionally
-   never takes the plugins it bundles from a registry
-   (`deckpilot_plugin_bundled::is_bundled_id`). Like every key set field,
+   installs a `deckpilot.*` package (the plugins it bundles included) only
+   as a first-party release signed by the publisher keys compiled into it
+   ([`publisher`](src/publisher.rs), `apps/agent/src/plugins/official.rs`);
+   with no key pinned it takes none. Like every key set field,
    `first_party` is unknown to a client that predates it, which then
    refuses the key set: it belongs in the first production key set.
 
 Publisher keys (U-2) were an optional extension in the spike and are not
-part of #191's schemas; they are not implemented here.
+part of #191's schemas. Only one publisher role exists, for DeckPilot's
+own release artifacts: [`publisher`](src/publisher.rs) verifies the
+first-party publisher signature of a `.dpplugin` before an application
+build bundles it (pinned keys in `publisher/first-party.json`: the two
+production keys since 2026-11-21, threshold 2; authenticity only, and the plugin API 1.9 privileged
+kinds stay refused). See
+[docs/marketplace/publisher-signature.md](../../docs/marketplace/publisher-signature.md).
 
 ## Offline
 

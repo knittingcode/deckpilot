@@ -528,5 +528,8 @@
     "lightboxHint": "Left and Right show the other screenshots; Escape closes.",
     "changelog": "Changelog",
     "fullLink": "This plugin is not DeckPilot’s: its links are shown in full. Check where one leads before you open it."
+  },
+  "installRefused": {
+    "title": "{{name}} {{version}} cannot be installed"
   }
 }

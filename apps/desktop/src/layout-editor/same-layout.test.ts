@@ -4,13 +4,12 @@ import type { ControlBinding, DeviceLayout } from "@/lib/types"
 
 import { sameLayout } from "./same-layout"
 
-const binding = (label?: string | null): ControlBinding =>
-  ({
-    control: { kind: "key", index: 1 },
-    trigger: { type: "press" },
-    target: { type: "action", action: "a-1" },
-    ...(label === undefined ? {} : { label }),
-  })
+const binding = (label?: string | null): ControlBinding => ({
+  control: { kind: "key", index: 1 },
+  trigger: { type: "press" },
+  target: { type: "action", action: "a-1" },
+  ...(label === undefined ? {} : { label }),
+})
 const layout = (b: ControlBinding): DeviceLayout => ({
   id: "l",
   name: "Main",

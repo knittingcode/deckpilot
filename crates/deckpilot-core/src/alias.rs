@@ -191,7 +191,7 @@ impl ActionAlias {
 /// of the module is cut over, and in every build without plugins, the
 /// legacy ids keep running the built-in.
 pub const ACTION_ALIASES: &[ActionAlias] = &[
-    // GitHub (P9): `deckpilot.github` (`plugins/first-party/github`), its
+    // GitHub (P9): `deckpilot.github` (`official/github` of knittingcode/deckpilot-plugins), its
     // contract checked by `crates/deckpilot-modules/tests/contracts.rs`.
     // The per-action `credential` override is dropped when it is empty or
     // names the module's credential (the plugin uses its slot `token`);
@@ -210,7 +210,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
     ),
     github("github.checks", "deckpilot.github.checks", true),
     github("github.open", "deckpilot.github.open", false),
-    // GitLab (P11): `deckpilot.gitlab` (`plugins/first-party/gitlab`), for
+    // GitLab (P11): `deckpilot.gitlab` (`official/gitlab` of knittingcode/deckpilot-plugins), for
     // GitLab.com or a self-managed GitLab the user enters; its contract
     // checked by `crates/deckpilot-modules/tests/contracts.rs`. As
     // GitHub's, the `credential` override is dropped when it is empty or
@@ -258,7 +258,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
         "deckpilot.gitlab.open",
         false,
     ),
-    // Jira (P11): `deckpilot.jira` (`plugins/first-party/jira`), for the
+    // Jira (P11): `deckpilot.jira` (`official/jira` of knittingcode/deckpilot-plugins), for the
     // Jira site the user enters (the plugin's slot `credential`);
     // `jira.open` has no `credential`.
     server(
@@ -290,7 +290,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
         false,
     ),
     // Notifications (P10): `deckpilot.notifications`
-    // (`plugins/first-party/notifications`), the first plugin of the
+    // (`official/notifications` of knittingcode/deckpilot-plugins), the first plugin of the
     // default set; its contract checked by
     // `crates/deckpilot-modules/tests/contracts.rs`. No parameter needs a
     // translation.
@@ -309,7 +309,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
     // (the host pins the Compose project, X3 M3), so a value of it is
     // refused instead of being dropped.
     //
-    // Git (`plugins/first-party/git`).
+    // Git (`official/git` of knittingcode/deckpilot-plugins).
     extracted("git", "git.status", "deckpilot.git.status", GIT),
     extracted("git", "git.branch", "deckpilot.git.branch", GIT),
     extracted("git", "git.changes", "deckpilot.git.changes", GIT),
@@ -326,7 +326,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
         "deckpilot.git.open-repository",
         GIT_OPEN,
     ),
-    // Docker (`plugins/first-party/docker`).
+    // Docker (`official/docker` of knittingcode/deckpilot-plugins).
     extracted("docker", "docker.status", "deckpilot.docker.status", &[]),
     extracted(
         "docker",
@@ -359,7 +359,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
         COMPOSE,
     ),
     extracted("docker", "docker.logs", "deckpilot.docker.logs", COMPOSE),
-    // Workspace (`plugins/first-party/workspace`).
+    // Workspace (`official/workspace` of knittingcode/deckpilot-plugins).
     extracted(
         "workspace",
         "workspace.open-in-editor",
@@ -378,7 +378,7 @@ pub const ACTION_ALIASES: &[ActionAlias] = &[
         "deckpilot.workspace.open-project",
         BROWSER,
     ),
-    // Projects (`plugins/first-party/projects`); the deprecated `next`,
+    // Projects (`official/projects` of knittingcode/deckpilot-plugins); the deprecated `next`,
     // `previous` and `active` stay same-name deprecated plugin actions.
     extracted(
         "projects",

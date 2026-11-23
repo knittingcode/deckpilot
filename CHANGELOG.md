@@ -32,6 +32,42 @@ released either. 0.6.0 is the first version intended for publication.
   the same face (the live preview's navigation gains the optional
   `folderCountdown`; protocol 16 unchanged).
 
+- Key titles can show variables: `{{ projects.current.key }}`,
+  `{{ shared.team.name }}` or `{{ system.profile.current.name }}`, alone,
+  several at once or mixed with text. The device and the editor's preview
+  show the same text, and keys update when the project, the profile or a
+  value changes. Sensitive variables and credentials never show on a key;
+  a value that is not available shows `-`. `{profile}`, `{project.key}` and
+  `{project.name}` keep working, and saved titles are not changed. A title
+  with variables may be up to 160 characters long; the key shows at most 32.
+  DeckPilot 0.13 and earlier open layouts with such a title but refuse to
+  save them, and to duplicate an action whose label is such a title, until
+  the title is shortened to 32 characters.
+- Close Application: a key, a gesture or a workflow you start can quit an
+  application. It asks the application to quit, as its Quit command does,
+  so it can ask you to save; with "Force quit if it does not close" on,
+  what still runs after 5 seconds is ended. Every instance you run of
+  exactly that application is closed, never another user's programs, the
+  system's or DeckPilot itself, and never from a schedule or an event.
+  A run that is cancelled or runs out of time while the application has
+  time to quit never forces it, and DeckPilot running as root or as an
+  administrator (elevated) closes nothing.
+- Importing a configuration lists its Close Application actions, marks
+  those that force-quit, and imports each one unbound (it closes nothing)
+  unless you allow it in the import review.
+- Open Application, Open, Website and Close Application offer the
+  applications installed on this computer and the system's file picker in
+  the inspector and the Action Library, instead of a typed resource key. A
+  choice is kept on this computer only, marked as such, and never
+  exported; DeckPilot stores the application's stable identifier (its
+  bundle id, App Paths name or desktop entry) where it has one.
+- An Open Application key can quit its application on a long press: one
+  choice in the inspector binds Close Application to the key's long press.
+- Website can open a page in a browser you choose instead of the default
+  one, and adds `https://` to an address written without it.
+- Open opens a chosen file, folder or application by itself; a file
+  inside a folder is now optional.
+
 ### Changed
 
 - Folders: Automatic exit pauses while a run started from the folder is
@@ -41,6 +77,195 @@ released either. 0.6.0 is the first version intended for publication.
 - Folder Inspector: Automatic exit is one compact row, "Automatic exit
   after [10] seconds", with the time edited inline (stored with Enter or
   when the field is left; Escape restores it).
+
+- Linux: an application bound by its desktop entry starts from the entry's
+  own command line, so `gtk-launch` is no longer needed, and it can open a
+  file or a page.
+- Open URL is now called Website, Open file is Open, and Open
+  application is Open Application; their saved actions keep working
+  unchanged.
+- Website refuses addresses with a user name or password
+  (`https://user:pass@…`) or with a backslash, which earlier versions
+  opened. Saved mail addresses (`mailto:`) still open.
+- Linux: a desktop entry with `Terminal=true` is no longer opened by Open
+  Application (earlier versions started it with `gtk-launch`, which opens
+  it in a terminal). Bind the program itself, or your terminal with the
+  program as its argument.
+- Windows: pages, files and folders open through `rundll32.exe` and
+  `explorer.exe` by their full path in the Windows folder.
+- **Behaviour change: while the Workflows plugin is disabled, keys and
+  gestures bound to a graph workflow no longer run it.** Disabled plugins
+  preserve bindings without executing them: the keys are kept, show
+  "Workflows off", and the app's status bar says why a press did nothing.
+  Turning the plugin on again restores them. Multi Actions are part of
+  DeckPilot itself and keep running with the plugin off; workflows started
+  from the app or by their schedules are not affected.
+- Deleting a workflow that is in use now asks first and lists every place
+  that uses it: keys and gestures, Sub-workflow and Loop nodes of other
+  workflows, Random Action and Multi Action Switch entries, and the Work
+  Session start and verification workflows. The keys are kept and show
+  "Workflow missing" unless you also choose to clear them; a Work Session
+  setting is cleared only when you tick it, otherwise the workflow is not
+  deleted; other workflows and actions are never changed. If something
+  started using the workflow while the dialog was open, the delete stops
+  and shows the updated list.
+- A key whose workflow was deleted now shows "Workflow missing" instead of
+  "Not in this profile", which is kept for a workflow of another profile
+  that shares the layout.
+- A key or gesture whose workflow did not start (missing, another
+  profile's, invalid, needing input values, already running, or too many
+  running) now says so in the app's status bar, once per key, instead of
+  only in the agent's log. A Multi Action Switch set to advance on
+  failure no longer skips a state whose workflow is only temporarily
+  unavailable (already running, too many running, or the Workflows plugin
+  off); it still moves past one that is missing, invalid or needs
+  configuration or input values.
+- Saving a layout refuses a new key that starts another profile's or a
+  deleted workflow, a workflow that needs input values, or a graph
+  workflow while the Workflows plugin is off. Keys saved like that before
+  are kept and reported, and moving or duplicating them is not new.
+
+- Built-in actions now declare where they make sense; nothing changes yet
+  for existing setups. Each built-in says whether it belongs on a key, on
+  a double click or long press, on a key's live display, in a Multi Action
+  or in a workflow. Saving a layout or workflow reports a use elsewhere
+  without refusing it, and such a use still runs, with a warning in the
+  agent's log. Wait is deprecated in favour of Delay and is no longer
+  offered for new actions; saved Waits keep working unchanged.
+
+### Fixed
+
+- A workflow used only by another workflow's Sub-workflow or Loop node, a
+  Random Action or Multi Action Switch, or the Work Session settings, could
+  be deleted without any warning, which broke what used it. Every kind of
+  use now counts.
+- An action that needs a value, such as Open application, can now be put
+  on a key or gesture, into a Multi Action or into a workflow before you
+  fill it in. Until then it is saved as "Needs configuration" and is never
+  run: a press, a step or a workflow that reaches it is refused before
+  anything happens, and says which settings are missing. A wrong value is
+  still refused when saving. Nothing changes for configured actions.
+
+## [0.13.0] - 2026-11-22
+
+### Added
+
+- Support for a signed Marketplace storefront: the agent can fetch,
+  verify and cache the editorial pages a plugin registry publishes
+  (featured plugins, collections, banners and plugin listings with their
+  icons and artwork), each signed and checked like the registry's
+  catalog, and offline from the cache. **No storefront is published in
+  the official registry yet, so nothing changes in the Marketplace for
+  now**; the editorial Discover page comes in a later release. A
+  storefront that is missing or fails its checks never affects the
+  catalog, plugin installs or updates.
+
+### Fixed
+
+- Windows and Linux: the main window's close button closes the window
+  again (since 0.10.0 it did nothing). With unsaved layout edits it still
+  asks first. The agent keeps running in the tray as before; macOS is
+  unchanged (closing hides the window to the menu bar).
+- Configuration export no longer overwrites or deletes an unrelated file
+  next to the chosen destination (one named like `backup.deckpilot.tmp`).
+  The export is staged in a new file of its own, created exclusively in
+  the destination's folder, and then replaces the destination in one step;
+  a failed export leaves the previous file and every other file as they
+  were, and simultaneous exports no longer interfere with each other.
+- Configuration import: after an import fails before anything is written
+  (for example because the configuration was locked), **Import** on the
+  same review screen tries again; the file no longer has to be opened and
+  decrypted again. An import is applied at most once, however often
+  **Import** is clicked. When a review can no longer be imported, the
+  window goes back to the password step instead of offering an **Import**
+  button that cannot work, and an import that was saved but whose module
+  settings could not be reloaded says so instead of reporting a failure.
+- A request from the app is no longer lost, or answered with a
+  "malformed message" error, when it reaches the agent in pieces while
+  the agent is sending the app status updates, plugin events or the live
+  preview. It now always gets its own answer.
+
+## [0.12.0] - 2026-11-22
+
+### Changed
+
+- The nine official plugins (Docker, Git, GitHub, GitLab, Jira,
+  Notifications, Projects, Workflows and Workspace) now come from their own,
+  independently signed releases in the DeckPilot plugins repository: every
+  copy bundled with the app is a published release signed by **both**
+  DeckPilot publisher keys, checked when the app is built and again by the
+  pins compiled into the app.
+- The bundled plugins are updated to these releases (GitHub 0.2.1; GitLab,
+  Jira and Notifications 0.1.2; Docker, Git, Projects, Workflows and
+  Workspace 0.1.1). Installed copies are replaced by the new version when
+  the app starts, including copies of Git, Docker and Projects whose move
+  from the built-in still waits for your consent; settings, credentials,
+  granted permissions and key bindings stay as they are. Their
+  permissions are unchanged, so no new consent is requested, and keys
+  that were waiting for your consent still wait for the same consent.
+  Plugin API stays 1.9.
+
+### Added
+
+- GitHub, GitLab, Jira and Notifications are also available from the
+  Marketplace, as the same two-key-signed official releases.
+
+### Security
+
+- The privileged plugins (Docker, Git, Projects, Workflows and Workspace,
+  which run processes or reach into projects, files or the app's views)
+  remain bundled-only: they are accepted only as the copies shipped with
+  the app, never from the Marketplace, and only with exactly the
+  permissions an independent security review approved.
+
+### Fixed
+
+- Installing first-party community plugins (Memory, Pomodoro, Markets,
+  Break Reminder, Air Quality) from the Marketplace failed in 0.11.0: the
+  DeckPilot publisher signatures meant for the nine official plugins were
+  required of every `deckpilot.*` plugin. They are required again only of
+  the official plugins (Docker, Git, GitHub, GitLab, Jira, Notifications,
+  Projects, Workflows, Workspace); community plugins are checked as in
+  0.10.0 (the signed registry, its authorization of the `deckpilot`
+  publisher, the package's digest) and never get the privileges reserved
+  for the official ones. When the Marketplace cannot plan an install, it
+  now says why in a dialog instead of seeming to do nothing. A community
+  plugin that 0.11.0 stopped (quarantined) is released at the next
+  registry refresh but stays turned off: turn it on again on the Plugins
+  page (Marketplace › Installed).
+
+## [0.11.0] - 2026-11-21
+
+### Security
+
+- Official plugins come only from DeckPilot. An official plugin
+  (`deckpilot.*`) that the Marketplace offers is installed or updated only
+  as a DeckPilot release signed by **both** production publisher keys
+  built into the app (key ids `BDCDC80985EB60B5` and `8C3C4E42700FA702`,
+  threshold 2), on top of the registry's own signatures. A release signed
+  by only one key, by an unknown or revoked key, or delivered with a
+  missing or altered signature is refused. A valid signature grants no
+  permission: the plugin still asks for its permissions as before.
+- Rollback protection for official plugins: DeckPilot never installs an
+  older official release than one it has already verified or shipped
+  with the app, and the same version only with the same files. Revoked
+  releases are refused at install, enable, every run and rollback, and an
+  installed copy that is revoked or cannot be verified is set aside with
+  the reason shown. Verifications are recorded in a tamper-evident audit
+  log.
+- The privileged gate stays closed. Official plugins that run processes
+  or reach into projects, files or the app's own views (Docker, Git,
+  Projects, Workflows and Workspace) are accepted only as the copies
+  bundled with the app, never from the Marketplace, whatever their
+  signature.
+
+### Changed
+
+- The nine bundled plugins are unchanged: the same versions and the same
+  files as in 0.10.0, still built from this repository and trusted by the
+  pins compiled into the app. The plugin API stays 1.9. Nothing has been
+  published with the new publisher keys yet; this release is what brings
+  them to installations.
 
 ## [0.10.0] - 2026-11-21
 

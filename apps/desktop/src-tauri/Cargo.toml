@@ -21,6 +21,8 @@ tauri-build.workspace = true
 
 [dependencies]
 base64.workspace = true
+# The application pickers (commands/machine.rs).
+deckpilot-apps.workspace = true
 deckpilot-core.workspace = true
 deckpilot-device.workspace = true
 deckpilot-ipc.workspace = true
@@ -40,6 +42,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Re-hashes storefront images before the webview sees them
+# (commands/storefront.rs).
+sha2.workspace = true
 # The operating system's preferred languages, for the app's language
 # (docs/i18n.md).
 sys-locale = "0.3"
@@ -47,6 +52,8 @@ tauri.workspace = true
 tauri-plugin-dialog = "2"
 # The Tauri updater of GitHub builds (feature `self-update`).
 tauri-plugin-updater = { version = "2", optional = true }
+# The export's exclusive staging file (commands/portability.rs).
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

@@ -58,6 +58,7 @@ use super::executor::{DataAccess, Executor, Opener, OwnVariables, SharedData, Tr
 use super::lane::{Done, Ended, Job, Lane, LaneEnd, LaneError, Reply, StateDone};
 use super::locales::Locales;
 use super::migration::LegacySnapshot;
+use super::official::{self, Official};
 use super::registry::{Registry, download_error};
 use super::variables::PublishedVariables;
 use super::worker::{EngineFailure, EngineReply, Events, StateReply};
@@ -335,6 +336,9 @@ pub(super) struct PluginService {
     /// The first-party plugins of the application bundle and the pins
     /// compiled into the agent (`bundled.rs`).
     bundle: Bundle,
+    /// Official releases from a registry: publisher keys, revocations,
+    /// rollback floors and their audit log (`official.rs`).
+    official: Official,
     /// What `deckpilot.db` said about the modules that can migrate at the
     /// agent's last module load (the user's decisions need it); `None`
     /// until then and whenever no alias exists. Its secrets never leave
@@ -461,6 +465,8 @@ impl PluginService {
         // bundled first-party plugins, checked against the pins compiled
         // into the agent.
         let bundle = Bundle::locate(settings);
+        let official = Official::open(&data_dir.join(official::STATE_DIR))
+            .with_official_ids(bundle.pins.plugins.iter().map(|pin| pin.id.clone()));
         bundled::seed(&mut manager, &bundle);
         let data = PluginData::open(
             &manager.layout().database(),
@@ -502,6 +508,7 @@ impl PluginService {
             values,
             health: HealthLog::default(),
             bundle,
+            official,
             snapshot: None,
             builtins: BTreeMap::new(),
             plan_cache: None,
@@ -510,8 +517,10 @@ impl PluginService {
         };
         if service.registry.is_some() {
             let _ = service.refresh();
-            service.apply_verdicts();
         }
+        // Also offline and without a registry: the official revocations
+        // compiled into this agent.
+        service.apply_verdicts();
         for record in service.manager.store().plugins()? {
             service.sync_grants(&record.id);
         }
@@ -1105,12 +1114,58 @@ impl PluginService {
         }
     }
 
+    /// The installed versions of official registry copies this agent does
+    /// not run (`official.rs`), a retained bundled copy checked against the
+    /// pins compiled into the agent.
+    fn withheld(
+        &self,
+        records: &[PluginRecord],
+    ) -> BTreeMap<(PluginId, Version), official::Withheld> {
+        let (bundle, layout) = (&self.bundle, self.manager.layout());
+        self.official.withheld(records, &|record, version| {
+            official::bundled_match(bundle, layout, record, version)
+        })
+    }
+
     /// Applies the stored revocations to installed plugins (also offline).
     fn apply_verdicts(&mut self) {
+        let records = self.manager.store().plugins().unwrap_or_default();
+        let revoked = self.withheld(&records);
+        // The official ones first, with their own reasons; then (with a
+        // registry) the registry's verdicts with the official ones on top,
+        // so a registry `Run` never lifts them.
+        {
+            for ((id, version), withheld) in &revoked {
+                let quarantine = records.iter().any(|r| {
+                    r.id == *id
+                        && r.state != PluginState::Quarantined
+                        && r.state.is_stable()
+                        && r.active().is_some_and(|a| a.version == *version)
+                });
+                if quarantine {
+                    match self.manager.quarantine(id, &withheld.state_reason()) {
+                        Ok(()) => {
+                            info!(plugin = %id, %version, why = %withheld.reason,
+                                "official plugin version not run");
+                            self.stop_host(id);
+                            self.sync_grants(id);
+                            self.changed(id);
+                        }
+                        Err(e) => {
+                            warn!(plugin = %id, error = %e, "official revocation not applied");
+                        }
+                    }
+                }
+            }
+        }
         let Some(registry) = self.registry.as_ref() else {
             return;
         };
-        match self.manager.apply_verdicts(registry.client()) {
+        let verdicts = official::Verdicts {
+            official: &revoked,
+            registry: registry.client(),
+        };
+        match self.manager.apply_verdicts(&verdicts) {
             Ok(changes) => {
                 for change in changes {
                     info!(?change, "registry verdict applied");
@@ -1172,11 +1227,87 @@ impl PluginService {
         version: &Version,
     ) -> Result<(ExpectedPackage, Vec<u8>), IpcError> {
         let target = self.pins(id, version)?;
-        let bytes = self
-            .registry()?
+        let registry = self.registry()?;
+        let bytes = registry
             .package(&target.url, &target.expected.package)
             .map_err(|e| download_error(&e))?;
+        // An official plugin: a first-party release signed by the
+        // publisher keys compiled into this agent, on top of the registry's
+        // pins (`official.rs`). Nothing is installed before it verified.
+        // Other `deckpilot.*` ids (first-party community plugins) follow the
+        // registry's rules alone (`Official::is_official`).
+        if self.official.is_official(id) {
+            let signatures = match self.official_signatures(registry, &target.url) {
+                Ok(signatures) => signatures,
+                Err(why) => {
+                    self.official.refused_before_verification(
+                        id,
+                        Some(version),
+                        Some(&target.expected.package),
+                        &why,
+                        Utc::now(),
+                    );
+                    // Not enough signature files could be downloaded: a
+                    // registry (download) problem, as a missing package is.
+                    return Err(error(
+                        ErrorCode::Failed,
+                        reason::REGISTRY,
+                        format!(
+                            "{id} is not a verified DeckPilot release; nothing was installed: \
+                             {why}"
+                        ),
+                    ));
+                }
+            };
+            let host = host_environment();
+            self.official
+                .verify(&official::Delivery {
+                    expected: &target.expected,
+                    package: &bytes,
+                    signatures: &signatures,
+                    pin: self.bundle.pins.get(id),
+                    host: host.as_ref(),
+                    now: Utc::now(),
+                })
+                .map_err(|refusal| refusal.to_ipc(id))?;
+        }
         Ok((target.expected, bytes))
+    }
+
+    /// The publisher signature files of an official release at `url`:
+    /// exactly one download per pinned current key id
+    /// (`<package>.<KEYID>.minisig`, size-capped, from where the package
+    /// comes from). A missing or unreadable file is tolerated only while the
+    /// files found can still meet the threshold; the verifier then decides
+    /// what each is worth.
+    fn official_signatures(
+        &self,
+        registry: &Registry,
+        url: &str,
+    ) -> Result<Vec<deckpilot_plugin_registry::publisher::SignatureFile>, String> {
+        let (key_ids, threshold) = self.official.signature_key_ids()?;
+        let mut found = Vec::new();
+        let mut missing = Vec::new();
+        for key_id in key_ids {
+            match registry.signature(url, &key_id) {
+                Ok(bytes) => {
+                    found.push(deckpilot_plugin_registry::publisher::SignatureFile {
+                        key_id,
+                        bytes,
+                    });
+                }
+                Err(e) => missing.push(download_error(&e).message),
+            }
+        }
+        if u64::try_from(found.len()).unwrap_or(0) < threshold {
+            return Err(format!(
+                "the publisher signatures: {} signature file(s) found, {threshold} distinct key(s) \
+                 required ({})",
+                found.len(),
+                missing.join("; ")
+            ));
+        }
+        Ok(found)
     }
 
     /// What the registry pins for `id` `version`, without the package.
@@ -1185,16 +1316,38 @@ impl PluginService {
         id: &PluginId,
         version: &Version,
     ) -> Result<deckpilot_plugin_registry::InstallTarget, IpcError> {
-        // The plugins the application bundles come only from the bundle,
-        // verified against the pins compiled into this agent: never from a
-        // registry, even one authorized to serve `deckpilot.*`.
-        if deckpilot_plugin_bundled::is_bundled_id(id, &self.bundle.pins) {
+        // An official plugin (the nine DeckPilot ships, the lock's, the
+        // bundle's; never derived from the `deckpilot.` prefix) comes from
+        // a registry only as a first-party release signed by the publisher
+        // keys compiled into this agent (`official.rs`, the two production
+        // keys, threshold 2); when this agent cannot verify one (no key
+        // pinned, an invalid lock, unreadable floors) it is refused before
+        // any download and a bundled one comes only from the application
+        // bundle. A first-party community plugin (`deckpilot.memory`, …)
+        // needs what any `deckpilot.*` registry package needs: the
+        // root-signed key set authorizing `deckpilot`, the verified
+        // publisher record and the pinned package (`resolve_install`), read
+        // with the first-party rules (no privileged kinds).
+        if self.official.is_official(id)
+            && let Err(why) = self.official.ready()
+        {
+            self.official.refused_before_verification(
+                id,
+                Some(version),
+                None,
+                &format!("refused before any download: {why}"),
+                Utc::now(),
+            );
+            let what = if deckpilot_plugin_bundled::is_bundled_id(id, &self.bundle.pins) {
+                "is bundled with DeckPilot and comes only from the application bundle"
+            } else {
+                "is an official DeckPilot plugin and is never installed from a registry"
+            };
             return Err(error(
                 ErrorCode::InvalidRequest,
                 reason::INVALID_PACKAGE,
                 format!(
-                    "{id} is bundled with DeckPilot and comes only from the application \
-                     bundle; a registry never serves it"
+                    "{id} {what} unless the release is signed by the DeckPilot publisher: {why}"
                 ),
             ));
         }
@@ -1451,10 +1604,32 @@ impl PluginService {
         self.announce_dropped(id.as_str(), &dropped);
     }
 
-    /// The registry's verdict on the installed version; a `disable`
-    /// quarantines the plugin.
+    /// The official revocations and the registry's verdict on the installed
+    /// version; a `disable` quarantines the plugin.
     fn check_verdict(&mut self, record: &PluginRecord) -> Result<(), IpcError> {
-        let (Some(registry), Some(active)) = (self.registry.as_ref(), record.active()) else {
+        let Some(active) = record.active() else {
+            return Ok(());
+        };
+        let revoked = self.withheld(std::slice::from_ref(record));
+        if let Some(withheld) = revoked.get(&(record.id.clone(), active.version.clone())) {
+            self.stop_host(&record.id);
+            if record.state != PluginState::Quarantined {
+                let _ = self
+                    .manager
+                    .quarantine(&record.id, &withheld.state_reason());
+                self.sync_grants(&record.id);
+                self.changed(&record.id);
+            }
+            return Err(error(
+                ErrorCode::Failed,
+                withheld.ipc_reason(),
+                format!(
+                    "{} {} is not run: {}",
+                    record.id, active.version, withheld.reason
+                ),
+            ));
+        }
+        let Some(registry) = self.registry.as_ref() else {
             return Ok(());
         };
         if let InstalledVerdict::Disable { reason: why, .. } = registry
@@ -1504,6 +1679,11 @@ impl PluginService {
                 asset.as_deref(),
             ),
             Request::ListAvailablePlugins { refresh } => self.available(refresh),
+            Request::GetStorefront => self.storefront_answer(),
+            Request::GetRegistryListing { plugin } => self.registry_listing(&plugin_id(&plugin)?),
+            Request::GetRegistryMedia { sha256, offset } => Ok(Response::RegistryMediaChunk {
+                chunk: self.registry()?.storefront_media(&sha256, offset)?,
+            }),
             Request::InstallPlugin { source, consent } => self.install(&source, &consent),
             Request::EnablePlugin { plugin, consent } => {
                 self.enable(&plugin_id(&plugin)?, &consent)
@@ -1701,6 +1881,17 @@ impl PluginService {
                         login: p.login.clone(),
                         verified: p.verified,
                     });
+                let official = self.official.is_official(&entry.id);
+                let icon = registry
+                    .storefront()
+                    .and_then(|s| s.listings.get(&entry.id))
+                    .and_then(|l| l.icon.as_ref())
+                    .map(|icon| ipc::MediaRef {
+                        sha256: icon.sha256.to_string(),
+                        media_type: icon.format.media_type().to_owned(),
+                        width: icon.width,
+                        height: icon.height,
+                    });
                 plugins.push(ipc::AvailablePlugin {
                     id: entry.id.to_string(),
                     name: entry.name.clone(),
@@ -1716,12 +1907,112 @@ impl PluginService {
                     homepage: detail.homepage.clone(),
                     source_repository: detail.source_repository.clone(),
                     deprecated: entry.deprecated.as_ref().map(|d| d.reason.clone()),
+                    icon,
+                    official,
+                    bundled_only: official && bundled_only(&entry.id, &detail),
                 });
             }
         }
         Ok(Response::AvailablePlugins {
             registry: registry.status(),
             plugins,
+        })
+    }
+
+    /// The plugins the storefront may place: in the verified index with a
+    /// published, non-withdrawn version this host can run.
+    fn placeables(registry: &Registry) -> super::storefront::Placeables {
+        let host = host_environment();
+        let mut out = super::storefront::Placeables::new();
+        let Some(index) = registry.client().index() else {
+            return out;
+        };
+        for entry in &index.plugins {
+            let Ok(detail) = registry.detail(&entry.id) else {
+                continue;
+            };
+            let versions: BTreeSet<Version> = detail
+                .versions
+                .iter()
+                .filter(|v| {
+                    let revoked = index
+                        .revocations
+                        .iter()
+                        .any(|r| r.matches(&entry.id, &v.version));
+                    let available = available_version(v, None, host.as_ref());
+                    !revoked && available.withdrawn.is_none() && available.incompatible.is_empty()
+                })
+                .map(|v| v.version.clone())
+                .collect();
+            if versions.is_empty() {
+                continue;
+            }
+            out.insert(
+                entry.id.to_string(),
+                super::storefront::Placeable {
+                    categories: entry.categories.iter().flatten().cloned().collect(),
+                    versions,
+                },
+            );
+        }
+        out
+    }
+
+    /// Work after an answer was sent: the storefront icons a refresh
+    /// queued (bounded), so no refresh waits for them.
+    pub fn after_reply(&mut self) {
+        if let Some(registry) = self.registry.as_mut() {
+            registry.prefetch_storefront_icons();
+        }
+    }
+
+    /// `getStorefront`: the verified storefront for this app, or none.
+    fn storefront_answer(&self) -> Result<Response, IpcError> {
+        let registry = self.registry()?;
+        let Some(current) = registry.storefront() else {
+            return Ok(Response::Storefront { storefront: None });
+        };
+        let platform = host_environment().map_or("", |h| platform_id(h.platform));
+        let now = registry
+            .client()
+            .state()
+            .clock_floor
+            .map_or_else(Utc::now, |floor| floor.max(Utc::now()));
+        let view = super::storefront::view(
+            current.seq(),
+            current.editorial.as_ref(),
+            &Self::placeables(registry),
+            &self.locales.tag(),
+            platform,
+            now,
+        );
+        Ok(Response::Storefront {
+            storefront: Some(Box::new(view)),
+        })
+    }
+
+    /// `getRegistryListing`: a plugin's verified listing, or none.
+    fn registry_listing(&self, id: &PluginId) -> Result<Response, IpcError> {
+        let registry = self.registry()?;
+        let listing = registry
+            .storefront()
+            .and_then(|s| s.listings.get(id))
+            .map(|listing| {
+                let published: BTreeSet<Version> = registry
+                    .detail(id)
+                    .map(|d| d.versions.iter().map(|v| v.version.clone()).collect())
+                    .unwrap_or_default();
+                let platform = host_environment().map_or("", |h| platform_id(h.platform));
+                Box::new(super::storefront::listing_view(
+                    listing,
+                    &published,
+                    &self.locales.tag(),
+                    platform,
+                ))
+            });
+        Ok(Response::RegistryListing {
+            plugin: id.to_string(),
+            listing,
         })
     }
 
@@ -1930,6 +2221,15 @@ impl PluginService {
             self.progress(id.as_str(), PluginOperation::Update, PluginStage::Verifying);
             let verified = verify_package(&bytes, &expected, &Limits::default())
                 .map_err(|e| package_error(&e))?;
+            // Bundled → Marketplace-managed: the update replaces the bundled
+            // copy only if it keeps what the user's configuration refers to;
+            // the bundled copy stays active until the store committed it.
+            if record.source == InstallSource::Bundled
+                && let Some(active) = record.active()
+            {
+                official::check_transition(&active.manifest, verified.manifest())
+                    .map_err(|m| error(ErrorCode::Failed, reason::INVALID_PACKAGE, m))?;
+            }
             self.trial_load(id, &verified)?;
             self.progress(
                 id.as_str(),
@@ -2075,10 +2375,34 @@ impl PluginService {
     fn rollback(&mut self, id: &PluginId) -> Result<Response, IpcError> {
         self.check_rollback(id)?;
         self.stop_host(id);
-        let result = match self.registry.as_ref() {
-            Some(registry) => self.manager.rollback(id, registry.client()),
-            None => self.manager.rollback(id, &NoRevocations),
+        // The version rolled back to must pass the official revocations
+        // too (a revoked release, a revoked signer, no record of it).
+        let records = self.manager.store().plugins().unwrap_or_default();
+        let revoked = self.withheld(&records);
+        // Refused with its own reason before the store is asked.
+        if let Some(previous) = records
+            .iter()
+            .find(|r| r.id == *id)
+            .and_then(PluginRecord::previous)
+            && let Some(withheld) = revoked.get(&(id.clone(), previous.version.clone()))
+        {
+            return Err(error(
+                ErrorCode::Failed,
+                withheld.ipc_reason(),
+                format!(
+                    "{id} cannot go back to {}: {}",
+                    previous.version, withheld.reason
+                ),
+            ));
+        }
+        let verdicts = official::Verdicts {
+            official: &revoked,
+            registry: match self.registry.as_ref() {
+                Some(registry) => registry.client(),
+                None => &NoRevocations,
+            },
         };
+        let result = self.manager.rollback(id, &verdicts);
         result.map_err(|e| store_error(&e))?;
         self.after_version_change(id);
         self.changed(id);
@@ -2839,6 +3163,39 @@ fn available_version(
     }
 }
 
+/// Whether an official plugin is bundled-only: one DeckPilot bundles whose
+/// registry versions declare a privileged kind (plugin API 1.9), which the
+/// store accepts only with the bundled copy. Derived here from the verified
+/// detail's permissions, never read from a registry flag.
+fn bundled_only(id: &PluginId, detail: &deckpilot_plugin_registry::PluginDetail) -> bool {
+    declares_privileged_kind(id, detail.versions.iter().map(|v| v.permissions.as_slice()))
+}
+
+fn declares_privileged_kind<'a>(
+    id: &PluginId,
+    mut versions: impl Iterator<Item = &'a [serde_json::Value]>,
+) -> bool {
+    use deckpilot_plugin_manifest::PermissionKind;
+    let privileged: Vec<&str> = [
+        PermissionKind::Tools,
+        PermissionKind::Resources,
+        PermissionKind::ProjectContext,
+        PermissionKind::HostViews,
+    ]
+    .into_iter()
+    .filter(|k| k.is_first_party_only())
+    .map(PermissionKind::as_str)
+    .collect();
+    deckpilot_plugin_bundled::BUNDLED_PLUGIN_IDS.contains(&id.as_str())
+        && versions.any(|permissions| {
+            permissions.iter().any(|p| {
+                p.get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| privileged.contains(&kind))
+            })
+        })
+}
+
 /// The platform's id as manifests and the runtime status name it.
 fn platform_id(platform: Platform) -> &'static str {
     match platform {
@@ -3080,6 +3437,35 @@ mod tests {
             ..integrity
         };
         assert!(module_matches_record(&none, module).is_err());
+    }
+
+    #[test]
+    fn bundled_only_is_derived_from_the_id_and_the_declared_kinds() {
+        let tools = vec![serde_json::json!({ "kind": "tools", "tools": [], "justification": "x" })];
+        let network = vec![serde_json::json!({ "kind": "network", "hosts": ["a.example"] })];
+        let git = PluginId::parse("deckpilot.git").unwrap();
+        let github = PluginId::parse("deckpilot.github").unwrap();
+        let community = PluginId::parse("deckpilot.memory").unwrap();
+        let third = PluginId::parse("acme.git").unwrap();
+        assert!(declares_privileged_kind(
+            &git,
+            [network.as_slice(), tools.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(
+            &github,
+            [network.as_slice()].into_iter()
+        ));
+        // A privileged kind outside the bundled ids (refused by the store
+        // anyway) never makes a plugin "bundled-only".
+        assert!(!declares_privileged_kind(
+            &community,
+            [tools.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(
+            &third,
+            [tools.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(&git, std::iter::empty()));
     }
 
     #[test]

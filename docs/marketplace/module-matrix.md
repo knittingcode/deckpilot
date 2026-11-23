@@ -352,7 +352,7 @@ reply); bundled with class `default` and routed through the alias block
 `notifications.*`. `critical` stays the plugin's decision on the delivery.
 No manifest-declared higher rate: 5 per minute, as for every plugin.
 Parity and the remaining differences:
-`plugins/first-party/notifications/README.md`.
+`official/notifications/README.md` of knittingcode/deckpilot-plugins.
 
 ### `workspace`
 
@@ -522,7 +522,7 @@ is already `crates/deckpilot-net`.
 *Status (P8):* `plugins/first-party/github` (`deckpilot.github`) reproduces
 the six actions with G1 and G6, pages of 50 and the credential slot
 `token`; bundled with class `migration`, not routed yet. Parity and the
-remaining differences: `plugins/first-party/github/README.md`.
+remaining differences: `official/github/README.md` of knittingcode/deckpilot-plugins.
 
 *Verdict (2026-11-20):* plugin only. The built-in is removed (WP-C5) once
 `deckpilot.github` has a user-origin slot for GitHub Enterprise (WP-B0) and
@@ -556,7 +556,7 @@ network), with the credential slot `token` (`PRIVATE-TOKEN`) and pages of
 50; bundled with class `migration` and routed by the `gitlab.*` alias
 block once a computer's migration is cut over (the server the user had
 entered is asked for). Parity and the remaining differences:
-`plugins/first-party/gitlab/README.md`.
+`official/gitlab/README.md` of knittingcode/deckpilot-plugins.
 
 *Verdict (2026-11-20):* plugin only. The built-in is removed (WP-C5) after
 WP-T1 (D2).
@@ -587,7 +587,7 @@ the four actions for the Jira Cloud site or Data Center the user enters
 Bearer by `deployment`); bundled with class `migration` and routed by the
 `jira.*` alias block once a computer's migration is cut over (the site is
 asked for). Parity and the remaining differences:
-`plugins/first-party/jira/README.md`.
+`official/jira/README.md` of knittingcode/deckpilot-plugins.
 
 *Verdict (2026-11-20):* plugin only. The built-in is removed (WP-C5) after
 WP-T1 (D2).

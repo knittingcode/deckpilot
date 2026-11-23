@@ -1,8 +1,9 @@
 //! **Experimental, feature `publish`.** Offline tooling that produces the
 //! static registry site the client verifies (architecture sections 9 to
 //! 11): keys for local and test use, root-signed key sets, per-plugin
-//! version history, revocations, the signed index and the timestamp, and
-//! an end-to-end check of the result with this crate's own client.
+//! version history, revocations, the signed index and the timestamp, the
+//! storefront (listings, editorial placements and their images), and an
+//! end-to-end check of the result with this crate's own client.
 //!
 //! Everything works on plain files in one working directory
 //! ([`Workspace`]); nothing here touches the network. The documents it
@@ -20,6 +21,8 @@ mod keys;
 mod keyset;
 mod layout;
 mod pack;
+mod release;
+mod storefront;
 mod verify;
 
 use std::fmt;
@@ -28,8 +31,17 @@ pub use catalog::PluginInfo;
 pub use cli::{Io, run};
 pub use keys::{KeyRole, Password, SigningKey, generate_key};
 pub use layout::{SiteSource, Workspace};
-pub use pack::package;
-pub use verify::{SiteReport, verify_site};
+pub use pack::{package, package_with_gate};
+pub use release::{
+    VerifyRequest, check_signed, check_signed_with_gate, floor_from_released_pins, preflight,
+    preflight_with_gate, sign as sign_release, verify as verify_release_files,
+    verify_with_gate as verify_release_files_with_gate,
+};
+pub use storefront::{
+    BuildReport as StorefrontBuildReport, CheckReport as StorefrontCheckReport, StorefrontReport,
+    build as build_storefront, check as check_storefront, sign as sign_storefront,
+};
+pub use verify::{SiteReport, verify_site, verify_site_with_storefront};
 
 /// Why a publishing command failed. The message never contains a secret.
 #[derive(Debug, Clone, PartialEq, Eq)]

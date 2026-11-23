@@ -81,3 +81,17 @@ export function describeValue(value: ParameterValue, projects: Project[] = []): 
       return value.value
   }
 }
+
+/** Keys of required parameters that have no usable value. */
+export function missingRequired(
+  specs: ParameterSpec[],
+  values: Record<string, ParameterValue>,
+): string[] {
+  return specs
+    .filter((spec) => {
+      if (!spec.required) return false
+      const value = values[spec.key]
+      return !value || isEmpty(value)
+    })
+    .map((spec) => spec.key)
+}

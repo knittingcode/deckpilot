@@ -39,6 +39,7 @@ import type {
   SecurityPolicy,
   SecurityView,
   WindowSpec,
+  InstalledApp,
   MachineConfig,
   MigrationNote,
   ModuleInfo,
@@ -65,6 +66,7 @@ import type {
   VariableDefinition,
   VariableValue,
   Workflow,
+  WorkflowDeleteConfirmation,
   WorkflowReport,
   WorkSessionSettings,
   WorkSessionSnapshot,
@@ -289,8 +291,19 @@ export const api = {
     ),
   duplicateWorkflow: (profileId: string, workflowId: string, name: string) =>
     invoke<Workflow>("duplicate_workflow", { profileId, workflowId, name }),
-  deleteWorkflow: (profileId: string, workflowId: string) =>
-    invoke<null>("delete_workflow", { profileId, workflowId }),
+  /**
+   * Deletes a workflow. Without `confirm`, one that something refers to is
+   * refused with `invalid.workflowInUse` ({@link WorkflowInUseParams}); with
+   * it, the delete fails with `invalid.workflowReferencesChanged` when the
+   * references are no longer those the fingerprint names. Keys and gestures
+   * that start it stay ("Workflow missing") unless `clearBindings`.
+   */
+  deleteWorkflow: (profileId: string, workflowId: string, confirm?: WorkflowDeleteConfirmation) =>
+    invoke<Saved<{ cleared: number; clearedWorkSession: number }>>("delete_workflow", {
+      profileId,
+      workflowId,
+      confirm: confirm ?? null,
+    }),
   validateWorkflowGraph: (profileId: string, workflow: Workflow) =>
     invoke<GraphIssue[]>("validate_workflow_graph", { profileId, workflow }),
   convertWorkflow: (profileId: string, workflow: Workflow) =>
@@ -339,6 +352,10 @@ export const api = {
   setResourceBinding: (key: string, kind: ResourceKind, value: string) =>
     invoke<MachineConfig>("set_resource_binding", { key, kind, value }),
   removeResourceBinding: (key: string) => invoke<MachineConfig>("remove_resource_binding", { key }),
+  /** This computer's installed applications, for the application and browser pickers. */
+  listApplications: () => invoke<InstalledApp[]>("list_applications"),
+  /** A picked application file as a binding stores it (bundle id, App Paths name, desktop id, path). */
+  describeApplication: (path: string) => invoke<InstalledApp>("describe_application", { path }),
   /** This computer's default gesture timings (`gestures.defaults`). */
   getGestureDefaults: () => invoke<GestureTimings>("get_gesture_defaults"),
   setGestureDefaults: (timings: GestureTimings) =>

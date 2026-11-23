@@ -33,7 +33,7 @@ site/v1/ (the Pages tree). Times default to the system clock (--now RFC 3339
 overrides). Passwords: --password-stdin, --password-env NAME, or
 DECKPILOT_REGISTRY_KEY_PASSWORD; never printed.
 
-  keys generate --role root|index|timestamp --out FILE [--no-password]
+  keys generate --role root|index|timestamp|publisher --out FILE [--no-password]
       Local and test keys only; production keys come from the key ceremony.
   keyset init --root PUB [--root PUB] [--root-threshold N] --index PUB --timestamp PUB
               [--seq-floor N] [--first-party]
@@ -60,6 +60,57 @@ DECKPILOT_REGISTRY_KEY_PASSWORD; never printed.
   sign-index --key FILE [--seq N]
   timestamp --key FILE [--expires-in 7d]             (at most 14d)
   verify-site [--roots FILE] [--state DIR] [--min-remaining 3d] [--require-packages]
+              [--require-storefront]
+      --require-storefront also verifies storefront/<seq>.json of the verified seq as a
+      client does, every listing and editorial document it pins, and every image (the
+      client's header checks, then a full decode); a missing storefront fails.
+
+The storefront (editorial placements and listings; storefront design):
+  storefront check
+      Checks registry/plugins/<id>/listing.json and editorial/editorial.json against
+      the input schemas and every text, link, markdown and image rule (each image is
+      also decoded in full), and the ids and versions they name against registry/.
+  storefront build [--seq N]
+      For the signed index/<N>.json (default: the newest): writes the listing and
+      editorial documents (published entries only) and media/<sha256>.<ext>, then the
+      unsigned storefront/<N>.json bound to that index; prunes storefronts of indexes
+      no longer on the site.
+  storefront sign --key FILE [--seq N]
+      Signs storefront/<N>.json with an INDEX key and the trusted comment
+      `deckpilot-registry v1 role:storefront seq:<N> keys:<kv>`.
+
+First-party release artifacts (the publisher signature, crate::publisher):
+  release sign --package FILE.dpplugin --id ID --version V (--key FILE | --key-env NAME)
+               [--out-dir DIR]
+      Signs a deckpilot.* package as ID V (from the release tag; the package must
+      say the same) with ONE publisher key, after the verifier's own checks, which
+      run before the key is loaded, and writes FILE.dpplugin.<KEYID>.minisig (KEYID:
+      the key's minisign key id, 16 uppercase hex) next to the package or in
+      --out-dir; never overwrites. Run once per key. --key-env reads the secret key
+      text from an environment variable.
+  release verify --package FILE.dpplugin [--signatures-dir DIR] --id ID --version V
+                 --sha256 HEX --size N --app-version V --plugin-api MAJOR.MINOR
+                 [--platform macos|windows|linux] [--keys FILE] [--released-pins FILE]
+                 [--revocations FILE] [--audit FILE.jsonl] [--unpack DIR]
+      Reads every FILE.dpplugin.<KEYID>.minisig next to the package (or in
+      --signatures-dir), reports which keys counted and why the other files did
+      not, and verifies the artifact against the claim (id, version, sha256, size),
+      the threshold of distinct pinned publisher keys (--keys: others, for tests;
+      the output says so), revocations, the host and the released pins (rollback);
+      appends the outcome to --audit; --unpack writes the files of a verified
+      artifact. Authenticity only: it grants no permission.
+
+A key test of the publisher keys (never a release; official-test-sign.yml):
+  release test-message --run N --out-dir DIR
+      Writes the fixed key test message of run N (1-9999) to
+      DIR/deckpilot-publisher-test-vN.txt: text, not a package.
+  release test-sign --run N (--key FILE | --key-env NAME) --out-dir DIR
+      Signs only that message, with the trusted comment `deckpilot-publisher-test v1
+      role:test run:N ...` (another domain than a release's), with ONE publisher key,
+      to DIR/deckpilot-publisher-test-vN.txt.<KEYID>.minisig; never overwrites.
+  release test-verify --run N --signatures-dir DIR [--keys FILE]
+      A threshold of distinct pinned publisher keys (--keys: others, for tests)
+      signed run N's message. `release verify` refuses these signatures.
 ";
 
 /// Where a command reads secrets and writes its output. Tests pass their
@@ -230,6 +281,43 @@ fn signing_key(opts: &Opts, io: &mut Io<'_>) -> Result<SigningKey> {
     SigningKey::load(&path, password.as_ref())
 }
 
+/// `--key FILE` or `--key-env NAME` (the secret key text in an environment
+/// variable, for a CI secret that never touches the disk).
+fn release_key(opts: &Opts, io: &mut Io<'_>) -> Result<SigningKey> {
+    let file = opts.path("key")?;
+    let env = opts.value("key-env")?;
+    let password = password(opts, io)?;
+    match (file, env) {
+        (Some(path), None) => SigningKey::load(&path, password.as_ref()),
+        (None, Some(name)) => {
+            let text =
+                zeroize::Zeroizing::new((io.env)(&name).filter(|v| !v.is_empty()).ok_or_else(
+                    || PublishError(format!("the environment variable {name} is not set")),
+                )?);
+            SigningKey::from_text(&text, &format!("${name}"), password.as_ref())
+        }
+        _ => fail("give either --key FILE or --key-env NAME"),
+    }
+}
+
+/// Writes a new file; an existing one is never overwritten.
+fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => PublishError(format!(
+                "{} already exists; refusing to overwrite",
+                path.display()
+            )),
+            _ => PublishError(format!("{}: {e}", path.display())),
+        })?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|e| PublishError(format!("{}: {e}", path.display())))
+}
+
 fn role_of(opts: &Opts, name: &str) -> Result<Option<Role>> {
     opts.path(name)?
         .map(|path| {
@@ -281,7 +369,12 @@ fn action_of(text: &str) -> Result<RevocationAction> {
 #[allow(clippy::too_many_lines)] // one arm per command
 pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
     let (command, rest) = match args {
-        [group, sub, rest @ ..] if group == "keys" || group == "keyset" => {
+        [group, sub, rest @ ..]
+            if group == "keys"
+                || group == "keyset"
+                || group == "release"
+                || group == "storefront" =>
+        {
             (format!("{group} {sub}"), rest)
         }
         [command, rest @ ..] => (command.clone(), rest),
@@ -293,6 +386,7 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
         "seq-floor-reset",
         "verified",
         "require-packages",
+        "require-storefront",
         "first-party",
         "no-first-party",
     ];
@@ -537,16 +631,37 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
             let state = opts.path("state")?;
             let min_remaining = opts.duration("min-remaining", TimeDelta::zero())?;
             let require_packages = opts.flag("require-packages");
+            let require_storefront = opts.flag("require-storefront");
             let now = opts.now()?;
             opts.finish()?;
-            let report = verify::run(
-                &ws,
-                roots.as_deref(),
-                state.as_deref(),
-                now,
-                min_remaining,
-                require_packages,
-            )?;
+            let (report, storefront) = if require_storefront {
+                let (report, storefront) = verify::run_with_storefront(
+                    &ws,
+                    roots.as_deref(),
+                    state.as_deref(),
+                    now,
+                    min_remaining,
+                    require_packages,
+                )?;
+                (report, Some(storefront))
+            } else {
+                let report = verify::run(
+                    &ws,
+                    roots.as_deref(),
+                    state.as_deref(),
+                    now,
+                    min_remaining,
+                    require_packages,
+                )?;
+                (report, None)
+            };
+            let storefront = storefront.map_or_else(String::new, |s| {
+                format!(
+                    "\nstorefront accepted by the client: seq {}, sha256 {}, {} listing(s), \
+                     {} section(s) ({} of an unknown kind skipped), {} image(s) verified",
+                    s.seq, s.sha256, s.listings, s.sections, s.skipped_sections, s.media
+                )
+            });
             format!(
                 "site accepted by the client: key set {}, seq {} ({}), expires {}, {} plugin(s), \
                  {} installable version(s), {} package(s) verified, {} revocation(s)",
@@ -558,7 +673,181 @@ pub fn run(args: &[String], io: &mut Io<'_>) -> Result<()> {
                 report.installable_versions,
                 report.packages_verified,
                 report.revocations
+            ) + &storefront
+        }
+        "storefront check" => {
+            opts.finish()?;
+            let report = super::storefront::check(&ws)?;
+            let mut message = format!(
+                "storefront sources pass: {} listing(s), {} published section(s), {} \
+                 collection(s), {} image(s) ({} bytes), every image decoded",
+                report.listings,
+                report.sections,
+                report.collections,
+                report.images,
+                report.media_bytes
+            );
+            for note in &report.notes {
+                message.push('\n');
+                message.push_str(note);
+            }
+            message
+        }
+        "storefront build" => {
+            let seq = opts.parsed("seq")?;
+            let now = opts.now()?;
+            opts.finish()?;
+            let report = super::storefront::build(&ws, seq, now)?;
+            let mut message = format!(
+                "wrote site/v1/storefront/{}.json: {} listing(s), editorial {}, {} image(s); \
+                 sign it with `storefront sign`",
+                report.seq,
+                report.listings,
+                if report.editorial { "yes" } else { "none" },
+                report.media
+            );
+            for id in &report.skipped {
+                message.push_str("\nskipped the listing of ");
+                message.push_str(id.as_str());
+                message.push_str(": not in index/");
+                message.push_str(&report.seq.to_string());
+                message.push_str(".json");
+            }
+            for note in &report.notes {
+                message.push('\n');
+                message.push_str(note);
+            }
+            message
+        }
+        "storefront sign" => {
+            let seq = opts.parsed("seq")?;
+            let key = signing_key(&opts, io)?;
+            opts.finish()?;
+            let seq = super::storefront::sign(&ws, seq, &key)?;
+            format!("signed site/v1/storefront/{seq}.json (index key, role:storefront)")
+        }
+        "release sign" => {
+            let package = std::fs::read(opts.required("package")?)
+                .map_err(|e| PublishError(format!("--package: {e}")))?;
+            let id = plugin_id(&opts.required("id")?)?;
+            let version: Version = opts
+                .parsed("version")?
+                .ok_or_else(|| PublishError("--version is required".into()))?;
+            let package_path = PathBuf::from(opts.required("package")?);
+            let out_dir = opts.path("out-dir")?;
+            // Every check that parses the package runs before the secret
+            // key is loaded, and the key is dropped before the signature is
+            // verified.
+            let claim = super::release::preflight(&package, id, version)?;
+            let key = release_key(&opts, io)?;
+            opts.finish()?;
+            let signature = super::release::sign(&package, &claim, &key)?;
+            let public = key.public().to_owned();
+            drop(key);
+            super::release::check_signed(&package, &signature, &public, &claim)?;
+            let key_id = crate::publisher::key_id(&public)
+                .ok_or_else(|| PublishError("the signing key has no key id".into()))?;
+            let out = super::release::signature_path(&package_path, out_dir.as_deref(), &key_id)?;
+            write_new(&out, format!("{signature}\n").as_bytes())?;
+            format!(
+                "signed {} {} (sha256 {}, {} bytes) with publisher key {key_id} (fingerprint {}) \
+                 to {}",
+                claim.id,
+                claim.version,
+                claim.package.sha256,
+                claim.package.size,
+                crate::publisher::fingerprint(&public).unwrap_or_default(),
+                out.display()
             )
+        }
+        "release verify" => {
+            let package = PathBuf::from(opts.required("package")?);
+            let signatures_dir = opts.path("signatures-dir")?;
+            let claim = crate::publisher::ReleaseClaim {
+                id: plugin_id(&opts.required("id")?)?,
+                version: opts
+                    .parsed("version")?
+                    .ok_or_else(|| PublishError("--version is required".into()))?,
+                package: deckpilot_plugin_manifest::PackageDigest {
+                    sha256: crate::publisher::parse_sha256(&opts.required("sha256")?)
+                        .map_err(|e| PublishError(format!("--sha256: {e}")))?,
+                    size: opts
+                        .parsed("size")?
+                        .ok_or_else(|| PublishError("--size is required".into()))?,
+                },
+            };
+            let platform = opts
+                .value("platform")?
+                .map(|p| super::release::parse_platform(&p))
+                .transpose()?;
+            let host = super::release::host(
+                opts.parsed("app-version")?
+                    .ok_or_else(|| PublishError("--app-version is required".into()))?,
+                &opts.required("plugin-api")?,
+                platform,
+            )?;
+            let keys = opts.path("keys")?;
+            let released_pins = opts.path("released-pins")?;
+            let revocations = opts.path("revocations")?;
+            let audit = opts.path("audit")?;
+            let unpack = opts.path("unpack")?;
+            let now = opts.now()?;
+            opts.finish()?;
+            super::release::verify(&super::release::VerifyRequest {
+                package: &package,
+                signatures_dir: signatures_dir.as_deref(),
+                keys: keys.as_deref(),
+                claim,
+                host,
+                released_pins: released_pins.as_deref(),
+                revocations: revocations.as_deref(),
+                audit: audit.as_deref(),
+                unpack: unpack.as_deref(),
+                now,
+            })?
+        }
+        "release test-message" => {
+            let run = super::release::parse_test_run(&opts.required("run")?)?;
+            let dir = PathBuf::from(opts.required("out-dir")?);
+            opts.finish()?;
+            let message = crate::publisher::test_message(run);
+            let out = dir.join(crate::publisher::test_message_file_name(run));
+            write_new(&out, &message)?;
+            let digest = crate::publisher::digest_of(&message);
+            format!(
+                "key test message {run} (sha256 {}, {} bytes) to {}",
+                digest.sha256,
+                digest.size,
+                out.display()
+            )
+        }
+        "release test-sign" => {
+            let run = super::release::parse_test_run(&opts.required("run")?)?;
+            let dir = PathBuf::from(opts.required("out-dir")?);
+            let key = release_key(&opts, io)?;
+            opts.finish()?;
+            let signature = super::release::test_sign(run, &key)?;
+            let public = key.public().to_owned();
+            drop(key);
+            let key_id = super::release::check_test_signed(run, &signature, &public)?;
+            let out = dir.join(crate::publisher::signature_file_name(
+                &crate::publisher::test_message_file_name(run),
+                &key_id,
+            ));
+            write_new(&out, format!("{signature}\n").as_bytes())?;
+            format!(
+                "signed key test message {run} with publisher key {key_id} (fingerprint {}) to {}; \
+                 a key test only, never a release signature",
+                crate::publisher::fingerprint(&public).unwrap_or_default(),
+                out.display()
+            )
+        }
+        "release test-verify" => {
+            let run = super::release::parse_test_run(&opts.required("run")?)?;
+            let dir = PathBuf::from(opts.required("signatures-dir")?);
+            let keys = opts.path("keys")?;
+            opts.finish()?;
+            super::release::test_verify(run, &dir, keys.as_deref())?
         }
         other => return fail(format!("unknown command `{other}`; see `help`")),
     };

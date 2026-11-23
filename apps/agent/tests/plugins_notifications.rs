@@ -3,8 +3,8 @@
 //! through the real agent, the real sandboxed plugin host, real storage and
 //! IPC, each test in its own data directory (feature `plugins`):
 //!
-//! * the plugin (`plugins/first-party/notifications`) is built to wasm with
-//!   the `guest` profile and bundled as `plugins/first-party/build.sh`
+//! * the plugin (its signed release artifact, verified and unpacked;
+//!   `support/official.rs`) is bundled as `plugins/first-party/build.sh`
 //!   stages it for a release (class `default`, pinned with
 //!   `DECKPILOT_TEST_BUNDLED_PINS`);
 //! * native notifications go to a file (`DECKPILOT_TEST_NOTIFICATIONS`,
@@ -20,7 +20,8 @@
 //!   with a notifier that decides as the agent's does) in the same
 //!   conditions: the same status, message, outputs, error code and native
 //!   notification. The differences are listed in [`DIFFERENT_REASONS`] and
-//!   in `plugins/first-party/notifications/README.md`;
+//!   in the plugin's README (`official/notifications/README.md` of
+//!   knittingcode/deckpilot-plugins);
 //! * [`a_fresh_install_gets_the_plugin_on_first_launch`]: seeded, enabled
 //!   with its one low-tier permission only, cut over, its actions and the
 //!   legacy ids running in the plugin at the first start;
@@ -94,10 +95,6 @@ fn runtime() -> PathBuf {
     repo().join("plugins/runtime")
 }
 
-fn source() -> PathBuf {
-    repo().join("plugins/first-party/notifications")
-}
-
 fn cargo_in_runtime(args: &[&str]) {
     let status = Command::new(option_env!("CARGO").unwrap_or("cargo"))
         .current_dir(runtime())
@@ -115,30 +112,13 @@ fn cargo_in_runtime(args: &[&str]) {
 
 struct Artifacts {
     host: PathBuf,
-    module: PathBuf,
 }
 
-/// The host and the plugin's module, built from `plugins/runtime` (or
-/// taken from `DECKPILOT_E2E_PLUGIN_HOST` and `DECKPILOT_E2E_WASM_DIR`).
+/// The host, built from `plugins/runtime` (or taken from
+/// `DECKPILOT_E2E_PLUGIN_HOST`).
 fn artifacts() -> &'static Artifacts {
     static ARTIFACTS: OnceLock<Artifacts> = OnceLock::new();
     ARTIFACTS.get_or_init(|| {
-        let wasm_dir = std::env::var_os("DECKPILOT_E2E_WASM_DIR")
-            .map(PathBuf::from)
-            .filter(|dir| dir.join("deckpilot_notifications.wasm").is_file())
-            .unwrap_or_else(|| {
-                cargo_in_runtime(&[
-                    "build",
-                    "--locked",
-                    "-p",
-                    "deckpilot-notifications",
-                    "--target",
-                    "wasm32-unknown-unknown",
-                    "--profile",
-                    "guest",
-                ]);
-                runtime().join("target/wasm32-unknown-unknown/guest")
-            });
         let host = std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
             || {
                 cargo_in_runtime(&[
@@ -156,10 +136,7 @@ fn artifacts() -> &'static Artifacts {
             },
             PathBuf::from,
         );
-        Artifacts {
-            host,
-            module: wasm_dir.join("deckpilot_notifications.wasm"),
-        }
+        Artifacts { host }
     })
 }
 
@@ -248,34 +225,19 @@ impl Env {
     fn stage(&self, version: Option<&str>) {
         let dir = self.bundled().join(ID);
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        for file in ["LICENSE", "assets/icon-128.png"] {
-            std::fs::copy(source().join(file), dir.join(file)).unwrap();
-        }
+        support::official::copy_into(ID, &dir);
         let mut manifest: Value =
-            serde_json::from_slice(&std::fs::read(source().join("manifest.json")).unwrap())
-                .unwrap();
+            serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
         if let Some(version) = version {
             manifest["version"] = json!(version);
+            std::fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_vec_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
         }
-        std::fs::write(
-            dir.join("manifest.json"),
-            serde_json::to_vec_pretty(&manifest).unwrap(),
-        )
-        .unwrap();
-        std::fs::copy(&artifacts().module, dir.join("plugin.wasm")).unwrap();
         let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();
-        let released: Value = serde_json::from_slice(
-            &std::fs::read(repo().join("plugins/first-party/bundled.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            released["plugins"]
-                .as_array()
-                .unwrap()
-                .contains(&json!({"path": "notifications", "class": "default"})),
-            "the release bundles deckpilot.notifications as a default-class plugin: {released}"
-        );
+        support::official::assert_released(ID, "default");
         let pins = Pins::compute(
             &self.bundled(),
             &[(PluginId::parse(ID).unwrap(), version, BundleClass::Default)],
@@ -1058,7 +1020,7 @@ async fn a_fresh_install_gets_the_plugin_on_first_launch() {
         .unwrap_or_else(|| panic!("not seeded\n{}", agent.log()));
     assert_eq!(summary.state, PluginState::Enabled, "{}", agent.log());
     assert_eq!(summary.origin, PluginOrigin::Bundled);
-    assert_eq!(summary.version, "0.1.1");
+    assert_eq!(summary.version, support::official::locked_version(ID));
     assert_eq!(
         summary
             .actions
@@ -1300,13 +1262,17 @@ async fn removing_or_disabling_the_plugin_sticks_across_restarts_and_upgrades() 
     assert_eq!(env.shown().len(), shown, "no fallback to the built-in");
     agent.stop().await;
 
-    // 3. An app update bundles 0.1.2: still disabled, still 0.1.1.
-    env.stage(Some("0.1.2"));
+    // 3. An app update bundles a newer version: still disabled, still the
+    // released one.
+    env.stage(Some("0.99.0"));
     let agent = env.start(true).await;
     let summary = agent.plugin().await.unwrap();
     assert_eq!(
         (summary.state, summary.version.as_str()),
-        (PluginState::Disabled, "0.1.1")
+        (
+            PluginState::Disabled,
+            support::official::locked_version(ID).as_str()
+        )
     );
     assert!(
         agent.log().contains("disabled by the user"),
@@ -1411,7 +1377,10 @@ async fn a_removed_or_broken_plugin_is_restored_from_the_bundle() {
     };
     assert_eq!(plugin.summary.state, PluginState::Enabled);
     assert_eq!(plugin.summary.origin, PluginOrigin::Bundled);
-    assert_eq!(plugin.summary.version, "0.1.1");
+    assert_eq!(
+        plugin.summary.version,
+        support::official::locked_version(ID)
+    );
     assert_eq!(env.plugin_store().tombstone(&plugin_id).unwrap(), None);
     let mut seen = Vec::new();
     let deadline = tokio::time::Instant::now() + SETTLE;
@@ -1483,7 +1452,7 @@ async fn a_removed_or_broken_plugin_is_restored_from_the_bundle() {
         .data_dir
         .join("plugins")
         .join(ID)
-        .join("0.1.1")
+        .join(support::official::locked_version(ID))
         .join("plugin.wasm");
     let mut permissions = std::fs::metadata(&wasm).unwrap().permissions();
     #[allow(clippy::permissions_set_readonly_false)]
@@ -1869,4 +1838,78 @@ async fn a_0_6_0_data_dir_starts_with_plugins_on_without_a_switch() {
     );
     off.stop().await;
     assert_eq!(database_files(&env.paths), before, "deckpilot.db changed");
+}
+
+/// The version v0.10.0 and v0.11.0 bundled (built from source there).
+const SHIPPED: &str = "0.1.1";
+
+/// An installation of v0.10.0 or v0.11.0 with the bundled 0.1.1, enabled
+/// and cut over, its settings changed and a stored action using it,
+/// upgrades to an app that bundles the signed release artifact: the copy
+/// moves to the released version (offline: there is no registry), still
+/// enabled, with the user's settings and grants exactly as they were and
+/// the stored action running in it. An older app on the same data never
+/// moves it back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_installed_bundled_copy_upgrades_to_the_released_artifact() {
+    let env = Env::new("plugins-notifications-artifact");
+    env.stage(Some(SHIPPED));
+    let mut profile = Profile::new("Work");
+    let legacy = instance(
+        "Legacy announce",
+        "notifications.show",
+        &json!({"title": "Legacy"}),
+    );
+    let legacy_id = legacy.id;
+    profile.actions.push(legacy);
+    {
+        let store = env.store();
+        store.save_profile(&profile).unwrap();
+        store.set_active_profile(Some(profile.id)).unwrap();
+    }
+    let plugin_id = PluginId::parse(ID).unwrap();
+    let released = support::official::locked_version(ID);
+    let snapshot = || {
+        let store = env.plugin_store();
+        let grants: Vec<(String, String)> = store
+            .grants(&plugin_id)
+            .unwrap()
+            .into_iter()
+            .map(|g| (g.key.to_string(), g.decided_by))
+            .collect();
+        (grants, store.settings(&plugin_id).unwrap())
+    };
+
+    // v0.11.0.
+    let agent = env.start(true).await;
+    agent
+        .wait_migration(MigrationPhase::CutOver, MigrationRoute::Plugin)
+        .await;
+    assert_eq!(agent.plugin().await.unwrap().version, SHIPPED);
+    agent.set_settings(&json!({"statusBar": false})).await;
+    agent.run_on_plugin(&env, legacy_id).await;
+    agent.stop().await;
+    let before = snapshot();
+    assert_eq!(before.1["statusBar"], json!(false));
+
+    // The app update with the release artifact.
+    env.stage(None);
+    let agent = env.start(true).await;
+    let summary = agent.plugin().await.unwrap();
+    assert_eq!(
+        (summary.state, summary.version.as_str()),
+        (PluginState::Enabled, released.as_str()),
+        "{}",
+        agent.log()
+    );
+    agent.run_on_plugin(&env, legacy_id).await;
+    agent.stop().await;
+    assert_eq!(snapshot(), before, "settings and grants kept");
+
+    // An older app on the same data: the released copy stays.
+    env.stage(Some(SHIPPED));
+    let agent = env.start(true).await;
+    assert_eq!(agent.plugin().await.unwrap().version, released);
+    agent.stop().await;
+    assert_eq!(snapshot(), before);
 }

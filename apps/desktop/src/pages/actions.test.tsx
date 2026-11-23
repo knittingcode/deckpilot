@@ -136,7 +136,9 @@ describe("Action Library", () => {
       general: { actionTypes: [ACTION_TYPES.log, next] },
     })
     api.getProfile.mockResolvedValue(library())
-    const { user, titlebarAction } = renderWithApp(<ActionLibraryView />, { modules: withDeprecated })
+    const { user, titlebarAction } = renderWithApp(<ActionLibraryView />, {
+      modules: withDeprecated,
+    })
     await screen.findByRole("textbox", { name: "Search actions" })
     titlebarAction("actions.new")
     const chooser = screen.getByRole("group", { name: "Action types" })
@@ -208,7 +210,10 @@ describe("Action Library", () => {
   })
 
   it("asks for a profile first", async () => {
-    const { user, context } = renderWithApp(<ActionLibraryView />, { editingProfileId: null, modules })
+    const { user, context } = renderWithApp(<ActionLibraryView />, {
+      editingProfileId: null,
+      modules,
+    })
     await user.click(screen.getByRole("button", { name: "Create a profile" }))
     expect(context.navigate).toHaveBeenCalledWith("profiles")
   })

@@ -464,7 +464,8 @@ export function LayoutEditor({
     },
     restyle: commands.restyle,
   }
-  // Without the Workflows plugin, workflows on keys still run but are read-only here.
+  // Without the Workflows plugin, graph workflows on keys are kept and not
+  // run, and read-only here.
   const workflowsActive = useIsPluginActive(WORKFLOWS_PLUGIN)
   const groups = useMemo(
     () =>
@@ -483,11 +484,12 @@ export function LayoutEditor({
             : unavailableText(modules, type, t)
         },
         workflowsActive,
+        view.workflowEntries,
         (type) => missingAction(modules, type),
       ),
     // The groups' labels are translated: rebuilt when the language changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [profile, draft, pageId, modules, language, workflowsActive],
+    [profile, draft, pageId, modules, language, workflowsActive, view.workflowEntries],
   )
   const workSessionOn = modules.some((m) => m.id === WORK_SESSION_MODULE && m.enabled)
   const bound = boundControls(draft, pageId)

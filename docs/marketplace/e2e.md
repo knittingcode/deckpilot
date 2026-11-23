@@ -110,17 +110,21 @@ Build the artifacts (from the repository root):
 cargo build -p deckpilot-agent --features plugins,test-hooks --bin deckpilot-agent
 (cd plugins/runtime &&
   cargo build --locked -p deckpilot-plugin-host --bin deckpilot-plugin-host &&
-  cargo build --locked -p hello-weather --target wasm32-unknown-unknown --profile guest &&
-  cargo build --locked -p deckpilot-notifications -p deckpilot-workflows --target wasm32-unknown-unknown --profile guest)
+  cargo build --locked -p hello-weather --target wasm32-unknown-unknown --profile guest)
+# The bundled plugins: their signed release artifacts, verified with the
+# pinned publisher keys and unpacked (downloads them once).
+plugins/first-party/build.sh --out /tmp/dp-e2e/official
 mkdir -p /tmp/dp-e2e && cp target/debug/deckpilot-agent /tmp/dp-e2e/
 export DECKPILOT_E2E_AGENT_BIN=/tmp/dp-e2e/deckpilot-agent
 export DECKPILOT_E2E_PLUGIN_HOST=$PWD/plugins/runtime/target/debug/deckpilot-plugin-host
 export DECKPILOT_E2E_WASM_DIR=$PWD/plugins/runtime/target/wasm32-unknown-unknown/guest
+export DECKPILOT_E2E_OFFICIAL_PLUGINS=/tmp/dp-e2e/official/bundled
 ```
 
-`DECKPILOT_E2E_WASM_DIR` must hold `hello_weather.wasm` and the bundled
-default plugins' `deckpilot_notifications.wasm` and
-`deckpilot_workflows.wasm`.
+`DECKPILOT_E2E_WASM_DIR` must hold `hello_weather.wasm`;
+`DECKPILOT_E2E_OFFICIAL_PLUGINS` the bundled default plugins
+(`deckpilot.notifications`, `deckpilot.workflows`) as `build.sh` unpacked
+their release artifacts.
 
 The command layer (any platform):
 

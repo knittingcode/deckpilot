@@ -6,7 +6,8 @@
 //!
 //! * **Exact trusted comments.** Every registry comment starts with
 //!   `deckpilot-registry v1 role:` and names its role, sequence and key set
-//!   (see [`keys_comment`], [`index_comment`], [`timestamp_comment`]). A
+//!   (see [`keys_comment`], [`index_comment`], [`timestamp_comment`],
+//!   [`storefront_comment`]). A
 //!   signature counts only if its comment is byte-for-byte the one expected
 //!   for that document, so a signature made for another role, another seq,
 //!   another key set or by the Tauri updater (`timestamp:…\tfile:…\tversion:…`)
@@ -56,6 +57,22 @@ pub fn index_comment(seq: u64, keys_version: u64) -> String {
 /// `deckpilot-registry v1 role:timestamp seq:<seq> keys:<keys_version>`.
 pub fn timestamp_comment(seq: u64, keys_version: u64) -> String {
     format!("{COMMENT_PREFIX}timestamp seq:{seq} keys:{keys_version}")
+}
+
+/// `deckpilot-registry v1 role:storefront seq:<seq> keys:<keys_version>`.
+///
+/// The storefront (storefront design §5) is signed by the **index** role
+/// with this comment. Comments are exact, so an index signature never
+/// passes as a storefront signature, nor the reverse, although the key is
+/// the same. Clients before the storefront never fetch `storefront/`.
+pub fn storefront_comment(seq: u64, keys_version: u64) -> String {
+    format!("{COMMENT_PREFIX}storefront seq:{seq} keys:{keys_version}")
+}
+
+/// Whether `comment` names the storefront role (whatever its seq and key
+/// set; the exact comment is required afterwards).
+pub(crate) fn is_storefront_comment(comment: &str) -> bool {
+    comment.starts_with(&format!("{COMMENT_PREFIX}storefront "))
 }
 
 /// Reads `seq` and `keys_version` from a timestamp comment. Only the
@@ -130,6 +147,45 @@ pub fn key_identity(public_key_b64: &str) -> Result<[u8; 32], SigError> {
         .and_then(|k| k.try_into().ok())
         .ok_or(invalid)?;
     Ok(key)
+}
+
+/// The minisign key id (8 bytes, little-endian) as minisign prints it: 16
+/// uppercase hex characters.
+fn format_key_id(raw: &[u8]) -> Option<String> {
+    let bytes: [u8; 8] = raw.get(2..10)?.try_into().ok()?;
+    Some(format!("{:016X}", u64::from_le_bytes(bytes)))
+}
+
+/// The minisign key id of a base64-wrapped minisign public key, as
+/// minisign prints it (16 uppercase hex characters).
+pub fn public_key_id(public_key_b64: &str) -> Result<String, SigError> {
+    let invalid = SigError::Signature(SignatureError::InvalidPublicKey);
+    key_identity(public_key_b64)?;
+    let text = STANDARD
+        .decode(public_key_b64.trim())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| invalid.clone())?;
+    let line = text.lines().nth(1).ok_or_else(|| invalid.clone())?;
+    let raw = STANDARD.decode(line.trim()).map_err(|_| invalid.clone())?;
+    format_key_id(&raw).ok_or(invalid)
+}
+
+/// The key id a base64 minisign signature names, **not verified** (the
+/// signature line's key number, as minisign prints it). Only used to match
+/// a signature file to the one pinned key it may be checked against.
+pub fn signature_key_id(signature_b64: &str) -> Result<String, SigError> {
+    let invalid = SigError::Signature(SignatureError::InvalidSignature);
+    // The strict four-line form first.
+    trusted_comment(signature_b64)?;
+    let text = STANDARD
+        .decode(signature_b64.trim())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| invalid.clone())?;
+    let line = text.split('\n').nth(1).ok_or_else(|| invalid.clone())?;
+    let raw = STANDARD.decode(line.trim()).map_err(|_| invalid.clone())?;
+    format_key_id(&raw).ok_or(invalid)
 }
 
 /// One key, exact comment.
@@ -234,5 +290,15 @@ mod tests {
             index_comment(5, 2),
             "deckpilot-registry v1 role:index seq:5 keys:2"
         );
+        assert_eq!(
+            storefront_comment(5, 2),
+            "deckpilot-registry v1 role:storefront seq:5 keys:2"
+        );
+        assert_ne!(storefront_comment(5, 2), index_comment(5, 2));
+        assert!(is_storefront_comment(&storefront_comment(1, 1)));
+        assert!(!is_storefront_comment(&index_comment(1, 1)));
+        assert!(!is_storefront_comment(
+            "deckpilot-registry v1 role:storefront-keys version:1"
+        ));
     }
 }

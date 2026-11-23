@@ -59,6 +59,7 @@
     "variablesAgentTooOld": "not supported: the running agent is too old for variables; restart the agent",
     "tooManyPreviews": "at most {{max}} references can be previewed at once",
     "previewAgain": "preview the import again",
+    "importInProgress": "this import is already being applied",
     "profileNameEmpty": "profile name must not be empty",
     "executionValueOnlyInRun": "execution values exist only during a run",
     "moduleDisabled": "the {{module}} module is disabled",
@@ -79,6 +80,10 @@
     "layoutUsedElsewhere": "the layout is also used by {{profiles}}; delete it in Layouts, or remove it from this profile",
     "keyImageEncoding": "the key image could not be encoded",
     "resourceValueEmpty": "resource value must not be empty",
+    "applicationNotFound": "the application file does not exist",
+    "applicationUnreadable": "the file is not an application DeckPilot can read",
+    "applicationNotInstalled": "this desktop entry is not installed in an applications folder",
+    "applicationsUnreadable": "the installed applications could not be listed",
     "resourceRoleEmpty": "resource role must not be empty",
     "workflowsRunning_one": "{{count}} workflow is running in the background; wait until it has finished or cancel it",
     "workflowsRunning_other": "{{count}} workflows are running in the background; wait until they have finished or cancel them",
@@ -88,7 +93,13 @@
       "replaced": "key {{key}} opens the folder “{{folder}}”; clear the key or delete the folder instead of replacing it",
       "recovered": "recovered gestures can only be kept, moved to a free key or discarded"
     },
-    "pluginFeatureOff": "the {{feature}} plugin is off: turn it on in Settings › Plugins"
+    "pluginFeatureOff": "the {{feature}} plugin is off: turn it on in Settings › Plugins",
+    "workflowInUse_one": "the workflow is still used in {{count}} place; confirm to delete it",
+    "workflowInUse_other": "the workflow is still used in {{count}} places; confirm to delete it",
+    "workflowReferencesChanged": "what uses the workflow changed since you confirmed; review it again",
+    "workflowNotInProfile": "key {{key}} on page “{{page}}” starts a workflow that is not in this profile; choose one of this profile’s workflows",
+    "workflowNeedsInputs": "key {{key}} on page “{{page}}” starts a workflow that needs input values; use it from a Sub-workflow node",
+    "workflowInWorkSession": "the Work Session settings use the workflow; also clear them to delete it"
   },
   "storage": {
     "database": "database error: {{detail}}",
@@ -190,7 +201,9 @@
     "opensOutside": "the page opens pages outside it, which the other layout does not have",
     "incompatiblePage": "the page does not fit the layout: {{detail}}",
     "inUse_one": "it is still used in {{count}} place; remove those references first",
-    "inUse_other": "it is still used in {{count}} places; remove those references first"
+    "inUse_other": "it is still used in {{count}} places; remove those references first",
+    "referencesChanged": "what uses it changed since it was confirmed; review the references again",
+    "usedByWorkSession": "the Work Session settings use it; clear them to delete it"
   },
   "projectContext": {
     "profileMismatch": "project context belongs to a different profile",

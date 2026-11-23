@@ -221,6 +221,17 @@ impl Manifest {
         }
     }
 
+    /// Every use of a plugin API 1.9 privileged kind (X12), in manifest
+    /// order, as `(JSON path, what)`: exactly the places
+    /// [`Manifest::validate_first_party`] refuses with
+    /// [`IssueCode::FirstPartyOnly`], whether or not the manifest is
+    /// otherwise valid. Empty: nothing privileged. The reviewed privileged
+    /// policy (`deckpilot-plugin-registry`, `privileged_policy`) lists a
+    /// plugin's usages in this form.
+    pub fn privileged_usages(&self) -> Vec<(String, String)> {
+        validate::privileged_usages(self)
+    }
+
     /// [`Manifest::validate_first_party`] for a plugin shipped inside the
     /// application bundle, whose every file the caller has matched against
     /// the sha256 pins compiled into the agent

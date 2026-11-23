@@ -1,7 +1,7 @@
-//! Unsaved layout edits and quitting the app (⌘Q, the macOS menu's
-//! "Quit DeckPilot UI"): the editor's draft lives only in the window and on
-//! the device of its live preview, so quitting with unsaved edits asks
-//! first. The window tells whether it has any ([`set_unsaved_edits`]); a
+//! Unsaved layout edits, closing the main window (Windows, Linux) and
+//! quitting the app (⌘Q, the macOS menu's "Quit DeckPilot UI"): the
+//! editor's draft lives only in the window and on the device of its live
+//! preview, so closing or quitting with unsaved edits asks first. The window tells whether it has any ([`set_unsaved_edits`]); a
 //! quit the user asked for is then held back and the window asks
 //! ([`QUIT_REQUESTED_EVENT`]), quitting with [`quit_app`] once the edits
 //! are discarded.
@@ -12,6 +12,11 @@ use tauri::{AppHandle, Runtime, State};
 
 /// Asks the main window to confirm quitting over unsaved edits.
 pub const QUIT_REQUESTED_EVENT: &str = "quit-requested";
+
+/// Asks the main window to confirm closing over unsaved edits (Windows,
+/// Linux; `lifecycle::on_window_event`, which lets the window close at once
+/// without any).
+pub const CLOSE_REQUESTED_EVENT: &str = "main-close-requested";
 
 /// Whether the main window has unsaved layout edits.
 #[derive(Debug, Default)]
@@ -31,10 +36,15 @@ pub fn set_unsaved_edits(edits: State<'_, UnsavedEdits>, unsaved: bool) {
 
 /// Closes the window that asked, after the user discarded unsaved edits
 /// (closing it asks first while there are any).
+///
+/// `destroy`, not `close`: `close` requests the close again
+/// (`CloseRequested`, which would ask again or be held back), while
+/// `destroy` ends the window as an allowed close does, without that
+/// event; `Destroyed` follows as for any closed window.
 #[tauri::command]
 pub fn close_main_window<R: Runtime>(window: tauri::Window<R>, edits: State<'_, UnsavedEdits>) {
     edits.0.store(false, Ordering::SeqCst);
-    let _ = window.close();
+    let _ = window.destroy();
 }
 
 /// Quits after the user discarded unsaved edits.

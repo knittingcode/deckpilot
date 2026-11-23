@@ -288,11 +288,10 @@ fn literal_url(text: &str) -> Result<url::Url, Refused> {
         return Err(invalid("is not an http or https address"));
     };
     let url = url::Url::parse(text).map_err(|_| invalid("is not a valid URL"))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(invalid("is not an http or https address"));
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(invalid("carries a user name or password"));
+    // The scheme, user-info and length rules the built-in Website action
+    // shares (`deckpilot_core::paths::http_url_problem`).
+    if let Some(problem) = deckpilot_core::paths::http_url_problem(&url) {
+        return Err(invalid(problem));
     }
     // The host exactly as written: no userinfo (`@`), no percent-encoded,
     // numeric-shorthand or otherwise rewritten host.
@@ -307,9 +306,6 @@ fn literal_url(text: &str) -> Result<url::Url, Refused> {
     match url.host_str() {
         Some(host) if !host.is_empty() && host == written => {}
         _ => return Err(invalid("does not name its host literally")),
-    }
-    if url.as_str().len() > deckpilot_plugin_abi::limits::MAX_OPEN_URL_LEN {
-        return Err(invalid("is longer than 2048 bytes"));
     }
     Ok(url)
 }

@@ -1,8 +1,8 @@
 //! The harness of the plugin API 1.9 first-party plugins' end-to-end tests
 //! (`plugins_workspace.rs`, `plugins_projects.rs`, `plugins_workflows.rs`):
-//! the plugin built to wasm with the `guest` profile and bundled as
-//! `plugins/first-party/build.sh` stages it (its locales included), pinned
-//! with `DECKPILOT_TEST_BUNDLED_PINS`; the real agent and the real
+//! the plugin's verified release artifact as `plugins/first-party/build.sh`
+//! stages it (`support/official.rs`: every file, its locales included),
+//! pinned with `DECKPILOT_TEST_BUNDLED_PINS`; the real agent and the real
 //! sandboxed host, each test in its own data directory, with a profile and
 //! this computer's resource bindings seeded; every program the agent would
 //! start recorded (`DECKPILOT_TEST_PLUGIN_LAUNCH`, feature `test-hooks`)
@@ -26,48 +26,33 @@ use deckpilot_plugin_manifest::PluginId;
 use deckpilot_storage::{ConfigStore, DatabaseKey};
 use serde_json::{Value, json};
 
-use crate::support::{self, TempDir};
+use crate::support::{self, TempDir, official};
 
 pub const STARTUP: Duration = Duration::from_secs(30);
 pub const SETTLE: Duration = Duration::from_secs(60);
 
-/// One first-party plugin of `plugins/first-party`.
+/// One official plugin `plugins/first-party/bundled.json` bundles from its
+/// release artifact (`plugins/first-party/artifacts.json`).
 #[derive(Debug, Clone, Copy)]
 pub struct FirstParty {
     pub id: &'static str,
-    /// Its directory under `plugins/first-party` (and in `bundled.json`).
-    pub dir: &'static str,
-    /// Its crate, built to `<crate with underscores>.wasm`.
-    pub krate: &'static str,
     /// The class `bundled.json` gives it.
     pub released: &'static str,
 }
 
 impl FirstParty {
+    /// The verified files of its locked release.
     pub fn source(&self) -> PathBuf {
-        repo().join("plugins/first-party").join(self.dir)
+        official::dir(self.id)
     }
 
     pub fn manifest(&self) -> Value {
-        serde_json::from_slice(&std::fs::read(self.source().join("manifest.json")).unwrap())
-            .unwrap()
+        official::manifest(self.id)
     }
 
     /// The release bundles it with the class this test expects.
     pub fn assert_released(&self) {
-        let released: Value = serde_json::from_slice(
-            &std::fs::read(repo().join("plugins/first-party/bundled.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            released["plugins"]
-                .as_array()
-                .unwrap()
-                .contains(&json!({"path": self.dir, "class": self.released})),
-            "the release bundles {} as a {}-class plugin: {released}",
-            self.id,
-            self.released
-        );
+        official::assert_released(self.id, self.released);
     }
 }
 
@@ -99,31 +84,25 @@ pub struct Artifacts {
     pub module: PathBuf,
 }
 
-/// The host and the plugin's module, built from `plugins/runtime` (or
-/// taken from `DECKPILOT_E2E_PLUGIN_HOST` and `DECKPILOT_E2E_WASM_DIR`).
+/// The host, built from `plugins/runtime` (or taken from
+/// `DECKPILOT_E2E_PLUGIN_HOST`), and the plugin's released module.
 pub fn artifacts(plugin: FirstParty) -> &'static Artifacts {
     static ARTIFACTS: Mutex<BTreeMap<&'static str, &'static Artifacts>> =
         Mutex::new(BTreeMap::new());
     let mut built = ARTIFACTS.lock().unwrap_or_else(PoisonError::into_inner);
-    built.entry(plugin.krate).or_insert_with(|| {
-        let file = format!("{}.wasm", plugin.krate.replace('-', "_"));
-        let wasm_dir = std::env::var_os("DECKPILOT_E2E_WASM_DIR")
-            .map(PathBuf::from)
-            .filter(|dir| dir.join(&file).is_file())
-            .unwrap_or_else(|| {
-                cargo_in_runtime(&[
-                    "build",
-                    "--locked",
-                    "-p",
-                    plugin.krate,
-                    "--target",
-                    "wasm32-unknown-unknown",
-                    "--profile",
-                    "guest",
-                ]);
-                runtime().join("target/wasm32-unknown-unknown/guest")
-            });
-        let host = std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
+    built.entry(plugin.id).or_insert_with(|| {
+        Box::leak(Box::new(Artifacts {
+            host: host(),
+            module: official::module(plugin.id),
+        }))
+    })
+}
+
+/// The plugin host, built once per test binary.
+pub fn host() -> PathBuf {
+    static HOST: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOST.get_or_init(|| {
+        std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
             || {
                 cargo_in_runtime(&[
                     "build",
@@ -139,12 +118,9 @@ pub fn artifacts(plugin: FirstParty) -> &'static Artifacts {
                 ))
             },
             PathBuf::from,
-        );
-        Box::leak(Box::new(Artifacts {
-            host,
-            module: wasm_dir.join(file),
-        }))
+        )
     })
+    .clone()
 }
 
 // ---------------------------------------------------------- environment
@@ -160,6 +136,8 @@ pub struct Env {
     /// `git` first on its `PATH`).
     #[allow(clippy::struct_field_names)] // `env.extra_env`, as it reads.
     pub extra_env: Vec<(String, std::ffi::OsString)>,
+    /// More arguments (`plugins_workflows.rs` adds `--mock-devices mk2`).
+    pub extra_args: Vec<&'static str>,
     /// Bundled next to the plugin, as `default`-class plugins
     /// ([`Env::with_projects`]).
     pub companions: Vec<FirstParty>,
@@ -170,8 +148,6 @@ pub struct Env {
 /// project's roles (git, docker, workspace) need it enabled.
 pub const PROJECTS: FirstParty = FirstParty {
     id: "deckpilot.projects",
-    dir: "projects",
-    krate: "deckpilot-projects",
     released: "migration",
 };
 
@@ -207,6 +183,7 @@ impl Env {
             key,
             plugin,
             extra_env: Vec::new(),
+            extra_args: Vec::new(),
             companions: Vec::new(),
         };
         env.stage(class);
@@ -226,6 +203,16 @@ impl Env {
 
     pub fn bundled(&self) -> PathBuf {
         self.dir.path().join("resources/bundled")
+    }
+
+    /// The plugin store, read directly (the agent stopped or not).
+    pub fn plugin_store(&self) -> deckpilot_plugin_store::PluginStore {
+        deckpilot_plugin_store::PluginStore::open(
+            &deckpilot_plugin_store::Layout::new(&self.paths.data_dir).database(),
+            &deckpilot_agent::plugins::key::plugin_store_key(&self.key),
+            Duration::from_secs(5),
+        )
+        .unwrap()
     }
 
     fn pins_file(&self) -> PathBuf {
@@ -281,11 +268,18 @@ impl Env {
     /// the icon, the locales and the module, and the pins the agent "was
     /// compiled with".
     fn stage(&self, class: BundleClass) {
+        self.restage(class, &|_, _| {});
+    }
+
+    /// The same as an app update (or an older app) would stage it: `edit`
+    /// changes each staged plugin's manifest (its id, the manifest) before
+    /// it is pinned, e.g. to the version an earlier release shipped.
+    pub fn restage(&self, class: BundleClass, edit: &dyn Fn(&str, &mut Value)) {
         let mut pinned = Vec::new();
         for (plugin, class) in std::iter::once((self.plugin, class))
             .chain(self.companions.iter().map(|c| (*c, BundleClass::Default)))
         {
-            pinned.push(self.stage_one(plugin, class));
+            pinned.push(self.stage_one(plugin, class, edit));
         }
         let pins = Pins::compute(&self.bundled(), &pinned).unwrap();
         std::fs::write(self.bundled().join("pins.json"), pins.to_json_pretty()).unwrap();
@@ -297,32 +291,22 @@ impl Env {
         &self,
         plugin: FirstParty,
         class: BundleClass,
+        edit: &dyn Fn(&str, &mut Value),
     ) -> (PluginId, semver::Version, BundleClass) {
         plugin.assert_released();
         let dir = self.bundled().join(plugin.id);
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::create_dir_all(dir.join("locales")).unwrap();
-        let manifest = plugin.manifest();
-        let mut files = vec!["manifest.json".to_owned(), "LICENSE".to_owned()];
-        files.extend(
-            manifest["icons"]
-                .as_object()
-                .unwrap()
-                .values()
-                .map(|v| v.as_str().unwrap().to_owned()),
-        );
-        files.extend(
-            manifest["locales"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|tag| format!("locales/{}.json", tag.as_str().unwrap())),
-        );
-        for file in files {
-            std::fs::copy(plugin.source().join(&file), dir.join(&file)).unwrap();
+        official::copy_into(plugin.id, &dir);
+        let released = plugin.manifest();
+        let mut manifest = released.clone();
+        edit(plugin.id, &mut manifest);
+        if manifest != released {
+            std::fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_vec_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
         }
-        std::fs::copy(&artifacts(plugin).module, dir.join("plugin.wasm")).unwrap();
         let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();
         (PluginId::parse(plugin.id).unwrap(), version, class)
     }
@@ -361,6 +345,7 @@ impl Env {
         for (name, value) in &self.extra_env {
             command.env(name, value);
         }
+        command.args(&self.extra_args);
         let agent = Agent {
             child: command.spawn().expect("the agent starts"),
             paths: self.paths.clone(),
@@ -460,6 +445,17 @@ impl Agent {
     /// A client subscribed to the agent's events.
     pub async fn events(&self) -> AgentClient {
         let mut client = self.client().await;
+        client.subscribe().await.unwrap();
+        client
+    }
+
+    /// A client subscribed to the agent's events as the configuration app
+    /// is: it also receives the status bar's notifications.
+    pub async fn app_events(&self) -> AgentClient {
+        self.client().await;
+        let mut client = AgentClient::connect(&self.paths, ClientKind::Desktop)
+            .await
+            .unwrap();
         client.subscribe().await.unwrap();
         client
     }

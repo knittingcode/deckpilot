@@ -123,7 +123,7 @@ base64.workspace = true
 deckpilot-plugin-bundled.workspace = true
 deckpilot-plugin-manifest.workspace = true
 deckpilot-plugin-package.workspace = true
-deckpilot-plugin-registry = { workspace = true, features = ["publish"] }
+deckpilot-plugin-registry = { workspace = true, features = ["publish", "test-privileged-gate"] }
 deckpilot-plugin-store.workspace = true
 flate2.workspace = true
 sha2.workspace = true

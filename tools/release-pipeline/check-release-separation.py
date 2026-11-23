@@ -52,7 +52,9 @@ import sys
 import yaml
 
 APP_ENVIRONMENT = "production-release"
-APP_SECRET = re.compile(r"secrets\.(APPLE_|TAURI_SIGNING_)")
+# Secret names are case-insensitive in GitHub Actions (secrets.apple_x is
+# secrets.APPLE_X), so every secret pattern here ignores case.
+APP_SECRET = re.compile(r"secrets\s*(\.\s*|\[\s*['\"])(APPLE_|TAURI_SIGNING_)", re.I)
 
 # Files of the plugin registry repository.
 REGISTRY_FILE = re.compile(
@@ -79,18 +81,25 @@ PUBLISHING_COMMAND = re.compile(
     r"|\bgit\s+push\b[^\n]*\bgh-pages\b"
 )
 
-# deckpilot-registry subcommands that write or sign; verify-site and help only read.
+# deckpilot-registry subcommands that write or sign (`release test-sign`, the
+# publisher key test, included); verify-site, help and `release verify` (the
+# publisher signature check a build runs) only read.
 REGISTRY_COMMAND = re.compile(
     r"\bdeckpilot-registry\b[^\n]*?\s(keys|keyset|package|publisher|add-version|yank|revoke"
-    r"|lift-revocation|build-index|sign-index|timestamp)\b"
+    r"|lift-revocation|build-index|sign-index|timestamp|release\s+(?:test-)?sign)\b"
     r"|\bcargo\s+run\b[^\n]*deckpilot-plugin-registry[^\n]*\s--\s+(?!verify-site\b|help\b)\S"
 )
 # A plugin package copied, moved or mapped into the application bundle.
 PACKAGE_FILE = re.compile(r"\.dpplugin\b")
 BUNDLE_STAGING = re.compile(r"src-tauri/|(^|[\s\"'/=])bundled/")
 PLUGIN_SIGNING = re.compile(r"\b(minisign|rsign|signer\s+sign)\b[^\n]*\.dpplugin\b")
-REGISTRY_SECRET = re.compile(r"secrets\.REGISTRY_")
-REGISTRY_ENVIRONMENT = re.compile(r"^registry-")
+# The registry role keys and the first-party publisher key, in either
+# expression syntax (secrets.X, secrets['X']), and the whole secrets context.
+REGISTRY_SECRET = re.compile(
+    r"secrets\s*(\.\s*|\[\s*['\"])(REGISTRY_|DECKPILOT_PUBLISHER_)|toJSON\(\s*secrets\s*\)", re.I
+)
+# The registry's environments and the publisher key's (official-release).
+REGISTRY_ENVIRONMENT = re.compile(r"^(registry-|official-release$)")
 
 
 def environment_name(job):
@@ -118,8 +127,9 @@ def check(path, workflow):
         if REGISTRY_ENVIRONMENT.match(str(environment)):
             registry_job = True
             problems.append(
-                f"{where} runs in the registry environment {environment}: registry signing happens only "
-                "in knittingcode/deckpilot-plugins (environments registry-release, registry-timestamp), never in this repository"
+                f"{where} runs in the registry environment {environment}: registry and publisher signing happen only "
+                "in knittingcode/deckpilot-plugins (environments registry-release, registry-timestamp, "
+                "official-release), never in this repository"
             )
         if REGISTRY_SECRET.search(job_env_text):
             registry_job = True

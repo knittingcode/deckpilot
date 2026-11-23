@@ -82,7 +82,9 @@ describe("Settings › Resources", () => {
     await i18n.changeLanguage("pl")
     try {
       renderWithApp(<ResourcesSettings />, { modules: [] })
-      expect(await screen.findByText("Te przypisania nigdy nie są częścią profilu.")).toBeInTheDocument()
+      expect(
+        await screen.findByText("Te przypisania nigdy nie są częścią profilu."),
+      ).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Usuń shop.repository" })).toBeInTheDocument()
     } finally {
       await i18n.changeLanguage("en")

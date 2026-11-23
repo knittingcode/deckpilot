@@ -52,18 +52,42 @@ pub struct Profile {
     rename_all_fields = "camelCase"
 )]
 pub enum Usage {
+    /// A step of a step workflow (Multi Action): it runs the action, or
+    /// (for a workflow) its overrides name the workflow.
     WorkflowStep {
         workflow: WorkflowId,
         workflow_name: String,
         position: usize,
     },
+    /// A key, dial or touch binding of a layout page.
     LayoutBinding {
         layout: LayoutId,
         layout_name: String,
         page: PageId,
         page_name: String,
         control: ControlId,
+        /// The binding's trigger (press, a gesture…). Absent only from
+        /// usages made before it was reported.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<crate::Trigger>,
     },
+    /// A node of another graph workflow that runs the workflow (Call,
+    /// Loop) or whose overrides name it.
+    WorkflowNode {
+        workflow: WorkflowId,
+        workflow_name: String,
+        node: crate::graph::NodeId,
+    },
+    /// An action whose parameters name the workflow: a Random Action's
+    /// candidate or a Multi Action Switch's state (`workflow:<id>`), or a
+    /// key's overrides of such an action.
+    ActionParameter {
+        action: ActionInstanceId,
+        action_name: String,
+    },
+    /// The profile's Work Session settings start (`startWorkflow`) or
+    /// verify (`verificationWorkflow`) a session with the workflow.
+    WorkSessionSetting { setting: crate::WorkSessionSetting },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -81,6 +105,14 @@ pub enum ProfileIssue {
     Layout { layout: String, issue: LayoutIssue },
     #[error("it is still used in {0} place(s); remove those references first")]
     InUse(usize),
+    /// A confirmed delete whose references are no longer the ones the
+    /// user confirmed (`Profile::delete_workflow_confirmed`).
+    #[error("what uses it changed since it was confirmed; review the references again")]
+    ReferencesChanged,
+    /// A confirmed delete of a workflow the Work Session settings use,
+    /// without asking to clear them (`Profile::delete_workflow_confirmed`).
+    #[error("the Work Session settings use it; clear them to delete it")]
+    UsedByWorkSession,
     #[error("{0} does not exist in this profile")]
     NotFound(&'static str),
     #[error("the layout is for a different device model")]
@@ -142,6 +174,7 @@ impl Profile {
                             page: page.id,
                             page_name: page.name.clone(),
                             control: binding.control,
+                            trigger: Some(binding.trigger),
                         });
                     }
                 }
@@ -239,7 +272,7 @@ impl Profile {
         conditions + overrides + parameters + bindings
     }
 
-    fn target_usages(&self, matches: impl Fn(&BindingTarget) -> bool) -> Vec<Usage> {
+    pub(crate) fn target_usages(&self, matches: impl Fn(&BindingTarget) -> bool) -> Vec<Usage> {
         let mut usages = Vec::new();
         for layout in &self.layouts {
             for page in &layout.pages {
@@ -250,6 +283,7 @@ impl Profile {
                         page: page.id,
                         page_name: page.name.clone(),
                         control: binding.control,
+                        trigger: Some(binding.trigger),
                     });
                 }
             }
@@ -281,7 +315,8 @@ impl Profile {
         usages
     }
 
-    /// Layout bindings that run a workflow.
+    /// Layout bindings that run a workflow. Kept for compatibility: every
+    /// kind of reference is in [`Profile::workflow_references`].
     pub fn workflow_usages(&self, id: WorkflowId) -> Vec<Usage> {
         self.target_usages(|t| *t == BindingTarget::Workflow { workflow: id })
     }
@@ -300,9 +335,11 @@ impl Profile {
         Ok(self.actions.remove(index))
     }
 
-    /// Deletes a workflow that no layout refers to.
+    /// Deletes a workflow that nothing refers to ([`Profile::workflow_references`]:
+    /// keys and gestures, Call and Loop nodes, Random and Switch actions).
+    /// A referenced one is deleted with [`Profile::delete_workflow_confirmed`].
     pub fn delete_workflow(&mut self, id: WorkflowId) -> Result<Workflow, ProfileIssue> {
-        let used = self.workflow_usages(id).len();
+        let used = self.workflow_references(id).len();
         if used > 0 {
             return Err(ProfileIssue::InUse(used));
         }

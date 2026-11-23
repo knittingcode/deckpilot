@@ -2,7 +2,7 @@
 
 import { i18n } from "@/i18n"
 import type { MissingAction } from "@/lib/action-availability"
-import type { BindingTarget, DeviceLayout, Profile } from "@/lib/types"
+import type { BindingTarget, DeviceLayout, Profile, WorkflowEntry } from "@/lib/types"
 
 export interface TargetOption {
   value: string
@@ -16,9 +16,9 @@ export interface TargetOption {
    */
   unavailable?: string
   /**
-   * With `unavailable`: the target still runs from the controls that use
-   * it and is only read-only here (a workflow while the Workflows plugin
-   * is off: the engine is the core's, managing workflows the plugin's).
+   * With `unavailable`: controls that use the target keep it and it is
+   * only read-only here (a graph workflow while the Workflows plugin is
+   * off: keys keep it and do not run it until the plugin is on again).
    */
   readOnly?: boolean
   /**
@@ -80,13 +80,22 @@ export function targetGroups(
   /**
    * Whether workflows can be chosen (the Workflows plugin is active). When
    * not, graph workflows stay listed, read-only: controls that use them
-   * keep them and still run them. Step workflows (Multi Actions) are the
-   * key editor's own and stay available.
+   * keep them and do not run them until the plugin is on again. Step
+   * workflows (Multi Actions) are the key editor's own and stay available.
    */
   workflows = true,
+  /**
+   * The profile's workflows as the backend describes them
+   * (`ProfileView.workflowEntries`): one that needs inputs stays listed
+   * and cannot be placed on a key (it runs only from a Sub-workflow node).
+   */
+  entries: WorkflowEntry[] = [],
   /** Why an assigned action of this type cannot run now, for the Inspector. */
   missing: (actionType: string) => MissingAction | null = () => null,
 ): TargetGroup[] {
+  const needsInputs = new Set(
+    entries.filter((e) => e.block?.code === "needsInputs").map((e) => e.id),
+  )
   const option = (target: BindingTarget, label: string, kind: TargetOption["kind"]) => ({
     value: encodeTarget(target),
     label,
@@ -116,7 +125,9 @@ export function targetGroups(
         ...option({ type: "workflow", workflow: w.id }, w.name, "workflow"),
         ...(!workflows && w.graph
           ? { unavailable: i18n.t("editor:targets.workflowsOff"), readOnly: true }
-          : {}),
+          : needsInputs.has(w.id)
+            ? { unavailable: i18n.t("editor:targets.workflowNeedsInputs") }
+            : {}),
       })),
     },
     {

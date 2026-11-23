@@ -1,0 +1,10 @@
+# expect: runs a registry publishing or signing command
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - run: target/release/deckpilot-registry release test-sign --run 1 --key-env KEY --out-dir out

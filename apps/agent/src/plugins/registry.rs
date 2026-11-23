@@ -25,6 +25,10 @@
 //! freshness report work offline. Details are content-addressed (the
 //! verified index pins their sha256), so a cached one is re-checked
 //! against the index each time it is read and never trusted by itself.
+//!
+//! The registry's storefront (editorial placements, listings and their
+//! images) is fetched after each refresh and kept beside the state
+//! (`storefront.rs`); it never changes what a refresh or an install does.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -43,6 +47,7 @@ use tracing::{debug, info, warn};
 
 use super::PluginSettings;
 use super::fetch::{DownloadError, HttpsConfig, HttpsSource, TlsRoots};
+use super::storefront::{Current, Storefronts};
 
 /// The official registry site (GitHub Pages of `knittingcode/deckpilot-plugins`,
 /// documents under `v1/`). Used only when there are trusted root keys
@@ -153,6 +158,8 @@ pub(super) struct Registry {
     /// Why the last refresh could not reach the registry (`None`: it did,
     /// or there was no refresh yet).
     offline: Option<String>,
+    /// The verified storefront of the verified index, if any.
+    storefront: Storefronts,
 }
 
 impl std::fmt::Debug for Registry {
@@ -245,7 +252,9 @@ impl Registry {
             client: open_client(roots, state_dir)?,
             details: state_dir.join(DETAILS_DIR),
             offline: None,
-        })
+            storefront: Storefronts::new(state_dir),
+        }
+        .with_cached_storefront())
     }
 
     /// Opens the registry served at `config.site`.
@@ -261,11 +270,60 @@ impl Registry {
             client: open_client(roots, state_dir)?,
             details: state_dir.join(DETAILS_DIR),
             offline: None,
-        })
+            storefront: Storefronts::new(state_dir),
+        }
+        .with_cached_storefront())
     }
 
     pub fn client(&self) -> &RegistryClient<FileTrustStore> {
         &self.client
+    }
+
+    /// The storefront of the stored seq from the cache (offline browsing).
+    fn with_cached_storefront(mut self) -> Self {
+        self.storefront.load_cached(&mut self.client);
+        self
+    }
+
+    /// The verified storefront of the verified index, if one is shown:
+    /// only while its seq is still the verified timestamp's (defence in
+    /// depth; a refresh replaces it anyway).
+    pub fn storefront(&self) -> Option<&Current> {
+        self.storefront.current_for(self.verified_seq())
+    }
+
+    fn verified_seq(&self) -> Option<u64> {
+        self.client.state().timestamp.as_ref().map(|t| t.seq)
+    }
+
+    /// One chunk of a storefront image (`getRegistryMedia`).
+    pub fn storefront_media(
+        &self,
+        sha256: &str,
+        offset: u64,
+    ) -> Result<deckpilot_ipc::plugins::MediaChunk, IpcError> {
+        self.storefront
+            .media_chunk(self.source.documents(), self.verified_seq(), sha256, offset)
+    }
+
+    /// Fetches the icons a new storefront places, within the prefetch
+    /// bounds; called once an answer was sent.
+    pub fn prefetch_storefront_icons(&mut self) {
+        let seq = self.verified_seq();
+        let timeout = super::storefront::PREFETCH_FETCH_TIMEOUT;
+        let (max, budget) = (
+            super::storefront::MAX_PREFETCH,
+            super::storefront::PREFETCH_BUDGET,
+        );
+        match &self.source {
+            // Each fetch bounded by its own short timeout, so one slow
+            // image cannot hold the plugin worker for long.
+            Source::Https(https) => {
+                let timed = https.with_timeout(timeout);
+                self.storefront.prefetch(&timed, seq, max, budget);
+            }
+            Source::Directory { site, .. } => self.storefront.prefetch(site, seq, max, budget),
+        }
     }
 
     /// Re-reads the registry and verifies it (key sets, timestamp, index).
@@ -276,6 +334,12 @@ impl Registry {
             let _ = https.take_unavailable();
         }
         let result = self.client.refresh(self.source.documents(), Utc::now());
+        // The storefront of whatever the client now trusts; it cannot
+        // change `result`.
+        if let Ok(refresh) = &result {
+            self.storefront
+                .sync(&mut self.client, self.source.documents(), refresh);
+        }
         self.offline = match (&result, &self.source) {
             (Ok(Refresh::Offline(_)), Source::Https(https)) => Some(
                 https
@@ -329,6 +393,10 @@ impl Registry {
                 .as_ref()
                 .map(|t| t.expires.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
             offline: self.offline.clone(),
+            storefront_problem: self
+                .storefront
+                .problem()
+                .map(|why| format!("editorial unavailable: {why}")),
         }
     }
 
@@ -417,6 +485,38 @@ impl Registry {
             }
         };
         Ok(bytes)
+    }
+
+    /// The publisher signature file of the key `key_id` next to the package
+    /// at `url` (`<package>.<KEYID>.minisig`): from `releases/` or
+    /// downloaded, at most [`publisher::MAX_SIGNATURE_BYTES`] bytes. Only
+    /// the publisher verifier decides what it is worth (`official.rs`).
+    ///
+    /// [`publisher::MAX_SIGNATURE_BYTES`]: deckpilot_plugin_registry::publisher::MAX_SIGNATURE_BYTES
+    pub fn signature(&self, url: &str, key_id: &str) -> Result<Vec<u8>, DownloadError> {
+        match &self.source {
+            Source::Https(https) => https.signature(url, key_id),
+            Source::Directory { releases, .. } => {
+                let not_ours = || {
+                    DownloadError::Refused(format!("{url} is not a release asset of this registry"))
+                };
+                if !deckpilot_plugin_registry::publisher::is_key_id(key_id) {
+                    return Err(not_ours());
+                }
+                let relative = url.strip_prefix(DOWNLOAD_PREFIX).ok_or_else(not_ours)?;
+                let name =
+                    deckpilot_plugin_registry::publisher::signature_file_name(relative, key_id);
+                let path = below(releases, &name).ok_or_else(not_ours)?;
+                let limit =
+                    u64::try_from(deckpilot_plugin_registry::publisher::MAX_SIGNATURE_BYTES)
+                        .unwrap_or(u64::MAX);
+                read_capped(&path, limit).map_err(|e| {
+                    DownloadError::Unavailable(format!(
+                        "the publisher signature {name} could not be read: {e}"
+                    ))
+                })
+            }
+        }
     }
 }
 

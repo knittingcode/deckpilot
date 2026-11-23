@@ -152,7 +152,10 @@ impl Registry {
 
     fn run(&self, args: &[&str]) -> String {
         let mut all: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
-        if args.first().is_none_or(|c| *c != "keys" && *c != "package") {
+        if args
+            .first()
+            .is_none_or(|c| *c != "keys" && *c != "package" && *c != "release")
+        {
             all.push("--dir".into());
             all.push(self.work().display().to_string());
         }
@@ -172,9 +175,45 @@ impl Registry {
         self.add_with(id, version, &[]);
     }
 
-    /// A `deckpilot.*` version, with the publishing tool's explicit option.
-    fn add_first_party(&self, id: &str, version: &str) {
+    /// A `deckpilot.*` version, with the publishing tool's explicit option,
+    /// without publisher signatures (a community plugin's release; an
+    /// official one's until `sign_release` adds them).
+    fn add_unsigned_first_party(&self, id: &str, version: &str) {
         self.add_with(id, version, &["--first-party"]);
+    }
+
+    /// `<package>.<KEYID>.minisig`, by the test's publisher key `key`, in
+    /// `releases/` next to the package (one `release sign` per key, as the
+    /// release workflow runs it).
+    fn sign_release(&self, id: &str, version: &str, key: &str) {
+        let package = self
+            .work()
+            .join(Self::release_path(id, version).trim_start_matches('/'));
+        self.run(&[
+            "release",
+            "sign",
+            "--package",
+            &package.display().to_string(),
+            "--id",
+            id,
+            "--version",
+            version,
+            "--key",
+            &self.key(key),
+        ]);
+    }
+
+    /// The served path of `key`'s signature file of a release.
+    fn signature_path(&self, id: &str, version: &str, key: &str) -> String {
+        let public = std::fs::read_to_string(self.keys().join(format!("{key}.pub"))).unwrap();
+        let key_id = deckpilot_plugin_registry::publisher::key_id(public.trim()).unwrap();
+        format!("{}.{key_id}.minisig", Self::release_path(id, version))
+    }
+
+    /// The publisher keys the agent pins in this test
+    /// (`DECKPILOT_TEST_PUBLISHER_KEYS`).
+    fn publisher_keys(&self) -> PathBuf {
+        self.keys().join("publisher-keys.json")
     }
 
     fn add_with(&self, id: &str, version: &str, extra: &[&str]) {
@@ -320,14 +359,21 @@ impl Registry {
             dir: TempDir::new("plugins-https-registry"),
         };
         std::fs::create_dir_all(registry.keys()).unwrap();
-        for role in ["root", "index", "timestamp"] {
+        for (role, name) in [
+            ("root", "root"),
+            ("index", "index"),
+            ("timestamp", "timestamp"),
+            ("publisher", "publisher"),
+            ("publisher", "publisher-b"),
+            ("publisher", "publisher-c"),
+        ] {
             registry.run(&[
                 "keys",
                 "generate",
                 "--role",
                 role,
                 "--out",
-                &registry.key(&format!("{role}.key")),
+                &registry.key(&format!("{name}.key")),
                 "--no-password",
             ]);
         }
@@ -356,6 +402,25 @@ impl Registry {
         registry.add(OTHER, "1.0.0");
         registry.publish();
         std::fs::copy(registry.work().join("roots.json"), registry.roots()).unwrap();
+        // Three publisher keys pinned, two of them must sign.
+        let public = |name: &str| {
+            std::fs::read_to_string(registry.keys().join(format!("{name}.key.pub")))
+                .unwrap()
+                .trim()
+                .to_owned()
+        };
+        std::fs::write(
+            registry.publisher_keys(),
+            serde_json::to_vec(&json!({
+                "publisherKeysVersion": 1,
+                "publisher": "deckpilot",
+                "keys": [public("publisher"), public("publisher-b"), public("publisher-c")],
+                "threshold": 2,
+                "revokedKeys": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         registry
     }
 
@@ -440,6 +505,7 @@ impl Env {
             .arg(&artifacts().host)
             .env("DECKPILOT_DATA_DIR", &self.paths.data_dir)
             .env("DECKPILOT_TEST_REGISTRY_CA", &ca)
+            .env("DECKPILOT_TEST_PUBLISHER_KEYS", registry.publisher_keys())
             .env(
                 "DECKPILOT_TEST_PLUGIN_HTTP",
                 self.dir.path().join("http.json"),
@@ -958,8 +1024,11 @@ async fn without_root_keys_nothing_is_fetched() {
     agent.stop().await;
 }
 
+/// A first-party **community** plugin (like deckpilot.memory): released
+/// without publisher signatures, it follows the registry's rules alone.
 const FIRST_PARTY: &str = "deckpilot.hello-weather";
-/// A plugin the agent bundles; the registry lists it anyway.
+/// An **official** plugin (one the agent bundles); the registry lists it
+/// anyway, and it needs the publisher signatures.
 const BUNDLED: &str = "deckpilot.github";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -971,9 +1040,9 @@ async fn first_party_plugins_need_the_root_authorization_and_a_verified_publishe
     // record says unverified.
     registry.authorize_first_party(true);
     registry.first_party_publisher(true);
-    registry.add_first_party(FIRST_PARTY, "1.0.0");
-    registry.add_first_party(FIRST_PARTY, "1.1.0");
-    registry.add_first_party(BUNDLED, "1.0.0");
+    registry.add_unsigned_first_party(FIRST_PARTY, "1.0.0");
+    registry.add_unsigned_first_party(FIRST_PARTY, "1.1.0");
+    registry.add_unsigned_first_party(BUNDLED, "1.0.0");
     registry.first_party_publisher(false);
     registry.publish();
     let server = HttpsServer::start(&registry.work());
@@ -994,8 +1063,10 @@ async fn first_party_plugins_need_the_root_authorization_and_a_verified_publishe
     let release = Registry::release_path(FIRST_PARTY, "1.0.0");
     assert!(!server.log().contains(&release), "{:?}", server.log());
 
-    // Verified, under the authorizing key set: installed from the
-    // registry with the first-party rules.
+    // Verified, under the authorizing key set: a community plugin is
+    // installed from the registry with the first-party rules and **no**
+    // publisher signatures (none exists; none is asked for). The 0.11.0
+    // regression refused exactly this.
     registry.first_party_publisher(true);
     registry.publish();
     let Response::Plugin { plugin } = agent.install(FIRST_PARTY, "1.0.0").await.unwrap() else {
@@ -1004,17 +1075,95 @@ async fn first_party_plugins_need_the_root_authorization_and_a_verified_publishe
     assert_eq!(plugin.summary.version, "1.0.0");
     assert!(server.log().contains(&release), "{:?}", server.log());
     assert_eq!(agent.installed().await, vec![FIRST_PARTY.to_owned()]);
+    let log = server.log();
+    assert!(
+        !log.iter()
+            .any(|p| p.starts_with(&release) && p.ends_with(".minisig")),
+        "{log:?}"
+    );
 
-    // A plugin the agent bundles: never from a registry, authorized or not.
+    // An official plugin the agent bundles, without the publisher
+    // signatures: refused, nothing installed (the registry's authorization
+    // alone is not enough).
+    let refused = agent.install(BUNDLED, "1.0.0").await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(message_of(&refused).contains("minisig"), "{refused:?}");
+    assert!(
+        message_of(&refused).contains("0 signature file(s) found, 2 distinct key(s) required"),
+        "{refused:?}"
+    );
+    assert_eq!(agent.installed().await, vec![FIRST_PARTY.to_owned()]);
+    // Signed by one pinned key: below the threshold, refused.
+    registry.sign_release(BUNDLED, "1.0.0", "publisher.key");
+    let refused = agent.install(BUNDLED, "1.0.0").await;
+    assert!(
+        message_of(&refused).contains("1 signature file(s) found, 2 distinct key(s) required"),
+        "{refused:?}"
+    );
+    // Key A's signature copied under key C's name: two files, one key.
+    let bundled_release = Registry::release_path(BUNDLED, "1.0.0");
+    let on_disk = |path: &str| registry.work().join(path.trim_start_matches('/'));
+    std::fs::copy(
+        on_disk(&registry.signature_path(BUNDLED, "1.0.0", "publisher.key")),
+        on_disk(&registry.signature_path(BUNDLED, "1.0.0", "publisher-c.key")),
+    )
+    .unwrap();
     let refused = agent.install(BUNDLED, "1.0.0").await;
     assert_eq!(reason_of(&refused), reason::INVALID_PACKAGE, "{refused:?}");
-    assert!(message_of(&refused).contains("bundled"), "{refused:?}");
-    let bundled_release = Registry::release_path(BUNDLED, "1.0.0");
     assert!(
-        !server.log().contains(&bundled_release),
-        "{:?}",
-        server.log()
+        message_of(&refused).contains("1 valid signature(s) from distinct pinned publisher keys"),
+        "{refused:?}"
     );
+    assert!(
+        message_of(&refused).contains("is named for key"),
+        "{refused:?}"
+    );
+    std::fs::remove_file(on_disk(&registry.signature_path(
+        BUNDLED,
+        "1.0.0",
+        "publisher-c.key",
+    )))
+    .unwrap();
+    assert_eq!(agent.installed().await, vec![FIRST_PARTY.to_owned()]);
+    // Signed by a second pinned key: installed, from the registry, with
+    // the first-party rules.
+    registry.sign_release(BUNDLED, "1.0.0", "publisher-b.key");
+    let before_final = server.log().len();
+    let Response::Plugin { plugin } = agent.install(BUNDLED, "1.0.0").await.unwrap() else {
+        panic!("installed")
+    };
+    assert_eq!(plugin.summary.version, "1.0.0");
+    // Exactly one signature file fetched per pinned key id in the
+    // successful attempt, from the same base as the package; C's is missing
+    // (404), which the threshold of 2 tolerates. The old single name is
+    // never asked for.
+    let log = server.log();
+    let last_attempt = &log[before_final..];
+    for key in ["publisher.key", "publisher-b.key", "publisher-c.key"] {
+        let path = registry.signature_path(BUNDLED, "1.0.0", key);
+        assert_eq!(
+            last_attempt.iter().filter(|p| **p == path).count(),
+            1,
+            "{path}: {last_attempt:?}"
+        );
+    }
+    assert!(
+        !log.contains(&format!("{bundled_release}.minisig")),
+        "{log:?}"
+    );
+    let mut installed = agent.installed().await;
+    installed.sort();
+    assert_eq!(installed, vec![BUNDLED.to_owned(), FIRST_PARTY.to_owned()]);
+    let audit =
+        std::fs::read_to_string(env.paths.data_dir.join("plugin-official/audit.jsonl")).unwrap();
+    // One verified release (the official one; the community plugin is not
+    // the publisher's), hash-chained.
+    assert_eq!(audit.matches("\"verified\"").count(), 1, "{audit}");
+    assert!(!audit.contains(FIRST_PARTY), "{audit}");
+    // The unsigned attempts are audited too (the signatures were not found).
+    assert!(audit.contains("the publisher signatures"), "{audit}");
+    assert!(server.log().iter().any(|p| p.starts_with(&bundled_release)));
+    assert!(audit.contains("\"prev\":\"genesis\""), "{audit}");
 
     // Key set 3 withdraws the authorization: the update is refused before
     // any download, and the installed version stays.
@@ -1033,5 +1182,24 @@ async fn first_party_plugins_need_the_root_authorization_and_a_verified_publishe
     assert!(!server.log().contains(&update), "{:?}", server.log());
     assert_eq!(agent.state(FIRST_PARTY).await.0, "1.0.0");
     assert_eq!(agent.runtime().await.registry.unwrap().seq, Some(4));
+    agent.stop().await;
+
+    // The agent's record of the releases it verified is gone: at the next
+    // start its registry copies of official plugins are quarantined (fail
+    // closed), and enabling one is refused.
+    std::fs::remove_file(env.paths.data_dir.join("plugin-official/floors.json")).unwrap();
+    let agent = env.started(&registry, &server).await;
+    assert_eq!(agent.state(BUNDLED).await.1, PluginState::Quarantined);
+    // The community plugin is not governed by those records.
+    assert_ne!(agent.state(FIRST_PARTY).await.1, PluginState::Quarantined);
+    let refused = agent
+        .request(Request::EnablePlugin {
+            plugin: BUNDLED.into(),
+            consent: vec![],
+        })
+        .await;
+    // Not a revocation: nothing vouches for it (accurate reason).
+    assert_eq!(reason_of(&refused), reason::INVALID_PACKAGE, "{refused:?}");
+    assert!(message_of(&refused).contains("no record"), "{refused:?}");
     agent.stop().await;
 }

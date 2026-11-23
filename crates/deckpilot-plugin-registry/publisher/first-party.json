@@ -1,0 +1,10 @@
+{
+  "publisherKeysVersion": 1,
+  "publisher": "deckpilot",
+  "keys": [
+    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJEQ0RDODA5ODVFQjYwQjUKUldTMVlPdUZDY2pOdlk4L215RWFIeXV0VUNicFgwcjZSRWFnbUNOZkJkbXp4Skt3VVB3L010aEYK",
+    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhDM0M0RTQyNzAwRkE3MDIKUldRQ3B3OXdRazQ4akppaDkyc3QzYzZINEFyOGc3eXV0K0xkcnJhZzlxYkxaOHZqYXM1ZFRERDAK"
+  ],
+  "threshold": 2,
+  "revokedKeys": []
+}

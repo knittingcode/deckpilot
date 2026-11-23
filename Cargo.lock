@@ -781,9 +781,9 @@ dependencies = [
 
 [[package]]
 name = "cookie"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+checksum = "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a"
 dependencies = [
  "time",
  "version_check",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-agent"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "auto-launch",
  "base64 0.23.1",
@@ -1078,8 +1078,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckpilot-apps"
+version = "0.13.0"
+dependencies = [
+ "deckpilot-core",
+ "libc",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "plist",
+ "rustix",
+ "serde",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
+ "winreg",
+]
+
+[[package]]
 name = "deckpilot-core"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "deckpilot-device",
@@ -1093,10 +1111,11 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-desktop"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "deckpilot-agent",
+ "deckpilot-apps",
  "deckpilot-core",
  "deckpilot-device",
  "deckpilot-distribution",
@@ -1126,13 +1145,14 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-updater",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
 
 [[package]]
 name = "deckpilot-dev"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1154,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-device"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1163,11 +1183,11 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-distribution"
-version = "0.10.0"
+version = "0.13.0"
 
 [[package]]
 name = "deckpilot-hid"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-device",
  "elgato-streamdeck",
@@ -1177,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-ipc"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
  "deckpilot-device",
@@ -1196,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-keystore"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "apple-native-keyring-store",
  "getrandom 0.4.3",
@@ -1209,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-module-deck"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
  "getrandom 0.4.3",
@@ -1217,14 +1237,14 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-module-general"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
 ]
 
 [[package]]
 name = "deckpilot-module-http"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
  "deckpilot-net",
@@ -1234,23 +1254,25 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-module-notifications"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
 ]
 
 [[package]]
 name = "deckpilot-module-system"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
+ "deckpilot-apps",
  "deckpilot-core",
+ "serde_json",
  "sysinfo",
  "url",
 ]
 
 [[package]]
 name = "deckpilot-module-work-session"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "deckpilot-core",
@@ -1258,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-modules"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
  "deckpilot-device",
@@ -1274,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-net"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-core",
  "reqwest",
@@ -1304,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-plugin-bundled"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "core-foundation 0.10.1",
  "deckpilot-plugin-manifest",
@@ -1319,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-plugin-manifest"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-device",
  "jsonschema",
@@ -1333,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-plugin-package"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-plugin-manifest",
  "flate2",
@@ -1348,27 +1370,32 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-plugin-registry"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
  "deckpilot-plugin-manifest",
  "deckpilot-plugin-package",
+ "deckpilot-plugin-registry",
  "deckpilot-update",
+ "flate2",
+ "image",
  "jsonschema",
  "minisign",
  "minisign-verify",
  "semver",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
+ "unicode-normalization",
  "zeroize",
 ]
 
 [[package]]
 name = "deckpilot-plugin-store"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "deckpilot-plugin-manifest",
  "deckpilot-plugin-package",
@@ -1395,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-portability"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
@@ -1413,7 +1440,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-presence"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "block2",
  "objc2",
@@ -1427,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-render"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "ab_glyph_rasterizer",
  "deckpilot-core",
@@ -1439,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-storage"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -1458,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "deckpilot-update"
-version = "0.10.0"
+version = "0.13.0"
 dependencies = [
  "base64 0.23.1",
  "deckpilot-distribution",
@@ -1936,9 +1963,9 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -2703,11 +2730,22 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -3502,6 +3540,7 @@ checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.2",
  "block2",
+ "libc",
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
@@ -4215,6 +4254,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
 name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4480,9 +4525,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4edff0039f148731aee2fd80f76dbfeb12d204ab3d1c544838d34e02151049b"
+checksum = "f172c4812a19b26d1c23cdb0070e69db335503dfa378b910eb857386e5b8beba"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
@@ -6212,6 +6257,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "unicode-segmentation"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6235,9 +6289,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",

@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { ShieldQuestion } from "lucide-react"
 import { toast } from "sonner"
 
-import { ConfirmDialog } from "@/components/dialogs"
+import { AlertDialog, ConfirmDialog } from "@/components/dialogs"
 import { Loading } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import { i18n, useTranslation } from "@/i18n"
@@ -226,6 +226,16 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
   const scrolledTo = useRef<number | null>(null)
   const [review, setReview] = useState<ReviewRequest | null>(null)
   const [planReview, setPlanReview] = useState<InstallPlanRequest | null>(null)
+  /**
+   * An install the agent refused while planning it (before any consent
+   * dialog could open): shown as a dialog of its own, so the click on
+   * Install never ends in nothing.
+   */
+  const [installRefused, setInstallRefused] = useState<{
+    name: string
+    version: string
+    error: PluginErrorText
+  } | null>(null)
   const [removal, setRemoval] = useState<RemovalRequest | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState<Map<string, Progress>>(new Map())
@@ -582,10 +592,17 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
         })
       })
       .catch((error: unknown) => {
-        // The plan could not be made: nothing was installed.
+        // The plan could not be made: nothing was installed. The card
+        // keeps the failure; the dialog says why.
         const text = pluginErrorText(error)
         setFailureOf(plugin.id, { operation: "install", error: text })
-        toastError(text)
+        returnFocus.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null
+        setInstallRefused({
+          name: plugin.name,
+          version: version.version,
+          error: text,
+        })
       })
       .finally(() => {
         setBusy(null)
@@ -1028,6 +1045,30 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
             returnFocus.current?.focus()
           }}
         />
+      )}
+      {installRefused && (
+        <AlertDialog
+          open
+          tone="error"
+          title={t("marketplace:installRefused.title", {
+            name: installRefused.name,
+            version: installRefused.version,
+          })}
+          description={installRefused.error.title}
+          onClose={() => {
+            setInstallRefused(null)
+            returnFocus.current?.focus()
+          }}
+        >
+          {installRefused.error.message !== installRefused.error.title && (
+            <p role="alert" className="text-sm break-words select-text">
+              {installRefused.error.message}
+            </p>
+          )}
+          {installRefused.error.hint && (
+            <p className="text-sm text-muted-foreground">{installRefused.error.hint}</p>
+          )}
+        </AlertDialog>
       )}
       {removal && (
         <RemovalDialog

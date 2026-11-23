@@ -87,10 +87,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           tools/ci/install-linux-deps.sh
-          # WebKitWebDriver and a virtual display for the UI test.
+          # WebKitWebDriver and a virtual display for the UI test;
+          # python3-xlib for closing the main window (tools/ci/close-window.py).
           # Ubuntu 26.04 renamed webkit2gtk-driver to webkitgtk-webdriver.
-          timeout 600 sudo apt-get install -y webkitgtk-webdriver xvfb ||
-            timeout 600 sudo apt-get install -y webkit2gtk-driver xvfb
+          # gnome-keyring: the key store of the app's first launch there.
+          timeout 600 sudo apt-get install -y webkitgtk-webdriver xvfb python3-xlib gnome-keyring dbus ||
+            timeout 600 sudo apt-get install -y webkit2gtk-driver xvfb python3-xlib gnome-keyring dbus
           driver=$(command -v WebKitWebDriver || dpkg -L webkitgtk-webdriver webkit2gtk-driver 2>/dev/null | grep -m1 '/WebKitWebDriver$')
           echo "WebKitWebDriver: $driver"
           test -x "$driver"
@@ -128,8 +130,15 @@ jobs:
         run: |
           cargo build --locked -p deckpilot-plugin-host --bin deckpilot-plugin-host
           cargo build --locked -p hello-weather --target wasm32-unknown-unknown --profile guest
-          # The default-class first-party plugins a fresh install seeds.
-          cargo build --locked -p deckpilot-notifications -p deckpilot-workflows --target wasm32-unknown-unknown --profile guest
+      # The default-class first-party plugins a fresh install seeds: their
+      # signed release artifacts, verified with the pinned publisher keys
+      # (never --keys) and unpacked, as a release bundles them.
+      - name: Stage the bundled plugins from their release artifacts
+        run: |
+          exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
+          cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckpilot-registry
+          plugins/first-party/build.sh --out "$RUNNER_TEMP/official" --artifacts-dir "$RUNNER_TEMP/official-artifacts" \
+            --registry-tool "target/debug/deckpilot-registry$exe"
       # Copied out of target/: building the tests below replaces
       # target/debug/deckpilot-desktop with a build that expects the dev
       # server.
@@ -142,14 +151,13 @@ jobs:
           mkdir -p "$E2E/bin" "$E2E/wasm" "$E2E/artifacts"
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           cp "target/debug/deckpilot-agent$exe" "$E2E/bin/"
-          for wasm in hello_weather deckpilot_notifications deckpilot_workflows; do
-            cp "plugins/runtime/target/wasm32-unknown-unknown/guest/$wasm.wasm" "$E2E/wasm/"
-          done
+          cp plugins/runtime/target/wasm32-unknown-unknown/guest/hello_weather.wasm "$E2E/wasm/"
           {
             echo "DECKPILOT_E2E_AGENT_BIN=$E2E/bin/deckpilot-agent$exe"
             echo "DECKPILOT_E2E_PLUGIN_HOST=$(native "$PWD")/plugins/runtime/target/debug/deckpilot-plugin-host$exe"
             echo "DECKPILOT_E2E_WASM_DIR=$E2E/wasm"
             echo "DECKPILOT_E2E_ARTIFACTS=$E2E/artifacts"
+            echo "DECKPILOT_E2E_OFFICIAL_PLUGINS=$(native "$RUNNER_TEMP")/official/bundled"
           } >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -170,6 +178,14 @@ jobs:
           exe=""; if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           cp "target/debug/deckpilot-desktop$exe" "$E2E/app/"
           echo "DECKPILOT_E2E_APP=$E2E/app/deckpilot-desktop$exe" >> "$GITHUB_ENV"
+      # The title bar's close button on this build: the main window closes
+      # and ends the app (tests/main_window_close.rs).
+      - name: Closing the main window (Linux)
+        if: matrix.gui && runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1440x900x24" tools/ci/with-keyring.sh cargo test --locked -p deckpilot-desktop --test main_window_close -- --ignored --nocapture
+      - name: Closing the main window (Windows)
+        if: matrix.gui && runner.os == 'Windows'
+        run: cargo test --locked -p deckpilot-desktop --test main_window_close -- --ignored --nocapture
       - name: Install tauri-driver
         if: matrix.gui
         run: |

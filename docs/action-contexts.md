@@ -12,10 +12,16 @@ stops working:
 
 - Saving a layout or a workflow **reports** a use outside its action's
   contexts and **refuses nothing**.
-- Running one **logs a warning** the first time and **still runs**.
+- Running one **logs a warning** (see "Running" below for when) and **still runs**.
 - Nothing stored is removed, converted or rewritten.
 
 Contexts are not permissions and not a security boundary.
+
+Contexts belong to action types. A key or gesture that starts a workflow
+(`BindingTarget::Workflow`) is not an action type and has no contexts: it
+goes on any key primary, dial or touch trigger and on gestures. What a
+save refuses and how a run is re-checked for workflow targets is in
+[data-model.md](data-model.md#workflows-on-keys).
 
 ## The five contexts
 
@@ -61,7 +67,7 @@ Every built-in action type declares its contexts. The contract test
 | `deck.next-page`, `deck.previous-page`, `deck.switch-profile`, `deck.brightness`, `deck.random`, `deck.switch-layout`, `deck.previous-layout` | key, gesture | A deck request is applied only for a key or a gesture. In any workflow it fails with `not-from-a-key` |
 | `deck.multi-switch` | key, gesture, display | As above. Its face shows the current state |
 | `deck.page-indicator` | display | Its face shows the page; its press does nothing |
-| `system.open-app`, `system.open-url`, `system.open-file`, `system.open-directory`, `system.run-command`, `http.request`, `notifications.show` | key, gesture, sequence, workflow | General purpose |
+| `system.open-app`, `system.open-url`, `system.open-file`, `system.open-directory`, `system.close-app`, `system.run-command`, `http.request`, `notifications.show` | key, gesture, sequence, workflow | General purpose. `system.close-app` also refuses runs the user did not start ([system-actions.md](system-actions.md#4-contexts-run-origins-and-permissions)) |
 | `system.process-status`, `http.health-check` | sequence, workflow | Queries: the result drives a step condition or later nodes |
 | `system.cpu`, `system.memory`, `system.network`, `system.disk` | display, workflow | A live reading on a key, or a value for a workflow |
 | `notifications.workflow-summary` | workflow | Only a graph run has a summary |
@@ -121,6 +127,14 @@ report each use outside its action's contexts as a `ContextIssue`:
 The `stored` flag is there for a future policy that refuses new
 incompatible uses while keeping stored ones. No such policy exists yet.
 
+Converting a Multi Action to a graph changes how its uses are compared.
+Before the conversion they are steps; afterwards they are nodes, matched
+by node id against a saved graph. The first save of the converted
+workflow has no saved graph to match, so every node is reported with
+`stored: false`, even when the same action was a stored step. This only
+matters for a future refusal policy, which would have to treat a
+conversion as keeping its stored uses.
+
 `save_layout` and `save_workflow` return these as `contextIssues`, which is
 left out when empty. They are not part of a layout's `incompatible` list,
 because those bindings are kept but not run, while these still run.
@@ -134,7 +148,7 @@ The following get no verdict, and the existing unavailable path applies:
 A graph workflow's `steps` are kept only for reference, so they are not
 checked as steps.
 
-## Running: warn once, then run
+## Running: warn, then run
 
 Every action run passes through `Engine::execute_with_outputs`, which
 checks the use's `Invocation.context`. The context is set as follows:
@@ -148,10 +162,23 @@ checks the use's `Invocation.context`. The context is set as follows:
 | A graph workflow's action nodes | `workflow` |
 | The app (Run, `runAction`), a plugin's Test run | none: not checked |
 
-A use outside the type's contexts **still runs**. The first run of each
-binding, step or node since the configuration was loaded is reported to
-the engine's `ContextWarnings` sink, and the agent logs it as a warning.
-Uses are told apart by action instance, context and workflow.
+A use outside the type's contexts **still runs**. The engine reports it to
+its `ContextWarnings` sink, and the agent logs it as a warning, the first
+time a given combination of **context, workflow and action instance**
+runs. The workflow is `None` for keys and gestures. This key is coarser
+than a single binding, step or node:
+
+- Two keys bound to the same action instance in the same context (for
+  example two presses) share one warning.
+- Two steps of one Multi Action that use the same instance share one
+  warning, and so do two nodes of one graph.
+- The same instance on a key, on a gesture and in each workflow is
+  warned about separately.
+
+The set of uses already reported belongs to the engine, and the agent
+builds a new engine whenever it reloads the configuration, for example
+after every save in the app. So the warning comes again once after each
+reload. That is accepted for now: it only adds log lines.
 
 A deck action in a workflow still fails exactly as before, with
 `not-from-a-key`.

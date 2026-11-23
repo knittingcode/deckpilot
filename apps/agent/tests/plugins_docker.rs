@@ -47,8 +47,6 @@ use first_party::{Env, FirstParty};
 
 const PLUGIN: FirstParty = FirstParty {
     id: "deckpilot.docker",
-    dir: "docker",
-    krate: "deckpilot-docker",
     released: "migration",
 };
 

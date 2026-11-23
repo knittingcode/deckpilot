@@ -1,17 +1,21 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use deckpilot_core::variables::{
+    DisplayTemplates, DisplayText, ProjectSource, ResolutionContext, ResolvedTemplates, TextKey,
+};
 use deckpilot_core::{
     ActiveProjectContext, DeviceLayout, KeyFace, LayoutId, LayoutIssue, PageDestination, PageId,
-    ProfileId, ProjectId, page_faces,
+    ProfileId, ProjectId, WorkflowBindingIssue, core_display, page_faces_scoped,
 };
 use deckpilot_device::{ControlId, DeviceModelId};
+use deckpilot_ipc::display_templates::{MAX_DISPLAY_TEMPLATES, ResolvedDisplayTemplate};
 use deckpilot_storage::ConfigStore;
 
 use super::reload::Saved;
 use super::{modify_profile, modify_profile_and_reload};
 use crate::error::{CommandError, CommandResult};
-use crate::state::{AppState, load_profile};
+use crate::state::{AppState, WORKFLOWS_PLUGIN, load_profile};
 
 /// Creates a layout for `model`, empty or generated from the profile's
 /// actions. It becomes the active layout if the model has none yet.
@@ -93,11 +97,20 @@ pub async fn save_layout(
     // (one that differs is kept as recovered, as migration 13 keeps it).
     layout.normalize_folder_labels();
     let registry = state.actions();
+    let graphs_off = state.require_feature(WORKFLOWS_PLUGIN).is_err();
     modify_profile_and_reload(&state, profile_id, |profile| {
         let stored = profile.layouts.iter().find(|l| l.id == layout.id);
         let (issues, kept) = check_for_save(&layout, stored, &state.catalog, &registry, profile);
         if !issues.is_empty() {
             return Err(refusal(&issues));
+        }
+        // New keys never start another profile's or a deleted workflow, a
+        // graph workflow while the Workflows plugin is off, or one that
+        // needs inputs; stored ones are kept and reported.
+        let workflow_issues =
+            layout.workflow_binding_issues(stored, profile, &registry, graphs_off);
+        if let Some(refused) = workflow_issues.iter().find(|issue| !issue.stored) {
+            return Err(workflow_refusal(refused));
         }
         // Reported, never refused (`docs/action-contexts.md`).
         let context_issues = layout.context_issues_for_save(stored, &registry, profile);
@@ -121,6 +134,7 @@ pub async fn save_layout(
             incompatible: kept.iter().map(ToString::to_string).collect(),
             context_issues,
             incomplete,
+            workflow_issues,
         })
     })
     .await
@@ -190,6 +204,27 @@ fn refusal(issues: &[LayoutIssue]) -> CommandError {
     )
 }
 
+/// The refusal of a new binding that starts a workflow it may not
+/// (`invalid.workflowNotInProfile`, `invalid.pluginFeatureOff`,
+/// `invalid.workflowNeedsInputs`), with the key's number as the editor
+/// shows it and the page.
+fn workflow_refusal(issue: &WorkflowBindingIssue) -> CommandError {
+    let key = match issue.control {
+        ControlId::Key { index } => u32::from(index) + 1,
+        _ => 0,
+    };
+    CommandError::invalid_with(
+        issue.reason.code(),
+        issue.to_string(),
+        [
+            ("key", key.into()),
+            ("page", issue.page_name.clone().into()),
+            ("workflow", issue.workflow.to_string().into()),
+            ("feature", "Workflows".into()),
+        ],
+    )
+}
+
 /// A saved layout, with the bindings it keeps that cannot run their
 /// action from their control. Serialized as the layout with an
 /// `incompatible` field (left out when empty), so the frontend reads it as
@@ -214,6 +249,12 @@ pub struct SavedLayout {
     /// Left out when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     incomplete: Vec<deckpilot_core::IncompleteUse>,
+    /// Stored bindings that start a workflow this profile may not start
+    /// from a key (another profile's or a deleted one, a graph workflow
+    /// while the Workflows plugin is off, one that needs inputs): kept and
+    /// not run. Left out when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    workflow_issues: Vec<WorkflowBindingIssue>,
 }
 
 /// What saving `layout` over `stored` (the saved version of the same
@@ -330,6 +371,11 @@ pub struct ControlFace {
     /// Left out for controls that do not navigate.
     #[serde(skip_serializing_if = "Option::is_none")]
     navigation: Option<deckpilot_core::ControlNavigation>,
+    /// The key's title template as the agent resolved it (the same
+    /// function as on the device), with what is unresolved: for keys whose
+    /// title has placeholders, while an agent of protocol 17 answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title_display: Option<ResolvedDisplayTemplate>,
 }
 
 /// How a key's title comes out on the device ([`deckpilot_render::TextReport`]).
@@ -474,8 +520,79 @@ struct PageFaces {
     incompatible: Vec<deckpilot_core::IncompatibleBinding>,
     /// What each control that navigates does to the view.
     navigation: Vec<(ControlId, deckpilot_core::ControlNavigation)>,
+    /// Every title template the faces resolved, by control.
+    titles: Vec<(ControlId, String, DisplayText)>,
 }
 
+/// Records the template and the text of every title resolved by `inner`.
+struct Collect<'a> {
+    inner: &'a dyn DisplayTemplates,
+    seen: std::cell::RefCell<Vec<(ControlId, String, DisplayText)>>,
+}
+
+impl DisplayTemplates for Collect<'_> {
+    fn display(&self, key: &TextKey, template: &str) -> DisplayText {
+        let text = self.inner.display(key, template);
+        self.seen
+            .borrow_mut()
+            .push((key.control, template.to_owned(), text.clone()));
+        text
+    }
+}
+
+/// The faces of a page with its titles resolved by the agent
+/// (`resolveDisplayTemplates`, the function the device uses), so the
+/// preview shows what the device shows. Without an agent that answers,
+/// titles show what the core resolves alone ([`core_display`]: the older
+/// placeholders, the profile and the project).
+async fn resolved_preview(
+    state: &AppState,
+    profile_id: ProfileId,
+    layout: &DeviceLayout,
+    page_id: PageId,
+    project_id: Option<ProjectId>,
+    live: Option<&LivePreview>,
+) -> CommandResult<(PageFaces, bool)> {
+    let first = page_preview(state, profile_id, layout, page_id, project_id, live, None)?;
+    let mut templates: Vec<String> = Vec::new();
+    for (_, template, _) in &first.titles {
+        if template.contains('{') && !templates.contains(template) {
+            templates.push(template.clone());
+        }
+    }
+    templates.truncate(MAX_DISPLAY_TEMPLATES);
+    if templates.is_empty() {
+        return Ok((first, false));
+    }
+    let context = ResolutionContext::preview(profile_id).with_project(
+        project_id,
+        if project_id.is_some() {
+            ProjectSource::Explicit
+        } else {
+            ProjectSource::Application
+        },
+    );
+    let Ok(answers) = super::variables::resolve_templates(&state.paths, context, templates).await
+    else {
+        return Ok((first, false));
+    };
+    let resolved: std::collections::BTreeMap<String, DisplayText> = answers
+        .into_iter()
+        .map(|answer| (answer.template, answer.display))
+        .collect();
+    let second = page_preview(
+        state,
+        profile_id,
+        layout,
+        page_id,
+        project_id,
+        live,
+        Some(&resolved),
+    )?;
+    Ok((second, true))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn page_preview(
     state: &AppState,
     profile_id: ProfileId,
@@ -483,6 +600,7 @@ fn page_preview(
     page_id: PageId,
     project_id: Option<ProjectId>,
     live: Option<&LivePreview>,
+    resolved: Option<&std::collections::BTreeMap<String, DisplayText>>,
 ) -> CommandResult<PageFaces> {
     let store = state.store()?;
     let profile = load_profile(&store, profile_id)?;
@@ -500,30 +618,54 @@ fn page_preview(
         .into_iter()
         .filter(|found| found.page == page_id)
         .collect();
-    let faces = page_faces(
-        &actions,
-        layout,
-        page_id,
-        &profile,
-        project,
-        &controls,
-        Some(&model.capabilities),
-    )
-    .into_iter()
-    .map(|(control, face)| {
-        let face = match live {
-            Some(live) => {
-                let action = layout
-                    .page(page_id)
-                    .and_then(|page| deckpilot_core::device_runtime::shown_binding(page, control))
-                    .and_then(|binding| binding.target.action_id());
-                with_live_state(face, action, live)
-            }
-            None => face,
+    // As the device shows it: a deleted workflow as missing, another
+    // profile's as not in this profile, graph workflows while the
+    // Workflows plugin is off as off.
+    let scope = deckpilot_core::WorkflowScope {
+        foreign: state.workflows_sharing_layouts(&store, &profile).ok(),
+        graphs_off: state.require_feature(WORKFLOWS_PLUGIN).is_err(),
+    };
+    let empty = std::collections::BTreeMap::new();
+    let (faces, titles) = core_display(&profile, project, |core| {
+        let agent = ResolvedTemplates {
+            resolved: resolved.unwrap_or(&empty),
+            fallback: core,
         };
-        (control, face)
-    })
-    .collect();
+        let collect = Collect {
+            inner: &agent,
+            seen: std::cell::RefCell::default(),
+        };
+        let faces = page_faces_scoped(
+            &actions,
+            layout,
+            page_id,
+            &profile,
+            project,
+            &controls,
+            Some(&model.capabilities),
+            &collect,
+            &scope,
+        );
+        (faces, collect.seen.into_inner())
+    });
+    let faces = faces
+        .into_iter()
+        .map(|(control, face)| {
+            let face = match live {
+                Some(live) => {
+                    let action = layout
+                        .page(page_id)
+                        .and_then(|page| {
+                            deckpilot_core::device_runtime::shown_binding(page, control)
+                        })
+                        .and_then(|binding| binding.target.action_id());
+                    with_live_state(face, action, live)
+                }
+                None => face,
+            };
+            (control, face)
+        })
+        .collect();
     let display = deckpilot_core::editor_navigation::display_controls(&model.capabilities);
     let navigation = controls
         .iter()
@@ -536,6 +678,7 @@ fn page_preview(
         .collect();
     Ok(PageFaces {
         navigation,
+        titles,
         faces,
         capabilities: model.capabilities.clone(),
         look: model.effective_appearance(),
@@ -558,7 +701,7 @@ fn page_preview(
 /// [`preview_marquee`] has its frames.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri passes each argument by name.
-pub fn preview_layout(
+pub async fn preview_layout(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     layout: DeviceLayout,
@@ -569,14 +712,15 @@ pub fn preview_layout(
     key_pixels: Option<u32>,
     folder_countdown: Option<deckpilot_core::FolderCountdown>,
 ) -> CommandResult<Vec<ControlFace>> {
-    let preview = page_preview(
+    let (preview, by_agent) = resolved_preview(
         &state,
         profile_id,
         &layout,
         page_id,
         project_id,
         live.as_ref(),
-    )?;
+    )
+    .await?;
     let capabilities = &preview.capabilities;
     let icons = render
         .unwrap_or(false)
@@ -622,6 +766,15 @@ pub fn preview_layout(
                     .iter()
                     .find(|(c, _)| *c == control)
                     .map(|(_, navigation)| navigation.clone()),
+                title_display: preview
+                    .titles
+                    .iter()
+                    .rev()
+                    .find(|(c, template, _)| by_agent && *c == control && template.contains('{'))
+                    .map(|(_, template, display)| ResolvedDisplayTemplate {
+                        template: template.clone(),
+                        display: display.clone(),
+                    }),
             }
         })
         .collect())
@@ -660,7 +813,7 @@ pub struct MarqueePreview {
     clippy::cast_precision_loss,
     reason = "key sizes and offsets are a few hundred pixels"
 )]
-pub fn preview_marquee(
+pub async fn preview_marquee(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     layout: DeviceLayout,
@@ -670,14 +823,15 @@ pub fn preview_marquee(
     live: Option<LivePreview>,
     key_pixels: Option<u32>,
 ) -> CommandResult<Option<MarqueePreview>> {
-    let preview = page_preview(
+    let (preview, _) = resolved_preview(
         &state,
         profile_id,
         &layout,
         page_id,
         project_id,
         live.as_ref(),
-    )?;
+    )
+    .await?;
     let Some((_, face)) = preview.faces.iter().find(|(c, _)| *c == control) else {
         return Ok(None);
     };
@@ -943,6 +1097,56 @@ mod tests {
         (profile, registry)
     }
 
+    /// A new key that starts another profile's (or a deleted) workflow is
+    /// refused with a stable code and the key's number; one stored like
+    /// that is kept and reported in `workflowIssues`.
+    #[test]
+    fn new_keys_never_start_another_profiles_workflow() {
+        let (profile, registry) = stored();
+        let foreign = deckpilot_core::WorkflowId::new();
+        let mut saved = profile.layouts[0].clone();
+        saved.pages[0].bindings.push(ControlBinding::new(
+            ControlId::Key { index: 1 },
+            Trigger::Press,
+            BindingTarget::Workflow { workflow: foreign },
+        ));
+        // A duplicate of the stored key is no new reference; a key to a
+        // workflow the layout did not start is.
+        let mut edited = saved.clone();
+        edited.pages[0].bindings.push(ControlBinding::new(
+            ControlId::Key { index: 4 },
+            Trigger::Press,
+            BindingTarget::Workflow { workflow: foreign },
+        ));
+        edited.pages[0].bindings.push(ControlBinding::new(
+            ControlId::Key { index: 2 },
+            Trigger::Press,
+            BindingTarget::Workflow {
+                workflow: deckpilot_core::WorkflowId::new(),
+            },
+        ));
+        let issues = edited.workflow_binding_issues(Some(&saved), &profile, &registry, false);
+        let refused = issues.iter().find(|issue| !issue.stored).unwrap();
+        let error = serde_json::to_value(workflow_refusal(refused)).unwrap();
+        assert_eq!(error["code"], "invalid.workflowNotInProfile");
+        assert_eq!(error["params"]["key"], 3);
+        let kept: Vec<&WorkflowBindingIssue> = issues.iter().filter(|i| i.stored).collect();
+        assert_eq!(kept.len(), 2);
+        let reported = serde_json::to_value(SavedLayout {
+            layout: saved,
+            incompatible: Vec::new(),
+            context_issues: Vec::new(),
+            incomplete: Vec::new(),
+            workflow_issues: kept.into_iter().cloned().collect(),
+        })
+        .unwrap();
+        assert_eq!(
+            reported["workflowIssues"][0]["reason"],
+            "workflowNotInProfile"
+        );
+        assert_eq!(reported["workflowIssues"][0]["stored"], true);
+    }
+
     #[test]
     fn a_stored_incompatible_binding_is_kept_and_a_new_one_refused() {
         let (profile, registry) = stored();
@@ -1122,6 +1326,7 @@ mod tests {
             incompatible: Vec::new(),
             context_issues: Vec::new(),
             incomplete: Vec::new(),
+            workflow_issues: Vec::new(),
         })
         .unwrap();
         assert_eq!(saved, plain);
@@ -1131,6 +1336,7 @@ mod tests {
             incompatible: vec!["why".into()],
             context_issues,
             incomplete: Vec::new(),
+            workflow_issues: Vec::new(),
         })
         .unwrap();
         assert_eq!(reported["incompatible"], serde_json::json!(["why"]));

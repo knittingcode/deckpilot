@@ -120,7 +120,33 @@ in any environment: no `deckpilot-registry` signing or publishing command,
 no registry secret, no `registry-*` environment, and never with the
 application's signing secrets or the `production-release` environment.
 This repository's CI only *tests* the registry tooling, with throwaway keys
-made inside the tests.
+made inside the tests. The same holds for the first-party publisher
+signature of release artifacts ([publisher-signature.md](publisher-signature.md)):
+this repository only *verifies* it (against the public keys pinned in
+`crates/deckpilot-plugin-registry/publisher/first-party.json`: two
+production keys, threshold 2);
+`release sign` runs only in `knittingcode/deckpilot-plugins`' release
+environment.
+The application build verifies it when a bundled plugin is taken from its
+release artifact instead of its source here (`"source": "artifact"` in
+`plugins/first-party/bundled.json`, locked by `plugins/first-party/artifacts.json`;
+none is yet): `plugins/first-party/build.sh` downloads the package and one
+signature file per locked key id from the release's immutable URL (or
+takes them from a pre-downloaded `--artifacts-dir`, `--offline`), checks
+size and sha256 against the lock, runs `deckpilot-registry release
+verify` with the pinned keys, `released-pins.json` and the lock's
+revocations, and unpacks the files into `bundled/<id>/`, where they are
+pinned and shipped inside the installers like every bundled plugin. The
+package and its signatures never become release assets of this repository
+or part of the bundle
+([publisher-signature.md](publisher-signature.md#wave-b-consuming-an-artifact),
+which also lists the per-plugin activation steps).
+The agent verifies it too, at run time, before it installs or updates any
+`deckpilot.*` package a registry delivers (both signatures are needed: the
+registry's for the listing and the pins, the publisher's for the release),
+and keeps a rollback floor, run-time revocations and an audit log of its
+own ([publisher-signature.md](publisher-signature.md#the-agent-installing-and-updating-official-plugins)).
+Without a pinned publisher key every such package is refused.
 
 ## `knittingcode/deckpilot-plugins`: the registry and the packages
 
@@ -134,6 +160,17 @@ made inside the tests.
 - **GitHub Releases** of that repository hold the signed plugin packages
   (`<id>-<version>.dpplugin`), pinned by sha256 and size in the signed
   index; one release per plugin version.
+- **The plugins DeckPilot bundles** are released there too (`official/`,
+  signed by the first-party publisher keys, threshold 2;
+  [publisher-signature.md](publisher-signature.md)) and reach users inside
+  the application: an application build verifies and stages each release
+  artifact as a bundled plugin. The five that use plugin API 1.9's
+  privileged kinds (Docker, Git, Projects, Workflows, Workspace) are
+  distributed **only** that way, never through the registry, and only at
+  exactly the version and privileges the reviewed privileged policy lists
+  ([publisher-signature.md](publisher-signature.md#privileged-plugins-the-reviewed-privileged-policy));
+  the independent review opened the gate for that policy on 2026-11-21,
+  and every bundled plugin has come from its signed release since.
 - Its workflows sign only in its own environments, with its own keys:
   `publish.yml` signs the index and the timestamp in `registry-release`
   (release tags `*--v*`), and `refresh-timestamp.yml` re-signs the
@@ -187,8 +224,11 @@ job `gate`) on every pull request that touches a workflow or
   refused. Tests: `tools/release-pipeline/test-publication.sh`.
 - `tools/release-pipeline/check-release-separation.py`: no workflow
   publishes plugin packages or registry metadata, runs a registry signing
-  or publishing command, signs a plugin package, or uses a registry secret
-  or environment, and none mixes them with the application's signing
+  or publishing command (including `release sign`; `release verify` only
+  reads), signs a plugin package, or uses a registry or publisher secret
+  (`REGISTRY_*`, `DECKPILOT_PUBLISHER_*`, as `secrets.X` or `secrets['X']`,
+  or the whole context with `toJSON(secrets)`) or environment
+  (`registry-*`, `official-release`), and none mixes them with the application's signing
   secrets or `production-release`. Tests:
   `tools/release-pipeline/test-release-separation.sh` with the fixtures in
   `tools/release-pipeline/fixtures/release-separation/`.

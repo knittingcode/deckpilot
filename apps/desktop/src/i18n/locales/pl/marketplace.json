@@ -560,5 +560,8 @@
     "lightboxHint": "Strzałki w lewo i w prawo pokazują pozostałe zrzuty; Escape zamyka.",
     "changelog": "Lista zmian",
     "fullLink": "Ta wtyczka nie pochodzi od DeckPilot: jej linki są pokazane w całości. Sprawdź, dokąd prowadzi link, zanim go otworzysz."
+  },
+  "installRefused": {
+    "title": "Nie można zainstalować: {{name}} {{version}}"
   }
 }

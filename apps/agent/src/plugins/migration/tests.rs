@@ -722,6 +722,39 @@ fn derived_grants_are_never_high_tier_and_never_overwrite() {
     );
 }
 
+/// A newer copy from a registry (an official release, `deckpilot.*`) is
+/// used by the migration as it is, but gets no derived grant: the low and
+/// medium tiers wait for the user's consent like everything else.
+#[test]
+fn a_registry_copy_gets_no_derived_grants() {
+    let env = Env::new();
+    let newer = env.bundle_with("0.2.0", |_| {});
+    let package = bundled::verified(&newer, &newer.pins.plugins[0]).unwrap();
+    let mut manager = env.open();
+    manager
+        .install(
+            &package,
+            &InstallSource::Registry {
+                registry: "https://registry.example/".into(),
+            },
+            &Consent::of(Vec::new(), "user"),
+        )
+        .unwrap();
+    let bundle = env.bundle();
+    start(&mut manager, &bundle, &env.snapshot());
+    let plugin = manager.store().plugin(&plugin_id()).unwrap().unwrap();
+    assert!(matches!(plugin.source, InstallSource::Registry { .. }));
+    assert_eq!(grants(manager.store()), []);
+    assert!(
+        manager
+            .store()
+            .grants(&plugin_id())
+            .unwrap()
+            .iter()
+            .all(|g| g.source != GrantSource::Derived)
+    );
+}
+
 #[test]
 fn the_snapshot_reads_nothing_without_aliases() {
     let env = Env::new();
@@ -1761,7 +1794,8 @@ fn the_gitlab_and_jira_plans_take_a_server_the_user_entered() {
 
 /// The modules extracted on 2026-11-20 (`git`, `docker`, `workspace`,
 /// `projects`) against their shipped plans, aliases and the real
-/// manifests of `plugins/first-party/<module>` (a minimal ABI module stands
+/// files of their releases (`plugins/first-party/contracts/deckpilot.<module>`:
+/// the manifest, license, icons and locales; a minimal ABI module stands
 /// in for each `plugin.wasm`; `tests/plugins_cutover.rs` runs the real
 /// Git plugin end to end).
 mod extraction {
@@ -1774,10 +1808,13 @@ mod extraction {
         PluginId::parse(&format!("deckpilot.{module}")).unwrap()
     }
 
+    /// What the release of `deckpilot.<module>` ships but its module
+    /// (`plugins/first-party/contracts/`, checked against the verified
+    /// release artifact by the agent's end-to-end tests).
     fn source(module: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../plugins/first-party")
-            .join(module)
+            .join("../../plugins/first-party/contracts")
+            .join(format!("deckpilot.{module}"))
     }
 
     /// A configuration store and the application resources.
@@ -1846,6 +1883,12 @@ mod extraction {
 
         /// [`Shipped::bundle`] with the plugins of `modules`.
         fn bundle_of(&self, modules: &[&str]) -> Bundle {
+            self.bundle_edited(modules, &|_, _| {})
+        }
+
+        /// [`Shipped::bundle_of`] with each manifest changed by `edit`
+        /// (module, manifest) first: an older or a later bundled version.
+        fn bundle_edited(&self, modules: &[&str], edit: &dyn Fn(&str, &mut Value)) -> Bundle {
             let bundled = self.root.path().join("resources").join(BUNDLED_DIR);
             let mut pinned = Vec::new();
             for &module in modules {
@@ -1858,7 +1901,10 @@ mod extraction {
                     &std::fs::read(source(module).join("manifest.json")).unwrap(),
                 )
                 .unwrap();
-                let mut files = vec!["manifest.json".to_owned(), "LICENSE".to_owned()];
+                let mut edited = manifest.clone();
+                edit(module, &mut edited);
+                let manifest = edited.clone();
+                let mut files = vec!["LICENSE".to_owned()];
                 files.extend(
                     manifest["icons"]
                         .as_object()
@@ -1875,6 +1921,23 @@ mod extraction {
                 );
                 for file in files {
                     std::fs::copy(source(module).join(&file), dir.join(&file)).unwrap();
+                }
+                let original: Value = serde_json::from_slice(
+                    &std::fs::read(source(module).join("manifest.json")).unwrap(),
+                )
+                .unwrap();
+                if edited == original {
+                    std::fs::copy(
+                        source(module).join("manifest.json"),
+                        dir.join("manifest.json"),
+                    )
+                    .unwrap();
+                } else {
+                    std::fs::write(
+                        dir.join("manifest.json"),
+                        serde_json::to_vec_pretty(&edited).unwrap(),
+                    )
+                    .unwrap();
                 }
                 let version = manifest["version"].as_str().unwrap();
                 std::fs::write(
@@ -2399,6 +2462,333 @@ mod extraction {
         cut_over_with(&snapshot, &env);
     }
 
+    /// The modules whose high tier waits for the user (Git, Docker,
+    /// Projects) and the key each waits for.
+    const WAITING: [(&str, &str); 3] = [
+        ("git", "tools:git"),
+        ("docker", "tools:docker"),
+        ("projects", "projectContext:select"),
+    ];
+
+    /// A configuration that uses Git, Docker and Projects.
+    fn git_docker_projects() -> Shipped {
+        let mut env = Shipped::new();
+        env.save("git", &[("gitExecutable", text("/opt/git/bin/git"))]);
+        env.save(
+            "docker",
+            &[("dockerExecutable", text("/usr/local/bin/docker"))],
+        );
+        env.profile.projects.push(deckpilot_core::Project::new(
+            deckpilot_core::ProjectKey::new("SHOP").unwrap(),
+            "Shop",
+        ));
+        env.uses("Status", "git.status", &[]);
+        env
+    }
+
+    /// The bundle of 0.10.0 and 0.11.0: version 0.1.0 of each plugin, which
+    /// both releases shipped with the same files and the same permissions
+    /// as the released artifacts (only the version and the repository
+    /// differ, `plugins/first-party/released-pins.json`).
+    fn shipped_0_1_0(env: &Shipped) -> Bundle {
+        env.bundle_edited(&MODULES, &|_, manifest| {
+            manifest["version"] = "0.1.0".into();
+        })
+    }
+
+    fn active(manager: &PluginManager, module: &str) -> String {
+        manager
+            .store()
+            .plugin(&plugin(module))
+            .unwrap()
+            .unwrap()
+            .active()
+            .unwrap()
+            .version
+            .to_string()
+    }
+
+    fn staged(manager: &PluginManager, module: &str) -> Option<String> {
+        manager
+            .store()
+            .plugin(&plugin(module))
+            .unwrap()
+            .unwrap()
+            .staged()
+            .map(|v| v.version.to_string())
+    }
+
+    fn released(module: &str) -> String {
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(source(module).join("manifest.json")).unwrap())
+                .unwrap();
+        manifest["version"].as_str().unwrap().to_owned()
+    }
+
+    /// An installation of 0.10.0 or 0.11.0 whose Git, Docker and Projects
+    /// migrations still wait for the user's consent upgrades to the app
+    /// that bundles the released artifacts: each copy moves to the
+    /// released version at the start (same declared permissions: nothing
+    /// granted, every grant kept), keeps waiting for the same consent, and
+    /// the user's consent then cuts it over to the pinned version. Before
+    /// this, the update was staged and the consent failed the health check
+    /// ("this agent pins no bundled deckpilot.git 0.1.0").
+    #[test]
+    fn copies_waiting_for_consent_move_to_the_bundled_version_and_cut_over() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        let mut before = BTreeMap::new();
+        for (module, high) in WAITING {
+            let record = phase(&manager, module).unwrap();
+            assert_eq!(
+                record.phase,
+                MigrationPhase::AwaitingConsent,
+                "{module}: {record:?}"
+            );
+            assert!(record.reason.unwrap().contains(high), "{module}");
+            assert_eq!(active(&manager, module), "0.1.0", "{module}");
+            before.insert(module, granted(&manager, module));
+        }
+
+        // The app update.
+        let bundle = env.bundle();
+        start(&mut manager, &bundle, &snapshot);
+        for (module, high) in WAITING {
+            assert_eq!(active(&manager, module), released(module), "{module}");
+            assert_eq!(staged(&manager, module), None, "{module}");
+            assert_eq!(
+                granted(&manager, module),
+                before[module],
+                "{module}: nothing granted"
+            );
+            let record = phase(&manager, module).unwrap();
+            assert_eq!(
+                record.phase,
+                MigrationPhase::AwaitingConsent,
+                "{module}: {record:?}"
+            );
+            assert!(record.reason.unwrap().contains(high), "{module}");
+            assert_eq!(
+                route_of(&manager, &bundle, module),
+                LegacyRoute::AwaitingConsent,
+                "{module}"
+            );
+        }
+
+        // The user's consent: cut over to the pinned version.
+        for (module, high) in WAITING {
+            consent_to(&mut manager, &bundle, &snapshot, module);
+            let record = phase(&manager, module).unwrap();
+            assert_eq!(
+                record.phase,
+                MigrationPhase::CutOver,
+                "{module}: {record:?}"
+            );
+            assert_eq!(
+                route_of(&manager, &bundle, module),
+                LegacyRoute::Plugin,
+                "{module}"
+            );
+            assert_eq!(active(&manager, module), released(module), "{module}");
+            assert!(
+                granted(&manager, module)
+                    .contains(&(high.to_owned(), format!("user:migration:{module}"))),
+                "{module}"
+            );
+        }
+    }
+
+    /// An installation where an agent without this rule already staged
+    /// the released version next to the active 0.1.0 (the state the
+    /// upgrade left behind before the fix): the user's consent applies the
+    /// staged bundled update first, so the migration cuts over to the
+    /// pinned version and never enables the unpinned 0.1.0.
+    #[test]
+    fn the_consent_applies_a_staged_bundled_update_first() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        let bundle = env.bundle();
+        for (module, _) in WAITING {
+            let pin = bundle
+                .pins
+                .plugins
+                .iter()
+                .find(|p| p.id == plugin(module))
+                .unwrap();
+            let package = bundled::verified(&bundle, pin).unwrap();
+            let outcome = manager.update(&package, &InstallSource::Bundled).unwrap();
+            assert!(
+                matches!(
+                    outcome,
+                    deckpilot_plugin_store::UpdateOutcome::AwaitingConsent { .. }
+                ),
+                "{module}: staged as before the fix"
+            );
+            assert_eq!(staged(&manager, module), Some(released(module)), "{module}");
+        }
+        for (module, _) in WAITING {
+            consent_to(&mut manager, &bundle, &snapshot, module);
+            let record = phase(&manager, module).unwrap();
+            assert_eq!(
+                record.phase,
+                MigrationPhase::CutOver,
+                "{module}: {record:?}"
+            );
+            assert_eq!(active(&manager, module), released(module), "{module}");
+            assert_eq!(staged(&manager, module), None, "{module}");
+        }
+    }
+
+    /// A staged copy of the pinned version whose files are not the pinned
+    /// ones (written by something else, or damaged) would fail every
+    /// start: it is dropped, the pinned copy is staged again from the
+    /// bundle and applied, and the consent then cuts over.
+    #[test]
+    fn a_staged_copy_that_differs_from_the_pins_is_replaced() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        // The released version number with other files.
+        let other = env.bundle_edited(&MODULES, &|module, manifest| {
+            if module == "git" {
+                manifest["description"] = "Not the released files.".into();
+            }
+        });
+        let pin = other
+            .pins
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin("git"))
+            .unwrap();
+        let package = bundled::verified(&other, pin).unwrap();
+        manager.update(&package, &InstallSource::Bundled).unwrap();
+        assert_eq!(staged(&manager, "git"), Some(released("git")));
+
+        let bundle = env.bundle();
+        start(&mut manager, &bundle, &snapshot);
+        assert_eq!(active(&manager, "git"), released("git"));
+        assert_eq!(staged(&manager, "git"), None);
+        let record = manager.store().plugin(&plugin("git")).unwrap().unwrap();
+        let dir = manager
+            .layout()
+            .resolve(&record.active().unwrap().install_dir);
+        let pin = bundle
+            .pins
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin("git"))
+            .unwrap();
+        deckpilot_plugin_bundled::verify_installed(&dir, pin).unwrap();
+        consent_to(&mut manager, &bundle, &snapshot, "git");
+        let record = phase(&manager, "git").unwrap();
+        assert_eq!(record.phase, MigrationPhase::CutOver, "{record:?}");
+    }
+
+    /// An optional permission (`tools:docker:modify`, named only by the
+    /// Compose changes) that a later bundled version makes required is a
+    /// different declared set: it stays staged for the user.
+    #[test]
+    fn an_optional_permission_becoming_required_stays_staged() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        let later = env.bundle_edited(&MODULES, &|module, manifest| {
+            if module != "docker" {
+                return;
+            }
+            manifest["version"] = "0.1.99".into();
+            for action in manifest["contributes"]["actions"].as_array_mut().unwrap() {
+                if let Some(action) = action.as_object_mut() {
+                    action.remove("requiresPermissions");
+                }
+            }
+        });
+        start(&mut manager, &later, &snapshot);
+        assert_eq!(active(&manager, "docker"), "0.1.0");
+        assert_eq!(staged(&manager, "docker").as_deref(), Some("0.1.99"));
+        let record = phase(&manager, "docker").unwrap();
+        assert_ne!(record.phase, MigrationPhase::CutOver, "{record:?}");
+    }
+
+    /// A later bundled version that asks for a new permission while the
+    /// migration waits for consent stays staged, with nothing granted by
+    /// itself. The user's consent to the migration then stops it with that
+    /// reason instead of enabling the copy the agent no longer pins; once
+    /// the user approves the update, Retry cuts it over.
+    #[test]
+    fn a_staged_escalation_stops_the_consent_until_approved_then_retry_cuts_over() {
+        let env = git_docker_projects();
+        let snapshot = env.backed_up();
+        let mut manager = env.open();
+        start(&mut manager, &shipped_0_1_0(&env), &snapshot);
+        let later = env.bundle_edited(&MODULES, &|module, manifest| {
+            if module != "git" {
+                return;
+            }
+            manifest["version"] = "0.1.99".into();
+            manifest["permissions"].as_array_mut().unwrap().push(json!({
+                "kind": "notifications",
+                "justification": "A permission the released version does not declare."
+            }));
+        });
+        start(&mut manager, &later, &snapshot);
+        assert_eq!(active(&manager, "git"), "0.1.0");
+        assert_eq!(staged(&manager, "git").as_deref(), Some("0.1.99"));
+        let before = granted(&manager, "git");
+
+        consent_to(&mut manager, &later, &snapshot, "git");
+        let record = phase(&manager, "git").unwrap();
+        assert_eq!(record.phase, MigrationPhase::Failed, "{record:?}");
+        let reason = record.reason.unwrap();
+        assert!(
+            reason.contains("asks for new permissions") && reason.contains("0.1.99"),
+            "{reason}"
+        );
+        let state = manager
+            .store()
+            .plugin(&plugin("git"))
+            .unwrap()
+            .unwrap()
+            .state;
+        assert_ne!(state, PluginState::Enabled, "the unpinned 0.1.0 never runs");
+        assert!(
+            !granted(&manager, "git")
+                .iter()
+                .any(|(k, _)| k == "notifications"),
+            "nothing granted by itself: {before:?}"
+        );
+
+        // The user approves the update's new permission (Plugins page).
+        let (_, diff) = manager.pending_update(&plugin("git")).unwrap().unwrap();
+        let escalated = diff.escalations();
+        assert!(
+            escalated
+                .iter()
+                .any(|key| key.kind == PermissionKind::Notifications),
+            "{escalated:?}"
+        );
+        manager
+            .approve_update(&plugin("git"), &Consent::of(escalated, "user"))
+            .unwrap();
+        assert_eq!(active(&manager, "git"), "0.1.99");
+        decide(
+            &mut manager,
+            &later,
+            &snapshot,
+            &Decision::Retry("git".into()),
+        )
+        .unwrap();
+        let record = phase(&manager, "git").unwrap();
+        assert_eq!(record.phase, MigrationPhase::CutOver, "{record:?}");
+        assert_eq!(route_of(&manager, &later, "git"), LegacyRoute::Plugin);
+    }
+
     /// X13: with none of the moved built-ins compiled in (WP-C5, WP-C6)
     /// a configuration saved by 0.9.x migrates from the static
     /// descriptors alone: the same eligibility, settings, derived grants,
@@ -2485,23 +2875,31 @@ mod extraction {
             assert!(plan_for(module).unwrap().extraction.is_none(), "{module}");
         }
         let released: Value = serde_json::from_slice(
-            &std::fs::read(source("bundled.json").with_file_name("bundled.json")).unwrap(),
+            &std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../plugins/first-party/bundled.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
-        for module in MODULES {
-            assert!(
-                released["plugins"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!({"path": module, "class": "migration"})),
-                "{module}"
-            );
-        }
-        assert!(
+        let class = |id: String| {
             released["plugins"]
                 .as_array()
                 .unwrap()
-                .contains(&json!({"path": "workflows", "class": "default"}))
+                .iter()
+                .find(|p| p["id"] == id.as_str())
+                .map(|p| (p["class"].clone(), p["source"].clone()))
+        };
+        for module in MODULES {
+            assert_eq!(
+                class(format!("deckpilot.{module}")),
+                Some((json!("migration"), json!("artifact"))),
+                "{module}"
+            );
+        }
+        assert_eq!(
+            class("deckpilot.workflows".to_owned()),
+            Some((json!("default"), json!("artifact")))
         );
     }
 }

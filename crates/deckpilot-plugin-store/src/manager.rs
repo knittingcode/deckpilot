@@ -228,7 +228,7 @@ impl PluginManager {
         let id = package.manifest().id.clone();
         store::check_source(&id, source)?;
         let declared = GrantSet::from_manifest(package.manifest());
-        check_privileged_source(&id, &declared, source)?;
+        check_privileged_source(&id, package.manifest(), source)?;
         check_consent(&id, &declared, consent)?;
         if *source == InstallSource::Bundled {
             check_bundled_consent(&id, &declared, consent)?;
@@ -765,6 +765,15 @@ impl PluginManager {
         decided_by: &str,
     ) -> Result<Vec<GrantKey>> {
         let plugin = self.plugin(id)?;
+        // Derived grants are for copies shipped inside the app only: a copy
+        // from a registry (even of a `deckpilot.*` id) gets what the user
+        // grants, nothing derived.
+        if plugin.source != InstallSource::Bundled {
+            return Err(StoreError::SourceNotAllowed {
+                id: id.clone(),
+                origin: plugin.source.as_str(),
+            });
+        }
         let active = active_of(&plugin)?;
         let declared = active.grants();
         let consent = Consent::of(keys.iter().cloned(), decided_by);
@@ -976,7 +985,7 @@ impl PluginManager {
     ) -> Result<UpdateOutcome> {
         let id = package.manifest().id.clone();
         store::check_source(&id, source)?;
-        check_privileged_source(&id, &GrantSet::from_manifest(package.manifest()), source)?;
+        check_privileged_source(&id, package.manifest(), source)?;
         let pending = pending_version(package)?;
         self.tx(|tx, ctx| {
             ensure_idle(tx, &id)?;
@@ -1104,6 +1113,96 @@ impl PluginManager {
         self.crash(Operation::ApproveUpdate, Failpoint::Committed)?;
         self.retire(&retired)?;
         Ok(staged.version)
+    }
+
+    /// Activates the staged update of a plugin installed **from the
+    /// application's bundle** when the staged version declares exactly the
+    /// permissions of the active one (keys, scopes and optional ones,
+    /// declared against declared, not against what is granted). Nothing is
+    /// granted: the stored grants carry over, intersected with what the new
+    /// version declares, and a permission still waiting for the user's
+    /// consent keeps waiting for it.
+    ///
+    /// [`update`](Self::update) compares an update with the *granted*
+    /// permissions, so a bundled copy installed by the migration engine and
+    /// still waiting for its high-tier consent would otherwise stage every
+    /// new bundled version, keeping an active version the agent no longer
+    /// pins. `None` (nothing changed) for any other source, without a staged
+    /// or an active version, when the declared permissions differ (an
+    /// escalation stays staged for the user), and for an enabled plugin that
+    /// would lack a required grant.
+    pub fn apply_bundled_update_unchanged(&mut self, id: &PluginId) -> Result<Option<Version>> {
+        let plugin = self.plugin(id)?;
+        if plugin.source != InstallSource::Bundled {
+            return Ok(None);
+        }
+        let (Some(active), Some(staged)) = (plugin.active(), plugin.staged()) else {
+            return Ok(None);
+        };
+        if active.grants() != staged.grants() {
+            return Ok(None);
+        }
+        let staged = staged.clone();
+        let dir = self.layout.resolve(&staged.install_dir);
+        if let Err(problem) = verify_installed(&dir, &staged.integrity) {
+            self.decline_update(id)?;
+            return Err(StoreError::Integrity {
+                id: id.clone(),
+                version: staged.version.to_string(),
+                problem: problem.to_string(),
+            });
+        }
+        let retired = self.tx(|tx, ctx| {
+            ensure_idle(tx, id)?;
+            let plugin =
+                store::load_plugin(tx, id)?.ok_or_else(|| StoreError::NotInstalled(id.clone()))?;
+            // The same checks again, inside the transaction.
+            let unchanged = plugin.source == InstallSource::Bundled
+                && plugin.staged().is_some_and(|s| s.version == staged.version)
+                && plugin
+                    .active()
+                    .is_some_and(|a| a.grants() == staged.grants());
+            if !unchanged {
+                return Ok(None);
+            }
+            let candidate = staged.grants();
+            let diff = PermissionDiff::compute(&store::load_grants(tx, id)?, &candidate);
+            let ungranted = diff
+                .escalations()
+                .into_iter()
+                .any(|key| !candidate.is_optional(&key));
+            if ungranted && plugin.state == PluginState::Enabled {
+                return Ok(None);
+            }
+            store::transition(tx, id, plugin.state, PluginState::Updating, None, ctx.now)?;
+            let retired = activate_without_consent(
+                tx,
+                ctx,
+                id,
+                plugin.state,
+                &staged.version,
+                &diff,
+                &candidate,
+            )?;
+            ctx.audit(
+                tx,
+                id,
+                event(
+                    Some(&staged.version.to_string()),
+                    "update",
+                    None,
+                    "applied",
+                    Some("bundled update with the same declared permissions; nothing granted"),
+                ),
+            )?;
+            Ok(Some(retired))
+        })?;
+        let Some(retired) = retired else {
+            return Ok(None);
+        };
+        self.crash(Operation::ApproveUpdate, Failpoint::Committed)?;
+        self.retire(&retired)?;
+        Ok(Some(staged.version))
     }
 
     /// Drops the staged update; the running version stays.
@@ -1584,10 +1683,12 @@ fn check_consent(id: &PluginId, declared: &GrantSet, consent: &Consent) -> Resul
 /// recording them from another source all the same.
 fn check_privileged_source(
     id: &PluginId,
-    declared: &GrantSet,
+    manifest: &deckpilot_plugin_manifest::Manifest,
     source: &InstallSource,
 ) -> Result<()> {
-    if *source != InstallSource::Bundled && declared.keys().any(GrantKey::is_first_party_only) {
+    if *source != InstallSource::Bundled
+        && !crate::grants::privileged_constructs(manifest).is_empty()
+    {
         return Err(StoreError::SourceNotAllowed {
             id: id.clone(),
             origin: source.as_str(),
@@ -1795,6 +1896,37 @@ fn activate(
         });
     }
     apply_grant_changes(tx, ctx, id, version, diff, candidate, consent)?;
+    switch_versions(tx, ctx, id, prior, version)
+}
+
+/// [`activate`] for a bundled update that declares exactly what the
+/// active version declares ([`PluginManager::apply_bundled_update_unchanged`]):
+/// no consent, so nothing is granted; covered, narrowed and removed keys
+/// are written as for any update, and a permission that is not granted
+/// stays so (the plugin keeps waiting for the user's consent).
+fn activate_without_consent(
+    tx: &Connection,
+    ctx: Ctx,
+    id: &PluginId,
+    prior: PluginState,
+    version: &Version,
+    diff: &PermissionDiff,
+    candidate: &GrantSet,
+) -> Result<Vec<String>> {
+    apply_grant_changes(tx, ctx, id, version, diff, candidate, None)?;
+    switch_versions(tx, ctx, id, prior, version)
+}
+
+/// The version side of an activation: the old active becomes previous,
+/// the older previous is retired (its directory returned), `version`
+/// becomes active and the plugin leaves `Updating` for its prior state.
+fn switch_versions(
+    tx: &Connection,
+    ctx: Ctx,
+    id: &PluginId,
+    prior: PluginState,
+    version: &Version,
+) -> Result<Vec<String>> {
     let plugin = store::load_plugin(tx, id)?.ok_or_else(|| StoreError::NotInstalled(id.clone()))?;
     let mut retired = Vec::new();
     if let Some(previous) = plugin.previous() {
@@ -1889,6 +2021,65 @@ fn apply_grant_changes(
         )?;
     }
     Ok(())
+}
+
+/// The store's own X12 backstop, whatever the manifest rules said.
+#[cfg(test)]
+mod privileged_source_tests {
+    use super::*;
+
+    type Edit = fn(&mut serde_json::Value);
+
+    fn manifest(edit: impl FnOnce(&mut serde_json::Value)) -> deckpilot_plugin_manifest::Manifest {
+        let mut value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../plugins/first-party/test-fixtures/example-default/manifest.json"
+        ))
+        .unwrap();
+        edit(&mut value);
+        deckpilot_plugin_manifest::Manifest::from_slice(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+    }
+
+    /// Every privileged construct, not only the privileged permissions, is
+    /// refused from any source but the bundle (even one no manifest rule
+    /// would have let through: no `hostViews` permission at all).
+    #[test]
+    fn every_privileged_construct_is_bundled_only() {
+        let id = PluginId::parse("deckpilot.example-default").unwrap();
+        let registry = InstallSource::Registry {
+            registry: "https://registry.example/".into(),
+        };
+        let plain = manifest(|_| {});
+        check_privileged_source(&id, &plain, &registry).unwrap();
+        let edits: [(&str, Edit); 4] = [
+            ("`statusItems`", |m| {
+                m["contributes"]["statusItems"] = serde_json::json!(["activeProject"]);
+            }),
+            ("`dashboardCards`", |m| {
+                m["contributes"]["dashboardCards"] = serde_json::json!(["activeProject"]);
+            }),
+            ("`node.changesContext`", |m| {
+                m["contributes"]["actions"][0]["node"]["changesContext"] = serde_json::json!(true);
+            }),
+            ("a `resource` parameter", |m| {
+                m["contributes"]["actions"][0]["parameters"][0]["kind"] =
+                    serde_json::json!({ "type": "resource", "kinds": ["directory"] });
+            }),
+        ];
+        for (what, edit) in edits {
+            let m = manifest(edit);
+            let constructs = crate::grants::privileged_constructs(&m);
+            assert!(constructs.contains(what), "{what}: {constructs:?}");
+            assert!(
+                matches!(
+                    check_privileged_source(&id, &m, &registry),
+                    Err(StoreError::SourceNotAllowed { .. })
+                ),
+                "{what}"
+            );
+            check_privileged_source(&id, &m, &InstallSource::Bundled).unwrap();
+        }
+    }
 }
 
 #[cfg(all(test, feature = "sqlcipher"))]

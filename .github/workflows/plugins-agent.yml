@@ -126,7 +126,27 @@ jobs:
         run: cargo build --locked -p deckpilot-plugin-host --bin deckpilot-plugin-host
       - name: Build the example plugins and the SDK test guest
         working-directory: plugins/runtime
-        run: cargo build --locked -p hello-weather -p hello-world -p developer-tools -p deckpilot-sdk-test-guest -p deckpilot-example-default -p deckpilot-legacy-fixture -p deckpilot-github -p deckpilot-gitlab -p deckpilot-jira -p deckpilot-notifications --target wasm32-unknown-unknown --profile guest
+        run: cargo build --locked -p hello-weather -p hello-world -p developer-tools -p deckpilot-sdk-test-guest -p deckpilot-example-default -p deckpilot-legacy-fixture --target wasm32-unknown-unknown --profile guest
+      # The official plugins the tests run are the ones a release bundles:
+      # the signed release artifacts of plugins/first-party/artifacts.json,
+      # downloaded once (size and sha256 checked), then verified offline
+      # with the pinned publisher keys (never --keys), released-pins.json
+      # and the revocations, and unpacked (apps/agent/tests/support/
+      # official.rs). The registry tool is the one built from this commit.
+      - name: Stage the official plugins from their release artifacts
+        run: |
+          exe=""; [ "$RUNNER_OS" = Windows ] && exe=.exe
+          native() { if command -v cygpath >/dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
+          cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckpilot-registry
+          plugins/first-party/build.sh --fetch-only --artifacts-dir "$RUNNER_TEMP/official-artifacts"
+          plugins/first-party/build.sh --out "$RUNNER_TEMP/official" --artifacts-dir "$RUNNER_TEMP/official-artifacts" \
+            --offline --registry-tool "target/debug/deckpilot-registry$exe" | tee "$RUNNER_TEMP/official.log"
+          # Every privileged plugin is admitted by exactly the reviewed policy.
+          for id in deckpilot.docker deckpilot.git deckpilot.projects deckpilot.workflows deckpilot.workspace; do
+            grep -q "^build.sh: $id .* admitted by the reviewed privileged policy" "$RUNNER_TEMP/official.log" \
+              || { echo "::error::$id was not admitted by the reviewed privileged policy"; exit 1; }
+          done
+          echo "DECKPILOT_E2E_OFFICIAL_PLUGINS=$(native "$RUNNER_TEMP/official/bundled")" >> "$GITHUB_ENV"
       - name: Plugin unit tests (incl. the registry over HTTPS)
         run: "cargo test -p deckpilot-agent --features plugins --lib --locked plugins::"
       - name: End to end
@@ -181,6 +201,12 @@ jobs:
       # 127.0.0.1 for the built-in.
       - name: GitLab and Jira cut-over end to end
         run: cargo test -p deckpilot-agent --features plugins --test plugins_cutover_servers --locked -- --nocapture
+      # The Git, Projects and Workspace cut-overs through the released
+      # artifacts, and the upgrades of 0.10.0 / 0.11.0 installations to
+      # them: cut over, and still waiting for the user's consent (Git's
+      # fake `git` is a shell script: Unix only).
+      - name: Git, Projects and Workspace cut-over end to end
+        run: cargo test -p deckpilot-agent --features plugins --test plugins_cutover_git --test plugins_cutover_projects --test plugins_cutover_workspace --locked -- --nocapture
       # deckpilot.notifications, the first default-class plugin: parity
       # with the built-in through the real agent, first launch on a fresh
       # data directory, the user's uninstall and disable across restarts
@@ -212,7 +238,8 @@ jobs:
           # The release set: exactly the plugins of bundled.json, with their
           # classes. The fixture builds below contain it too, and are checked
           # against an agent compiled with their pins.
-          plugins/first-party/build.sh --out "$RUNNER_TEMP/bundle-release"
+          artifacts=(--artifacts-dir "$RUNNER_TEMP/official-artifacts" --offline --registry-tool "target/debug/deckpilot-registry$exe")
+          plugins/first-party/build.sh --out "$RUNNER_TEMP/bundle-release" "${artifacts[@]}"
           # A released version never changes (plugins/first-party/README.md,
           # "Versions"): no plugin of the release set has the id and version
           # of one a release shipped, recorded in
@@ -220,20 +247,37 @@ jobs:
           # other files. check-bundled-plugins.sh below checks it again.
           tools/release-pipeline/check-released-pins.sh "$RUNNER_TEMP/bundle-release/bundled/pins.json"
           jq -c '[.plugins[] | {id, class}] | sort_by(.id)' "$RUNNER_TEMP/bundle-release/bundled/pins.json" | tr -d '\r' > "$RUNNER_TEMP/release-set.json"
-          # What bundled.json lists (each directory's manifest id is
-          # `deckpilot.<directory>`, checked here too), as the built pins must say.
-          for path in $(jq -r '.plugins[].path' plugins/first-party/bundled.json | tr -d '\r'); do
-            id=$(jq -r .id "plugins/first-party/$path/manifest.json" | tr -d '\r')
-            [ "$id" = "deckpilot.$path" ] || { echo "plugins/first-party/$path has id $id"; exit 1; }
+          # What bundled.json lists (every entry a release artifact naming
+          # its id), as the built pins must say.
+          jq -e 'all(.plugins[]; .source == "artifact")' plugins/first-party/bundled.json > /dev/null
+          jq -c '[.plugins[] | {id, class}] | sort_by(.id)' plugins/first-party/bundled.json | tr -d '\r' | diff - "$RUNNER_TEMP/release-set.json"
+          # The committed contracts are exactly the releases' files but the
+          # module (apps/agent/tests/support/official.rs checks it too).
+          for dir in "$RUNNER_TEMP"/bundle-release/bundled/deckpilot.*; do
+            id=$(basename "$dir")
+            diff -r -x plugin.wasm "$dir" "plugins/first-party/contracts/$id"
           done
-          jq -c '[.plugins[] | {id: ("deckpilot." + .path), class}] | sort_by(.id)' plugins/first-party/bundled.json | tr -d '\r' | diff - "$RUNNER_TEMP/release-set.json"
+          [ "$(ls plugins/first-party/contracts | wc -l | tr -d ' ')" = "$(jq '.plugins | length' plugins/first-party/bundled.json | tr -d '\r')" ]
           for run in a b; do
-            plugins/first-party/build.sh --test-fixtures --out "$RUNNER_TEMP/bundle-$run" --target-dir "$RUNNER_TEMP/first-party-$run"
+            plugins/first-party/build.sh --test-fixtures --out "$RUNNER_TEMP/bundle-$run" --target-dir "$RUNNER_TEMP/first-party-$run" "${artifacts[@]}"
           done
-          diff -r "$RUNNER_TEMP/bundle-a" "$RUNNER_TEMP/bundle-b"
+          # bundled/ only: the artifacts' audit log next to it records times.
+          diff -r "$RUNNER_TEMP/bundle-a/bundled" "$RUNNER_TEMP/bundle-b/bundled"
           DECKPILOT_BUNDLED_PINS="$RUNNER_TEMP/bundle-a/bundled/pins.json" \
             cargo build --locked -p deckpilot-agent --features plugins --bin deckpilot-agent
           tools/release-pipeline/check-bundled-plugins.sh "$RUNNER_TEMP/bundle-a/bundled" "target/debug/deckpilot-agent$exe"
+      # plugins/first-party/build.sh's release-artifact path (artifacts.sh):
+      # a valid two-signature artifact staged and pinned (offline cache,
+      # download through a curl stand-in, fetch-only), every refusal
+      # (tampered bytes, one signature, a wrong or revoked key, a downgrade,
+      # a wrong id or version, a missing file, a mutable URL, the pinned
+      # keys), never both, and a mixed source and artifact build. Throwaway
+      # keys made in the test, through the test-only keys hook; no network.
+      - name: Bundled plugins from release artifacts
+        run: |
+          exe=""; [ "$RUNNER_OS" = Windows ] && exe=.exe
+          cargo build --locked -p deckpilot-plugin-registry --features publish --bin deckpilot-registry
+          plugins/first-party/test-build.sh "$RUNNER_TEMP/first-party-artifacts-test" "target/debug/deckpilot-registry$exe"
       # The release set the dry run built (pins.json and every plugin's
       # files), to compare byte for byte with a build on another machine
       # when this platform's recorded pins (released-pins.json) differ.

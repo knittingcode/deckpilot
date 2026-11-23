@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use deckpilot_plugin_manifest::Sha256Digest;
+
 use crate::model::{Keyset, Revocation, Timestamp};
 
 /// Format of [`TrustState`]; any other value is refused.
@@ -60,6 +62,22 @@ impl TrustState {
     }
 }
 
+/// The storefront accepted for a seq (storefront design §5 step 8), kept to
+/// detect equivocation: a second, different storefront signed for the same
+/// seq.
+///
+/// It is stored **beside** [`TrustState`], not in it: `TrustState` refuses
+/// unknown fields, and DeckPilot 0.10 to 0.12 read the same state file. A
+/// new field there would make an older build (after a downgrade) refuse its
+/// whole trust state as corrupt. A missing record (every state written
+/// before storefronts existed) simply means "none seen yet".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorefrontRecord {
+    pub seq: u64,
+    pub sha256: Sha256Digest,
+}
+
 /// Why the trust store failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
@@ -85,6 +103,20 @@ pub trait TrustStore {
     /// against the stored timestamp again when read).
     fn load_index(&self) -> Result<Option<Vec<u8>>, StoreError>;
     fn save_index(&mut self, bytes: &[u8]) -> Result<(), StoreError>;
+    /// The storefront record ([`StorefrontRecord`]); `None` when none was
+    /// stored. Stores that predate storefronts keep the default: no record,
+    /// so no equivocation check across restarts.
+    fn load_storefront_record(&self) -> Result<Option<StorefrontRecord>, StoreError> {
+        Ok(None)
+    }
+    /// Replaces the storefront record (atomically, like `save`).
+    fn save_storefront_record(&mut self, _record: &StorefrontRecord) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+fn parse_record(bytes: &[u8]) -> Result<StorefrontRecord, StoreError> {
+    serde_json::from_slice(bytes).map_err(|e| StoreError::Corrupt(e.to_string()))
 }
 
 fn parse_state(bytes: &[u8]) -> Result<TrustState, StoreError> {
@@ -95,9 +127,10 @@ fn serialize_state(state: &TrustState) -> Result<Vec<u8>, StoreError> {
     serde_json::to_vec_pretty(state).map_err(|e| StoreError::Io(e.to_string()))
 }
 
-/// Two files in one directory: `registry-trust.json` (the state) and
-/// `registry-index.json` (the index cache), each replaced atomically
-/// (temporary file in the same directory, fsync, rename, directory fsync).
+/// Files in one directory: `registry-trust.json` (the state),
+/// `registry-index.json` (the index cache) and `registry-storefront.json`
+/// (the storefront record), each replaced atomically (temporary file in the
+/// same directory, fsync, rename, directory fsync).
 #[derive(Debug, Clone)]
 pub struct FileTrustStore {
     dir: PathBuf,
@@ -106,6 +139,7 @@ pub struct FileTrustStore {
 impl FileTrustStore {
     pub const STATE_FILE: &'static str = "registry-trust.json";
     pub const INDEX_FILE: &'static str = "registry-index.json";
+    pub const STOREFRONT_FILE: &'static str = "registry-storefront.json";
 
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
@@ -117,6 +151,10 @@ impl FileTrustStore {
 
     pub fn index_path(&self) -> PathBuf {
         self.dir.join(Self::INDEX_FILE)
+    }
+
+    pub fn storefront_record_path(&self) -> PathBuf {
+        self.dir.join(Self::STOREFRONT_FILE)
     }
 }
 
@@ -162,6 +200,18 @@ impl TrustStore for FileTrustStore {
         let path = self.index_path();
         write_atomic(&path, bytes).map_err(|e| StoreError::Io(format!("{}: {e}", path.display())))
     }
+
+    fn load_storefront_record(&self) -> Result<Option<StorefrontRecord>, StoreError> {
+        read_optional(&self.storefront_record_path())?
+            .map(|bytes| parse_record(&bytes))
+            .transpose()
+    }
+
+    fn save_storefront_record(&mut self, record: &StorefrontRecord) -> Result<(), StoreError> {
+        let path = self.storefront_record_path();
+        let bytes = serde_json::to_vec_pretty(record).map_err(|e| StoreError::Io(e.to_string()))?;
+        write_atomic(&path, &bytes).map_err(|e| StoreError::Io(format!("{}: {e}", path.display())))
+    }
 }
 
 /// In memory, serialized like the file store (so a clone behaves like the
@@ -171,6 +221,8 @@ pub struct MemoryTrustStore {
     pub state: Option<Vec<u8>>,
     pub index: Option<Vec<u8>>,
     pub fail_saves: bool,
+    /// The storefront record, serialized.
+    pub storefront: Option<Vec<u8>>,
 }
 
 impl TrustStore for MemoryTrustStore {
@@ -195,6 +247,19 @@ impl TrustStore for MemoryTrustStore {
             return Err(StoreError::Io("simulated failure".into()));
         }
         self.index = Some(bytes.to_vec());
+        Ok(())
+    }
+
+    fn load_storefront_record(&self) -> Result<Option<StorefrontRecord>, StoreError> {
+        self.storefront.as_deref().map(parse_record).transpose()
+    }
+
+    fn save_storefront_record(&mut self, record: &StorefrontRecord) -> Result<(), StoreError> {
+        if self.fail_saves {
+            return Err(StoreError::Io("simulated failure".into()));
+        }
+        self.storefront =
+            Some(serde_json::to_vec(record).map_err(|e| StoreError::Io(e.to_string()))?);
         Ok(())
     }
 }

@@ -191,7 +191,7 @@ fn signature_text(document: &str, bytes: &[u8]) -> Result<String, RegistryError>
 }
 
 /// Length then sha256, before anything parses the bytes.
-fn check_ref(bytes: &[u8], reference: &FileRef) -> Result<(), String> {
+pub(crate) fn check_ref(bytes: &[u8], reference: &FileRef) -> Result<(), String> {
     let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     if length != reference.length {
         return Err(format!("length {length}, pinned {}", reference.length));
@@ -280,6 +280,11 @@ impl<S: TrustStore> RegistryClient<S> {
     /// The store, e.g. to inspect it in tests.
     pub fn store(&self) -> &S {
         &self.store
+    }
+
+    /// The store, for the storefront record (`storefront.rs`).
+    pub(crate) fn store_mut(&mut self) -> &mut S {
+        &mut self.store
     }
 
     /// The verified index, whatever its freshness (browsing works from the

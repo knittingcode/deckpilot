@@ -30,8 +30,8 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
-import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
+import { WorkflowDeleteDialog } from "@/components/workflow-delete-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -942,35 +942,20 @@ function Builder({
                         >
                           <Copy /> {t("workflows:builder.panel.duplicate")}
                         </Button>
-                        <ConfirmDialog
+                        <WorkflowDeleteDialog
                           trigger={
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={(view.workflowUsages[initial.id] ?? []).length > 0}
-                              title={
-                                (view.workflowUsages[initial.id] ?? []).length > 0
-                                  ? t("workflows:builder.panel.inUse")
-                                  : undefined
-                              }
-                            >
+                            <Button variant="ghost" size="sm">
                               <Trash2 /> {t("common:actions.delete")}
                             </Button>
                           }
+                          profileId={profileId}
+                          view={view}
+                          workflow={initial}
                           title={t("workflows:builder.panel.deleteTitle", { name: initial.name })}
                           description={t("workflows:builder.panel.deleteDescription")}
-                          onConfirm={() => {
-                            api
-                              .deleteWorkflow(profileId, initial.id)
-                              .then(() => {
-                                toast.success(t("workflows:builder.toast.deleted"))
-                                onDeleted()
-                              })
-                              .catch((e: unknown) =>
-                                toast.error(t("workflows:builder.toast.deleteFailed"), {
-                                  description: errorMessage(e),
-                                }),
-                              )
+                          onDeleted={() => {
+                            toast.success(t("workflows:builder.toast.deleted"))
+                            onDeleted()
                           }}
                         />
                       </div>

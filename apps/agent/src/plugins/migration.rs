@@ -1127,8 +1127,11 @@ impl Engine<'_> {
         if let Some(record) = &record {
             match record.phase {
                 MigrationPhase::CutOver => {
-                    if start && let Err(stop) = self.reconcile(m, record) {
-                        self.stopped(m, stop);
+                    if start {
+                        self.refresh_cut_over(m);
+                        if let Err(stop) = self.reconcile(m, record) {
+                            self.stopped(m, stop);
+                        }
                     }
                     return;
                 }
@@ -1138,6 +1141,46 @@ impl Engine<'_> {
         }
         if let Err(stop) = self.steps(m) {
             self.stopped(m, stop);
+        }
+    }
+
+    /// An app update that bundles a newer version of a cut-over plugin:
+    /// its installed bundled copy is updated, as seeding updates a
+    /// `default`-class one ([`bundled::refresh`]: never backwards, never
+    /// over a copy from another source or the user's tombstone, grants
+    /// kept, anything new beyond the low tier staged for the user's
+    /// consent). Without it the older copy, which this agent no longer
+    /// pins, would never load again. A failure leaves the migration cut
+    /// over: the copy is refused at load with the reason, as before.
+    fn refresh_cut_over(&mut self, m: &LegacyModule) {
+        let Some(pin) = self.pin(m) else {
+            return;
+        };
+        let store = self.manager.store();
+        if !matches!(store.tombstone(&m.plugin), Ok(None)) {
+            return;
+        }
+        let Ok(Some(record)) = store.plugin(&m.plugin) else {
+            return;
+        };
+        if record.source != InstallSource::Bundled {
+            return;
+        }
+        match bundled::refresh(self.manager, self.bundle, &pin, &record) {
+            Seeded::Updated => {
+                info!(module = %m.module, plugin = %m.plugin, version = %pin.version,
+                    "the cut-over plugin is updated to the bundled version");
+                self.touched.insert(m.plugin.clone());
+            }
+            Seeded::Broken(why) | Seeded::Failed(why) => {
+                warn!(module = %m.module, plugin = %m.plugin, version = %pin.version, %why,
+                    "the cut-over plugin cannot be updated to the bundled version");
+            }
+            Seeded::UpdateAwaitingConsent => {
+                info!(module = %m.module, plugin = %m.plugin, version = %pin.version,
+                    "the bundled update of the cut-over plugin waits for the user's consent");
+            }
+            _ => {}
         }
     }
 
@@ -1217,6 +1260,7 @@ impl Engine<'_> {
                 None,
             );
         }
+        self.pinned_copy(m, &pin)?;
         self.ensure_backup(m)?;
         self.import_credentials(m)?;
         self.enable(m)?;
@@ -1346,6 +1390,19 @@ impl Engine<'_> {
                     )));
                 }
             }
+        }
+        // Derived grants are for the copy shipped inside the app only: a
+        // newer copy from a registry (an official release included) keeps
+        // exactly what the user granted it; what it lacks waits for the
+        // user's consent like any other permission.
+        let bundled_copy = self
+            .manager
+            .store()
+            .plugin(&m.plugin)
+            .map_err(failed)?
+            .is_some_and(|record| record.source == InstallSource::Bundled);
+        if !bundled_copy {
+            return Ok(());
         }
         let manifest = self.active_manifest(m)?;
         let keys: BTreeSet<GrantKey> = GrantSet::from_manifest(&manifest)
@@ -1537,6 +1594,44 @@ impl Engine<'_> {
             info!(module = %m.module, plugin = %m.plugin, %slot, "stored credential imported");
         }
         Ok(())
+    }
+
+    /// Before the plugin is enabled for the module: a bundled copy runs only
+    /// as the version this agent pins. The install step has already
+    /// applied a staged bundled update that declares nothing new; one that
+    /// asks for new permissions waits for the user's approval of them, and
+    /// until then the migration stops here with that reason instead of
+    /// enabling a copy the agent would refuse to load.
+    fn pinned_copy(&self, m: &LegacyModule, pin: &Pin) -> Step<()> {
+        let record = self
+            .manager
+            .store()
+            .plugin(&m.plugin)
+            .map_err(failed)?
+            .ok_or_else(|| failed(format!("{} is not installed", m.plugin)))?;
+        if record.source != InstallSource::Bundled {
+            return Ok(());
+        }
+        let active = record
+            .active()
+            .ok_or_else(|| failed(format!("{} has no active version", m.plugin)))?;
+        if active.version == pin.version {
+            return Ok(());
+        }
+        Err(failed(match record.staged() {
+            Some(staged) if staged.version != pin.version => format!(
+                "{} {} waits on the Plugins page, but this agent bundles {}: decline that update, then retry",
+                m.plugin, staged.version, pin.version
+            ),
+            Some(staged) => format!(
+                "the bundled update of {} to {} asks for new permissions: approve it on the Plugins page, then retry",
+                m.plugin, staged.version
+            ),
+            None => format!(
+                "this agent bundles {} {}, not the installed {}",
+                m.plugin, pin.version, active.version
+            ),
+        }))
     }
 
     fn enable(&mut self, m: &LegacyModule) -> Step<()> {

@@ -11,6 +11,9 @@
 //! | `getPluginActions` | `pluginActions` | one page of a plugin's actions with their definitions (feature [`feature::PAGED_ANSWERS`]) |
 //! | `getPluginIcon` | `pluginIcon` | one chunk of a plugin's icon (feature [`feature::PAGED_ANSWERS`]) |
 //! | `listAvailablePlugins` | `availablePlugins` | the verified registry index with per-version permissions and compatibility (`refresh` re-reads the registry first) |
+//! | `getStorefront` | `storefront` | Discover's editorial sections and collections from the verified storefront, localized and filtered (feature [`feature::STOREFRONT`]) |
+//! | `getRegistryListing` | `registryListing` | one plugin's verified listing: promo, description, highlights, icon, screenshots, links, release notes (feature [`feature::STOREFRONT`]) |
+//! | `getRegistryMedia` | `registryMediaChunk` | one chunk of a verified storefront image, by sha256 (feature [`feature::STOREFRONT`]) |
 //! | `installPlugin` | `plugin` | installs from the registry or from a package file (verified against the registry pins), in state `disabled`, granting `consent` |
 //! | `enablePlugin` | `plugin` | grants `consent`, then enables; every declared permission must be granted |
 //! | `disablePlugin` | `plugin` | stops its host and disables it |
@@ -128,6 +131,14 @@ pub mod feature {
     /// ignores `asset`, so a client asks for an asset's file only when the
     /// agent lists the feature.
     pub const VISUAL_ASSETS: &str = "visualAssets";
+    /// The registry storefront (no protocol bump): `getStorefront`,
+    /// `getRegistryListing` and `getRegistryMedia`, and the optional
+    /// [`AvailablePlugin::icon`](super::AvailablePlugin::icon),
+    /// [`AvailablePlugin::official`](super::AvailablePlugin::official) and
+    /// [`AvailablePlugin::bundled_only`](super::AvailablePlugin::bundled_only).
+    /// An agent without it knows no storefront; the app then shows the
+    /// catalog only.
+    pub const STOREFRONT: &str = "storefront";
 }
 
 /// What a plugin's visual asset is.
@@ -296,6 +307,9 @@ pub mod reason {
     /// `restoreBundledPlugin` for a bundled plugin this agent's
     /// application bundle has no pinned copy of (a build without it).
     pub const NOT_PINNED: &str = "notPinned";
+    /// `getRegistryMedia` for an image the current verified storefront
+    /// does not reference.
+    pub const UNKNOWN_MEDIA: &str = "unknownMedia";
 }
 
 /// Most consent items one `decideModuleMigration` may decide.
@@ -373,6 +387,12 @@ pub struct RegistryStatus {
     /// verified state above is then the stored one (offline).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline: Option<String>,
+    /// Why Discover shows the catalog only although the registry is
+    /// verified: the storefront was refused or could not be fetched
+    /// ("editorial unavailable: …"; feature [`feature::STOREFRONT`]).
+    /// Installs are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storefront_problem: Option<String>,
 }
 
 /// Why a verified registry may no longer be used for installs.
@@ -792,6 +812,200 @@ pub struct AvailablePlugin {
     /// Why the registry deprecated the plugin, if it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<String>,
+    /// The icon of the plugin's verified storefront listing (feature
+    /// [`feature::STOREFRONT`]); fetched with `getRegistryMedia`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<MediaRef>,
+    /// One of DeckPilot's official plugins, as the agent knows them (the
+    /// plugins it ships and pins); never read from a registry document
+    /// (feature [`feature::STOREFRONT`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub official: bool,
+    /// An official plugin that declares privileged kinds: it reaches users
+    /// only as the copy bundled with DeckPilot, never from the registry.
+    /// Derived by the agent (feature [`feature::STOREFRONT`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bundled_only: bool,
+}
+
+// ------------------------------------------------------------ storefront
+
+/// Media types of storefront images (no SVG).
+pub const STOREFRONT_MEDIA_TYPES: [&str; 3] = ["image/png", "image/webp", "image/jpeg"];
+
+/// Most bytes of a `storefront` or `registryListing` answer: the agent
+/// drops trailing sections (or the oldest release notes) beyond it.
+pub const MAX_STOREFRONT_ANSWER_BYTES: usize = 48 * 1024;
+
+/// A verified storefront image, by the sha256 of its bytes (fetched with
+/// `getRegistryMedia`). `width` and `height` were checked by the agent
+/// against the image's header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaRef {
+    /// 64 lowercase hex digits.
+    pub sha256: String,
+    /// One of [`STOREFRONT_MEDIA_TYPES`].
+    pub media_type: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Where a banner leads: `plugin`, `collection` or `category`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetView {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BannerView {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cta: Option<String>,
+    pub artwork: MediaRef,
+    /// Empty when `decorative`.
+    pub alt: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub decorative: bool,
+    pub target: TargetView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blurb: Option<String>,
+}
+
+/// One Discover section, text localized. `kind` is `bannerCarousel`,
+/// `collectionRow`, `spotlight`, `recentlyAdded`, `categoryHighlights` or
+/// `catalog` (text, so an older app skips a kind it does not know).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionView {
+    pub id: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub items: Vec<BannerView>,
+    #[serde(default)]
+    pub plugins: Vec<String>,
+    #[serde(default)]
+    pub categories: Vec<CategoryView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// A spotlight's version: whose release notes to show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionView {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub plugins: Vec<String>,
+}
+
+/// The answer of `getStorefront`: sections in display order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorefrontView {
+    pub seq: u64,
+    pub sections: Vec<SectionView>,
+    #[serde(default)]
+    pub collections: Vec<CollectionView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightView {
+    pub title: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenshotView {
+    pub media: MediaRef,
+    pub alt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtView {
+    pub media: MediaRef,
+    pub alt: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingLinks {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseNoteView {
+    pub version: String,
+    pub text: String,
+}
+
+/// The answer of `getRegistryListing`, text localized, screenshots for
+/// this platform, release notes newest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_md: Option<String>,
+    #[serde(default)]
+    pub highlights: Vec<HighlightView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<MediaRef>,
+    #[serde(default)]
+    pub screenshots: Vec<ScreenshotView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promo_art: Option<ArtView>,
+    #[serde(default)]
+    pub links: ListingLinks,
+    #[serde(default)]
+    pub release_notes: Vec<ReleaseNoteView>,
+}
+
+/// One chunk of a storefront image (`getRegistryMedia`): the same shape as
+/// a [`PluginIconChunk`], with a media type of [`STOREFRONT_MEDIA_TYPES`].
+pub type MediaChunk = PluginIconChunk;
+
+/// Largest storefront image (`getRegistryMedia` offsets stay below it).
+pub const MAX_MEDIA_BYTES: u64 = 1024 * 1024;
+
+/// `^[0-9a-f]{64}$`: the only media key `getRegistryMedia` accepts.
+pub fn is_media_sha256(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// What to install.
@@ -1151,6 +1365,16 @@ pub(crate) fn check_request(request: &crate::Request) -> Result<(), String> {
         crate::Request::DeletePluginCredential { plugin, key } => {
             check_text("plugin", plugin)?;
             check_text("credential", key)
+        }
+        crate::Request::GetRegistryListing { plugin } => check_text("plugin", plugin),
+        crate::Request::GetRegistryMedia { sha256, offset } => {
+            if !is_media_sha256(sha256) {
+                return Err("sha256 must be 64 lowercase hex digits".into());
+            }
+            if *offset >= MAX_MEDIA_BYTES {
+                return Err("offset is beyond any storefront image".into());
+            }
+            Ok(())
         }
         crate::Request::GetPluginActions { plugin, from } => {
             check_text("plugin", plugin)?;

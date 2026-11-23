@@ -27,8 +27,11 @@ target/release/deckpilot-registry help
 ```
 
 The `publish` feature only adds the `publish` module and the binary
-(dependencies `minisign` and `zeroize`). Without it the crate is the
-verifier library and nothing else.
+(dependencies `minisign`, `zeroize`, and for `storefront check|build` and
+`verify-site --require-storefront`: `image` with PNG, JPEG and WebP
+decoders, `unicode-normalization` and `jsonschema`). Without it the crate is
+the verifier library and nothing else: the client walks storefront image
+headers (`media.rs`) but never decodes pixels.
 
 ## Working directory
 
@@ -47,6 +50,15 @@ site/v1/keys/<n>.json(.minisig)        root-signed key sets (signature array)
 site/v1/index/<seq>.json(.minisig)     signed index snapshots (newest plus 10)
 site/v1/plugins/<id>/<sha256>.json     content-addressed details
 site/v1/timestamp.json(.minisig)       the only mutable document
+
+registry/plugins/<id>/listing.json     storefront listing (author source)
+registry/plugins/<id>/media/*          its images: .png, .webp, .jpg
+editorial/editorial.json               storefront placements (maintainers only)
+editorial/media/*                      their images
+site/v1/storefront/<seq>.json(.minisig)  signed storefront envelope (index role)
+site/v1/storefront/listings/<id>/<sha256>.json  content-addressed listings
+site/v1/storefront/editorial/<sha256>.json      content-addressed editorial
+site/v1/media/<sha256>.<png|webp|jpg>  content-addressed images
 ```
 
 Secret keys never belong in this directory.
@@ -55,7 +67,7 @@ Secret keys never belong in this directory.
 
 | Command | Does | Needs |
 | --- | --- | --- |
-| `keys generate --role root\|index\|timestamp --out FILE` | minisign key pair: `FILE` (mode 0600, scrypt-encrypted unless `--no-password`) and `FILE.pub` | password |
+| `keys generate --role root\|index\|timestamp\|publisher --out FILE` | minisign key pair: `FILE` (mode 0600, scrypt-encrypted unless `--no-password`) and `FILE.pub` | password |
 | `keyset init --root PUB… [--root-threshold N] --index PUB --timestamp PUB [--seq-floor N] [--first-party]` | `roots.json` and an unsigned `keys/1.json`; `--first-party` adds `"first_party": {"namespaces": ["deckpilot"]}` ([first-party plugins](#first-party-plugins-deckpilot)) | public keys only |
 | `keyset rotate [--root PUB…] [--root-threshold N] [--index PUB] [--timestamp PUB] [--seq-floor N] [--seq-floor-reset] [--first-party \| --no-first-party]` | unsigned `keys/<n+1>.json`; unchanged roles and the first-party authorization are carried over (`--first-party` adds it, `--no-first-party` withdraws it); `seq_floor` defaults to the live seq | public keys only |
 | `keyset sign --key FILE [--version N]` | adds one root signature; prints how many of the previous and new root thresholds are met | a root key |
@@ -68,7 +80,12 @@ Secret keys never belong in this directory.
 | `build-index --source-commit SHA [--min-app-version V] [--keep 10]` | details and an unsigned `index/<seq>.json`, `seq` = live seq + 1 (at least `seq_floor`); prunes to the newest 11 snapshots and the details they pin | — |
 | `sign-index --key FILE [--seq N]` | `index/<seq>.json.minisig` with `deckpilot-registry v1 role:index seq:<seq> keys:<n>` | the index key |
 | `timestamp --key FILE [--expires-in 7d]` | re-signs `timestamp.json` for the newest signed index | the timestamp key |
-| `verify-site [--roots F] [--state DIR] [--min-remaining 3d] [--require-packages]` | runs the client end to end (see below) | — |
+| `verify-site [--roots F] [--state DIR] [--min-remaining 3d] [--require-packages] [--require-storefront]` | runs the client end to end (see below) | — |
+| `storefront check` | checks the [storefront](#the-storefront) sources: input schemas, text, links, markdown, every image (header rules and a full decode), the ids and versions they name | — |
+| `storefront build [--seq N]` | for the signed `index/<N>.json` (default: newest): listing and editorial documents (published entries only), `media/<sha256>.<ext>`, and the unsigned `storefront/<N>.json` bound to that index; prunes storefronts whose index is gone and files no kept storefront references | — |
+| `storefront sign --key FILE [--seq N]` | `storefront/<N>.json.minisig` with `deckpilot-registry v1 role:storefront seq:<N> keys:<n>`, after checking the envelope is bound to the signed `index/<N>.json` | the index key |
+| `release sign --package F.dpplugin --id ID --version V (--key FILE \| --key-env NAME) [--out-dir DIR]` | the first-party publisher signature of a release artifact as `ID V` (from the release tag; the package must say the same) by **one** key, written to `F.dpplugin.<KEYID>.minisig` (KEYID: the key's minisign key id, 16 uppercase hex) next to the package or in `--out-dir`, never overwritten; after the verifier's own checks, which run before the key is loaded; the key is dropped before the new signature is verified ([publisher-signature.md](../../docs/marketplace/publisher-signature.md)); run once per key, only in `knittingcode/deckpilot-plugins`' release environment | one publisher key |
+| `release verify --package F [--signatures-dir DIR] --id ID --version V --sha256 H --size N --app-version V --plugin-api M.N [--platform P] [--keys F] [--released-pins F] [--revocations F] [--audit F.jsonl] [--unpack DIR]` | reads every `F.*.minisig` next to the package (or in `--signatures-dir`), lists each file as counted (key id, fingerprint) or ignored (reason), and verifies the release artifact against the claim, the threshold of distinct pinned publisher keys (`--keys`: test keys, flagged in the output), revocations, the host and the rollback floor; audits the outcome; grants nothing | — |
 
 `--now <RFC 3339>` replaces the system clock in every command that records
 a time.
@@ -123,6 +140,89 @@ the state of an existing client, then against the new site with that
 state, and it proves that existing clients accept the update: no rollback,
 no equivocation, no dropped revocation, a continuous key set chain. A
 refused site never changes the stored state.
+
+Without `--require-storefront`, `verify-site` does not look at
+`storefront/` or `media/` at all: its result and output are the same as
+before storefronts existed, whatever those directories hold. With it, it
+then fetches `storefront/<seq>.json` for the verified seq and has the same
+client verify it (`verify_storefront`, `verify_listing`,
+`verify_editorial`), then checks every image the documents pin with the
+client's `verify_media` and decodes it in full; a missing or refused
+storefront fails.
+
+## The storefront
+
+Editorial placements (banners, rows, spotlights, collections) and listing
+content (promo text, description, screenshots, icon, links, release notes)
+for Discover. Nothing in the documents above changes: every registry
+document refuses unknown fields and DeckPilot 0.10 to 0.12 read the
+production registry, so the storefront lives at **new paths** that older
+clients never request, and the key set gains **no role**.
+
+- **Signer**: the index role, with its own exact trusted comment
+  `deckpilot-registry v1 role:storefront seq:<seq> keys:<kv>`
+  (`sig::storefront_comment`). Comments are exact, so an index signature
+  is never a storefront signature, nor the reverse. Same `sign` job, same
+  `registry-release` environment, same admin-only tag as the index. The
+  timestamp key and the publisher keys never sign it.
+- **Binding**: `storefront/<seq>.json` carries `seq`, `keys_version` and the
+  `{path, sha256, length}` of `index/<seq>.json`; a client accepts it only
+  for its currently verified timestamp (so rollback and freeze protection
+  come from the timestamp chain), and only if every listed id is in that
+  index. Listings and the editorial document are pinned by sha256 and
+  length and checked before parsing; images likewise, at
+  `media/<sha256>.<ext>`, a path the client derives itself.
+- **Equivocation**: the client records the seq and sha256 of the
+  storefront it accepted in `registry-storefront.json`, beside (not in)
+  `registry-trust.json`, whose fields stay exactly those older builds read.
+  Another storefront for the same seq is refused.
+- **Strictness**: the envelope and image references refuse unknown fields;
+  listing and editorial content ignore them, and an editorial section of an
+  unknown `kind` is skipped. An unknown `storefront_version`,
+  `listing_version` or `editorial_version` refuses that document only.
+- **Refusal**: a refused storefront means catalog-only Discover; it never
+  changes the result of a refresh or an install.
+
+Sources: `registry/plugins/<id>/listing.json`
+([`schema/inputs/listing.schema.json`](schema/inputs/listing.schema.json),
+written by the plugin's author, no placement fields) and
+`editorial/editorial.json`
+([`schema/inputs/editorial.schema.json`](schema/inputs/editorial.schema.json),
+maintainers only; `draft`, `published` or `archived`, only `published`
+reaches the site, without `status`). The signed documents are described by
+`schema/registry-{storefront,listing,editorial}.schema.json`.
+
+Images (`storefront check` and every client):
+
+| Use | Formats | Size and aspect | Max bytes |
+| --- | --- | --- | --- |
+| icon | PNG, WebP | square, 256 to 1024 px | 256 KiB |
+| screenshot (0 to 8, alt text required) | PNG, WebP, JPEG | 16:10 or 16:9 (±1%), 1280 to 2560 px wide | 1 MiB |
+| promo art (alt text required) | PNG, WebP, JPEG | 2:1, 1600 to 3200 px wide | 1 MiB |
+| banner art (alt text, or `decorative`) | PNG, WebP, JPEG | 3:1, 1200 to 3600 px wide | 1 MiB |
+
+At most 8,388,608 pixels per image, 8 MiB per listing and 16 MiB for the
+editorial document. 8-bit channels only, no animation (APNG, animated
+WebP), no metadata (PNG text and `eXIf` chunks, JPEG APP1/APP13 and
+comments, WebP `EXIF`/`XMP`), an ICC profile up to 64 KiB; PNG chunks
+from an allow-list with every CRC checked and nothing after `IEND`; JPEG
+baseline or progressive with 1 or 3 components and nothing after `EOI`;
+WebP whose RIFF size is the file length. The format is sniffed from the
+bytes and must match the extension. **SVG is refused.**
+
+Text is Unicode NFC, without control characters (except line breaks in
+descriptions and release notes), bidi controls or zero-width characters;
+every localized map has `en` (and today only `en` and `pl`). Descriptions
+and release notes use a safe markdown subset (paragraphs, one-level lists,
+bold, emphasis, code, https links); raw HTML, headings, images, tables and
+quotes are refused. Links are `https:` only, at most 512 characters, with
+no userinfo, IP address, port or punycode host; a `deckpilot.*` listing
+links only to `github.com/knittingcode/…` or `knittingcode.github.io`.
+Listing text outside the `deckpilot` namespace that says "official",
+"verified" or "DeckPilot team" is flagged for review.
+
+The publishing order is `build-index`, `sign-index`, `storefront build`,
+`storefront sign`, `timestamp`, `verify-site --require-storefront`.
 
 ## First-party plugins (`deckpilot.*`)
 
@@ -287,6 +387,13 @@ released only to jobs on `main` after review, never to pull requests or
 forks. No job that runs author code has a secret, an environment or
 `id-token: write`.
 
+With storefronts enabled (`REGISTRY_STOREFRONT_ENABLED`), the `sign` job
+runs `storefront build` and `storefront sign` with the index key between
+`sign-index` and `timestamp`, and `verify-site` adds
+`--require-storefront`; an editorial-only change is published with a
+`registry--v…` tag (a new seq with the same plugins). Off, the site is
+exactly what it was before storefronts.
+
 ### `timestamp.yml`: daily
 
 `schedule` plus `workflow_dispatch`, same concurrency group as
@@ -294,7 +401,9 @@ forks. No job that runs author code has a secret, an environment or
 client), `timestamp --expires-in 7d` in `registry-timestamp`, `verify-site
 --state … --min-remaining 6d`, deploy, `verify-published`. It never needs
 the index key: the timestamp alone keeps clients fresh (this crate's
-decision 1), and `index/<seq>.json` stays byte-for-byte the same.
+decision 1), and `index/<seq>.json` stays byte-for-byte the same. The
+mirror must keep `storefront/` and `media/` byte for byte as well, or the
+first refresh after a storefront publish would delete them.
 
 ## Not covered
 

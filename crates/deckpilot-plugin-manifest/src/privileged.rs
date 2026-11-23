@@ -274,7 +274,7 @@ fn sub_grant(
 
 /// Every place a manifest uses a privileged kind, with its JSON path and
 /// what it is.
-fn usages(m: &Manifest) -> Vec<(String, String)> {
+pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for (index, permission) in m.permissions.iter().enumerate() {
         if permission.kind().is_first_party_only() {

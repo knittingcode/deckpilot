@@ -152,17 +152,53 @@ inner() {
   esac
 }
 
+# Linux: the title bar's close button, as a window manager sends it
+# (WM_DELETE_WINDOW; tools/ci/close-window.py, python3-xlib) closes the main
+# window, which as the last one ends the app; the agent keeps running
+# (apps/desktop/src-tauri/src/lifecycle.rs). 0.10.0 to 0.12.0: the button did
+# nothing.
+close_main_window() {
+  local step="$label: close button ends the app, agent keeps running" sent agents
+  if ! sent=$(python3 -I "$SMOKE_ROOT/tools/ci/close-window.py" 0 close 2>&1); then
+    record "$step" error "cannot close the main window: $sent"
+    return
+  fi
+  for _ in $(seq 1 60); do
+    kill -0 "$desktop_pid" 2> /dev/null || break
+    sleep 0.5
+  done
+  agents=$(agent_pids | tr '\n' ' ')
+  if kill -0 "$desktop_pid" 2> /dev/null; then
+    record "$step" fail "$sent; deckpilot-desktop pid $desktop_pid still running 30 s later; window: $(python3 -I "$SMOKE_ROOT/tools/ci/close-window.py" 0 find 2>&1 || echo gone)"
+  elif [ -z "$agents" ]; then
+    record "$step" fail "$sent; the app ended, but so did the agent"
+  else
+    record "$step" pass "$sent; deckpilot-desktop pid $desktop_pid ended with its last window; agent pids $agents keep running"
+  fi
+}
+
 inner_launch() {
-  local data="$DECKPILOT_DATA_DIR" alive_desktop=0 alive_agent=0 checks=0 shot agents
+  local data="$DECKPILOT_DATA_DIR" alive_desktop=0 alive_agent=0 checks=0 shot agents waited=0 polls=""
   "$exe" > "$SMOKE_OUT/$label-desktop.log" 2>&1 &
   desktop_pid=$!
+  # The app starts the agent as it launches; a cold first start on a slow
+  # runner can take longer than the first 5 s (run 45032484488, macos-15-intel:
+  # the only agent of the session logged its start about 4.5 s after the app
+  # was launched, and the first check missed it). The 30 s therefore count
+  # from the agent's appearance, waited for up to 20 s.
+  while [ "$waited" -lt 40 ] && [ -z "$(agent_pids)" ] && kill -0 "$desktop_pid" 2> /dev/null; do
+    sleep 0.5
+    waited=$((waited + 1))
+  done
   # 30 s, checked every 5 s.
   for _ in 1 2 3 4 5 6; do
     sleep 5
     checks=$((checks + 1))
     kill -0 "$desktop_pid" 2> /dev/null && alive_desktop=$((alive_desktop + 1))
-    [ -n "$(agent_pids)" ] && alive_agent=$((alive_agent + 1))
+    if [ -n "$(agent_pids)" ]; then alive_agent=$((alive_agent + 1)); polls="$polls+"; else polls="$polls-"; fi
   done
+  local appeared="agent there $((waited / 2)).$((waited % 2 * 5)) s after the launch"
+  [ "$waited" -ge 40 ] && appeared="no agent within 20 s of the launch"
   agents=$(agent_pids | tr '\n' ' ')
   if [ "$alive_desktop" -eq "$checks" ]; then
     record "$label: desktop alive 30 s" pass "pid $desktop_pid alive at $alive_desktop/$checks checks"
@@ -170,11 +206,11 @@ inner_launch() {
     record "$label: desktop alive 30 s" fail "alive at $alive_desktop/$checks checks; log: $(tail -n 5 "$SMOKE_OUT/$label-desktop.log" 2> /dev/null)"
   fi
   if [ "$alive_agent" -eq "$checks" ]; then
-    record "$label: agent started by the app, alive 30 s" pass "pids $agents ($(ps -o args= -p "${agents%% *}" 2> /dev/null | cut -c1-120)) at $alive_agent/$checks checks"
+    record "$label: agent started by the app, alive 30 s" pass "$appeared; pids $agents ($(ps -o args= -p "${agents%% *}" 2> /dev/null | cut -c1-120)) at $alive_agent/$checks checks"
   elif [ "$alive_agent" -gt 0 ]; then
-    record "$label: agent started by the app, alive 30 s" fail "agent seen at only $alive_agent/$checks checks"
+    record "$label: agent started by the app, alive 30 s" fail "$appeared; then seen at only $alive_agent/$checks checks ($polls)"
   else
-    record "$label: agent started by the app, alive 30 s" fail "no deckpilot-agent process"
+    record "$label: agent started by the app, alive 30 s" fail "no deckpilot-agent process ($appeared)"
   fi
   # The encrypted database in the isolated data directory.
   for _ in $(seq 1 30); do [ -s "$data/deckpilot.db" ] && break; sleep 1; done
@@ -202,6 +238,7 @@ inner_launch() {
   else
     record "$label: screenshot" error "no screenshot could be taken"
   fi
+  if [ "$os" = Linux ]; then close_main_window; fi
   stop_all
   if [ -z "$(agent_pids)" ] && ! kill -0 "$desktop_pid" 2> /dev/null; then
     record "$label: stopped" pass "desktop and agent terminated"

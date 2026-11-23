@@ -3,8 +3,9 @@
 //! P8), as a regression test of every action on known GitHub answers
 //! (feature `plugins`):
 //!
-//! * the plugin (`plugins/first-party/github`) is built to wasm with the
-//!   `guest` profile and bundled as an installed application ships it;
+//! * the plugin (its signed release artifact, verified and unpacked by
+//!   `plugins/first-party/build.sh`; `support/official.rs`) is bundled as
+//!   an installed application ships it;
 //!   the real agent seeds it, the user consents to its permissions and
 //!   stores its token, and every action runs in the real sandboxed host,
 //!   invoked over IPC like the configuration app does;
@@ -51,8 +52,6 @@ use serde_json::{Value, json};
 
 const PLUGIN: parity::Plugin = parity::Plugin {
     id: "deckpilot.github",
-    dir: "github",
-    package: "deckpilot-github",
 };
 const ID: &str = PLUGIN.id;
 const GRANTS: &[&str] = &[

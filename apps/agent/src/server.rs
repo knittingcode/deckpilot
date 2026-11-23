@@ -6,14 +6,14 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use deckpilot_core::ActionInstanceId;
-use deckpilot_ipc::framing::{FrameError, read_message, write_message};
+use deckpilot_ipc::framing::{FrameError, FrameReader, write_message};
 use deckpilot_ipc::plugin_answers;
 use deckpilot_ipc::{
     AgentEvent, Capability, ClientKind, ClientMessage, ErrorCode, IpcError, KeyStateEntry,
     MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, Request, Response, ServerMessage, SharedStream, token,
 };
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
-use tokio::io::BufReader;
+use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
@@ -115,7 +115,7 @@ struct DialogApp {
 /// than one frame is not written at all, so the connection is still
 /// aligned: an answer is shortened or refused in its place
 /// ([`plugin_answers::fit`]), an event is left out.
-async fn send(writer: &mut SharedStream, message: &ServerMessage) -> bool {
+async fn send<W: AsyncWrite + Unpin>(writer: &mut W, message: &ServerMessage) -> bool {
     match write_message(writer, message).await {
         Ok(()) => true,
         Err(FrameError::TooLarge) => {
@@ -180,12 +180,12 @@ async fn next_event<T: Clone>(
 /// Reads and checks the `hello` message and answers with `welcome`.
 /// Returns `None` (after sending an error where useful) if the client may not
 /// continue.
-async fn authenticate(
-    reader: &mut BufReader<SharedStream>,
-    writer: &mut SharedStream,
+async fn authenticate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    reader: &mut FrameReader<BufReader<R>>,
+    writer: &mut W,
     token: &str,
 ) -> Option<(ClientKind, u32)> {
-    let hello = tokio::time::timeout(HELLO_TIMEOUT, read_message::<_, ClientMessage>(reader));
+    let hello = tokio::time::timeout(HELLO_TIMEOUT, reader.read_message::<ClientMessage>());
     let rejection = match hello.await {
         Ok(Ok(Some(ClientMessage::Hello {
             protocol,
@@ -221,16 +221,31 @@ async fn authenticate(
     None
 }
 
-#[allow(clippy::too_many_lines)] // One arm per kind of message a connection gets.
 async fn serve(
     stream: Stream,
     handle: AgentHandle,
     token: Arc<str>,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) {
     let stream = SharedStream::new(stream);
-    let mut reader = BufReader::new(stream.clone());
-    let mut writer = stream;
+    serve_connection(stream.clone(), stream, handle, token, shutdown).await;
+}
+
+/// Serves one connection, read from `reader` and written to `writer`.
+#[allow(clippy::too_many_lines)] // One arm per kind of message a connection gets.
+async fn serve_connection<R, W>(
+    reader: R,
+    mut writer: W,
+    handle: AgentHandle,
+    token: Arc<str>,
+    mut shutdown: watch::Receiver<bool>,
+) where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    // Owned by the connection, not by one read: a read that an event
+    // interrupts keeps the part of a request it read (issue #401).
+    let mut reader = FrameReader::new(BufReader::new(reader));
 
     let Some((client, protocol)) = authenticate(&mut reader, &mut writer, &token).await else {
         return;
@@ -248,7 +263,9 @@ async fn serve(
     let mut live: LiveEvents = None;
     loop {
         tokio::select! {
-            message = read_message::<_, serde_json::Value>(&mut reader) => {
+            // Cancel safe: an event sent meanwhile loses nothing of a
+            // request that is only partly read.
+            message = reader.read_message::<serde_json::Value>() => {
                 let reply = match message {
                     Ok(None) | Err(FrameError::Io(_)) => break,
                     Ok(Some(value)) => {
@@ -515,5 +532,269 @@ async fn handle_message(
             id: Some(id),
             error,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! A connection whose requests arrive in pieces while the agent sends
+    //! it events (issue #401).
+
+    use super::*;
+    use crate::service::Command;
+    use deckpilot_ipc::framing::MAX_MESSAGE_BYTES;
+    use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
+    use tokio::sync::mpsc;
+
+    const TOKEN: &str = "secret";
+    const WAIT: Duration = Duration::from_secs(5);
+
+    struct Peer {
+        reader: FrameReader<BufReader<ReadHalf<DuplexStream>>>,
+        writer: WriteHalf<DuplexStream>,
+        handle: AgentHandle,
+        stop: watch::Sender<bool>,
+        served: tokio::task::JoinHandle<()>,
+    }
+
+    /// Answers every request a connection forwards to the agent with `ok`.
+    fn answer_all(mut commands: mpsc::UnboundedReceiver<Command>) {
+        tokio::spawn(async move {
+            while let Some(command) = commands.recv().await {
+                if let Command::Request { reply, .. } = command {
+                    let _ = reply.send(Ok(Response::Ok));
+                }
+            }
+        });
+    }
+
+    /// An authenticated connection subscribed to runtime events.
+    async fn subscribed() -> Peer {
+        let (handle, commands) = AgentHandle::detached();
+        answer_all(commands);
+        let (client_end, agent_end) = tokio::io::duplex(4 * MAX_MESSAGE_BYTES);
+        let (agent_reader, agent_writer) = tokio::io::split(agent_end);
+        let (stop, shutdown) = watch::channel(false);
+        let served = tokio::spawn(serve_connection(
+            agent_reader,
+            agent_writer,
+            handle.clone(),
+            TOKEN.into(),
+            shutdown,
+        ));
+        let (reader, writer) = tokio::io::split(client_end);
+        let mut peer = Peer {
+            reader: FrameReader::new(BufReader::new(reader)),
+            writer,
+            handle,
+            stop,
+            served,
+        };
+        let hello = ClientMessage::Hello {
+            protocol: PROTOCOL_VERSION,
+            token: TOKEN.into(),
+            client: ClientKind::Other,
+        };
+        write_message(&mut peer.writer, &hello).await.unwrap();
+        assert!(matches!(
+            peer.receive().await,
+            Some(ServerMessage::Welcome { .. })
+        ));
+        let subscribe = ClientMessage::Request {
+            id: 1,
+            request: Request::Subscribe,
+        };
+        write_message(&mut peer.writer, &subscribe).await.unwrap();
+        assert!(matches!(
+            peer.receive().await,
+            Some(ServerMessage::Response {
+                id: 1,
+                response: Response::Ok
+            })
+        ));
+        peer
+    }
+
+    /// A `getStatus` request with `id`, without its newline.
+    fn status_request(id: u64) -> Vec<u8> {
+        serde_json::to_vec(&ClientMessage::Request {
+            id,
+            request: Request::GetStatus,
+        })
+        .unwrap()
+    }
+
+    impl Peer {
+        /// Writes `bytes` and lets the connection read them.
+        async fn write(&mut self, bytes: &[u8]) {
+            self.writer.write_all(bytes).await.unwrap();
+            self.writer.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        async fn receive(&mut self) -> Option<ServerMessage> {
+            tokio::time::timeout(WAIT, self.reader.read_message())
+                .await
+                .expect("the connection answered in time")
+                .unwrap()
+        }
+
+        /// The agent sends an event, and the client receives it.
+        async fn event(&mut self) {
+            self.handle.emit_for_test(AgentEvent::ShowWindow);
+            assert!(matches!(
+                self.receive().await,
+                Some(ServerMessage::Event {
+                    event: AgentEvent::ShowWindow
+                })
+            ));
+        }
+
+        /// Nothing more arrives for a while.
+        async fn quiet(&mut self) {
+            let next = tokio::time::timeout(
+                Duration::from_millis(100),
+                self.reader.read_message::<ServerMessage>(),
+            );
+            if let Ok(message) = next.await {
+                panic!("expected nothing more, got {message:?}");
+            }
+        }
+
+        /// The connection is closed and its task has ended.
+        async fn closed(mut self) {
+            assert!(self.receive().await.is_none());
+            tokio::time::timeout(WAIT, self.served)
+                .await
+                .expect("the connection ended in time")
+                .unwrap();
+        }
+    }
+
+    fn answered(message: Option<ServerMessage>, expected: u64) {
+        match message {
+            Some(ServerMessage::Response {
+                id,
+                response: Response::Ok,
+            }) if id == expected => {}
+            other => panic!("expected the answer to request {expected}, got {other:?}"),
+        }
+    }
+
+    fn refused(message: Option<ServerMessage>) -> IpcError {
+        match message {
+            Some(ServerMessage::Error { id: None, error }) => {
+                assert_eq!(error.code, ErrorCode::InvalidRequest);
+                error
+            }
+            other => panic!("expected an uncorrelated error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_split_by_an_event_gets_one_correlated_answer() {
+        let mut peer = subscribed().await;
+        let request = status_request(2);
+        let (head, tail) = request.split_at(request.len() / 2);
+        peer.write(head).await;
+        peer.event().await;
+        peer.write(tail).await;
+        peer.write(b"\n").await;
+        answered(peer.receive().await, 2);
+        peer.quiet().await;
+    }
+
+    #[tokio::test]
+    async fn a_request_fragmented_across_several_events_gets_one_correlated_answer() {
+        let mut peer = subscribed().await;
+        let request = status_request(7);
+        let chunks: Vec<&[u8]> = request.chunks(request.len() / 4 + 1).collect();
+        assert!(chunks.len() >= 4);
+        for chunk in chunks {
+            peer.write(chunk).await;
+            peer.event().await;
+            peer.event().await;
+        }
+        peer.write(b"\n").await;
+        answered(peer.receive().await, 7);
+        peer.quiet().await;
+        // The connection is still aligned: the next request is answered.
+        let mut next = status_request(8);
+        next.push(b'\n');
+        peer.write(&next).await;
+        answered(peer.receive().await, 8);
+    }
+
+    #[tokio::test]
+    async fn a_request_of_exactly_the_limit_split_by_events_is_answered() {
+        let mut peer = subscribed().await;
+        let mut request = status_request(3);
+        request.resize(MAX_MESSAGE_BYTES, b' ');
+        for chunk in request.chunks(MAX_MESSAGE_BYTES / 3 + 1) {
+            peer.write(chunk).await;
+            peer.event().await;
+        }
+        peer.write(b"\n").await;
+        answered(peer.receive().await, 3);
+        peer.quiet().await;
+    }
+
+    #[tokio::test]
+    async fn an_oversized_frame_split_by_events_is_refused_and_closes_the_connection() {
+        let mut peer = subscribed().await;
+        let mut request = status_request(4);
+        request.resize(MAX_MESSAGE_BYTES + 1, b' ');
+        let chunks: Vec<Vec<u8>> = request
+            .chunks(MAX_MESSAGE_BYTES / 3 + 1)
+            .map(<[u8]>::to_vec)
+            .collect();
+        let (last, first) = chunks.split_last().unwrap();
+        for chunk in first {
+            peer.write(chunk).await;
+            peer.event().await;
+        }
+        peer.write(last).await;
+        let error = refused(peer.receive().await);
+        assert_eq!(
+            error.message,
+            format!("message exceeds {MAX_MESSAGE_BYTES} bytes")
+        );
+        peer.closed().await;
+    }
+
+    #[tokio::test]
+    async fn a_partial_frame_when_the_client_closes_is_answered_as_malformed() {
+        let mut peer = subscribed().await;
+        let request = status_request(5);
+        peer.write(&request[..request.len() / 2]).await;
+        peer.event().await;
+        peer.writer.shutdown().await.unwrap();
+        let error = refused(peer.receive().await);
+        assert!(
+            error.message.starts_with("malformed message"),
+            "{}",
+            error.message
+        );
+        peer.closed().await;
+    }
+
+    #[tokio::test]
+    async fn the_agent_stopping_during_a_partial_frame_closes_in_order() {
+        let mut peer = subscribed().await;
+        let request = status_request(6);
+        peer.write(&request[..request.len() / 2]).await;
+        peer.event().await;
+        peer.write(&request[request.len() / 2..]).await;
+        // The final notification is delivered, the partial request is not
+        // answered, and the connection closes.
+        peer.handle.emit_for_test(AgentEvent::ShowWindow);
+        peer.stop.send(true).unwrap();
+        assert!(matches!(
+            peer.receive().await,
+            Some(ServerMessage::Event {
+                event: AgentEvent::ShowWindow
+            })
+        ));
+        peer.closed().await;
     }
 }

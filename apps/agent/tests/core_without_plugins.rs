@@ -3,8 +3,8 @@
 //! the built-ins `github`, `gitlab`, `jira`, `git`, `docker`, `workspace`
 //! and `projects` are gone, and the core must stand on its own. Through
 //! the real agent, the real sandboxed host and every first-party plugin of
-//! `plugins/first-party` built to wasm and bundled as the release bundles
-//! them (staged as `default`-class so that a fresh install seeds them),
+//! `plugins/first-party/bundled.json`, its verified release artifact
+//! bundled as the release bundles it (`support/official.rs`; staged as `default`-class so that a fresh install seeds them),
 //! with a simulated Stream Deck MK.2, three ways:
 //!
 //! * `--disable-plugins`: no plugin runtime at all;
@@ -21,8 +21,12 @@
 //! * every legacy action resolves unavailable with a reason, never as an
 //!   unknown type and never with a panic; pressing their keys leaves the
 //!   agent answering;
-//! * a workflow bound to a key still runs (a core one succeeds; the seed's
-//!   graph, whose nodes are the plugins', is refused with the reason);
+//! * a workflow bound to a key still runs without a plugin runtime (a core
+//!   one succeeds; the seed's graph, whose nodes are the plugins', is
+//!   refused with the reason). With the Workflows plugin disabled or
+//!   uninstalled, the key is kept and does not start its graph workflow
+//!   (disabled plugins preserve bindings without executing them); the
+//!   workflow still runs from the app;
 //! * the stored layouts, actions and workflows are byte for byte the same
 //!   after the app's save round-trip;
 //! * `getActiveProject` answers the clear "the Projects plugin is not
@@ -78,18 +82,17 @@ const REMOVED: [&str; 7] = [
     "projects",
 ];
 
-/// Every first-party plugin: its directory (and id `deckpilot.<dir>`) and
-/// its crate.
-const FIRST_PARTY: [(&str, &str); 9] = [
-    ("docker", "deckpilot-docker"),
-    ("git", "deckpilot-git"),
-    ("github", "deckpilot-github"),
-    ("gitlab", "deckpilot-gitlab"),
-    ("jira", "deckpilot-jira"),
-    ("notifications", "deckpilot-notifications"),
-    ("projects", "deckpilot-projects"),
-    ("workflows", "deckpilot-workflows"),
-    ("workspace", "deckpilot-workspace"),
+/// Every first-party plugin the release bundles (id `deckpilot.<name>`).
+const FIRST_PARTY: [&str; 9] = [
+    "docker",
+    "git",
+    "github",
+    "gitlab",
+    "jira",
+    "notifications",
+    "projects",
+    "workflows",
+    "workspace",
 ];
 
 fn plugin_id(dir: &str) -> String {
@@ -268,11 +271,6 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-struct Artifacts {
-    host: PathBuf,
-    wasm: PathBuf,
-}
-
 fn cargo_in_runtime(args: &[&str]) {
     let status = Command::new(option_env!("CARGO").unwrap_or("cargo"))
         .current_dir(repo().join("plugins/runtime"))
@@ -288,26 +286,12 @@ fn cargo_in_runtime(args: &[&str]) {
     assert!(status.success(), "cargo {args:?} in plugins/runtime failed");
 }
 
-/// The host and every first-party plugin's module, built once from
-/// `plugins/runtime` (or taken from `DECKPILOT_E2E_PLUGIN_HOST` and
-/// `DECKPILOT_E2E_WASM_DIR`).
-fn artifacts() -> &'static Artifacts {
-    static ARTIFACTS: OnceLock<Artifacts> = OnceLock::new();
-    ARTIFACTS.get_or_init(|| {
-        let file = |krate: &str| format!("{}.wasm", krate.replace('-', "_"));
-        let wasm = std::env::var_os("DECKPILOT_E2E_WASM_DIR")
-            .map(PathBuf::from)
-            .filter(|dir| FIRST_PARTY.iter().all(|(_, k)| dir.join(file(k)).is_file()))
-            .unwrap_or_else(|| {
-                let mut args = vec!["build", "--locked"];
-                for (_, krate) in &FIRST_PARTY {
-                    args.extend(["-p", krate]);
-                }
-                args.extend(["--target", "wasm32-unknown-unknown", "--profile", "guest"]);
-                cargo_in_runtime(&args);
-                repo().join("plugins/runtime/target/wasm32-unknown-unknown/guest")
-            });
-        let host = std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
+/// The host, built once from `plugins/runtime` (or taken from
+/// `DECKPILOT_E2E_PLUGIN_HOST`).
+fn host() -> &'static PathBuf {
+    static HOST: OnceLock<PathBuf> = OnceLock::new();
+    HOST.get_or_init(|| {
+        std::env::var_os("DECKPILOT_E2E_PLUGIN_HOST").map_or_else(
             || {
                 cargo_in_runtime(&[
                     "build",
@@ -323,8 +307,7 @@ fn artifacts() -> &'static Artifacts {
                 ))
             },
             PathBuf::from,
-        );
-        Artifacts { host, wasm }
+        )
     })
 }
 
@@ -375,45 +358,32 @@ impl Env {
         self.dir.path().join("no-programs")
     }
 
-    /// Every first-party plugin as `build.sh` stages it, pinned with class
+    /// Every first-party plugin as `build.sh` stages its release artifact, pinned with class
     /// `default` (seeded on a fresh install, as the bundled migration-class
     /// ones are once a migration needs them).
     fn stage(&self) {
         let mut pinned = Vec::new();
-        for (dir_name, krate) in FIRST_PARTY {
-            let source = repo().join("plugins/first-party").join(dir_name);
-            let id = plugin_id(dir_name);
+        let released: Value = serde_json::from_slice(
+            &std::fs::read(repo().join("plugins/first-party/bundled.json")).unwrap(),
+        )
+        .unwrap();
+        let mut ids: Vec<_> = released["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_str().unwrap().to_owned())
+            .collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            FIRST_PARTY.map(plugin_id),
+            "every plugin the release bundles"
+        );
+        for name in FIRST_PARTY {
+            let id = plugin_id(name);
             let dir = self.bundled().join(&id);
-            std::fs::create_dir_all(dir.join("assets")).unwrap();
-            std::fs::create_dir_all(dir.join("locales")).unwrap();
-            let manifest: Value =
-                serde_json::from_slice(&std::fs::read(source.join("manifest.json")).unwrap())
-                    .unwrap();
-            let mut files = vec!["manifest.json".to_owned(), "LICENSE".to_owned()];
-            files.extend(
-                manifest["icons"]
-                    .as_object()
-                    .into_iter()
-                    .flatten()
-                    .map(|(_, v)| v.as_str().unwrap().to_owned()),
-            );
-            files.extend(
-                manifest["locales"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|tag| format!("locales/{}.json", tag.as_str().unwrap())),
-            );
-            for file in files {
-                std::fs::copy(source.join(&file), dir.join(&file)).unwrap();
-            }
-            std::fs::copy(
-                artifacts()
-                    .wasm
-                    .join(format!("{}.wasm", krate.replace('-', "_"))),
-                dir.join("plugin.wasm"),
-            )
-            .unwrap();
+            support::official::copy_into(&id, &dir);
+            let manifest = support::official::manifest(&id);
             let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();
             pinned.push((PluginId::parse(&id).unwrap(), version, BundleClass::Default));
         }
@@ -441,7 +411,7 @@ impl Env {
                 "debug",
             ])
             .arg("--plugin-host")
-            .arg(&artifacts().host)
+            .arg(host())
             .arg("--bundled-plugins")
             .arg(self.bundled());
         if !plugins {
@@ -583,7 +553,7 @@ impl Agent {
         match self.ok(Request::ListPlugins).await {
             Response::Plugins { plugins } => plugins
                 .into_iter()
-                .filter(|p| FIRST_PARTY.iter().any(|(dir, _)| plugin_id(dir) == p.id))
+                .filter(|p| FIRST_PARTY.iter().any(|name| plugin_id(name) == p.id))
                 .map(|p| (p.id, p.state))
                 .collect(),
             other => panic!("unexpected {other:?}"),
@@ -609,7 +579,7 @@ impl Agent {
     /// Enables every first-party plugin with the user's consent to every
     /// permission it declares (the optional ones included).
     async fn enable_all(&self) {
-        for (dir, _) in FIRST_PARTY {
+        for dir in FIRST_PARTY {
             let id = plugin_id(dir);
             let Response::Plugin { plugin } =
                 self.ok(Request::GetPlugin { plugin: id.clone() }).await
@@ -727,7 +697,10 @@ async fn finished(events: &mut AgentClient, workflow: WorkflowId) -> ExecutionSt
 
 /// Everything the core must do with no optional plugin serving.
 #[allow(clippy::too_many_lines)] // One pass over every promise of WP-T1.
-async fn the_core_stands_alone(env: &Env, agent: &Agent) {
+///
+/// `workflows_off`: the Workflows plugin is installed and cannot run
+/// (disabled or uninstalled), so keys do not start graph workflows.
+async fn the_core_stands_alone(env: &Env, agent: &Agent, workflows_off: bool) {
     // The device renders every key of its home page.
     let status = agent
         .wait_status("the simulated MK.2 shows the layout", |s| {
@@ -783,7 +756,7 @@ async fn the_core_stands_alone(env: &Env, agent: &Agent) {
     assert_eq!(agent.run(env.seeded.core_action).await, "core");
 
     // Keys bound to them leave the agent answering; the workflow key runs
-    // its workflow.
+    // its workflow, unless the Workflows plugin is off.
     let mut events = agent.client().await;
     events.subscribe().await.unwrap();
     // Not key 14: it opens the next page.
@@ -807,10 +780,34 @@ async fn the_core_stands_alone(env: &Env, agent: &Agent) {
             })
             .await;
     }
+    if workflows_off {
+        // Kept, not run: the only run is the app's.
+        let Response::ExecutionStarted { .. } = agent
+            .ok(Request::StartWorkflow {
+                workflow: env.seeded.core_workflow,
+            })
+            .await
+        else {
+            panic!("startWorkflow");
+        };
+    }
     assert_eq!(
         finished(&mut events, env.seeded.core_workflow).await,
         ExecutionState::Succeeded
     );
+    if workflows_off {
+        let Response::Executions { executions } = agent
+            .ok(Request::ListExecutions {
+                workflow: Some(env.seeded.core_workflow),
+                limit: None,
+            })
+            .await
+        else {
+            panic!("listExecutions");
+        };
+        let triggers: Vec<_> = executions.iter().map(|r| r.trigger).collect();
+        assert_eq!(triggers, [deckpilot_core::ExecutionTrigger::App]);
+    }
     // The seed's graph, whose nodes are the plugins', is refused with the
     // reason before it starts; nothing else happens.
     match agent
@@ -897,7 +894,7 @@ async fn the_core_runs_with_plugins_switched_off() {
         agent.request(Request::ListPlugins).await,
         Err(ClientError::Agent(_))
     ));
-    the_core_stands_alone(&env, &agent).await;
+    the_core_stands_alone(&env, &agent, false).await;
     agent.stop().await;
 
     // Started again with plugins: seeded, enabled, every key back.
@@ -930,7 +927,7 @@ async fn the_core_runs_with_every_first_party_plugin_disabled() {
             plugins.iter().all(|(_, s)| *s == PluginState::Disabled)
         })
         .await;
-    the_core_stands_alone(&env, &agent).await;
+    the_core_stands_alone(&env, &agent, true).await;
     every_key_recovers(&env, &agent).await;
     agent.stop().await;
 }
@@ -944,7 +941,7 @@ async fn the_core_runs_with_every_first_party_plugin_uninstalled() {
             plugins.len() == FIRST_PARTY.len()
         })
         .await;
-    for (dir, _) in FIRST_PARTY {
+    for dir in FIRST_PARTY {
         agent
             .ok(Request::UninstallPlugin {
                 plugin: plugin_id(dir),
@@ -960,9 +957,9 @@ async fn the_core_runs_with_every_first_party_plugin_uninstalled() {
     let agent = env.start(true).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(agent.first_party().await, Vec::new());
-    the_core_stands_alone(&env, &agent).await;
+    the_core_stands_alone(&env, &agent, true).await;
 
-    for (dir, _) in FIRST_PARTY {
+    for dir in FIRST_PARTY {
         agent
             .ok(Request::RestoreBundledPlugin {
                 plugin: plugin_id(dir),

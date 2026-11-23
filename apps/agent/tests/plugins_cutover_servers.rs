@@ -140,8 +140,6 @@ const GITLAB: Module = Module {
     name: "GitLab",
     plugin: parity::Plugin {
         id: "deckpilot.gitlab",
-        dir: "gitlab",
-        package: "deckpilot-gitlab",
     },
     credential: "gitlab.token",
     secret: "glpat-cutover-4b8d1e-not-a-real-token",
@@ -210,8 +208,6 @@ const JIRA: Module = Module {
     name: "Jira",
     plugin: parity::Plugin {
         id: "deckpilot.jira",
-        dir: "jira",
-        package: "deckpilot-jira",
     },
     credential: "jira.token",
     secret: "dev@example.com:ATATT-cutover-9f2a-not-a-real-token",
@@ -286,8 +282,6 @@ const GITHUB: Module = Module {
     name: "GitHub",
     plugin: parity::Plugin {
         id: "deckpilot.github",
-        dir: "github",
-        package: "deckpilot-github",
     },
     credential: "github.token",
     secret: "ghp_cutover-ghe-5c2a-not-a-real-token",
@@ -511,29 +505,13 @@ impl Env {
     /// "was compiled with".
     fn stage(&self) {
         let plugin = &self.module.plugin;
-        let source = parity::repo().join("plugins/first-party").join(plugin.dir);
         let dir = self.bundled().join(plugin.id);
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        for file in ["manifest.json", "LICENSE", "assets/icon-128.png"] {
-            std::fs::copy(source.join(file), dir.join(file)).unwrap();
-        }
-        std::fs::copy(&parity::artifacts(plugin).module, dir.join("plugin.wasm")).unwrap();
+        support::official::copy_into(plugin.id, &dir);
         let manifest: Value =
             serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
         let version = semver::Version::parse(manifest["version"].as_str().unwrap()).unwrap();
-        let released: Value = serde_json::from_slice(
-            &std::fs::read(parity::repo().join("plugins/first-party/bundled.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            released["plugins"]
-                .as_array()
-                .unwrap()
-                .contains(&json!({"path": plugin.dir, "class": "migration"})),
-            "the release bundles {} as a migration-class plugin: {released}",
-            plugin.id
-        );
+        support::official::assert_released(plugin.id, "migration");
         let pins = Pins::compute(
             &self.bundled(),
             &[(

@@ -195,6 +195,11 @@ What a key shows as its title, first match wins:
    has its type's name;
 6. the action's name.
 
+Whichever wins is a display template (`docs/variables.md` §3): 1, 2, 3, 5
+and 6 may hold references, a plugin's suggested title included, and are
+resolved with the display-safe variables only. A dynamic title (4) is the
+plugin's text as it sent it, never resolved.
+
 ### Plugin titles
 
 A plugin's action may declare (plugin API 1.8,
@@ -282,8 +287,9 @@ missing-plugin face.
 
 ## Dynamic text
 
-Templates (`{project.key}`, `{project.name}`, `{profile}`, `{page.…}`) are
-resolved, and a module's or plugin's label and detail applied, **before**
+Templates (`{project.key}`, `{project.name}`, `{profile}`, `{page.…}`, and
+references such as `{{ shared.team.name }}`, see `docs/variables.md` §3) are
+resolved by the agent, and a module's or plugin's label and detail applied, **before**
 the title is measured. A different resolved text is a different face, so it
 is laid out (fitted, wrapped) again; frames are cached by face and size, so
 an unchanged text is not drawn twice.

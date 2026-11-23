@@ -14,6 +14,9 @@ page says what happens then and how it is tested.
 | Releases 0.6.0, 0.7.0, 0.8.0 and 0.8.1 | 0.6.0, 0.7.0, 0.8.0, 0.8.1 | 10 | 9 |
 | Release 0.9.0 | 0.9.0 | 11 | 10 |
 | Release 0.10.0 | 0.10.0 | 16 | 13 |
+| Release 0.11.0 | 0.11.0 | 16 | 13 |
+| Release 0.12.0 | 0.12.0 | 16 | 13 |
+| Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Current main | see `Cargo.toml` | 16 | 13 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
@@ -30,6 +33,29 @@ store (`plugins.db`) goes from schema 5 to 6 (host-held tool settings); a
 0.9.x agent refuses the upgraded file and runs without plugins. The
 configuration database goes from schema 10 to 13 (folder controls, folder
 titles), each step after an encrypted backup.
+
+0.11.0 changes neither the protocol nor a schema: plugin API 1.9, plugin
+store schema 6, and the same bundled plugins as 0.10.0. It adds the
+first-party publisher keys that official plugins from a registry must be
+signed with ([publisher-signature.md](marketplace/publisher-signature.md));
+the agent keeps its floors in `<data>/plugin-official/floors.json`, which
+an older agent does not read.
+
+0.12.0 changes neither the protocol nor a schema either: plugin API 1.9,
+plugin store schema 6. Its nine bundled plugins are new versions, taken
+from their signed releases in `knittingcode/deckpilot-plugins` (GitHub
+0.2.1; GitLab, Jira and Notifications 0.1.2; the others 0.1.1), with the
+same permissions as in 0.11.0. A 0.11.0 or 0.10.0 installation replaces
+its bundled copies with them when 0.12.0 starts.
+
+0.13.0 changes neither the protocol nor a schema: plugin API 1.9, plugin
+store schema 6, and the same nine bundled plugins (same versions and
+bytes) as 0.12.0. It adds the IPC feature `storefront` without a protocol
+bump: `getStorefront`, `getRegistryListing` and `getRegistryMedia`, which
+the app sends only to an agent that announces the feature (against an
+older agent the app's storefront commands answer `null`). The agent caches
+a verified storefront under `<state>/storefront/` and its media under
+`<state>/media/`; an older agent does not read them.
 
 Current main speaks protocol 16: the Device Editor's live preview
 ([editor-navigation-and-simulation.md](editor-navigation-and-simulation.md#3-live-preview-and-navigation-sync)).
