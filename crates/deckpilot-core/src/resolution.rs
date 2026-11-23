@@ -55,6 +55,11 @@ pub struct Invocation {
     /// cause). `None` when the caller did not say: such a run counts as
     /// not started by the user.
     pub origin: Option<crate::RunOrigin>,
+    /// Where the action runs ([`crate::contexts`]): a key's press or a
+    /// gesture (by the binding's trigger), a Multi Action step, a workflow
+    /// node. `None` for a run from the app or a plugin's Test run, which is
+    /// never checked.
+    pub context: Option<crate::ActionContext>,
 }
 
 impl Invocation {
@@ -77,6 +82,15 @@ impl Invocation {
     #[must_use]
     pub fn with_execution(self, execution: Option<ExecutionId>) -> Self {
         Self { execution, ..self }
+    }
+
+    /// The same invocation, running in `context`.
+    #[must_use]
+    pub fn with_context(self, context: crate::ActionContext) -> Self {
+        Self {
+            context: Some(context),
+            ..self
+        }
     }
 
     /// The same invocation, started by `origin`.

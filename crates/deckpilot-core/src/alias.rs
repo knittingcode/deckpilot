@@ -789,6 +789,30 @@ pub struct AliasStatus {
     pub target: ActionTypeId,
     pub plugin: ModuleId,
     pub outcome: AliasOutcome,
+    /// The contexts the built-in declares that the plugin's action does
+    /// not ([`context_incompatibilities`]), while both are there. Reported
+    /// only: they do not change the routing.
+    pub context_issues: Vec<String>,
+}
+
+/// The contexts ([`crate::contexts`]) of the built-in `builtin` that the
+/// plugin action type `target` does not support (a plugin without a
+/// declaration supports all five); empty when it supports them all. The
+/// legacy id takes the plugin's definition, contexts included, so stored
+/// bindings, steps and nodes of the legacy type stay where they make
+/// sense only while this is empty.
+///
+/// Reported only, unlike [`incompatibilities`]: it is not part of the
+/// routing decision, so a plugin that narrows its contexts never moves a
+/// legacy type back to the built-in or makes it unavailable.
+pub fn context_incompatibilities(builtin: &ActionType, target: &ActionType) -> Vec<String> {
+    let supported = target.effective_contexts();
+    builtin
+        .effective_contexts()
+        .iter()
+        .filter(|context| !supported.contains(*context))
+        .map(|context| format!("context `{context}` is no longer supported"))
+        .collect()
 }
 
 /// Why the plugin action type `target` cannot replace the built-in

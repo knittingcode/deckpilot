@@ -176,6 +176,94 @@ impl Workflow {
         issues
     }
 
+    /// The uses of actions in a context their type does not declare
+    /// ([`crate::contexts`]): with a graph, its action nodes (`workflow`);
+    /// without one, its steps (`sequence`). Each is marked `stored` when
+    /// the same use is in `stored`, the saved version of this workflow
+    /// (`None`: a new one): a step whose action is a step of `stored` (at
+    /// the same index or elsewhere, counted as a multiset), a node with the
+    /// same id and action. Steps or nodes whose action is missing or whose
+    /// type is unavailable get no verdict. Reported only: saving refuses
+    /// none of them.
+    pub fn context_issues(
+        &self,
+        stored: Option<&Workflow>,
+        profile: &Profile,
+        registry: &ActionRegistry,
+    ) -> Vec<crate::ContextIssue> {
+        let verdict = |action: ActionInstanceId, context: crate::ActionContext| {
+            let instance = profile.action(action)?;
+            let definition = registry.definition(&instance.action_type)?;
+            crate::context_compatibility(definition, context)
+                .reason()
+                .cloned()
+        };
+        let mut issues = Vec::new();
+        if let Some(graph) = &self.graph {
+            let stored_node = |id: &crate::graph::NodeId, action: ActionInstanceId| {
+                stored
+                    .and_then(|w| w.graph.as_ref())
+                    .and_then(|g| g.nodes.iter().find(|n| &n.id == id))
+                    .is_some_and(|n| match &n.kind {
+                        crate::graph::NodeKind::Action { action: was, .. } => *was == action,
+                        _ => false,
+                    })
+            };
+            for node in &graph.nodes {
+                if let crate::graph::NodeKind::Action { action, .. } = &node.kind
+                    && let Some(reason) = verdict(*action, crate::ActionContext::Workflow)
+                {
+                    issues.push(crate::ContextIssue {
+                        site: crate::ContextSite::Node {
+                            node: node.id.clone(),
+                        },
+                        action: *action,
+                        reason,
+                        stored: stored_node(&node.id, *action),
+                    });
+                }
+            }
+            return issues;
+        }
+        // The steps of the saved Multi Action, as a multiset; those at the
+        // same index are matched first.
+        let earlier: &[WorkflowStep] = stored
+            .filter(|w| w.graph.is_none())
+            .map_or(&[], |w| &w.steps);
+        let mut left: std::collections::BTreeMap<ActionInstanceId, usize> =
+            std::collections::BTreeMap::new();
+        for step in earlier {
+            *left.entry(step.action).or_default() += 1;
+        }
+        let mut found = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            if let Some(reason) = verdict(step.action, crate::ActionContext::Sequence) {
+                let same_place = earlier.get(index).is_some_and(|s| s.action == step.action);
+                if same_place && let Some(count) = left.get_mut(&step.action) {
+                    *count -= 1;
+                }
+                found.push((index, step.action, reason, same_place));
+            }
+        }
+        for (index, action, reason, same_place) in found {
+            let stored = same_place
+                || left.get_mut(&action).is_some_and(|count| {
+                    let some = *count > 0;
+                    if some {
+                        *count -= 1;
+                    }
+                    some
+                });
+            issues.push(crate::ContextIssue {
+                site: crate::ContextSite::Step { index },
+                action,
+                reason,
+                stored,
+            });
+        }
+        issues
+    }
+
     #[must_use]
     pub fn step(mut self, action: ActionInstanceId, on_failure: OnFailure) -> Self {
         self.steps.push(WorkflowStep::new(action, on_failure));

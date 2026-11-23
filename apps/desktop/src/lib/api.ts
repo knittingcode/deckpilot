@@ -4,6 +4,7 @@ import { errorCode, rawErrorMessage } from "./backend-error"
 
 import type {
   ActionInstance,
+  ContextIssue,
   ActionReference,
   ActionParameters,
   ActionResult,
@@ -272,9 +273,15 @@ export const api = {
   unbindActionReferences: (profileId: string, actionId: string, selection: ReferenceSelection) =>
     invoke<ReferenceChangeResult>("unbind_action_references", { profileId, actionId, selection }),
 
-  /** Resolves once the agent has read the workflow, so it can be started right away. */
+  /**
+   * Resolves once the agent has read the workflow, so it can be started right away.
+   * `contextIssues`: steps or nodes whose action is not meant for them; reported only.
+   */
   saveWorkflow: (profileId: string, workflow: Workflow) =>
-    invoke<Saved<Workflow>>("save_workflow", { profileId, workflow }),
+    invoke<Saved<Workflow & { contextIssues?: ContextIssue[] }>>("save_workflow", {
+      profileId,
+      workflow,
+    }),
   duplicateWorkflow: (profileId: string, workflowId: string, name: string) =>
     invoke<Workflow>("duplicate_workflow", { profileId, workflowId, name }),
   deleteWorkflow: (profileId: string, workflowId: string) =>
@@ -338,13 +345,18 @@ export const api = {
   /**
    * Resolves once the agent has read the layout, so its keys work right away.
    * `incompatible`: stored bindings kept although their action cannot run
-   * from their control (new ones are refused).
+   * from their control (new ones are refused). `contextIssues`: bindings
+   * whose action is not meant for their context; reported only, they are
+   * saved and run.
    */
   saveLayout: (profileId: string, layout: DeviceLayout) =>
-    invoke<Saved<DeviceLayout & { incompatible?: string[] }>>("save_layout", {
-      profileId,
-      layout,
-    }),
+    invoke<Saved<DeviceLayout & { incompatible?: string[]; contextIssues?: ContextIssue[] }>>(
+      "save_layout",
+      {
+        profileId,
+        layout,
+      },
+    ),
   duplicateLayout: (profileId: string, layoutId: string, name: string) =>
     invoke<string>("duplicate_layout", { profileId, layoutId, name }),
   deleteLayout: (profileId: string, layoutId: string) =>

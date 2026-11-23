@@ -15,6 +15,16 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Changed
+
+- Built-in actions now declare where they make sense; nothing changes yet
+  for existing setups. Each built-in says whether it belongs on a key, on
+  a double click or long press, on a key's live display, in a Multi Action
+  or in a workflow. Saving a layout or workflow reports a use elsewhere
+  without refusing it, and such a use still runs, with a warning in the
+  agent's log. Wait is deprecated in favour of Delay and is no longer
+  offered for new actions; saved Waits keep working unchanged.
+
 ## [0.13.0] - 2026-11-22
 
 ### Added

@@ -12,6 +12,7 @@ pub mod appearance;
 pub mod assets;
 pub mod button_state;
 pub mod cancel;
+pub mod contexts;
 pub mod controls;
 pub mod credentials;
 pub mod device_runtime;
@@ -74,6 +75,10 @@ pub use button_state::{
     MIN_REFRESH_INTERVAL, RefreshPolicy, StateError, StateSnapshot,
 };
 pub use cancel::{CancelReason, CancellationToken};
+pub use contexts::{
+    ActionContext, ActionContexts, ContextGuard, ContextIssue, ContextSite, ContextWarning,
+    ContextWarnings, NoContextWarnings, context_compatibility,
+};
 pub use controls::{
     ActionControls, Compatibility, IncompatibilityReason, KEY_INPUTS, MAX_INPUTS_PER_KIND,
     STEP_ENCODER_INPUTS, compatibility,
@@ -112,7 +117,7 @@ pub use id::{
 };
 pub use layout::{
     BindingTarget, ControlBinding, DeviceLayout, IncompatibleBinding, LayoutIssue, LayoutPage,
-    Trigger, binding_incompatibility,
+    Trigger, binding_context_incompatibility, binding_incompatibility,
 };
 pub use module::{
     Availability, Capability, FeatureModule, ModuleError, ModuleId, ModuleInfo, ModuleManifest,

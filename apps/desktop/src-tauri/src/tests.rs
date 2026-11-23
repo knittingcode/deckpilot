@@ -1087,15 +1087,17 @@ fn fresh_installation_has_an_empty_action_library() {
         module("system")["configValues"]["allowCommands"]["value"],
         false
     );
-    // No built-in type is deprecated any more (the deprecated `projects.*`
-    // types moved to the Projects plugin with the module, WP-C6): the flag
-    // is left out of every type.
+    // The one deprecated built-in type is Wait, replaced by Delay (the
+    // deprecated `projects.*` types moved to the Projects plugin with the
+    // module, WP-C6): the flag is left out of every other type.
     assert!(modules.as_array().unwrap().iter().all(|m| {
-        m["actionTypes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|t| t.get("deprecated").is_none())
+        m["actionTypes"].as_array().unwrap().iter().all(|t| {
+            if t["id"] == "general.wait" {
+                t["deprecated"] == true
+            } else {
+                t.get("deprecated").is_none()
+            }
+        })
     }));
     assert_eq!(h.ok("migration_notes", json!({})), json!([]));
 }
@@ -3063,6 +3065,98 @@ fn restarting_the_agent_never_ends_running_workflows_silently() {
         json!({ "executionId": execution["id"] }),
     );
     wait_for(&h, |s| s["status"]["runningExecutions"] == 0);
+}
+
+/// Contexts are advisory (`docs/action-contexts.md`): saving a Multi
+/// Action with a deck step, or a layout with Log on a key, reports the use
+/// (new, then stored) and saves; nothing is refused.
+#[test]
+fn saving_reports_uses_outside_their_contexts_and_refuses_none() {
+    let h = Harness::new();
+    let profile = h.ok(
+        "create_profile",
+        json!({ "name": "Work", "description": "" }),
+    );
+    let profile_id = profile["id"].as_str().unwrap().to_owned();
+    let action = |name: &str, action_type: &str, parameters: Value| {
+        h.ok(
+            "create_action",
+            json!({ "profileId": profile_id, "action": {
+                "name": name, "actionType": action_type, "parameters": parameters
+            } }),
+        )["id"]
+            .clone()
+    };
+    let next = action("Next", "deck.next-page", json!({}));
+    let log = action(
+        "Log",
+        "general.log",
+        json!({ "message": { "type": "text", "value": "hi" } }),
+    );
+    let workflow = json!({
+        "id": deckpilot_core::WorkflowId::new(), "name": "Steps",
+        "steps": [{ "action": next }, { "action": log }]
+    });
+    let saved = h.ok(
+        "save_workflow",
+        json!({ "profileId": profile_id, "workflow": workflow }),
+    );
+    assert_eq!(saved["name"], "Steps");
+    assert_eq!(
+        saved["contextIssues"],
+        json!([{
+            "site": { "kind": "step", "index": 0 },
+            "action": next,
+            "reason": { "type": "contextUnsupported", "context": "sequence", "supported": ["key", "gesture"] },
+            "stored": false
+        }])
+    );
+    // Saved again: the step is stored now.
+    let again = h.ok(
+        "save_workflow",
+        json!({ "profileId": profile_id, "workflow": workflow }),
+    );
+    assert_eq!(again["contextIssues"][0]["stored"], true);
+
+    let mut layout = h.ok(
+        "create_layout",
+        json!({ "profileId": profile_id, "modelId": models::STREAM_DECK_MK2_ID, "name": "Keys", "generate": false }),
+    );
+    layout["pages"][0]["bindings"] = json!([{
+        "control": { "kind": "key", "index": 0 },
+        "trigger": { "type": "press" },
+        "target": { "type": "action", "action": log }
+    }]);
+    let saved = h.ok(
+        "save_layout",
+        json!({ "profileId": profile_id, "layout": layout }),
+    );
+    assert!(saved.get("incompatible").is_none(), "{saved}");
+    assert_eq!(saved["contextIssues"][0]["site"]["kind"], "binding");
+    assert_eq!(saved["contextIssues"][0]["reason"]["context"], "key");
+    assert_eq!(saved["contextIssues"][0]["stored"], false);
+    let view = h.ok("get_profile", json!({ "profileId": profile_id }));
+    assert_eq!(
+        view["profile"]["layouts"][0]["pages"][0]["bindings"][0]["target"]["action"],
+        log
+    );
+    // The built-ins say where they make sense; Wait is deprecated.
+    let types = h.ok("list_action_types", json!({}));
+    let of = |id: &str| {
+        types
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        of("general.log")["contexts"],
+        json!(["sequence", "workflow"])
+    );
+    assert_eq!(of("deck.page-indicator")["contexts"], json!(["display"]));
+    assert_eq!(of("general.wait")["deprecated"], true);
 }
 
 /// The work session commands (protocol 8) against a real agent: state,

@@ -237,6 +237,12 @@ fn request_definition() -> ActionType {
         requires_project: false,
         deprecated: false,
         controls: Some(deckpilot_core::ActionControls::keys()),
+        contexts: Some(deckpilot_core::ActionContexts::of([
+            deckpilot_core::ActionContext::Key,
+            deckpilot_core::ActionContext::Gesture,
+            deckpilot_core::ActionContext::Sequence,
+            deckpilot_core::ActionContext::Workflow,
+        ])),
         node: NodeSpec {
             icon: Some("globe".into()),
             outputs: vec![
@@ -307,6 +313,11 @@ fn health_definition() -> ActionType {
         requires_project: false,
         deprecated: false,
         controls: Some(deckpilot_core::ActionControls::keys()),
+        // A query: its result drives a step condition or later nodes.
+        contexts: Some(deckpilot_core::ActionContexts::of([
+            deckpilot_core::ActionContext::Sequence,
+            deckpilot_core::ActionContext::Workflow,
+        ])),
         node: NodeSpec {
             icon: Some("activity".into()),
             outputs: vec![

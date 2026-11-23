@@ -34,6 +34,7 @@ impl ActionHandler for Counting {
 
 fn definition(id: &str, controls: Option<ActionControls>) -> ActionType {
     ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new(id).unwrap(),

@@ -1,7 +1,9 @@
 use tauri::State;
 
+use serde::Serialize;
+
 use deckpilot_core::graph::{Conversion, GraphIssue, from_steps};
-use deckpilot_core::{ProfileId, Workflow, WorkflowId};
+use deckpilot_core::{ContextIssue, ProfileId, Workflow, WorkflowId};
 
 use super::reload::Saved;
 use super::{modify_profile, modify_profile_and_reload};
@@ -49,16 +51,31 @@ pub fn convert_workflow(
     Ok(from_steps(&workflow, &profile))
 }
 
+/// A saved workflow, with its steps or nodes whose action is not meant
+/// for a Multi Action step or a workflow node (`deckpilot_core::contexts`),
+/// each marked `stored` when it was saved before. Serialized as the
+/// workflow with a `contextIssues` field, left out when empty, so the
+/// frontend reads it as before.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedWorkflow {
+    #[serde(flatten)]
+    workflow: Workflow,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    context_issues: Vec<ContextIssue>,
+}
+
 /// Creates or replaces a workflow after validating it. Returns once the
 /// agent has read it, so it can be started right away. A graph workflow
 /// needs the Workflows plugin, and so does replacing one; a step workflow
-/// (Multi Action) does not.
+/// (Multi Action) does not. Uses outside an action's contexts are reported
+/// and never refused.
 #[tauri::command]
 pub async fn save_workflow(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     workflow: Workflow,
-) -> CommandResult<Saved<Workflow>> {
+) -> CommandResult<Saved<SavedWorkflow>> {
     require_workflows(&state, Some(&workflow))?;
     if workflow.graph.is_none() {
         // Turning a graph back into steps is managing a workflow too.
@@ -71,15 +88,21 @@ pub async fn save_workflow(
     super::trim_in_place(&mut workflow.name);
     super::trim_in_place(&mut workflow.description);
     modify_profile_and_reload(&state, profile_id, |profile| {
-        let issues = workflow.validate(profile, &state.actions());
+        let actions = state.actions();
+        let issues = workflow.validate(profile, &actions);
         if !issues.is_empty() {
             return Err(CommandError::Invalid(issues.join("\n")));
         }
+        let context_issues =
+            workflow.context_issues(profile.workflow(workflow.id), profile, &actions);
         match profile.workflows.iter_mut().find(|w| w.id == workflow.id) {
             Some(existing) => *existing = workflow.clone(),
             None => profile.workflows.push(workflow.clone()),
         }
-        Ok(workflow)
+        Ok(SavedWorkflow {
+            workflow,
+            context_issues,
+        })
     })
     .await
 }
@@ -123,4 +146,75 @@ pub fn delete_workflow(
         profile.delete_workflow(workflow_id)?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use deckpilot_core::{
+        ActionContext, ActionInstanceId, ContextIssue, ContextSite, IncompatibilityReason,
+        OnFailure,
+    };
+
+    use super::*;
+    use crate::commands::reload::AgentReload;
+
+    fn workflow() -> Workflow {
+        Workflow::new("Steps").step(ActionInstanceId::new(), OnFailure::Stop)
+    }
+
+    /// Without issues, a save answers exactly what it did before
+    /// `contextIssues` existed: the workflow and `agentReload`, flattened.
+    #[test]
+    fn a_saved_workflow_without_issues_serializes_as_before() {
+        let workflow = workflow();
+        let before = serde_json::to_value(Saved {
+            value: workflow.clone(),
+            agent_reload: AgentReload::Applied,
+        })
+        .unwrap();
+        let now = serde_json::to_value(Saved {
+            value: SavedWorkflow {
+                workflow: workflow.clone(),
+                context_issues: Vec::new(),
+            },
+            agent_reload: AgentReload::Applied,
+        })
+        .unwrap();
+        assert_eq!(now, before);
+        assert!(now.get("contextIssues").is_none());
+
+        // With one, only the field is added.
+        let action = workflow.steps[0].action;
+        let mut reported = serde_json::to_value(Saved {
+            value: SavedWorkflow {
+                workflow,
+                context_issues: vec![ContextIssue {
+                    site: ContextSite::Step { index: 0 },
+                    action,
+                    reason: IncompatibilityReason::ContextUnsupported {
+                        context: ActionContext::Sequence,
+                        supported: vec![ActionContext::Key, ActionContext::Gesture],
+                    },
+                    stored: false,
+                }],
+            },
+            agent_reload: AgentReload::Applied,
+        })
+        .unwrap();
+        let issues = reported.as_object_mut().unwrap().remove("contextIssues");
+        assert_eq!(reported, before);
+        assert_eq!(
+            issues,
+            Some(serde_json::json!([{
+                "site": { "kind": "step", "index": 0 },
+                "action": action,
+                "reason": {
+                    "type": "contextUnsupported",
+                    "context": "sequence",
+                    "supported": ["key", "gesture"],
+                },
+                "stored": false,
+            }]))
+        );
+    }
 }

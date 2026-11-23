@@ -26,6 +26,7 @@ impl ActionHandler for Plain {
 
 fn definition(id: &str, title: Option<ActionTitle>) -> ActionType {
     ActionType {
+        contexts: None,
         editor_navigation: None,
         title,
         id: ActionTypeId::new(id).unwrap(),

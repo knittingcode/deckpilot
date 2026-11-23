@@ -235,6 +235,7 @@ fn settings_schema(manifest: &Manifest) -> Result<ActionType, String> {
         .map(setting_spec)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new(format!("{}.settings", manifest.id)).map_err(|e| e.to_string())?,

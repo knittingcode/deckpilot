@@ -205,6 +205,13 @@ impl MultiSwitch {
             requires_project: false,
             deprecated: false,
             controls: Some(deckpilot_core::ActionControls::keys()),
+            // A deck request: applied for a key or gesture, refused in any workflow.
+            // Its face shows the current state.
+            contexts: Some(deckpilot_core::ActionContexts::of([
+                deckpilot_core::ActionContext::Key,
+                deckpilot_core::ActionContext::Gesture,
+                deckpilot_core::ActionContext::Display,
+            ])),
             node: NodeSpec {
                 icon: Some("layers".into()),
                 timeout_ms: 5_000,

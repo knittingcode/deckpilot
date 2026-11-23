@@ -199,6 +199,19 @@ pub enum IncompatibilityReason {
         kind: ControlKind,
         input: InputCapability,
     },
+    /// The action's type does not declare the context of this use
+    /// ([`crate::contexts`]). Reported only, for now: saving keeps the use
+    /// and running it logs a warning.
+    #[error(
+        "the action is not meant to run {}; it runs {}",
+        crate::contexts::place(*context),
+        crate::contexts::places(supported)
+    )]
+    ContextUnsupported {
+        context: crate::ActionContext,
+        /// The contexts it declares, in order.
+        supported: Vec<crate::ActionContext>,
+    },
 }
 
 fn article(kind: ControlKind) -> &'static str {

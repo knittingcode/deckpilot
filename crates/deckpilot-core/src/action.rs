@@ -356,6 +356,13 @@ pub struct ActionType {
     /// declares its controls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controls: Option<crate::ActionControls>,
+    /// Where the action makes sense ([`crate::contexts`]): a key's press,
+    /// a gesture, a key's display, a Multi Action step, a workflow node.
+    /// `None`, and not sent, for a type without a declaration (plugins,
+    /// older definitions): it gets [`crate::ActionContexts::legacy`], all
+    /// five. Every built-in type declares its contexts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<crate::ActionContexts>,
     /// What running the action does to the page or layout a device shows,
     /// for the editor's interactive preview
     /// ([`crate::editor_navigation`]): data only, never run by the editor.
@@ -727,6 +734,7 @@ mod tests {
 
     fn action_type() -> ActionType {
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new("test.action").unwrap(),
@@ -853,6 +861,7 @@ mod structured_text_tests {
 
     fn spec(kind: ParameterKind) -> ActionType {
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new("test.structured").unwrap(),
@@ -971,6 +980,7 @@ mod reference_tests {
 
     fn action_type() -> ActionType {
         ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new("test.references").unwrap(),

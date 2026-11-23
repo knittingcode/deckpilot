@@ -55,6 +55,7 @@ pub(crate) struct Echo(ActionType);
 impl Echo {
     pub(crate) fn new() -> Self {
         Self(ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: echo_type(),
@@ -131,6 +132,7 @@ pub(crate) struct Select(ActionType);
 impl Select {
     pub(crate) fn new() -> Self {
         Self(ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: select_type(),
@@ -321,6 +323,7 @@ impl FeatureModule for TestModule {
     fn action_handlers(&self, _config: &ActionParameters) -> Vec<Box<dyn ActionHandler>> {
         match self.manifest.id.as_str() {
             "test-extra" => vec![Box::new(Noop(ActionType {
+                contexts: None,
                 editor_navigation: None,
                 title: None,
                 id: ActionTypeId::new("test-extra.noop").unwrap(),
@@ -358,6 +361,7 @@ pub(crate) const LEGACY_CREDENTIAL: &str = "legacy-token";
 
 fn fetch_type(id: &str, message_length: usize) -> ActionType {
     ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new(id).unwrap(),

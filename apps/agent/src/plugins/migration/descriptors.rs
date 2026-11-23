@@ -139,6 +139,7 @@ impl LegacyDescriptor {
     pub fn config(&self, row: Option<&ModuleSettings>) -> ActionParameters {
         let manifest = self.manifest();
         let schema = ActionType {
+            contexts: None,
             editor_navigation: None,
             title: None,
             id: ActionTypeId::new(format!("{}.config", self.module)).expect("module ids are valid"),

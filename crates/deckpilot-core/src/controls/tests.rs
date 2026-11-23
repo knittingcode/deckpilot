@@ -9,6 +9,7 @@ use InputCapability as I;
 
 fn action(controls: Option<ActionControls>) -> ActionType {
     ActionType {
+        contexts: None,
         editor_navigation: None,
         title: None,
         id: ActionTypeId::new("test.action").unwrap(),
