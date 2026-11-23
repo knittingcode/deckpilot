@@ -2784,6 +2784,45 @@ fn icons_are_imported_shown_previewed_and_deleted() {
     let plain = h.ok("preview_layout", args(Value::Null));
     assert!(plain[0].get("image").is_none());
 
+    // Key labels (docs/key-text.md, "Labels"): the preview's faces carry
+    // the resolved labels and, with `render`, the renderer's boxes in
+    // canvas units, the same at the preview's size; keys without labels
+    // carry neither.
+    assert!(faces[0].get("labelBoxes").is_none());
+    assert!(faces[0]["face"].get("labels").is_none());
+    let mut labelled = saved.clone();
+    labelled["pages"][0]["bindings"] = binding(json!({
+        "background": "#102030",
+        "labels": [
+            { "id": "ribbon", "text": "{profile}", "position": { "mode": "anchored", "to": "bottom" } },
+            { "id": "tag", "text": "v2", "position": { "mode": "preset", "at": "topLeft" } },
+            { "id": "off", "text": "off", "enabled": false }
+        ]
+    }));
+    let draft = |pixels: Value| json!({ "profileId": profile_id, "layout": labelled, "pageId": page, "projectId": null, "render": true, "keyPixels": pixels });
+    let native = h.ok("preview_layout", draft(Value::Null));
+    let face_labels = native[0]["face"]["labels"].as_array().unwrap();
+    assert_eq!(face_labels.len(), 2, "the disabled label is not shown");
+    assert_eq!(face_labels[1]["text"], "v2");
+    let boxes = native[0]["labelBoxes"].as_array().unwrap();
+    assert_eq!(boxes.len(), 2);
+    assert_eq!(boxes[0]["id"], "ribbon");
+    assert_eq!(boxes[0]["canvas"], json!({ "width": 72.0, "height": 72.0 }));
+    assert_eq!(boxes[0]["width"], 72.0);
+    let large = h.ok("preview_layout", draft(json!(144)));
+    assert_eq!(large[0]["labelBoxes"], native[0]["labelBoxes"]);
+    // A template that shows a run's value is refused when saving.
+    labelled["pages"][0]["bindings"] = binding(json!({
+        "labels": [{ "id": "bad", "text": "{{ steps.fetch.output.token }}" }]
+    }));
+    let error = h
+        .call(
+            "save_layout",
+            json!({ "profileId": profile_id, "layout": labelled }),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("never shows"), "{error}");
+
     // Without `keyPixels` the image has the device's own size (72 x 72 on
     // an MK.2); with it, the size the app shows the key at (CSS pixels
     // times the display's pixel ratio), drawn at that size rather than
