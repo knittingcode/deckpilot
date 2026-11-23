@@ -86,9 +86,88 @@ pub fn set_gesture_defaults(
 /// Read off the main thread; nothing is started.
 #[tauri::command]
 pub async fn list_applications() -> CommandResult<Vec<InstalledApp>> {
-    tauri::async_runtime::spawn_blocking(deckpilot_apps::discover)
+    tauri::async_runtime::spawn_blocking(|| remember(deckpilot_apps::discover()))
         .await
         .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
+}
+
+/// The installed web browsers and the system's default, for Website's
+/// "Open with" (`deckpilot_apps::browsers`: `LaunchServices` on macOS, the
+/// registered browsers and the `https` association on Windows, desktop
+/// entries and `mimeapps.list` on Linux).
+#[tauri::command]
+pub async fn list_browsers() -> CommandResult<deckpilot_apps::browsers::Browsers> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let found = deckpilot_apps::browsers::browsers();
+        remember(found.browsers.clone());
+        found
+    })
+    .await
+    .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
+}
+
+/// The applications the pickers were last given, by id: the only ones an
+/// icon is drawn for, so the app never names a file to read.
+static LISTED: std::sync::Mutex<Vec<InstalledApp>> = std::sync::Mutex::new(Vec::new());
+/// Icons drawn so far, as data URLs (`None`: the system has none).
+static ICONS: std::sync::Mutex<std::collections::BTreeMap<String, Option<String>>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// Most icons kept.
+const MAX_CACHED_ICONS: usize = 512;
+
+fn remember(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
+    let mut listed = LISTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for app in &apps {
+        if !listed.iter().any(|known| known.id == app.id) {
+            listed.push(app.clone());
+        }
+    }
+    apps
+}
+
+/// The icon of application `id`, one the pickers listed, as a
+/// `data:image/png;base64,…` URL of at most 64×64 pixels, drawn by the
+/// system and encoded again by `deckpilot_apps::icons`; `None` when there
+/// is none or the id was not listed. Cached.
+#[tauri::command]
+pub async fn application_icon(id: String) -> CommandResult<Option<String>> {
+    tauri::async_runtime::spawn_blocking(move || icon_for(&id))
+        .await
+        .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
+}
+
+fn icon_for(id: &str) -> Option<String> {
+    use base64::Engine as _;
+    if let Some(cached) = ICONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+    {
+        return cached.clone();
+    }
+    let app = LISTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .find(|a| a.id == id)
+        .cloned()?;
+    let icon =
+        deckpilot_apps::icons::icon(&app, &deckpilot_apps::xdg::XdgDirs::from_env()).map(|png| {
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(png)
+            )
+        });
+    let mut icons = ICONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if icons.len() >= MAX_CACHED_ICONS {
+        icons.clear();
+    }
+    icons.insert(id.to_owned(), icon.clone());
+    icon
 }
 
 /// An application the user picked with the file picker, as a binding
@@ -97,7 +176,9 @@ pub async fn list_applications() -> CommandResult<Vec<InstalledApp>> {
 /// that name; anything else by its path.
 #[tauri::command]
 pub fn describe_application(path: String) -> CommandResult<InstalledApp> {
-    describe(Platform::current(), &path)
+    let app = describe(Platform::current(), &path)?;
+    remember(vec![app.clone()]);
+    Ok(app)
 }
 
 fn describe(platform: Platform, path: &str) -> CommandResult<InstalledApp> {
@@ -174,6 +255,21 @@ fn describe(platform: Platform, path: &str) -> CommandResult<InstalledApp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icons_are_drawn_only_for_listed_applications() {
+        // Never listed: no file is read for it.
+        assert_eq!(icon_for("/etc/passwd"), None);
+        assert_eq!(icon_for("com.example.never-listed"), None);
+        let apps = remember(deckpilot_apps::discover());
+        if cfg!(target_os = "macos") || cfg!(windows) {
+            let first = apps.first().expect("an installed application");
+            let icon = icon_for(&first.id).expect("the system draws its icon");
+            assert!(icon.starts_with("data:image/png;base64,"));
+            // Cached: the same answer without drawing again.
+            assert_eq!(icon_for(&first.id), Some(icon));
+        }
+    }
 
     #[test]
     fn picked_files_are_described_by_their_stable_id() {

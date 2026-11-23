@@ -260,7 +260,10 @@ with an argument list.
 | Default browser / file association | LaunchServices (`open`) | `rundll32 url.dll,FileProtocolHandler`, `explorer` for folders | `xdg-open` |
 | Chosen browser | bundle id or `.app` | executable or App Paths name | `.desktop` id (`%u`) or executable |
 | Stable app id | bundle id | App Paths name, AUMID | desktop-file id |
-| Discovery | standard application folders | App Paths, Start menu | XDG data dirs |
+| Discovery | standard application folders and the Finder | App Paths, Start menu | XDG data dirs |
+| Browsers | `LaunchServices` `https` handlers (macOS 12+; `Info.plist` before) | `StartMenuInternet` | desktop entries with `x-scheme-handler/http(s)` |
+| Default browser | `LaunchServices` | `UrlAssociations\https\UserChoice` | `mimeapps.list` |
+| Icons | `NSWorkspace` | `SHGetFileInfoW` | `hicolor` PNGs, `/usr/share/pixmaps` (no SVG) |
 | Graceful close | `terminate` (bundle) / `SIGTERM` (path) | `WM_CLOSE` to top-level windows | `SIGTERM` |
 | Force quit | `forceTerminate` / `SIGKILL` | `TerminateProcess` | `SIGKILL` |
 | Owner check | user id | SID and session | user id |
@@ -293,32 +296,48 @@ Honest limitations:
 
 ## 6. User interface
 
-The app draws the four actions from their schemas as before, with:
+The inspector, the Action Library and workflow nodes draw the four actions
+(and Open folder) with machine-local pickers
+(`components/machine-resource-field.tsx`). The simple mode is the default;
+no resource key, project role or internal name shows in it.
 
-- **Machine-local pickers** (`components/machine-resource-field.tsx`) for
-  every application, browser and location parameter of the four actions,
-  in the Action Library, the inspector and workflow nodes: the installed
-  applications (`list_applications`, browsers listed first for Website),
-  another application through the file picker (`describe_application`
-  turns an `.app`, an installed `.desktop` file or an App Paths executable
-  into its stable id), and a file or folder through the native picker.
-  The choice is bound in Settings › Resources under a generated key
-  (`app.safari`, `file.report-pdf`, `folder.downloads`; a key that holds
-  another value gets a number, so no other action changes), shown with a
-  *This computer only* badge and the note that it is never exported. The
-  raw resource key or project role stays available under a disclosure.
-- **Website validation** as the agent does it (`lib/system-actions.ts`,
-  the same cases as `paths::website_url`'s tests): the refused scheme,
-  credentials or character is named, and a normalised address is shown
-  ("Opens https://example.com/").
-- **Inspector panels** (`layout-editor/system-action-inspector.tsx`) for a
-  key bound to one of the four: the action's settings with Save and Test
-  (a failed test says what its error code means), the graceful or forced
-  behaviour of Close Application in words, and *On long press: Nothing /
-  Quit the application* for Open Application.
-- **Localized names** of the System actions and their parameters (English
-  and Polish), in the Action Library, the editor's library and the
-  workflow catalog; the `process-control` capability in Settings › Modules.
+| Action | Field | Simple mode |
+| --- | --- | --- |
+| Open Application, Close Application | Application | A searchable list of the installed applications with their icons (`list_applications`, `application_icon`), and *Another application…*: the native dialog limited to `.app` (macOS), `.exe` and `.lnk` (Windows), `.desktop` files or any file (Linux), turned into a stable id by `describe_application` |
+| Website | Open with | *Default browser (Name)* first, then every installed browser with its icon (`list_browsers`); a browser that is not installed any more is said so, and the page opens in the default browser (`fallback: default-browser`) |
+| Open | File, folder or application | Its name and path, *Choose file…* and *Choose folder…* (the native dialogs of the Tauri dialog plugin); the file inside a folder (`path`) is an optional disclosure |
+| Open folder | Folder | Its name and path, *Choose folder…* |
+| Close Application | Force quit | A toggle, off, with what graceful and forced mean |
+
+A choice is bound in Settings › Resources under a generated key
+(`app.safari-k3x9q2`, `file.report-pdf-…`, `folder.downloads-…`), shown
+with a *This computer only* badge, and never exported. *Advanced* switches
+a field to the resource key or project role control; a saved action whose
+key is not a picker's (`shop.repository`) or that uses a project role opens
+in advanced mode and runs unchanged.
+
+**Native services** (desktop backend, `commands/machine.rs`, all reading
+`deckpilot-apps` off the main thread, nothing started, no shell):
+
+- `list_applications`: `discover()` (bundles and the Finder on macOS; App
+  Paths, registered browsers and Start-menu shortcuts on Windows; XDG
+  desktop entries on Linux).
+- `list_browsers`: `browsers::browsers()`: macOS `LaunchServices`
+  (`URLsForApplicationsToOpenURL`, `URLForApplicationToOpenURL`);
+  Windows `StartMenuInternet` and the `https` `UserChoice`; Linux desktop
+  entries with `x-scheme-handler/http(s)` and `mimeapps.list`.
+- `application_icon(id)`: only for an id the pickers were given (no file a
+  caller names is ever read); drawn by the system (`NSWorkspace
+  iconForFile`, `SHGetFileInfoW`, the `hicolor` theme or
+  `/usr/share/pixmaps` for a desktop entry's PNG icon), decoded, scaled to
+  at most 64×64 and encoded again as a PNG of at most 64 KiB, cached (512
+  icons).
+- `describe_application(path)`: a picked file as its stable id.
+
+Website validation, the inspector panels (Save and Test, the long press of
+Open Application) and the localized names are as in #409. Dropping a file
+onto a field is not offered: the webview's drop gives no paths, and the
+window's drop events are not wired to fields.
 
 ## 7. Tests
 

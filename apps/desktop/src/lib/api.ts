@@ -353,6 +353,10 @@ export const api = {
   removeResourceBinding: (key: string) => invoke<MachineConfig>("remove_resource_binding", { key }),
   /** This computer's installed applications, for the application and browser pickers. */
   listApplications: () => invoke<InstalledApp[]>("list_applications"),
+  /** The installed browsers and the system's default (its id). */
+  listBrowsers: () => invoke<{ browsers: InstalledApp[]; default?: string }>("list_browsers"),
+  /** A listed application's icon as a small PNG data URL, or `null`. */
+  applicationIcon: (id: string) => invoke<string | null>("application_icon", { id }),
   /** A picked application file as a binding stores it (bundle id, App Paths name, desktop id, path). */
   describeApplication: (path: string) => invoke<InstalledApp>("describe_application", { path }),
   /** This computer's default gesture timings (`gestures.defaults`). */

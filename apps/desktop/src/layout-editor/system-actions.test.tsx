@@ -27,6 +27,8 @@ const api = vi.hoisted(() => ({
   createAction: vi.fn(),
   updateAction: vi.fn(),
   runAction: vi.fn(),
+  listBrowsers: vi.fn(),
+  applicationIcon: vi.fn(),
 }))
 const dialog = vi.hoisted(() => ({ open: vi.fn() }))
 
@@ -41,7 +43,15 @@ let bindings: MachineResourceBinding[] = []
 
 beforeEach(() => {
   bindings = [{ key: "app.safari", kind: "application", value: "com.apple.Safari" }]
-  api.getMachineConfig.mockImplementation(() => Promise.resolve({ os: "macos", bindings }))
+  api.getMachineConfig.mockImplementation(() => Promise.resolve({ os: "macOs", bindings }))
+  api.applicationIcon.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=")
+  api.listBrowsers.mockResolvedValue({
+    browsers: [
+      { name: "Firefox", id: "org.mozilla.firefox", kind: "bundle", browser: true },
+      { name: "Safari", id: "com.apple.Safari", kind: "bundle", browser: true },
+    ],
+    default: "com.apple.Safari",
+  })
   api.setResourceBinding.mockImplementation((key: string, kind: string, value: string) => {
     bindings = [...bindings.filter((b) => b.key !== key), { key, kind, value } as never]
     return Promise.resolve({ os: "macos", bindings })
@@ -187,7 +197,9 @@ describe("the Open Application panel", () => {
     api.createAction.mockResolvedValue(quits)
     const { onChange, onActionSaved, user } = renderPanel(pressOpens, [opens])
     const panel = screen.getByRole("region", { name: "Open Application" })
-    expect(await within(panel).findByText("com.apple.Safari")).toBeInTheDocument()
+    // The application by its name, never its resource key.
+    expect(await within(panel).findByText("Safari")).toBeInTheDocument()
+    expect(within(panel).queryByText(/app\.safari/)).not.toBeInTheDocument()
     expect(within(panel).getByText("This computer only")).toBeInTheDocument()
     await user.click(within(panel).getByRole("combobox", { name: "On long press" }))
     await user.click(await screen.findByRole("option", { name: "Quit the application" }))
@@ -256,7 +268,10 @@ describe("the machine-local pickers", () => {
     )
     const user = userEvent.setup()
     await user.click(screen.getByRole("combobox", { name: "Choose application…" }))
-    await user.click(await screen.findByRole("option", { name: /TextEdit/ }))
+    const option = await screen.findByRole("option", { name: /TextEdit/ })
+    // Each application with the icon the system drew.
+    expect(option.querySelector("img")).not.toBeNull()
+    await user.click(option)
     await waitFor(() => {
       expect(onChange).toHaveBeenCalledWith({
         type: "fixed",
@@ -268,36 +283,88 @@ describe("the machine-local pickers", () => {
       "application",
       "com.apple.TextEdit",
     )
+    expect(api.applicationIcon).toHaveBeenCalledWith("com.apple.TextEdit")
   })
 
-  it("list browsers first and offer the default browser", async () => {
+  it("say when a chosen application is not installed any more", async () => {
+    bindings = [{ key: "app.gone-123456", kind: "application", value: "org.example.Gone" }]
+    render(
+      <MachineResourceField
+        id="f"
+        pick="application"
+        value={{ type: "fixed", key: "app.gone-123456" }}
+        optional={false}
+        onChange={vi.fn()}
+      />,
+    )
+    expect(await screen.findByRole("alert")).toHaveTextContent("not installed on this computer")
+  })
+
+  it("choose another application with the native dialog, limited to applications", async () => {
+    dialog.open.mockResolvedValue("/Applications/Editor.app")
+    api.describeApplication.mockResolvedValue({
+      name: "Editor",
+      id: "com.example.Editor",
+      kind: "bundle",
+      browser: false,
+    })
     const onChange = vi.fn()
     render(
       <MachineResourceField
         id="f"
-        pick="browser"
-        value={{ type: "fixed", key: "app.safari" }}
-        optional
+        pick="application"
+        value={null}
+        optional={false}
         onChange={onChange}
       />,
     )
     const user = userEvent.setup()
-    expect(await screen.findByText("com.apple.Safari")).toBeInTheDocument()
-    expect(screen.getByRole("note")).toHaveTextContent("never exported")
-    await user.click(screen.getByRole("combobox", { name: "Choose browser…" }))
-    const browsers = await screen.findByRole("group", { name: "Browsers" })
-    expect(
-      within(browsers)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual([expect.stringContaining("Firefox"), expect.stringContaining("Safari")])
-    // The same value is not bound twice.
-    await user.click(within(browsers).getByRole("option", { name: /Safari/ }))
     await waitFor(() => {
-      expect(onChange).toHaveBeenCalledWith({ type: "fixed", key: "app.safari" })
+      expect(api.getMachineConfig).toHaveBeenCalled()
     })
-    await user.click(screen.getByRole("button", { name: "Use the default browser" }))
-    expect(onChange).toHaveBeenLastCalledWith(null)
+    await user.click(screen.getByRole("combobox", { name: "Choose application…" }))
+    await user.click(await screen.findByRole("option", { name: /Another application/ }))
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalled()
+    })
+    expect(dialog.open).toHaveBeenCalledWith({
+      directory: false,
+      multiple: false,
+      filters: [{ name: "Applications", extensions: ["app"] }],
+    })
+    expect(api.describeApplication).toHaveBeenCalledWith("/Applications/Editor.app")
+  })
+
+  it("open with the default browser unless another is chosen", async () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <MachineResourceField id="f" pick="browser" value={null} optional onChange={onChange} />,
+    )
+    const user = userEvent.setup()
+    const select = await screen.findByRole("combobox")
+    await waitFor(() => {
+      expect(select).toHaveTextContent("Default browser (Safari)")
+    })
+    await user.click(select)
+    await user.click(await screen.findByRole("option", { name: "Firefox" }))
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({
+        type: "fixed",
+        key: expect.stringMatching(/^app\.firefox-[a-z0-9]{6}$/) as unknown,
+      })
+    })
+    // A chosen browser that is gone: the default browser is used, and said so.
+    bindings = [{ key: "app.gone-123456", kind: "application", value: "org.example.Gone" }]
+    rerender(
+      <MachineResourceField
+        id="g"
+        pick="browser"
+        value={{ type: "fixed", key: "app.gone-123456" }}
+        optional
+        onChange={onChange}
+      />,
+    )
+    expect(await screen.findByText(/not installed any more/)).toBeInTheDocument()
   })
 
   it("bind a picked file, and say when a binding is missing", async () => {
@@ -322,10 +389,61 @@ describe("the machine-local pickers", () => {
       })
     })
     expect(dialog.open).toHaveBeenCalledWith({ directory: false, multiple: false })
-    expect(api.setResourceBinding).toHaveBeenCalledWith(
-      expect.stringMatching(/^file\.q1-report-pdf-[a-z0-9]{6}$/),
-      "other",
-      "/Users/me/Reports/Q1 report.pdf",
+  })
+
+  it("open folders with the folder dialog only", async () => {
+    dialog.open.mockResolvedValue("/Users/me/Downloads")
+    const onChange = vi.fn()
+    render(
+      <MachineResourceField
+        id="f"
+        pick="folder"
+        value={null}
+        optional={false}
+        onChange={onChange}
+      />,
     )
+    const user = userEvent.setup()
+    expect(screen.queryByRole("button", { name: "Choose file…" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Choose folder…" }))
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({
+        type: "fixed",
+        key: expect.stringMatching(/^folder\.downloads-[a-z0-9]{6}$/) as unknown,
+      })
+    })
+    expect(dialog.open).toHaveBeenCalledWith({ directory: true, multiple: false })
+  })
+
+  it("keep resource keys and roles in advanced mode, opened for saved ones", async () => {
+    const advanced = <p>resource key control</p>
+    const { rerender } = render(
+      <MachineResourceField
+        id="f"
+        pick="location"
+        value={{ type: "projectRole", role: "repository" }}
+        optional={false}
+        onChange={vi.fn()}
+        advanced={advanced}
+      />,
+    )
+    // A saved project role opens in advanced mode.
+    expect(screen.getByText("resource key control")).toBeInTheDocument()
+    rerender(
+      <MachineResourceField
+        id="g"
+        key="simple"
+        pick="location"
+        value={{ type: "fixed", key: "file.report-abc123" }}
+        optional={false}
+        onChange={vi.fn()}
+        advanced={advanced}
+      />,
+    )
+    // A picked file: the simple mode, no key, no role.
+    expect(screen.queryByText("resource key control")).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Advanced" }))
+    expect(screen.getByText("resource key control")).toBeInTheDocument()
   })
 })

@@ -18,20 +18,30 @@
 //! ([`AppId::parse`]), nothing goes through a shell, and process names are
 //! never compared.
 //!
+//! - [`browsers::browsers`] lists the installed web browsers and the
+//!   default one, and [`icons::icon`] draws an application's icon as a
+//!   small PNG, both from the system's own records.
+//!
 //! The platform code is small: `AppKit`'s `NSRunningApplication` on macOS
 //! (safe bindings), signals through `rustix` on Unix, and the Win32 calls
 //! in [`native_windows`], the one module that allows `unsafe`.
 
+pub mod browsers;
 pub mod bundle;
 pub mod close;
 pub mod desktop_entry;
 mod discovery;
+pub mod icons;
 mod id;
 mod launch;
 #[cfg(target_os = "macos")]
 mod native_macos;
+#[cfg(target_os = "macos")]
+mod native_macos_icon;
 #[cfg(windows)]
 pub mod native_windows;
+#[cfg(windows)]
+mod native_windows_icon;
 pub mod process;
 pub mod windows_apps;
 pub mod xdg;
