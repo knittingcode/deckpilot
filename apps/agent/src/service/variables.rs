@@ -427,7 +427,7 @@ impl Agent {
     /// application's active project of the profile when it asks for the
     /// application's project without naming one, so pickers and the
     /// variables page show what a key press would see.
-    fn preview_context(&self, context: &ResolutionContext) -> ResolutionContext {
+    pub(super) fn preview_context(&self, context: &ResolutionContext) -> ResolutionContext {
         let mut context = as_preview(context);
         if context.project_source == ProjectSource::Application && context.project.is_none() {
             context.project = if self
@@ -457,7 +457,10 @@ impl Agent {
     }
 
     /// The shared variables of `profile` as the database holds them now.
-    fn current_variables(&self, profile: ProfileId) -> Result<SharedVariables, IpcError> {
+    pub(super) fn current_variables(
+        &self,
+        profile: ProfileId,
+    ) -> Result<SharedVariables, IpcError> {
         self.store()?
             .shared_variables_for(profile)
             .map_err(|e| storage_error(&e))
@@ -465,7 +468,7 @@ impl Agent {
 
     /// The profile a client's context names: the active one, or one from
     /// the database.
-    fn context_profile(&self, id: ProfileId) -> Result<Profile, IpcError> {
+    pub(super) fn context_profile(&self, id: ProfileId) -> Result<Profile, IpcError> {
         if self.security != SecurityState::Unlocked {
             return Err(locked());
         }

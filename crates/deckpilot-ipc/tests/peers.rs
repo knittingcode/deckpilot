@@ -140,7 +140,7 @@ async fn a_protocol_4_agent_is_used_with_protocol_4_only() {
     // The client stepped down from its own protocol until accepted.
     assert_eq!(
         *peer.hellos.lock().unwrap(),
-        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]
+        [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]
     );
     assert_eq!(client.protocol(), 4);
     assert_eq!(client.agent_protocol(), 4);
@@ -202,7 +202,7 @@ async fn agents_older_than_protocol_4_need_replacing() {
     // It never went below the oldest protocol the app works with.
     assert_eq!(
         *peer.hellos.lock().unwrap(),
-        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]
+        [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]
     );
     // Protocol 1 still works for stopping it during an update.
     let mut stopper = AgentClient::connect_with_protocol(&peer.paths, ClientKind::Desktop, 1)
@@ -270,7 +270,7 @@ async fn a_protocol_6_agent_is_never_asked_about_variables() {
         .unwrap();
     assert_eq!(
         *peer.hellos.lock().unwrap(),
-        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6]
+        [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6]
     );
     assert_eq!(client.protocol(), 6);
     assert!(client.supports(Capability::Notifications));
@@ -312,7 +312,7 @@ async fn a_protocol_7_agent_is_never_asked_about_the_work_session() {
         .unwrap();
     assert_eq!(
         *peer.hellos.lock().unwrap(),
-        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7]
+        [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7]
     );
     assert_eq!(client.protocol(), 7);
     assert!(client.supports(Capability::Variables));
@@ -368,7 +368,7 @@ async fn a_protocol_8_agent_lists_variables_without_the_registry() {
         .unwrap();
     assert_eq!(
         *peer.hellos.lock().unwrap(),
-        [16, 15, 14, 13, 12, 11, 10, 9, 8]
+        [17, 16, 15, 14, 13, 12, 11, 10, 9, 8]
     );
     assert_eq!(client.protocol(), 8);
     assert!(client.supports(Capability::WorkSession));
@@ -409,7 +409,7 @@ async fn a_protocol_9_agent_is_never_asked_about_plugins() {
         .unwrap();
     assert_eq!(
         *peer.hellos.lock().unwrap(),
-        [16, 15, 14, 13, 12, 11, 10, 9]
+        [17, 16, 15, 14, 13, 12, 11, 10, 9]
     );
     assert_eq!(client.protocol(), 9);
     assert!(client.supports(Capability::VariableRegistry));
@@ -503,7 +503,10 @@ async fn a_protocol_10_agent_is_never_asked_to_watch_key_states() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [16, 15, 14, 13, 12, 11, 10]);
+    assert_eq!(
+        *peer.hellos.lock().unwrap(),
+        [17, 16, 15, 14, 13, 12, 11, 10]
+    );
     assert_eq!(client.protocol(), 10);
     assert!(client.supports(Capability::Plugins));
     assert!(!client.supports(Capability::KeyStates));
@@ -534,7 +537,7 @@ async fn a_protocol_11_agent_is_never_told_about_plugin_dialogs() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [16, 15, 14, 13, 12, 11]);
+    assert_eq!(*peer.hellos.lock().unwrap(), [17, 16, 15, 14, 13, 12, 11]);
     assert_eq!(client.protocol(), 11);
     assert!(client.supports(Capability::KeyStates));
     assert!(!client.supports(Capability::PluginDialogs));
@@ -586,7 +589,7 @@ async fn a_protocol_12_agent_is_never_told_the_locale() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [16, 15, 14, 13, 12]);
+    assert_eq!(*peer.hellos.lock().unwrap(), [17, 16, 15, 14, 13, 12]);
     assert_eq!(client.protocol(), 12);
     assert!(client.supports(Capability::PluginDialogs));
     assert!(!client.supports(Capability::Locale));
@@ -633,7 +636,7 @@ async fn a_protocol_13_agent_is_never_asked_to_simulate_a_press() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [16, 15, 14, 13]);
+    assert_eq!(*peer.hellos.lock().unwrap(), [17, 16, 15, 14, 13]);
     assert_eq!(client.protocol(), 13);
     assert!(client.supports(Capability::Locale));
     assert!(!client.supports(Capability::SimulateInput));
@@ -681,7 +684,7 @@ async fn a_protocol_14_agent_is_never_asked_to_restore_a_bundled_plugin() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [16, 15, 14]);
+    assert_eq!(*peer.hellos.lock().unwrap(), [17, 16, 15, 14]);
     assert_eq!(client.protocol(), 14);
     assert!(client.supports(Capability::SimulateInput));
     assert!(!client.supports(Capability::RestoreBundled));
@@ -721,7 +724,7 @@ async fn a_protocol_15_agent_is_never_asked_for_a_live_preview() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [16, 15]);
+    assert_eq!(*peer.hellos.lock().unwrap(), [17, 16, 15]);
     assert_eq!(client.protocol(), 15);
     assert!(client.supports(Capability::RestoreBundled));
     assert!(!client.supports(Capability::LivePreview));
@@ -756,6 +759,55 @@ async fn a_protocol_15_agent_is_never_asked_for_a_live_preview() {
                 Err(ClientError::Unsupported {
                     needs: 16,
                     protocol: 15,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        *peer.received.lock().unwrap(),
+        Vec::<serde_json::Value>::new()
+    );
+    assert!(matches!(
+        client.request(Request::GetStatus).await,
+        Ok(Response::Status { .. })
+    ));
+}
+
+/// A protocol 16 agent (DeckPilot before variables in key titles): the
+/// client refuses `listDisplayVariables` and `resolveDisplayTemplates`
+/// before sending them, so the app shows titles resolved by the core alone;
+/// the rest works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_protocol_16_agent_is_never_asked_to_resolve_display_templates() {
+    use deckpilot_core::variables::{CatalogFilter, ResolutionContext};
+    let peer = peer(16, "0.13.0");
+    let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
+        .await
+        .unwrap();
+    assert_eq!(*peer.hellos.lock().unwrap(), [17, 16]);
+    assert_eq!(client.protocol(), 16);
+    assert!(client.supports(Capability::LivePreview));
+    assert!(!client.supports(Capability::DisplayTemplates));
+    let context = ResolutionContext::preview(deckpilot_core::ProfileId::new());
+    for request in [
+        Request::ListDisplayVariables {
+            context: Box::new(context.clone()),
+            filter: Box::new(CatalogFilter::default()),
+        },
+        Request::ResolveDisplayTemplates {
+            context: Box::new(context),
+            templates: vec!["{{ projects.current.key }}".into()],
+        },
+    ] {
+        let refused = client.request(request).await;
+        assert!(
+            matches!(
+                &refused,
+                Err(ClientError::Unsupported {
+                    needs: 17,
+                    protocol: 16,
                     ..
                 })
             ),

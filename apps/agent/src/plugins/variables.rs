@@ -64,6 +64,7 @@ impl PublishedVariables {
 
     /// Sets (`Some`) or clears (`None`) one value. `false` when the
     /// generation is stale (the plugin was stopped since): nothing changes.
+    #[cfg(test)]
     pub fn set(
         &self,
         plugin: &str,
@@ -71,10 +72,26 @@ impl PublishedVariables {
         id: &str,
         value: Option<VariableValue>,
     ) -> bool {
+        self.update(plugin, generation, id, value).is_some()
+    }
+
+    /// Sets (`Some`) or clears (`None`) one value, saying whether it changed:
+    /// `None` when the generation is stale, `Some(false)` when the value
+    /// was already the one given (nothing to announce, nothing to redraw).
+    pub fn update(
+        &self,
+        plugin: &str,
+        generation: u64,
+        id: &str,
+        value: Option<VariableValue>,
+    ) -> Option<bool> {
         let mut all = self.0.write().unwrap_or_else(PoisonError::into_inner);
         let values = all.entry(plugin.to_owned()).or_default();
         if values.generation != generation {
-            return false;
+            return None;
+        }
+        if values.values.get(id) == value.as_ref() {
+            return Some(false);
         }
         match value {
             Some(value) => {
@@ -84,7 +101,7 @@ impl PublishedVariables {
                 values.values.remove(id);
             }
         }
-        true
+        Some(true)
     }
 
     /// Clears every value of `plugin` within `generation`; the ids that
@@ -165,6 +182,8 @@ pub(crate) fn declarations(namespace: &str, variables: &[Variable]) -> Vec<Varia
                     .collect(),
                 sensitive: variable.sensitive.unwrap_or(false),
                 read_only: true,
+                // The host's project id is an id, never text on a key.
+                identifier: variable.source == Some(VariableHostSource::ProjectId),
             })
         })
         .collect()
@@ -322,6 +341,20 @@ mod tests {
         assert!(store.set("acme.a", next, "x", Some(VariableValue::Integer(3))));
         assert!(store.set("acme.a", next, "y", Some(VariableValue::Boolean(true))));
         assert!(store.set("acme.a", next, "y", None));
+        // The same value again changes nothing (and is not announced).
+        assert_eq!(
+            store.update("acme.a", next, "x", Some(VariableValue::Integer(3))),
+            Some(false)
+        );
+        assert_eq!(store.update("acme.a", next, "y", None), Some(false));
+        assert_eq!(
+            store.update("acme.a", next, "x", Some(VariableValue::Integer(4))),
+            Some(true)
+        );
+        assert_eq!(
+            store.update("acme.a", generation, "x", Some(VariableValue::Integer(5))),
+            None
+        );
         assert_eq!(store.clear("acme.a", next), Some(vec!["x".to_owned()]));
         assert_eq!(store.forget_all().len(), 1);
     }
@@ -380,6 +413,30 @@ mod tests {
     /// X7: the host's value, the project in the context, only while the
     /// plugin is enabled and holds `projectContext`; what the plugin
     /// published never stands in for it.
+    #[test]
+    fn the_hosts_project_id_is_an_identifier_never_shown_on_a_key() {
+        let declared = declarations(
+            "plugins.deckpilot.projects",
+            &[
+                host_variable("current.id", "host:project.id"),
+                host_variable("current.key", "host:project.key"),
+                variable("other", "string", "machine"),
+            ],
+        );
+        let flags: Vec<(&str, bool)> = declared
+            .iter()
+            .map(|d| (d.id.name(), d.identifier))
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("deckpilot.projects.current.id", true),
+                ("deckpilot.projects.current.key", false),
+                ("deckpilot.projects.other", false),
+            ]
+        );
+    }
+
     #[test]
     fn host_variables_have_the_contexts_project_only_while_the_plugin_may_have_them() {
         use deckpilot_core::variables::{NoLiveState, ProjectSource, ResolutionContext};

@@ -14,6 +14,7 @@ use tauri::State;
 use deckpilot_core::variables::{
     CatalogEntry, CatalogFilter, PreviewItem, ReferencePreview, ResolutionContext,
 };
+use deckpilot_ipc::display_templates::ResolvedDisplayTemplate;
 use deckpilot_ipc::{ClientError, MAX_PREVIEW_ITEMS, Request, Response};
 
 use super::agent::unexpected;
@@ -88,5 +89,69 @@ pub async fn preview_references(
     {
         Response::ReferencePreviews { previews } => Ok(previews),
         other => Err(unexpected(&other)),
+    }
+}
+
+/// The references a key title may use in `context` that match `filter`:
+/// display-safe sources only, metadata only (protocol 17,
+/// `deckpilot_ipc::display_templates`).
+#[tauri::command]
+pub async fn list_display_variables(
+    state: State<'_, AppState>,
+    context: ResolutionContext,
+    filter: Option<CatalogFilter>,
+) -> CommandResult<Vec<CatalogEntry>> {
+    let request = Request::ListDisplayVariables {
+        context: Box::new(context),
+        filter: Box::new(filter.unwrap_or_default()),
+    };
+    match agent::request(&state.paths, request)
+        .await
+        .map_err(not_supported)?
+    {
+        Response::Variables { entries } => Ok(entries),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// What each title template shows on a key in `context`, in the order
+/// asked, resolved by the agent as the device shows it.
+#[tauri::command]
+pub async fn resolve_display_templates(
+    state: State<'_, AppState>,
+    context: ResolutionContext,
+    templates: Vec<String>,
+) -> CommandResult<Vec<ResolvedDisplayTemplate>> {
+    if templates.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Err(message) = deckpilot_ipc::display_templates::check_templates(&templates) {
+        return Err(CommandError::invalid_with(
+            "tooManyTemplates",
+            message,
+            [(
+                "max",
+                deckpilot_ipc::display_templates::MAX_DISPLAY_TEMPLATES.into(),
+            )],
+        ));
+    }
+    resolve_templates(&state.paths, context, templates)
+        .await
+        .map_err(not_supported)
+}
+
+/// `resolveDisplayTemplates` on the agent.
+pub async fn resolve_templates(
+    paths: &deckpilot_ipc::AgentPaths,
+    context: ResolutionContext,
+    templates: Vec<String>,
+) -> Result<Vec<ResolvedDisplayTemplate>, ClientError> {
+    let request = Request::ResolveDisplayTemplates {
+        context: Box::new(context),
+        templates,
+    };
+    match agent::request(paths, request).await? {
+        Response::DisplayTemplates { texts } => Ok(texts),
+        _ => Err(ClientError::Closed),
     }
 }

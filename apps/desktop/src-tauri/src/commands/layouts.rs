@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use deckpilot_core::variables::{
+    DisplayTemplates, DisplayText, ProjectSource, ResolutionContext, ResolvedTemplates, TextKey,
+};
 use deckpilot_core::{
     ActiveProjectContext, DeviceLayout, KeyFace, LayoutId, LayoutIssue, PageDestination, PageId,
-    ProfileId, ProjectId, page_faces,
+    ProfileId, ProjectId, core_display, page_faces_with,
 };
 use deckpilot_device::{ControlId, DeviceModelId};
+use deckpilot_ipc::display_templates::{MAX_DISPLAY_TEMPLATES, ResolvedDisplayTemplate};
 use deckpilot_storage::ConfigStore;
 
 use super::reload::Saved;
@@ -330,6 +334,11 @@ pub struct ControlFace {
     /// Left out for controls that do not navigate.
     #[serde(skip_serializing_if = "Option::is_none")]
     navigation: Option<deckpilot_core::ControlNavigation>,
+    /// The key's title template as the agent resolved it (the same
+    /// function as on the device), with what is unresolved: for keys whose
+    /// title has placeholders, while an agent of protocol 17 answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title_display: Option<ResolvedDisplayTemplate>,
 }
 
 /// How a key's title comes out on the device ([`deckpilot_render::TextReport`]).
@@ -474,8 +483,79 @@ struct PageFaces {
     incompatible: Vec<deckpilot_core::IncompatibleBinding>,
     /// What each control that navigates does to the view.
     navigation: Vec<(ControlId, deckpilot_core::ControlNavigation)>,
+    /// Every title template the faces resolved, by control.
+    titles: Vec<(ControlId, String, DisplayText)>,
 }
 
+/// Records the template and the text of every title resolved by `inner`.
+struct Collect<'a> {
+    inner: &'a dyn DisplayTemplates,
+    seen: std::cell::RefCell<Vec<(ControlId, String, DisplayText)>>,
+}
+
+impl DisplayTemplates for Collect<'_> {
+    fn display(&self, key: &TextKey, template: &str) -> DisplayText {
+        let text = self.inner.display(key, template);
+        self.seen
+            .borrow_mut()
+            .push((key.control, template.to_owned(), text.clone()));
+        text
+    }
+}
+
+/// The faces of a page with its titles resolved by the agent
+/// (`resolveDisplayTemplates`, the function the device uses), so the
+/// preview shows what the device shows. Without an agent that answers,
+/// titles show what the core resolves alone ([`core_display`]: the older
+/// placeholders, the profile and the project).
+async fn resolved_preview(
+    state: &AppState,
+    profile_id: ProfileId,
+    layout: &DeviceLayout,
+    page_id: PageId,
+    project_id: Option<ProjectId>,
+    live: Option<&LivePreview>,
+) -> CommandResult<(PageFaces, bool)> {
+    let first = page_preview(state, profile_id, layout, page_id, project_id, live, None)?;
+    let mut templates: Vec<String> = Vec::new();
+    for (_, template, _) in &first.titles {
+        if template.contains('{') && !templates.contains(template) {
+            templates.push(template.clone());
+        }
+    }
+    templates.truncate(MAX_DISPLAY_TEMPLATES);
+    if templates.is_empty() {
+        return Ok((first, false));
+    }
+    let context = ResolutionContext::preview(profile_id).with_project(
+        project_id,
+        if project_id.is_some() {
+            ProjectSource::Explicit
+        } else {
+            ProjectSource::Application
+        },
+    );
+    let Ok(answers) = super::variables::resolve_templates(&state.paths, context, templates).await
+    else {
+        return Ok((first, false));
+    };
+    let resolved: std::collections::BTreeMap<String, DisplayText> = answers
+        .into_iter()
+        .map(|answer| (answer.template, answer.display))
+        .collect();
+    let second = page_preview(
+        state,
+        profile_id,
+        layout,
+        page_id,
+        project_id,
+        live,
+        Some(&resolved),
+    )?;
+    Ok((second, true))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn page_preview(
     state: &AppState,
     profile_id: ProfileId,
@@ -483,6 +563,7 @@ fn page_preview(
     page_id: PageId,
     project_id: Option<ProjectId>,
     live: Option<&LivePreview>,
+    resolved: Option<&std::collections::BTreeMap<String, DisplayText>>,
 ) -> CommandResult<PageFaces> {
     let store = state.store()?;
     let profile = load_profile(&store, profile_id)?;
@@ -500,30 +581,46 @@ fn page_preview(
         .into_iter()
         .filter(|found| found.page == page_id)
         .collect();
-    let faces = page_faces(
-        &actions,
-        layout,
-        page_id,
-        &profile,
-        project,
-        &controls,
-        Some(&model.capabilities),
-    )
-    .into_iter()
-    .map(|(control, face)| {
-        let face = match live {
-            Some(live) => {
-                let action = layout
-                    .page(page_id)
-                    .and_then(|page| deckpilot_core::device_runtime::shown_binding(page, control))
-                    .and_then(|binding| binding.target.action_id());
-                with_live_state(face, action, live)
-            }
-            None => face,
+    let empty = std::collections::BTreeMap::new();
+    let (faces, titles) = core_display(&profile, project, |core| {
+        let agent = ResolvedTemplates {
+            resolved: resolved.unwrap_or(&empty),
+            fallback: core,
         };
-        (control, face)
-    })
-    .collect();
+        let collect = Collect {
+            inner: &agent,
+            seen: std::cell::RefCell::default(),
+        };
+        let faces = page_faces_with(
+            &actions,
+            layout,
+            page_id,
+            &profile,
+            project,
+            &controls,
+            Some(&model.capabilities),
+            &collect,
+        );
+        (faces, collect.seen.into_inner())
+    });
+    let faces = faces
+        .into_iter()
+        .map(|(control, face)| {
+            let face = match live {
+                Some(live) => {
+                    let action = layout
+                        .page(page_id)
+                        .and_then(|page| {
+                            deckpilot_core::device_runtime::shown_binding(page, control)
+                        })
+                        .and_then(|binding| binding.target.action_id());
+                    with_live_state(face, action, live)
+                }
+                None => face,
+            };
+            (control, face)
+        })
+        .collect();
     let display = deckpilot_core::editor_navigation::display_controls(&model.capabilities);
     let navigation = controls
         .iter()
@@ -536,6 +633,7 @@ fn page_preview(
         .collect();
     Ok(PageFaces {
         navigation,
+        titles,
         faces,
         capabilities: model.capabilities.clone(),
         look: model.effective_appearance(),
@@ -555,7 +653,7 @@ fn page_preview(
 /// still, cut with `…`; [`preview_marquee`] has its frames.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri passes each argument by name.
-pub fn preview_layout(
+pub async fn preview_layout(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     layout: DeviceLayout,
@@ -565,14 +663,15 @@ pub fn preview_layout(
     live: Option<LivePreview>,
     key_pixels: Option<u32>,
 ) -> CommandResult<Vec<ControlFace>> {
-    let preview = page_preview(
+    let (preview, by_agent) = resolved_preview(
         &state,
         profile_id,
         &layout,
         page_id,
         project_id,
         live.as_ref(),
-    )?;
+    )
+    .await?;
     let capabilities = &preview.capabilities;
     let icons = render
         .unwrap_or(false)
@@ -612,6 +711,15 @@ pub fn preview_layout(
                     .iter()
                     .find(|(c, _)| *c == control)
                     .map(|(_, navigation)| navigation.clone()),
+                title_display: preview
+                    .titles
+                    .iter()
+                    .rev()
+                    .find(|(c, template, _)| by_agent && *c == control && template.contains('{'))
+                    .map(|(_, template, display)| ResolvedDisplayTemplate {
+                        template: template.clone(),
+                        display: display.clone(),
+                    }),
             }
         })
         .collect())
@@ -650,7 +758,7 @@ pub struct MarqueePreview {
     clippy::cast_precision_loss,
     reason = "key sizes and offsets are a few hundred pixels"
 )]
-pub fn preview_marquee(
+pub async fn preview_marquee(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     layout: DeviceLayout,
@@ -660,14 +768,15 @@ pub fn preview_marquee(
     live: Option<LivePreview>,
     key_pixels: Option<u32>,
 ) -> CommandResult<Option<MarqueePreview>> {
-    let preview = page_preview(
+    let (preview, _) = resolved_preview(
         &state,
         profile_id,
         &layout,
         page_id,
         project_id,
         live.as_ref(),
-    )?;
+    )
+    .await?;
     let Some((_, face)) = preview.faces.iter().find(|(c, _)| *c == control) else {
         return Ok(None);
     };

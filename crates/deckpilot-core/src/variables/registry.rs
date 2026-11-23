@@ -313,6 +313,10 @@ pub struct VariableDeclaration {
     /// says otherwise is refused.
     #[serde(default = "read_only")]
     pub read_only: bool,
+    /// The value is an identifier (a project's id, say), not text for
+    /// people: it is never shown on a key ([`super::display_safe`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub identifier: bool,
 }
 
 fn read_only() -> bool {
@@ -335,6 +339,7 @@ impl VariableDeclaration {
             requires: Vec::new(),
             sensitive: false,
             read_only: true,
+            identifier: false,
         }
     }
 
