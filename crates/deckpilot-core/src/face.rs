@@ -67,6 +67,16 @@ pub struct KeyFace {
     /// its fallback icon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    /// The key's action cannot run now: its plugin (or module) is not
+    /// installed, disabled, incompatible, failed verification, waits for a
+    /// permission or is briefly away. Drawn as the compact missing-plugin
+    /// face ([`crate::device_runtime::symbols::PLUGIN_MISSING`] in place of
+    /// any icon, the key's title and colours kept, no warning text); the
+    /// app's Inspector says why. Computed for every face, never stored: the
+    /// binding keeps its own icon and look, which come back with the
+    /// plugin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unavailable: bool,
     /// The labels the key shows ([`crate::KeyLabel`]), resolved: only those
     /// enabled and visible, in paint order within their layer. Never the
     /// templates (they stay in the layout). Empty: none, not written, so a
@@ -165,6 +175,7 @@ impl KeyFace {
             badge: None,
             series: None,
             symbol: None,
+            unavailable: false,
             labels: Vec::new(),
             text: crate::i18n::FaceText::default(),
         }
@@ -185,9 +196,20 @@ impl KeyFace {
             badge: None,
             series: None,
             symbol: None,
+            unavailable: false,
             labels: Vec::new(),
             text: crate::i18n::FaceText::default(),
         }
+    }
+
+    /// The compact face of a key whose action cannot run now (see
+    /// [`KeyFace::unavailable`]): its title, the missing-plugin icon, no
+    /// live state and no secondary text.
+    pub fn unavailable_action(title: impl Into<String>) -> Self {
+        let mut face = Self::new(FaceStyle::Notice, title)
+            .with_symbol(Some(crate::device_runtime::symbols::PLUGIN_MISSING));
+        face.unavailable = true;
+        face
     }
 
     /// The face with `symbol` as its icon name (see [`KeyFace::symbol`]).

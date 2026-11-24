@@ -1815,7 +1815,21 @@ pub fn page_faces_scoped(
                         if incompatible {
                             unavailable_face(binding, profile, &title)
                         } else {
-                            face_for(registry, binding, layout, profile, project, &title, scope)
+                            // Another gesture of the key that can run keeps
+                            // the key from looking unavailable
+                            // (docs/key-text.md, "Keys whose plugin is
+                            // missing").
+                            let other_runs = page
+                                .bindings
+                                .iter()
+                                .filter(|other| {
+                                    other.control == *control && !std::ptr::eq(*other, binding)
+                                })
+                                .any(|other| binding_runs(registry, other, profile, capabilities));
+                            face_for(
+                                registry, binding, layout, profile, project, &title, scope,
+                                other_runs,
+                            )
                         }
                         .with_appearance(binding.appearance.as_ref())
                         .with_title_suggestions(title_suggestions(registry, binding, profile))
@@ -2062,6 +2076,49 @@ fn face_labels(
         .collect()
 }
 
+/// Whether `binding` can run now: its action's type is known to
+/// `registry` and runs from its control, its workflow is in the profile.
+/// Navigation and stateful keys always can.
+fn binding_runs(
+    registry: &ActionRegistry,
+    binding: &ControlBinding,
+    profile: &Profile,
+    capabilities: Option<&DeviceCapabilities>,
+) -> bool {
+    let compatible = || {
+        capabilities.is_none_or(|capabilities| {
+            crate::binding_incompatibility(binding, capabilities, registry, profile).is_none()
+        })
+    };
+    match &binding.target {
+        BindingTarget::Action { action, .. } => profile.action(*action).is_some_and(|instance| {
+            registry.definition(&instance.action_type).is_some() && compatible()
+        }),
+        BindingTarget::Workflow { workflow } => {
+            profile.workflow(*workflow).is_some() && compatible()
+        }
+        BindingTarget::OpenPage { .. } | BindingTarget::Back | BindingTarget::Stateful(_) => true,
+    }
+}
+
+/// The face of an action whose type cannot run now: the compact
+/// missing-plugin face, or with `another_gesture_runs` the key's plain look
+/// with the action's own icon.
+fn not_running_face(label: String, icon: Option<String>, another_gesture_runs: bool) -> KeyFace {
+    if another_gesture_runs {
+        KeyFace::new(FaceStyle::Action, label).with_symbol(icon)
+    } else {
+        KeyFace::unavailable_action(label)
+    }
+}
+
+/// The face of `binding`. An action whose type cannot run now (its plugin
+/// or module is missing, disabled, incompatible, unverified or waits for a
+/// permission) shows the compact missing-plugin face
+/// ([`KeyFace::unavailable_action`]) with its title, unless
+/// `another_gesture_runs`: then the key keeps its plain look and only the
+/// affected gesture says what is missing (in the app's Inspector).
+#[allow(clippy::too_many_arguments)] // What a face depends on, each by name.
 fn face_for(
     registry: &ActionRegistry,
     binding: &ControlBinding,
@@ -2070,6 +2127,7 @@ fn face_for(
     project: Option<&Project>,
     title: &Title<'_>,
     scope: &crate::WorkflowScope,
+    another_gesture_runs: bool,
 ) -> KeyFace {
     match &binding.target {
         BindingTarget::Action { action, overrides } => {
@@ -2128,8 +2186,7 @@ fn face_for(
                         project,
                     )
                     .unwrap_or_else(|| {
-                        KeyFace::new(FaceStyle::Notice, label)
-                            .with_system_detail(SystemText::Unavailable)
+                        not_running_face(label, instance.icon.clone(), another_gesture_runs)
                     }),
             )
         }
@@ -2207,6 +2264,9 @@ pub mod symbols {
     pub const FOLDER_BACK: &str = "folder-back";
     pub const WORKFLOW: &str = "list-ordered";
     pub const WORK_SESSION: &str = "timer";
+    /// A key whose action cannot run now (its plugin is missing, disabled
+    /// or unavailable, [`crate::KeyFace::unavailable`]): Lucide's `plug`.
+    pub const PLUGIN_MISSING: &str = "plug";
 }
 
 mod working;
@@ -2232,6 +2292,9 @@ mod folder_tests;
 
 #[cfg(test)]
 mod title_tests;
+
+#[cfg(test)]
+mod missing_plugin_tests;
 
 #[cfg(test)]
 mod display_tests;
