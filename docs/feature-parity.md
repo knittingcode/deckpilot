@@ -105,7 +105,7 @@ component tests). Nothing here has physical evidence yet.
 | Custom title and icon of a folder | verified (simulated) | core | Binding label and appearance apply to folder keys like any other | — |
 | Move actions in and out of folders | verified (simulated) | core (app) | Cut and paste across pages; move and copy whole pages; drag between keys moves or swaps (#285, `folders.test.tsx`) | — |
 | Rename; delete with confirmation | verified (simulated) | core (app) | Rename in the page bar; deleting asks first and names the keys and pages that go with it (#285, `delete-page-dialog.tsx`, `folders.test.tsx`) | — |
-| Automatic return after an action runs | verified (integration) | core | `LayoutPage.autoReturn`, a switch on the folder page (#284; `apps/agent/tests/deck.rs::a_folder_that_closes_returns_after_its_key_ran`, `deck_tests.rs`) | — |
+| Automatic return after an action runs | verified (integration) | core | `LayoutPage.autoReturn` ("Exit after action completes"), a switch in the folder Inspector and the page menu; left when the run is over (#284; `apps/agent/tests/folder_exit.rs`, `apps/agent/tests/deck.rs::a_folder_that_closes_returns_after_its_key_ran`, `folder_tests.rs`) | — |
 | Navigation state preserved sensibly | verified (integration) | core | Reconnect and reload keep the page; a profile is returned to on the page it was left on; the pages survive an agent restart (#284; `deck.rs::the_profile_and_the_pages_survive_a_restart`, `deck_tests.rs`) | — |
 | **Switch Profile**: a specific profile, next, previous, wraparound | verified (integration) | built-in module | `deck.switch-profile`; the editor lists the real profiles (#284; `deck.rs::a_key_switches_the_profile_of_every_device`, `modules/deck/profile-field.test.tsx`) | — |
 | Device selection, cross-device switching | missing | core | One active profile for every device | Per-device profiles do not exist: see [5.4](#54-switch-profile) and the owner decisions |
@@ -292,10 +292,12 @@ and leave the folder.
   when none is free.
 
 **Automatic return.** `LayoutPage.autoReturn` (optional, omitted when
-false): after a key of the page ran an action or started a workflow, the
-device returns to the folder's parent, as Back would. It applies to
-actions and workflows only (not to navigation keys), whatever the action's
-result, at the moment the key is handled. It is a property of the folder,
+false; "Exit after action completes"): once what a key of the page started
+is over (an action, a plugin's action, a whole workflow; succeeded, failed
+or cancelled), the device returns to the folder's parent, as Back would.
+It applies to actions and workflows only (not to navigation keys); a run
+that cannot start leaves the device in the folder (see
+[data-model.md](data-model.md#auto-exit)). It is a property of the folder,
 so it is set once and applies to every key in it.
 
 **Navigation state.** The runtime keeps, per profile and device, the page

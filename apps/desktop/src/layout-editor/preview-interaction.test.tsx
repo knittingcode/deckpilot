@@ -1002,6 +1002,54 @@ describe("live preview: the device shows the draft", { timeout: 20_000 }, () => 
     expect(mocks.runAction).not.toHaveBeenCalled()
   })
 
+  it("draws the agent's Auto Exit countdown on the folder's Back key, as the device does", async () => {
+    renderEditor()
+    await started()
+    /** The countdown the last preview of `page` was asked to draw. */
+    const drawn = (page: string): unknown =>
+      (mocks.previewLayout.mock.calls as unknown[][]).filter(([, , p]) => p === page).at(-1)?.[7] ??
+      null
+    // The device enters Tools by its own key: the editor follows and the
+    // Canvas draws the seconds the agent reports.
+    emit({
+      kind: "navigated",
+      navigation: shown(["home", "tools"], 2, { folderCountdown: { seconds: 7 } }),
+      own: false,
+    })
+    expect(currentPage()).toBe("Tools")
+    await waitFor(() => {
+      expect(drawn("tools")).toEqual({ seconds: 7, paused: false })
+    })
+    // A key of the folder started a run: paused, with what is left.
+    emit({
+      kind: "navigated",
+      navigation: shown(["home", "tools"], 3, {
+        folderCountdown: { seconds: 7, paused: true },
+      }),
+      own: false,
+    })
+    await waitFor(() => {
+      expect(drawn("tools")).toEqual({ seconds: 7, paused: true })
+    })
+    // An older state that arrives late changes nothing.
+    emit({
+      kind: "navigated",
+      navigation: shown(["home", "tools"], 2, { folderCountdown: { seconds: 9 } }),
+      own: false,
+    })
+    // Exit after action completes: back on Home, no countdown anywhere.
+    emit({ kind: "navigated", navigation: shown(["home"], 4), own: false })
+    expect(currentPage()).toBe("Home")
+    await waitFor(() => {
+      expect(drawn("home")).toBeNull()
+    })
+    expect(
+      (mocks.previewLayout.mock.calls as unknown[][]).some(([, , , , , , , c]) =>
+        JSON.stringify(c ?? null).includes("9"),
+      ),
+    ).toBe(false)
+  })
+
   it("follows a layout switch on the device unless something is unsaved", async () => {
     const { shell } = renderEditor()
     await started()

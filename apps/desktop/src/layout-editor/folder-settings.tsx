@@ -1,10 +1,12 @@
 // The settings of the folder a key opens, in that key's inspector: Auto
-// Exit, and for a folder whose Back is still on its first free key
-// ("legacy") the one-click "Move Back to the first key". Its name is the
-// key header's title field (the folder's one title, `folderKeyTitle`).
-// Only controls, no headings or explanations. The folder's own protected Back key has an
-// empty inspector; the page navigator's "Close after a key runs" stays in
-// its menu.
+// Exit (one row: a switch, and its time inline while it is on), Exit after action
+// completes (`autoReturn`, a switch of its own), and for a folder whose
+// Back is still on its first free key ("legacy") the one-click "Move Back
+// to the first key". Its name is the key header's title field (the
+// folder's one title, `folderKeyTitle`). Only controls, no headings or
+// explanations. The folder's own protected Back key has an empty
+// inspector; the page navigator's menu has the same "Exit after action
+// completes".
 
 import { useContext, useId, useState } from "react"
 import { ArrowLeft, ArrowRightLeft, Trash2 } from "lucide-react"
@@ -12,10 +14,10 @@ import { ArrowLeft, ArrowRightLeft, Trash2 } from "lucide-react"
 import { DialogsContext } from "@/components/dialogs/use-dialogs"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { useInlineNumber } from "@/components/inline-number"
+import { InlineNumberInput } from "@/components/inline-number-input"
 import { Switch } from "@/components/ui/switch"
-import { useTranslation } from "@/i18n"
+import { Trans, useTranslation } from "@/i18n"
 import {
   autoExitOf,
   backPosition,
@@ -32,7 +34,7 @@ import {
   resolveFolderLabel,
   restoreRecovered,
 } from "@/lib/folder-control"
-import { controlLabel, page as findPage } from "@/lib/layout-model"
+import { controlLabel, page as findPage, setAutoReturn } from "@/lib/layout-model"
 import type { ControlId, DeviceLayout, DeviceModel } from "@/lib/types"
 
 interface FolderSettingsProps {
@@ -45,7 +47,10 @@ interface FolderSettingsProps {
   first?: boolean
 }
 
-/** The folder `pageId`'s Auto Exit, and "Move Back to the first key" for a legacy one. */
+/**
+ * The folder `pageId`'s Auto Exit and Exit after action completes (two
+ * independent switches), and "Move Back to the first key" for a legacy one.
+ */
 export function FolderSettings({
   model,
   draft,
@@ -56,19 +61,8 @@ export function FolderSettings({
   const { t } = useTranslation()
   const id = useId()
   const page = findPage(draft, pageId)
-  const stored = autoExitOf(page)
-  // What is typed: committed while it is valid, kept (with why) when not.
-  const [text, setText] = useState(String(stored.seconds))
-  const [synced, setSynced] = useState(stored.seconds)
-  if (stored.seconds !== synced) {
-    // Undo, redo or revert changed it.
-    setSynced(stored.seconds)
-    if (Number(text) !== stored.seconds) setText(String(stored.seconds))
-  }
   const [moveRefused, setMoveRefused] = useState(false)
   if (!page || !isFolderPage(draft, pageId)) return null
-  const error = checkAutoExitSeconds(text)
-  const shownSeconds = error ? stored.seconds : Number(text)
   const legacy = backPosition(draft, pageId) === "legacy"
   return (
     <section
@@ -76,51 +70,17 @@ export function FolderSettings({
       aria-label={t("editor:folderSettings.title")}
       className={first ? "grid gap-3" : "grid gap-3 border-t pt-4"}
     >
-      <label className="flex items-center gap-2 text-sm" htmlFor={`${id}-enabled`}>
+      <AutoExitRow id={id} draft={draft} pageId={pageId} onChange={onChange} />
+      <label className="flex items-center gap-2 text-sm" htmlFor={`${id}-completion`}>
         <Switch
-          id={`${id}-enabled`}
-          checked={stored.enabled}
+          id={`${id}-completion`}
+          checked={page.autoReturn === true}
           onCheckedChange={(checked) => {
-            onChange(setAutoExit(draft, pageId, { ...stored, enabled: checked }))
+            onChange(setAutoReturn(draft, pageId, checked))
           }}
         />
-        {t("editor:folderSettings.autoExit")}
+        {t("editor:folderSettings.exitAfterCompletion")}
       </label>
-      {stored.enabled && (
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${id}-seconds`}>{t("editor:folderSettings.exitAfter")}</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id={`${id}-seconds`}
-              inputMode="numeric"
-              className="w-24"
-              value={text}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? `${id}-error` : undefined}
-              onChange={(event) => {
-                const value = event.target.value
-                setText(value)
-                if (checkAutoExitSeconds(value) === null && Number(value) !== stored.seconds) {
-                  const seconds = Number(value)
-                  setSynced(seconds)
-                  onChange(
-                    setAutoExit(draft, pageId, { ...stored, seconds }),
-                    `auto-exit:${pageId}`,
-                  )
-                }
-              }}
-            />
-            <span className="text-sm text-muted-foreground">
-              {t("editor:folderSettings.seconds", { count: shownSeconds })}
-            </span>
-          </div>
-          {error && (
-            <p id={`${id}-error`} role="alert" className="text-xs text-destructive">
-              {t(error, { min: 1, max: 3600 })}
-            </p>
-          )}
-        </div>
-      )}
       {legacy && reservedBackControl(model) && (
         <div data-slot="legacy-back" className="grid gap-2">
           <Button
@@ -147,6 +107,83 @@ export function FolderSettings({
         </div>
       )}
     </section>
+  )
+}
+
+/**
+ * Auto Exit in one row: "[switch] Automatic exit" while it is off, and
+ * "[switch] Automatic exit after [10] seconds" while it is on, the time an
+ * inline field between the words (its order and the unit's plural come
+ * from the translation). The time is kept while the switch is off. What is
+ * typed is stored with Enter or when the field is left, if it is a whole
+ * number of seconds from 1 to 3600 (one undo step each); anything else is
+ * never stored: it is shown with why while typed, and Escape, Enter or
+ * leaving the field bring back the stored time. The row keeps its height either way, and wraps between its parts
+ * when it is narrow.
+ */
+function AutoExitRow({
+  id,
+  draft,
+  pageId,
+  onChange,
+}: {
+  id: string
+  draft: DeviceLayout
+  pageId: string
+  onChange: (layout: DeviceLayout, group?: string) => void
+}) {
+  const { t } = useTranslation()
+  const stored = autoExitOf(findPage(draft, pageId))
+  // What is typed: stored while it is valid, kept (with why) when not.
+  const seconds = useInlineNumber({
+    stored: stored.seconds,
+    check: checkAutoExitSeconds,
+    onCommit: (value) => {
+      if (value !== null) onChange(setAutoExit(draft, pageId, { ...stored, seconds: value }))
+    },
+  })
+  const error = seconds.error as ReturnType<typeof checkAutoExitSeconds>
+  const shownSeconds = seconds.typed ?? stored.seconds
+  const field = (
+    <InlineNumberInput
+      id={`${id}-seconds`}
+      field={seconds}
+      aria-label={t("editor:folderSettings.timeout")}
+      aria-describedby={error ? `${id}-error` : undefined}
+    />
+  )
+  return (
+    <div className="grid gap-1.5">
+      <div
+        data-slot="auto-exit"
+        className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+      >
+        <Switch
+          id={`${id}-enabled`}
+          aria-label={t("editor:folderSettings.autoExit")}
+          checked={stored.enabled}
+          onCheckedChange={(checked) => {
+            onChange(setAutoExit(draft, pageId, { ...stored, enabled: checked }))
+          }}
+        />
+        {stored.enabled ? (
+          <span data-slot="auto-exit-text" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Trans
+              i18nKey="editor:folderSettings.autoExitAfter"
+              count={shownSeconds}
+              components={{ field }}
+            />
+          </span>
+        ) : (
+          <label htmlFor={`${id}-enabled`}>{t("editor:folderSettings.autoExit")}</label>
+        )}
+      </div>
+      {stored.enabled && error && (
+        <p id={`${id}-error`} role="alert" className="text-xs text-destructive">
+          {t(error, { min: 1, max: 3600 })}
+        </p>
+      )}
+    </div>
   )
 }
 

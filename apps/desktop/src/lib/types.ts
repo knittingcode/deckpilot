@@ -651,9 +651,11 @@ export interface LayoutPage {
   /** Gesture timings of controls that differ from the machine's defaults. */
   gestures?: KeyGestureSettings[]
   /**
-   * A folder that closes by itself: after one of its keys ran an action or
-   * started a workflow, the device returns to the folder's parent. Not
-   * stored when off.
+   * "Exit after action completes": once what one of its keys ran (an
+   * action, a plugin's action, a workflow or Multi Action) reached its end
+   * — succeeded, failed or cancelled — the device returns to the folder's
+   * parent; a run that could not start leaves it in the folder. Runs pause
+   * the folder's Auto Exit countdown either way. Not stored when off.
    */
   autoReturn?: boolean
   /**
@@ -1377,6 +1379,19 @@ export interface DeviceNavigation {
   inScope: boolean
   /** Grows with every state reported: the higher of two is newer. */
   seq: number
+  /**
+   * The Auto Exit countdown of the folder shown, as its protected Back key
+   * shows it; absent without one (and from older agents).
+   */
+  folderCountdown?: FolderCountdown
+}
+
+/** A folder's Auto Exit countdown on its Back key (`deckpilot_core::FolderCountdown`). */
+export interface FolderCountdown {
+  /** Whole seconds left, rounded up. */
+  seconds: number
+  /** Paused while a run started from the folder is not over. */
+  paused?: boolean
 }
 
 /** What the live preview session reports (`commands/live_preview.rs`). */

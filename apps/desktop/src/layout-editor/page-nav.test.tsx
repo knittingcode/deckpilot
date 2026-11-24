@@ -295,7 +295,7 @@ describe("the page navigation under the device", { timeout: 20_000 }, () => {
     await user.click(within(pages).getByRole("button", { name: "Actions for “Git”" }))
     expect(
       within(await screen.findByRole("menu")).getByRole("menuitemcheckbox", {
-        name: /Close after a key runs/,
+        name: /Exit after action completes/,
       }),
     ).toHaveAttribute("aria-checked", "false")
     await user.keyboard("{Escape}")

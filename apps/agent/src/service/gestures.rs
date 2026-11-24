@@ -249,7 +249,9 @@ impl Agent {
                     input,
                     ..
                 } => {
-                    self.dispatch_edge(&device, control, input, lane.edge_origin());
+                    self.with_folder_scope(&device, |agent| {
+                        agent.dispatch_edge(&device, control, input, lane.edge_origin());
+                    });
                     match input {
                         ControlInput::Press => dispatched.push(Trigger::Press),
                         ControlInput::Release => dispatched.push(Trigger::Release),
@@ -257,7 +259,11 @@ impl Agent {
                     }
                 }
                 GestureOutput::Fired(fired) => {
-                    if self.dispatch_gesture(&fired, lane.gesture_origin()) {
+                    let device = fired.device.clone();
+                    let dispatched_gesture = self.with_folder_scope(&device, |agent| {
+                        agent.dispatch_gesture(&fired, lane.gesture_origin())
+                    });
+                    if dispatched_gesture {
                         dispatched.push(Trigger::from(fired.gesture));
                     }
                 }
@@ -305,6 +311,9 @@ impl Agent {
         }
         match outcome {
             Ok(RuntimeOutcome::Action { action, mut result }) => {
+                // It ran in place: a folder that exits after its actions
+                // complete is left once the key is handled.
+                self.folder_action_ran();
                 let name = self.action_name(action);
                 // A Random Action's pick runs as the key's own binding
                 // would, for this device; picks do not nest.

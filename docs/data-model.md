@@ -495,9 +495,27 @@ run by the agent's loop, so it works with the app closed):
 
 - It starts when a device **enters** the folder — the page it shows comes
   to be the folder page or a page inside it from outside, by any
-  navigation — and is measured from entering. Moving between pages of the
-  same folder (into a folder inside it and back) does not restart it;
-  entering again after leaving starts it anew.
+  navigation — and is measured from entering on a monotonic clock. Only
+  the folder the device shows counts down: while a folder inside it is
+  shown, the outer folder keeps what is left of its time and goes on from
+  there when the device comes back to it (an inactive folder never expires
+  in the background). Entering again after leaving starts it anew.
+- **Runs pause it.** When a key of the folder starts something that ends
+  later — a workflow (also a Multi Action, a switch's or a Random Action's
+  workflow) as a whole, a plugin's action — the countdown stops at once,
+  keeping what is left, and goes on from there when the run reached its
+  end (succeeded, failed or cancelled). Each run holds the folder by its
+  own id (a workflow's execution id), so with several runs the countdown
+  goes on only after the last one. The agent's execution lifecycle tells
+  the folder; completion is never guessed from time or key releases.
+- **The protected Back key shows it** (`device_runtime::folder_back_face`):
+  the Back icon with the whole seconds left under it (10 s show `10` from
+  entering, `1` in the last second), and a pause mark in the top right
+  corner while a run holds it. The agent redraws it once a second, only
+  when what it shows changes, and only that key; the key still only goes
+  back. Without Auto Exit it is the plain Back key. Every device, the
+  simulated MK.2 and, in a live preview, the editor's Canvas (from the
+  navigation's optional `folderCountdown`) draw the same face.
 - Leaving the folder by hand, another layout or profile, locking and
   disconnecting cancel it. A device that reconnects, and an agent that
   restarts, start none (only entering does); deadlines are never stored.
@@ -518,14 +536,26 @@ The actions *Next page* and *Previous page*
 ([Deck actions](modules.md#deck-actions)) move along the top-level pages
 and leave nothing of a folder on the stack.
 
-**Folders that close.** A folder page with `autoReturn` closes after one
-of its keys ran an action or started a workflow: the device returns to the
-folder's parent, as Back would, at the moment the key is handled and
-whatever the action's result. Keys that open a page or go back do not
-close it, an unbound key does nothing, and a key that already changed the
-page (*Next page*) is not followed by a second step. On a page outside
-folders the setting has no effect. Layouts without it are stored exactly
-as before.
+**Exit after action completes.** A folder page with `autoReturn` ("Exit
+after action completes" in the Inspector, independent of Auto Exit) is
+left once what one of its keys started is over: an action that runs in
+place right after it ran, a plugin's action when its result is there, a
+workflow or Multi Action when the whole run ended — succeeded, failed or
+cancelled, the error and the history recorded as always. With several runs
+it waits for the last one; the folder is left once, as Back would (its
+parent, one level). A run that cannot start (the workflow already runs,
+too many runs) is reported and leaves the device in the folder. With Auto
+Exit on as well, the countdown is paused during the run and the folder is
+left right after it, without waiting for the time; without a run the time
+still applies. Keys that open a page or go back do not close it, an
+unbound key does nothing, and a key that already changed the page (*Next
+page*) is not followed by a second step. Leaving the folder by hand,
+another folder, page, layout or profile, a disconnect and locking make a
+run's end unable to navigate (each entry has its own generation). On a
+page outside folders the setting has no effect. Layouts without it are
+stored exactly as before (it is omitted when off); up to 0.10.0 it closed
+the folder when the key was handled, and folders that had it keep it with
+the new timing.
 
 **The page a device returns to.** The runtime remembers, per profile and
 device, the top-level page the device showed when the profile was left;
