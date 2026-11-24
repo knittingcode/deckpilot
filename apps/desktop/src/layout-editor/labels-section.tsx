@@ -69,21 +69,24 @@ import {
   copiedLabels,
   defaultPlateOpacity,
   duplicateLabel,
+  hasText,
   labelReports,
   labelsOf,
   moveLabel,
   nudge,
   placedAt,
-  positionFromBox,
+  placedFromBox,
   positionKind,
   removeLabel,
   reorderLabels,
+  resized,
   updateLabel,
   withLabels,
 } from "./labels"
 import { LabelOutlines } from "./label-outlines"
 import { NumberField } from "./text-appearance"
 import { TitleVariablePicker } from "./title-variables"
+import { useExpectedBoxes } from "./use-expected-boxes"
 
 const OPEN_KEY = "deckpilot.editor.labelsOpen"
 
@@ -550,6 +553,13 @@ function LabelStage({
   const key = controlKey(control)
   const image = look.images.get(key)
   const canvas = boxes[0]?.canvas ?? { width: LABEL_LIMITS.canvas, height: LABEL_LIMITS.canvas }
+  // Nudges and drags start from where a label was moved to, until the
+  // renderer's next boxes arrive.
+  const expected = useExpectedBoxes(boxes)
+  const moveTo = (id: string, position: LabelPosition) => {
+    onMove(id, position)
+    expected.moved(id, position)
+  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       if (selected) {
@@ -563,7 +573,7 @@ function LabelStage({
       onEdit(selected)
       return
     }
-    nudge(event, boxes, selected, onMove)
+    nudge(event, expected.boxes, selected, moveTo)
   }
   return (
     <div
@@ -589,6 +599,7 @@ function LabelStage({
         onSelect={onSelect}
         onEdit={onEdit}
         onMove={onMove}
+        expected={expected}
       />
     </div>
   )
@@ -623,6 +634,12 @@ function LabelSettings({
   const textId = useId()
   const input = useRef<HTMLInputElement>(null)
   const [more, setMore] = useState(false)
+  // Text being typed that cannot be kept (empty): the label keeps its last
+  // text, and the field says why, until it has text again or loses focus.
+  // It belongs to the text it was typed over; a new one (undo) replaces it.
+  const [typed, setTyped] = useState<{ for: string; text: string } | null>(null)
+  const text = typed?.for === label.text ? typed.text : label.text
+  const needsText = !hasText(text)
   useEffect(() => {
     if (editRequest === 0) return
     const field = input.current
@@ -636,14 +653,19 @@ function LabelSettings({
   const setMode = (mode: LabelPosition["mode"]) => {
     if (mode === position.mode) return
     // The new mode keeps the label where the renderer drew it.
-    const next: LabelPosition = box
-      ? positionFromBox(box, mode)
-      : mode === "absolute"
-        ? { mode, x: 500, y: 500 }
-        : mode === "anchored"
-          ? { mode, to: "bottom", inset: 0 }
-          : { mode, at: "bottom" }
-    onChange(placedAt(next))
+    if (box) {
+      onChange(placedFromBox(box, mode))
+      return
+    }
+    onChange(
+      placedAt(
+        mode === "absolute"
+          ? { mode, x: 500, y: 500 }
+          : mode === "anchored"
+            ? { mode, to: "bottom", inset: 0 }
+            : { mode, at: "bottom" },
+      ),
+    )
   }
   const spot = positionKind(position).spot
   const background = label.background ?? "auto"
@@ -658,25 +680,39 @@ function LabelSettings({
             id={textId}
             ref={input}
             className="h-8 min-w-0 flex-1"
-            maxLength={Math.max(maxTitleLength(label.text), LABEL_LIMITS.template)}
-            value={label.text}
+            maxLength={Math.max(maxTitleLength(text), LABEL_LIMITS.template)}
+            value={text}
+            aria-invalid={needsText || undefined}
+            aria-describedby={needsText ? `${textId}-error` : undefined}
             onChange={(event) => {
-              onChange({ text: event.target.value }, group("text"))
+              const next = event.target.value
+              setTyped({ for: label.text, text: next })
+              if (hasText(next)) onChange({ text: next }, group("text"))
+            }}
+            onBlur={() => {
+              setTyped(null)
             }}
           />
           {look.profileId && (
             <TitleVariablePicker
               profileId={look.profileId}
               onPick={(reference) => {
-                const start = input.current?.selectionStart ?? label.text.length
-                const end = input.current?.selectionEnd ?? label.text.length
-                const next =
-                  label.text.slice(0, start) + referenceText(reference) + label.text.slice(end)
-                if (Array.from(next).length <= LABEL_LIMITS.template) onChange({ text: next })
+                const start = input.current?.selectionStart ?? text.length
+                const end = input.current?.selectionEnd ?? text.length
+                const next = text.slice(0, start) + referenceText(reference) + text.slice(end)
+                if (Array.from(next).length <= LABEL_LIMITS.template) {
+                  setTyped(null)
+                  onChange({ text: next })
+                }
               }}
             />
           )}
         </div>
+        {needsText && (
+          <p id={`${textId}-error`} className="text-xs text-destructive" role="alert">
+            {t("editor:labels.needsText")}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-1.5">
@@ -771,7 +807,8 @@ function LabelSettings({
           range={[LABEL_LIMITS.size[0], LABEL_LIMITS.size[1]]}
           placeholder={String(LABEL_DEFAULTS.size)}
           onCommit={(value) => {
-            onChange({ size: value })
+            // A smallest size above the new size comes down with it.
+            onChange(resized(label, value))
           }}
         />
         <ToggleGroup

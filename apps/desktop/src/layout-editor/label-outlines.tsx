@@ -6,20 +6,21 @@
 //
 // - a click selects a label, a double click edits it (its text field);
 // - a drag moves it (a free position, snapped within 4 units, one undo
-//   step on release); until the renderer's next boxes arrive, the outline
-//   stays where it was dropped instead of jumping back;
-// - arrows nudge the selected label by 1 unit, Shift+arrows by 5
-//   (`onKeyDown`, for the element that holds the focus).
+//   step on release);
+// - arrows nudge the selected label by 1 unit, Shift+arrows by 5 (`nudge`,
+//   for the element that holds the focus).
+//
+// Until the renderer's next boxes arrive, a moved label's outline is where
+// the move put it (`useExpectedBoxes`), and the next drag or nudge starts
+// from there, so quick moves add up instead of starting from the old box.
 
-import { type PointerEvent, useEffect, useRef, useState } from "react"
+import { type PointerEvent, useRef, useState } from "react"
 
 import type { LabelBox, LabelPosition } from "@/lib/key-labels"
 import { cn } from "@/lib/utils"
 
 import { movedBy } from "./labels"
-
-/** How long a dropped outline waits for the renderer's boxes before it goes back. */
-const SETTLE_MS = 1500
+import { type ExpectedBoxes, useExpectedBoxes } from "./use-expected-boxes"
 
 interface Drag {
   id: string
@@ -27,8 +28,6 @@ interface Drag {
   y: number
   dx: number
   dy: number
-  /** Released: waiting for boxes other than these (the renderer's next ones). */
-  settled?: LabelBox[]
 }
 
 export interface LabelOutlinesProps {
@@ -42,6 +41,11 @@ export interface LabelOutlinesProps {
   compact?: boolean
   /** A name for each outline, e.g. "Label SHOP"; outlines without one are hidden from assistive technology. */
   describe?: (box: LabelBox) => string | undefined
+  /**
+   * Where moved labels are expected, when the parent also moves them (the
+   * stage's nudges); without it the outlines keep their own.
+   */
+  expected?: ExpectedBoxes
 }
 
 /**
@@ -57,21 +61,13 @@ export function LabelOutlines({
   onMove,
   compact = false,
   describe,
+  expected,
 }: LabelOutlinesProps) {
   const layer = useRef<HTMLDivElement>(null)
-  const [held, setDrag] = useState<Drag | null>(null)
-  // New boxes from the renderer replace a dropped outline's own position.
-  const drag = held?.settled && held.settled !== boxes ? null : held
-  const settled = drag?.settled !== undefined
-  useEffect(() => {
-    if (!settled) return
-    const timer = setTimeout(() => {
-      setDrag(null)
-    }, SETTLE_MS)
-    return () => {
-      clearTimeout(timer)
-    }
-  }, [settled])
+  const [drag, setDrag] = useState<Drag | null>(null)
+  const own = useExpectedBoxes(boxes)
+  const placed = expected ?? own
+  const shownBoxes = placed.boxes
 
   const canvas = boxes[0]?.canvas ?? { width: 72, height: 72 }
   const units = (pixels: number) => {
@@ -89,20 +85,21 @@ export function LabelOutlines({
     setDrag({ id: box.id, x: event.clientX, y: event.clientY, dx: 0, dy: 0 })
   }
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!drag || drag.settled) return
+    if (!drag) return
     event.stopPropagation()
     setDrag({ ...drag, dx: units(event.clientX - drag.x), dy: units(event.clientY - drag.y) })
   }
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!drag || drag.settled) return
+    if (!drag) return
     event.stopPropagation()
-    const box = boxes.find((b) => b.id === drag.id)
+    // From where the label is now: a move the renderer has not drawn yet counts.
+    const box = shownBoxes.find((b) => b.id === drag.id)
     if (box && (Math.abs(drag.dx) >= 0.5 || Math.abs(drag.dy) >= 0.5)) {
-      onMove(drag.id, movedBy(box, drag.dx, drag.dy, true))
-      setDrag({ ...drag, settled: boxes })
-    } else {
-      setDrag(null)
+      const position = movedBy(box, drag.dx, drag.dy, true)
+      onMove(drag.id, position)
+      placed.moved(drag.id, position)
     }
+    setDrag(null)
   }
   const percent = (value: number, of: number) => `${(value / of) * 100}%`
   return (
@@ -111,7 +108,7 @@ export function LabelOutlines({
       data-slot="key-label-outlines"
       className="pointer-events-none absolute inset-0"
     >
-      {boxes.map((box) => {
+      {shownBoxes.map((box) => {
         const moving = drag?.id === box.id ? drag : null
         const name = describe?.(box)
         return (

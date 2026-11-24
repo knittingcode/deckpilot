@@ -16,10 +16,12 @@ import {
   moveLabel,
   movedBy,
   movedLook,
+  placedFromBox,
   positionFromBox,
   presetLook,
   removeLabel,
   reorderLabels,
+  resized,
   updateLabel,
   withLabels,
 } from "./labels"
@@ -116,6 +118,40 @@ describe("positions from the renderer's boxes", () => {
     })
   })
 
+  it("keeps a corner label where it is in Edge mode, the rest of the distance as offsets", () => {
+    // Bottom left: 4 units from the left, 10 from the bottom; one inset (4)
+    // for both edges, the 6 units more from the bottom as an offset up.
+    const corner = box({ x: 4, y: 50 })
+    expect(placedFromBox(corner, "anchored")).toEqual({
+      position: { mode: "anchored", to: "bottomLeft", inset: 4 },
+      offsetX: null,
+      offsetY: -6,
+    })
+    // Top right: 2 from the top, 6 from the right: 4 units more to the left.
+    expect(placedFromBox(box({ x: 34, y: 2 }), "anchored")).toEqual({
+      position: { mode: "anchored", to: "topRight", inset: 2 },
+      offsetX: -4,
+      offsetY: null,
+    })
+    // Other modes clear the offsets, as before.
+    expect(placedFromBox(corner, "absolute")).toEqual({
+      position: positionFromBox(corner, "absolute"),
+      offsetX: null,
+      offsetY: null,
+    })
+  })
+
+  it("lowers the smallest size with the size, the backend refuses one above it", () => {
+    expect(resized(label("a", { minSize: 12 }), 9)).toEqual({ size: 9, minSize: 9 })
+    // Back to the default size (10).
+    expect(resized(label("a", { size: 20, minSize: 14 }), null)).toEqual({
+      size: null,
+      minSize: 10,
+    })
+    expect(resized(label("a", { minSize: 7 }), 9)).toEqual({ size: 9 })
+    expect(resized(label("a"), 6)).toEqual({ size: 6 })
+  })
+
   it("nudges by units, and a drag snaps to guides within 4 units", () => {
     expect(movedBy(box(), 1, 0)).toEqual({ mode: "absolute", x: 514, y: 778 })
     // Across to the centre line; down to the text area's bottom edge (centre 60).
@@ -200,6 +236,34 @@ describe("the look when the key's shown binding changes", () => {
       "a",
       "b",
     ])
+  })
+
+  it("never cuts labels to merge: 5 and 5 are not mergeable, and nothing is dropped", () => {
+    const control = { kind: "key", index: 0 } as const
+    const five = (prefix: string) =>
+      Array.from({ length: 5 }, (_, i) => label(`${prefix}${String(i)}`))
+    const moving: KeyAppearance = { labels: five("m") }
+    const own: KeyAppearance = { background: "#ffffff", labels: five("o") }
+    const before = layout([binding("click", moving), binding("longPress", own)])
+    const after = layout([binding("longPress", own)])
+    expect(lookTransfer(before, after, "home", control)).toMatchObject({
+      conflict: true,
+      labels: 5,
+      merged: 10,
+      mergeable: false,
+    })
+    // Asked anyway, a merge keeps all ten (the dialog does not offer it).
+    expect(movedLook(moving, own, "merge")?.labels).toHaveLength(10)
+    // Labels with the same id count once: 5 and 5 sharing two make 8, which fit.
+    const sharing: KeyAppearance = { labels: [...five("o").slice(0, 2), ...five("m").slice(2)] }
+    expect(
+      lookTransfer(
+        layout([binding("click", sharing), binding("longPress", own)]),
+        after,
+        "home",
+        control,
+      ),
+    ).toMatchObject({ merged: 8, mergeable: true })
   })
 })
 
