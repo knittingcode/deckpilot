@@ -107,6 +107,7 @@
     "restored": "{{name}} restored",
     "reinstalled": "{{name}} reinstalled"
   },
+  "refresh": "Refresh",
   "classes": {
     "label": "What DeckPilot includes",
     "core": {
