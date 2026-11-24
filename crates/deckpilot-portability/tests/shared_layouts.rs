@@ -237,7 +237,12 @@ fn managed_layouts_stay_out_of_exports_and_the_target_seeds_its_own() {
             BindingTarget::action(mic.id),
         ));
     store
-        .seed_managed_layout("deckpilot.calls", &calls, std::slice::from_ref(&mic), "1.0.0")
+        .seed_managed_layout(
+            "deckpilot.calls",
+            &calls,
+            std::slice::from_ref(&mic),
+            "1.0.0",
+        )
         .unwrap();
     let payload = sealed(&payload::export(&store, &modules(), None, OPTIONS, 1, "test").unwrap());
     assert_eq!(payload.library.layouts, vec![spare], "only the user's own");
