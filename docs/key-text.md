@@ -223,6 +223,48 @@ shown disabled. A plugin's default icon is its action's `node.icon`, under
 the key's own icon. The editor is always DeckPilot's: a plugin cannot
 replace it or draw its keys itself.
 
+### Keys whose plugin is missing
+
+A key keeps its assignment when the plugin behind its action is not
+installed, disabled, incompatible, failed verification, was withdrawn by
+the registry, is briefly away (updating, starting) or waits for a
+permission: the action's id, parameters, gesture bindings, title, icon,
+background and look stay stored as they are. Nothing is rewritten and no
+fallback is ever saved.
+
+The key then shows the **compact missing-plugin face**
+(`KeyFace::unavailable`, `KeyFace::unavailable_action`): the Lucide `plug`
+icon (`symbols::PLUGIN_MISSING`), a little softer than the title, in place
+of any icon (the action's, the type's or the key's own, which is only not
+drawn), the key's title (the user's, else the action's name) and the key's
+colours, title placement and background. There is no warning text on the
+key and nothing red; it reads at 72 × 72 on an MK.2. The face is made by
+the core (`device_runtime::page_faces`) and drawn by `deckpilot-render`, so
+the Canvas, the Inspector's key preview, the simulated and the physical
+device show the same pixels. Live state is not asked for.
+
+**Which keys show it** (one rule, from the key's bindings on the page
+shown): the face comes from the key's shown binding (press, else single
+press, else the first). It is the missing-plugin face when that binding's
+action cannot run (its type is unknown to the registry) **and** no other
+binding of the key can run. A binding can run when it is an action whose
+type the registry knows and that runs from the control, a workflow of the
+profile, a page, Back or a stateful key. So a key whose long press still
+works keeps its normal look (its title, look and the action's own icon);
+only the affected gesture's card in the Inspector says what is missing. A
+binding that cannot run from its control (`docs/device-controls.md`) is a
+different state and keeps its own face.
+
+The app's Inspector says why the action cannot run and how to get it
+back; the key itself never shows the reason.
+
+**Coming back**: when the plugin can run the action again, the registry
+knows its type again and the key is drawn from the stored binding as it
+was, with nothing to reassign. Legacy action types of built-ins that moved
+to a plugin (`projects.next`, `git.status`, …) follow the plugin that
+serves them, in the agent and in the app (`plugin_actions.rs`,
+`extend_legacy`).
+
 ## Dynamic text
 
 Templates (`{project.key}`, `{project.name}`, `{profile}`, `{page.…}`, and

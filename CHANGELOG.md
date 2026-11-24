@@ -17,27 +17,21 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
-- The main window starts in the Device Editor; the Dashboard is gone (a
-  session that was on it opens the Device Editor). Pages that plugins and
-  modules add stay in the rail as before.
-- The toolbar shows Device › Profile › Layout as one trail. The device menu
-  lists the connected devices first, then the known devices that are not
-  connected (by serial) and the models without a device; the layout menu
-  lists only the layouts of the profile being edited that fit the device,
-  a new layout and the way to the Layout Manager.
-- The Layout Manager moved from the rail to Settings › Layouts. It
-  duplicates, renames, sets defaults, deletes and assigns layouts to
-  profiles, and can be filtered to one profile; "Manage layouts…" in the
-  Device Editor's layout menu and in Settings › Profiles opens it there. An
-  old link to the Layouts page opens the settings page.
-- Settings › Profiles lists every profile in one table and shows a
-  profile's details in a view of its own; opening a profile neither
-  activates it nor changes what a device shows.
-- The settings pages share one layout (title, sections, rows). Language
-  names each language in that language and applies at once. Modules lists
-  only DeckPilot's built-in modules, with a link to the Marketplace for
-  plugins.
-- Notifications show their time beside the title.
+### Fixed
+
+- The editor's previews of keys stored with the old action ids of
+  built-ins that moved to a plugin (`projects.next`, `git.status`, …)
+  showed them as unavailable even while the plugin served them. They now
+  follow the plugin, as the agent does.
+- Settings › Resources called an application chosen with the application
+  or browser picker "missing", because it is stored by its bundle id,
+  desktop-file id or App Paths name rather than a path, and never checked a
+  file chosen with the file picker. Applications are now checked the way
+  Open Application finds them, and a chosen file that was moved or deleted
+  shows as missing.
+- Close Application also compares a process's start time before it signals
+  or waits for it, so a new process that was given the same process id is
+  never taken for the one it matched.
 
 ## [0.14.0] - 2026-11-24
 

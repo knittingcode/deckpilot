@@ -33,9 +33,13 @@ struct Tree(PathBuf);
 
 impl Tree {
     fn new() -> Self {
+        // The clock alone is not unique: on macOS it counts microseconds, and
+        // two tests starting together removed each other's tree.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "deckpilot-open-{}-{}",
+            "deckpilot-open-{}-{}-{}",
             std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
