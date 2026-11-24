@@ -252,3 +252,30 @@ fn a_detection_only_provider_controls_nothing() {
         ))
     );
 }
+
+#[test]
+fn app_versions_and_codes_are_bounded() {
+    assert_eq!(
+        AppVersion::new("25198.1112.3+b2").unwrap().as_str(),
+        "25198.1112.3+b2"
+    );
+    for bad in ["", "1.0 (meeting: Board)", &"1".repeat(33), "1.0\n"] {
+        assert!(AppVersion::new(bad).is_none(), "{bad}");
+    }
+    let outcome: CommandOutcome =
+        serde_json::from_str(r#"{"kind":"rejected","code":"Host said: no unmuting"}"#).unwrap();
+    assert_eq!(
+        outcome,
+        CommandOutcome::Rejected {
+            code: crate::FailureCode::new(crate::FailureCode::PROTOCOL)
+        }
+    );
+    let availability: Availability =
+        serde_json::from_str(r#"{"kind":"error","code":"tcc-denied"}"#).unwrap();
+    assert_eq!(
+        availability,
+        Availability::Error {
+            code: crate::FailureCode::new("tcc-denied")
+        }
+    );
+}

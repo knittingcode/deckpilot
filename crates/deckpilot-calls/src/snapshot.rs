@@ -6,7 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::provider::{CallKind, CapabilitySet, Direction, ProviderId, Tri};
+use crate::provider::{
+    CallKind, CallObservation, CapabilitySet, ConsentState, Direction, Private, ProviderId, Tri,
+};
 
 /// How a call ended, as the engine records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,9 +29,23 @@ pub enum EndCause {
 }
 
 /// Why a call track failed: a stable code (`[a-z0-9-]`, at most 48 bytes).
+///
+/// Deserializing one goes through [`FailureCode::new`], so a code read from
+/// anywhere is a stable code.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct FailureCode(String);
+pub struct FailureCode(#[serde(deserialize_with = "stable_code")] String);
+
+fn stable_code<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    Ok(FailureCode::new(&text).0)
+}
+
+impl std::fmt::Display for FailureCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 impl FailureCode {
     /// The provider broke its protocol.
@@ -103,7 +119,10 @@ impl CallState {
 
 /// The focused call as the plugin (`call.state`), the faces and the IPC
 /// see it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Its `Debug` never prints the title (only whether there is one), so a
+/// snapshot can be logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallSnapshot {
     pub state: CallState,
@@ -124,7 +143,61 @@ pub struct CallSnapshot {
     pub generation: u64,
 }
 
+impl std::fmt::Debug for CallSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallSnapshot")
+            .field("state", &self.state)
+            .field("kind", &self.kind)
+            .field("direction", &self.direction)
+            .field("mic_muted", &self.mic_muted)
+            .field("camera_on", &self.camera_on)
+            .field("capabilities", &self.capabilities)
+            .field("provider", &self.provider)
+            .field("since", &self.since)
+            .field("title", &self.title.as_ref().map(|_| "<redacted>"))
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
 impl CallSnapshot {
+    /// The snapshot of a call as `observation` shows it, in `state`. The
+    /// title is taken only with the user's opt-in (`consent.titles`); it is
+    /// dropped otherwise, whatever the provider sent.
+    pub fn from_observation(
+        state: CallState,
+        observation: &CallObservation,
+        capabilities: CapabilitySet,
+        provider: ProviderId,
+        consent: ConsentState,
+        generation: u64,
+    ) -> Self {
+        Self {
+            state,
+            kind: observation.kind,
+            direction: observation.direction,
+            mic_muted: observation.mic_muted,
+            camera_on: observation.camera_on,
+            capabilities,
+            provider: Some(provider),
+            since: observation.observed_at.as_millis(),
+            title: Self::title_with_consent(observation.title.as_ref(), consent),
+            generation,
+        }
+    }
+
+    /// A title for the snapshot: only with the user's opt-in.
+    pub fn title_with_consent(
+        title: Option<&Private<String>>,
+        consent: ConsentState,
+    ) -> Option<String> {
+        if consent.titles {
+            title.map(|t| t.reveal().clone())
+        } else {
+            None
+        }
+    }
+
     /// No call, with the provider's current capabilities.
     pub fn idle(capabilities: CapabilitySet, generation: u64) -> Self {
         Self {
@@ -139,5 +212,71 @@ impl CallSnapshot {
             title: None,
             generation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::Instant;
+    use crate::provider::{CallKey, Evidence, ObservedPhase, UnsupportedReason};
+
+    fn observation() -> CallObservation {
+        CallObservation {
+            key: CallKey::new("k").unwrap(),
+            kind: CallKind::Meeting,
+            phase: ObservedPhase::Connected,
+            direction: None,
+            mic_muted: Tri::Known(true),
+            camera_on: Tri::Unknown,
+            title: Some(Private::new("Board: layoffs".to_owned())),
+            source: Evidence::AppApi,
+            observed_at: Instant::from_secs(3),
+        }
+    }
+
+    fn snapshot(titles: bool) -> CallSnapshot {
+        CallSnapshot::from_observation(
+            CallState::Active,
+            &observation(),
+            CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
+            ProviderId::new("mock").unwrap(),
+            ConsentState {
+                observe: true,
+                control: false,
+                titles,
+            },
+            7,
+        )
+    }
+
+    #[test]
+    fn the_title_needs_the_opt_in() {
+        let without = snapshot(false);
+        assert_eq!(without.title, None);
+        assert!(!serde_json::to_string(&without).unwrap().contains("layoffs"));
+        assert_eq!(snapshot(true).title.as_deref(), Some("Board: layoffs"));
+        assert_eq!(snapshot(true).mic_muted, Tri::Known(true));
+    }
+
+    #[test]
+    fn debug_never_prints_the_title() {
+        let printed = format!("{:?}", snapshot(true));
+        assert!(!printed.contains("layoffs"), "{printed}");
+        assert!(printed.contains("<redacted>"), "{printed}");
+    }
+
+    #[test]
+    fn failure_codes_are_stable_codes_however_they_arrive() {
+        assert_eq!(FailureCode::new("busy").as_str(), "busy");
+        for bad in ["", "Some Text", "x".repeat(49).as_str(), "a\nb"] {
+            assert_eq!(
+                FailureCode::new(bad).as_str(),
+                FailureCode::PROTOCOL,
+                "{bad}"
+            );
+        }
+        let read: FailureCode = serde_json::from_str("\"<script>\"").unwrap();
+        assert_eq!(read.as_str(), FailureCode::PROTOCOL);
     }
 }
