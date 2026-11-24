@@ -982,3 +982,22 @@ fn missing_capabilities_are_reported_once() {
         .count();
     assert_eq!(reports, 1);
 }
+
+#[test]
+fn since_stays_while_the_state_does() {
+    let mut h = Harness::new();
+    h.at(1);
+    h.see("a", P::Connected, None);
+    let since = h.engine.snapshot().since;
+    h.at(30);
+    h.see_full(
+        "a",
+        P::Connected,
+        None,
+        Tri::Known(true),
+        Tri::Unknown,
+        Evidence::AppApi,
+    );
+    assert_eq!(h.engine.snapshot().since, since);
+    assert_eq!(since, 1000);
+}
