@@ -99,6 +99,8 @@ beforeEach(() => {
     ]),
   )
   api.listModules.mockResolvedValue([])
+  // The Workflows page checks its graph after a short delay.
+  api.validateWorkflowGraph.mockResolvedValue([])
   api.agentStatus.mockResolvedValue(
     agentConnection({
       status: agentStatus({
