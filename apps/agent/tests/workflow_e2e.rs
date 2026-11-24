@@ -313,6 +313,29 @@ fn offset_clock() -> (Clock, Arc<AtomicU64>) {
     (clock, offset)
 }
 
+/// How long the busy runs take: the bound on how long the agent may take
+/// to look at a schedule that fell due while they run.
+const BUSY_MS: u32 = 5_000;
+
+/// Waits until the agent logged, in this test, a line with all of `parts`.
+async fn wait_logged(parts: &[&str]) {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let log = support::agent_log::test_log();
+        if log
+            .lines()
+            .any(|line| parts.iter().all(|p| line.contains(p)))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "nothing logged with {parts:?}:\n{log}"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn triggered_runs_respect_manual_runs_and_the_concurrency_limit() {
     let mut profile = work_profile();
@@ -322,7 +345,7 @@ async fn triggered_runs_respect_manual_runs_and_the_concurrency_limit() {
         WorkflowTrigger::schedule(Schedule::Interval { minutes: 1 }),
     ];
     let busy: Vec<Workflow> = (1..=4)
-        .map(|n| waiting_workflow(&format!("Busy {n}"), 1_500))
+        .map(|n| waiting_workflow(&format!("Busy {n}"), BUSY_MS))
         .collect();
     profile.workflows.push(watched.clone());
     profile.workflows.extend(busy.iter().cloned());
@@ -355,9 +378,25 @@ async fn triggered_runs_respect_manual_runs_and_the_concurrency_limit() {
     for workflow in &busy {
         started.push(agent.start_workflow(workflow.id).await.unwrap().id);
     }
+    // The agent's next tick sees it due: skipped at the limit. Waited for,
+    // since a stalled runner may take its time; the busy runs last long
+    // enough that it is still the four of them it counts.
     offset.fetch_add(61, Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    wait_logged(&[
+        "trigger cannot start the workflow",
+        "workflow=Watched",
+        "detail=every 1 min",
+        "4 workflows are already running",
+    ])
+    .await;
     assert_eq!(agent.runs(watched.id).await.len(), 2);
+    for &id in &started {
+        assert_eq!(
+            agent.execution(id).await.summary.state,
+            ExecutionState::Running,
+            "a busy run ended before the schedule was looked at"
+        );
+    }
     for id in started {
         assert_eq!(
             agent.wait_finished(id).await.summary.state,
