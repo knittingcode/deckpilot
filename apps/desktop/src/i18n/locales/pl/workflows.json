@@ -323,7 +323,8 @@
     "empty": "Brak pasujących węzłów",
     "unavailableEntry": "{{title}} — niedostępne: {{reason}}",
     "unavailable": "Niedostępne: {{reason}}",
-    "addHint": "{{title}} — przeciągnij na płótno lub kliknij, aby dodać"
+    "addHint": "{{title}} — przeciągnij na płótno lub kliknij, aby dodać",
+    "needsSetup": "jeszcze nieskonfigurowana"
   },
   "node": {
     "title": {

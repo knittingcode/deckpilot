@@ -28,6 +28,7 @@ import { InstalledView } from "./installed"
 import { DiagnosticsView } from "./diagnostics"
 import { ConfigureDialog } from "./configure"
 import {
+  failureSettled,
   listingOf,
   type MarketplaceSection,
   pluginDisplayName,
@@ -272,7 +273,22 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
     (refresh = false) => {
       const current = ++generation.current
       return loadAll(client, refresh).then((next) => {
-        if (current === generation.current) setLoad(next)
+        if (current !== generation.current) return
+        setLoad(next)
+        // Failures the agent has settled since (installed, or at the version
+        // tried) are forgotten, so they do not come back after an uninstall.
+        if (next.status !== "ready") return
+        const installed = next.snapshot.installed
+        setFailures((previous) => {
+          const kept = [...previous].filter(
+            ([id, failure]) =>
+              !failureSettled(
+                failure,
+                installed.find((p) => p.summary.id === id),
+              ),
+          )
+          return kept.length === previous.size ? previous : new Map(kept)
+        })
       })
     },
     [client],

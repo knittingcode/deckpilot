@@ -455,7 +455,12 @@ export function PluginTile({
           official={official}
           extra={category ? categoryName(category) : undefined}
         />
-        <span id={`${id}-summary`} className="mt-1 line-clamp-2 text-xs text-foreground/80">
+        <span
+          id={`${id}-summary`}
+          className="mt-1 line-clamp-2 text-xs text-foreground/80"
+          // Two lines on the tile; the whole summary on hover and on its page.
+          title={plugin.summary}
+        >
           {plugin.summary}
         </span>
         {note && <span className="mt-0.5 text-[11px] text-muted-foreground">{note}</span>}
