@@ -17,7 +17,7 @@
       "stopped": "Agent zatrzymany",
       "incompatible": "Niezgodna wersja agenta"
     },
-    "checkLogInDiagnostics": "Sprawdź jego dziennik w Ustawienia › Diagnostyka",
+    "checkLogInDiagnostics": "Sprawdź jego dziennik w Ustawienia › Dzienniki i diagnostyka",
     "badge": {
       "checking": "Sprawdzanie…",
       "running": "Działa",

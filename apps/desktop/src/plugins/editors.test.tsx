@@ -7,6 +7,7 @@ import "@testing-library/jest-dom/vitest"
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { i18n } from "@/i18n"
 import { pluginModules } from "@/lib/plugin-actions"
 import type { ModuleInfo } from "@/lib/types"
 import { ActionLibraryView } from "@/pages/actions"
@@ -164,14 +165,28 @@ describe("the action picker with plugins", () => {
 
     await user.click(item)
     expect(
-      screen.getByText(
-        /Hello Weather \(acme.hello-weather\): the plugin is disabled\. The action is kept/,
-      ),
+      screen.getByText(/^Plugin turned off \(Hello Weather\)\. The action is kept/),
     ).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled()
     // The saved parameters are still shown.
     expect(screen.getByDisplayValue("Ada")).toBeInTheDocument()
+  })
+
+  it("says why in the window's language, not in the agent's English", async () => {
+    const { user } = await renderLibrary(await helloModules("disabled"))
+    await user.click(screen.getByRole("button", { name: /Greet Ada/ }))
+    try {
+      await act(async () => {
+        await i18n.changeLanguage("pl")
+      })
+      const note = screen.getByText(/^Wtyczka jest wyłączona \(Hello Weather\)\. Akcja zostaje/)
+      expect(note.textContent).not.toMatch(/the plugin is disabled/)
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage("en")
+      })
+    }
   })
 
   it("keeps the actions of an uninstalled plugin and says so", async () => {
@@ -182,9 +197,7 @@ describe("the action picker with plugins", () => {
       "The plugin acme.hello-weather is not installed",
     )
     await user.click(item)
-    expect(
-      screen.getByText(/The plugin acme.hello-weather is not installed\. The action is kept/),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/^Plugin not installed\. The action is kept/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
     // Deleting stays possible.
     expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled()

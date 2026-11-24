@@ -546,7 +546,7 @@
     "blocked": {
       "new": "Save the workflow to run it",
       "dirty": "Save your changes to run the workflow",
-      "agent": "The agent is not running. Start it in Settings › Agent",
+      "agent": "The agent is not running. Start it in Settings › Background Agent",
       "profile": "Workflows run for the active profile. Make “{{profile}}” active to run this one"
     },
     "error": {

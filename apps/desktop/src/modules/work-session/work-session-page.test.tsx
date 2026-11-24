@@ -152,7 +152,7 @@ describe("Work Session page", () => {
     renderWithApp(<WorkSessionPage />)
     expect(
       await screen.findByText(
-        "The work session could not be loaded: The agent is not running. Check that the agent is running in Settings › Agent.",
+        "The work session could not be loaded: The agent is not running. Check that the agent is running in Settings › Background Agent.",
       ),
     ).toBeInTheDocument()
   })
@@ -405,7 +405,7 @@ describe("Work Session history", () => {
     await renderPage()
     expect(
       await screen.findByText(
-        "The session history could not be loaded: Database is locked. Check that the agent is running in Settings › Agent.",
+        "The session history could not be loaded: Database is locked. Check that the agent is running in Settings › Background Agent.",
       ),
     ).toBeInTheDocument()
   })

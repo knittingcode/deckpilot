@@ -263,7 +263,7 @@
       "untilSaved": "Na urządzeniu nic się nie zmieni, dopóki nie zapiszesz układu.",
       "confirm": "Przełącz na gesty"
     },
-    "readOnly": "Tylko do odczytu: {{reason}}. Klawisze zachowują ten przepływ pracy, ale go nie uruchamiają, dopóki wtyczka jest wyłączona; po jej włączeniu (Ustawienia › Wtyczki) znów działa i można go wybrać lub zmienić."
+    "readOnly": "Tylko do odczytu: {{reason}}. Klawisze zachowują ten przepływ pracy, ale go nie uruchamiają, dopóki wtyczka jest wyłączona; po jej włączeniu (Marketplace › Zainstalowane) znów działa i można go wybrać lub zmienić."
   },
   "variables": {
     "references": "Odwołania",
@@ -393,7 +393,7 @@
     "regionMany_few": "Ustawienia {{count}} elementów sterujących",
     "regionMany_many": "Ustawienia {{count}} elementów sterujących",
     "regionMany_other": "Ustawienia {{count}} elementu sterującego",
-    "readOnly": "Tylko do odczytu: {{reason}}. Klawisze zachowują ten przepływ pracy, ale go nie uruchamiają, dopóki wtyczka jest wyłączona; po jej włączeniu (Ustawienia › Wtyczki) znów działa i można go wybrać lub zmienić."
+    "readOnly": "Tylko do odczytu: {{reason}}. Klawisze zachowują ten przepływ pracy, ale go nie uruchamiają, dopóki wtyczka jest wyłączona; po jej włączeniu (Marketplace › Zainstalowane) znów działa i można go wybrać lub zmienić."
   },
   "pageNav": {
     "untitled": "Bez nazwy",

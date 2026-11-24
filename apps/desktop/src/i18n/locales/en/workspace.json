@@ -95,7 +95,7 @@
     },
     "settings": {
       "title": "Settings of {{plugin}}",
-      "description": "Stored by the agent for this plugin only. Also in Settings › Extensions › Plugins."
+      "description": "Stored by the agent for this plugin only. Also in Marketplace › Installed › Configure."
     }
   },
   "shell": {
@@ -227,7 +227,7 @@
     }
   },
   "workSession": {
-    "checkAgent": "Check that the agent is running in Settings › Agent.",
+    "checkAgent": "Check that the agent is running in Settings › Background Agent.",
     "unlockNext": "Unlock DeckPilot if it is locked, then try again.",
     "loadFailed": "The work session could not be loaded",
     "state": {
@@ -376,7 +376,7 @@
       "title": "Work Session",
       "description": "Time worked, started and finished from a key on the device",
       "unsupportedTitle": "Work sessions need a newer agent",
-      "unsupportedDescription": "The running agent does not support work sessions. Restart the agent in Settings › Agent so the one installed with this app runs.",
+      "unsupportedDescription": "The running agent does not support work sessions. Restart the agent in Settings › Background Agent so the one installed with this app runs.",
       "otherProject": "Project of another profile",
       "key": {
         "title": "Work Session key",

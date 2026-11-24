@@ -108,7 +108,7 @@
     "copyName": "{{name}} (kopia)",
     "unavailable": {
       "title": "Niedostępna",
-      "pluginKept": "{{reason}}. Akcja zostaje zachowana; będzie można ją edytować i uruchamiać, gdy wtyczka znów będzie mogła działać (Ustawienia › Wtyczki).",
+      "pluginKept": "{{reason}}. Akcja zostaje zachowana; będzie można ją edytować i uruchamiać, gdy wtyczka znów będzie mogła działać (Marketplace › Zainstalowane).",
       "pluginNew": "{{reason}}. Wybierz inny typ akcji.",
       "moduleDisabled": "Moduł {{module}} jest wyłączony. Włącz go w Ustawieniach, aby edytować lub uruchamiać tę akcję; do tego czasu akcja zostaje zachowana.",
       "noModule": "Żaden zainstalowany moduł nie dostarcza typu „{{type}}”. Akcja zostaje zachowana, ale nie może działać."
@@ -216,7 +216,7 @@
       "choose": "Wybierz projekt",
       "current": "Bieżący projekt (domyślnie)",
       "notInProfile": "Zapisany projekt nie należy do tego profilu. Wybierz jeden z jego projektów.",
-      "pluginOff": "Wtyczka Projekty jest wyłączona: projekt pozostaje zapisany, ale można go zmienić tylko przy włączonej wtyczce (Ustawienia › Wtyczki)."
+      "pluginOff": "Wtyczka Projekty jest wyłączona: projekt pozostaje zapisany, ale można go zmienić tylko przy włączonej wtyczce (Marketplace › Zainstalowane)."
     },
     "resource": {
       "source": "Źródło zasobu",

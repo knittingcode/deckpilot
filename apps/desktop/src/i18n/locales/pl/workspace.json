@@ -99,7 +99,7 @@
     },
     "settings": {
       "title": "Ustawienia wtyczki {{plugin}}",
-      "description": "Przechowywane przez agenta tylko dla tej wtyczki. Dostępne także w Ustawienia › Rozszerzenia › Wtyczki."
+      "description": "Przechowywane przez agenta tylko dla tej wtyczki. Dostępne także w Marketplace › Zainstalowane › Konfiguruj."
     }
   },
   "shell": {

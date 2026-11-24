@@ -104,7 +104,7 @@
     "copyName": "{{name}} (copy)",
     "unavailable": {
       "title": "Unavailable",
-      "pluginKept": "{{reason}}. The action is kept; it can be edited and run again once the plugin can run (Settings › Plugins).",
+      "pluginKept": "{{reason}}. The action is kept; it can be edited and run again once the plugin can run (Marketplace › Installed).",
       "pluginNew": "{{reason}}. Choose another action type.",
       "moduleDisabled": "The {{module}} module is disabled. Enable it in Settings to edit or run this action; it is kept until then.",
       "noModule": "No installed module provides “{{type}}”. The action is kept but cannot run."
@@ -204,7 +204,7 @@
       "choose": "Choose a project",
       "current": "Current project (default)",
       "notInProfile": "The saved project is not part of this profile. Choose one of its projects.",
-      "pluginOff": "The Projects plugin is off: the project stays saved but can only be changed while the plugin is on (Settings › Plugins)."
+      "pluginOff": "The Projects plugin is off: the project stays saved but can only be changed while the plugin is on (Marketplace › Installed)."
     },
     "resource": {
       "source": "Resource source",
