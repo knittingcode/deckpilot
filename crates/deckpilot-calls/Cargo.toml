@@ -17,6 +17,10 @@ serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[features]
+# The mock provider (`testing`), for the agent's tests and the dev seed.
+testing = []
+
 [dev-dependencies]
 serde_json.workspace = true
 
