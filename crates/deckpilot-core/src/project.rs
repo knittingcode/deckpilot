@@ -8,6 +8,14 @@ use thiserror::Error;
 
 use crate::{IdentifierError, Profile, ProfileId, ProjectId, ResourceKey};
 
+mod repository;
+
+pub use repository::{
+    DERIVED_REPOSITORY_KEY, MAX_REMOTES_PER_REPOSITORY, MAX_REPOSITORIES_PER_PROJECT,
+    MAX_REPOSITORY_DESCRIPTION_CHARS, MAX_REPOSITORY_KEY_CHARS, MAX_REPOSITORY_NAME_CHARS,
+    REPOSITORY_ROLE, Repository, RepositoryError, RepositoryId, RepositoryKey, RepositoryRemote,
+};
+
 /// Short, human-facing project code such as `SHOP`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -68,6 +76,11 @@ impl fmt::Display for ProjectKey {
 /// `resources` maps a *role* (e.g. `repository`, `compose`) to a logical
 /// resource key. Project-dependent actions refer to roles, so the same action
 /// targets a different resource depending on the active project.
+///
+/// `repositories` lists the project's repositories in order, and
+/// `default_repository` names one of them ([`repository`] module). Both are
+/// left out of the JSON when empty, so a project without repositories reads
+/// and writes exactly as before.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -76,6 +89,12 @@ pub struct Project {
     pub name: String,
     #[serde(default)]
     pub resources: BTreeMap<String, ResourceKey>,
+    /// Ordered: the position is the index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repositories: Vec<Repository>,
+    /// Must name one of `repositories`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_repository: Option<RepositoryId>,
 }
 
 impl Project {
@@ -85,6 +104,8 @@ impl Project {
             key,
             name: name.into(),
             resources: BTreeMap::new(),
+            repositories: Vec::new(),
+            default_repository: None,
         }
     }
 }

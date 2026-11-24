@@ -11,6 +11,7 @@
     "errors:engine.*",
     "errors:module.*",
     "errors:catalog.*",
+    "errors:repository.*",
     "errors:profile.*",
     "errors:projectContext.*",
     "errors:agent.*",

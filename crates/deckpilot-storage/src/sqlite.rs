@@ -97,6 +97,10 @@ const MIGRATIONS: &[&str] = &[
     // title of its own that differed is kept in the recovered list
     // (`layouts::migrate_folder_labels`). Rewrites layout documents only.
     "",
+    // Repositories of a project: two new columns, and the repository the
+    // `repository` role stands for (`repositories::migrate`). Additive:
+    // roles, resources and bindings are not rewritten.
+    crate::repositories::SCHEMA,
 ];
 
 /// Runs `step` again while SQLite reports the database busy, for up to
@@ -344,6 +348,7 @@ impl SqliteStore {
                 11 => crate::layouts::migrate_folder_backs(&tx)?,
                 12 => crate::layouts::migrate_folder_controls(&tx)?,
                 13 => crate::layouts::migrate_folder_labels(&tx)?,
+                14 => crate::repositories::migrate(&tx)?,
                 _ => {}
             }
             failpoint(Failpoint::Migration(version + 1))?;
@@ -1478,21 +1483,28 @@ const SHARED_LAYOUTS_DOCUMENT_VERSION: u32 = 6;
 
 /// The projects of `profile`, in order.
 pub(crate) fn projects_of(connection: &Connection, profile: ProfileId) -> Result<Vec<Project>> {
-    let mut statement = connection.prepare(
-        "SELECT id, key, name, resources FROM projects WHERE profile_id = ?1
-         ORDER BY position, id",
-    )?;
+    // Migrations before 14 (shared layouts, 10) read projects before the
+    // repository columns exist.
+    let mut statement = connection.prepare(if has_repository_columns(connection)? {
+        "SELECT id, key, name, resources, repositories, default_repository FROM projects
+         WHERE profile_id = ?1 ORDER BY position, id"
+    } else {
+        "SELECT id, key, name, resources, '[]', NULL FROM projects
+         WHERE profile_id = ?1 ORDER BY position, id"
+    })?;
     let rows = statement.query_map([profile.to_string()], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?,
         ))
     })?;
     let mut projects = Vec::new();
     for row in rows {
-        let (id, key, name, resources) = row?;
+        let (id, key, name, resources, repositories, default_repository) = row?;
         projects.push(Project {
             id: parse_id(&id)?,
             key: ProjectKey::new(key).map_err(|error| {
@@ -1500,9 +1512,21 @@ pub(crate) fn projects_of(connection: &Connection, profile: ProfileId) -> Result
             })?,
             name,
             resources: serde_json::from_str(&resources)?,
+            repositories: serde_json::from_str(&repositories)?,
+            default_repository: default_repository.as_deref().map(parse_id).transpose()?,
         });
     }
     Ok(projects)
+}
+
+/// Whether `projects` has the columns of migration 14. Earlier migrations
+/// that read or write profiles run before it.
+fn has_repository_columns(connection: &Connection) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('projects') WHERE name = 'repositories')",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
 /// The default project of `profile`.
@@ -1718,9 +1742,36 @@ impl SqliteStore {
             "UPDATE projects SET key = id WHERE profile_id = ?1",
             [&profile_id],
         )?;
+        let repository_columns = has_repository_columns(tx)?;
         for (position, project) in profile.projects.iter().enumerate() {
-            let changed = tx
-                .execute(
+            let position = i64::try_from(position).unwrap_or(i64::MAX);
+            let written = if repository_columns {
+                tx.execute(
+                    "INSERT INTO projects (id, profile_id, key, name, position, resources,
+                                           repositories, default_repository)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT (id) DO UPDATE SET
+                        key = excluded.key,
+                        name = excluded.name,
+                        position = excluded.position,
+                        resources = excluded.resources,
+                        repositories = excluded.repositories,
+                        default_repository = excluded.default_repository
+                     WHERE projects.profile_id = excluded.profile_id",
+                    params![
+                        project.id.to_string(),
+                        profile_id,
+                        project.key.as_str(),
+                        project.name,
+                        position,
+                        encode(&project.resources)?,
+                        encode(&project.repositories)?,
+                        project.default_repository.map(|id| id.to_string())
+                    ],
+                )
+            } else {
+                // Inside a migration before 14: no repositories yet.
+                tx.execute(
                     "INSERT INTO projects (id, profile_id, key, name, position, resources)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                      ON CONFLICT (id) DO UPDATE SET
@@ -1734,17 +1785,18 @@ impl SqliteStore {
                         profile_id,
                         project.key.as_str(),
                         project.name,
-                        i64::try_from(position).unwrap_or(i64::MAX),
+                        position,
                         encode(&project.resources)?
                     ],
                 )
-                .map_err(|error| {
-                    if constraint_violation(&error) {
-                        StorageError::DuplicateProjectKey(project.key.to_string())
-                    } else {
-                        error.into()
-                    }
-                })?;
+            };
+            let changed = written.map_err(|error| {
+                if constraint_violation(&error) {
+                    StorageError::DuplicateProjectKey(project.key.to_string())
+                } else {
+                    error.into()
+                }
+            })?;
             if changed == 0 {
                 return Err(StorageError::ProjectOfAnotherProfile(project.id));
             }
@@ -2922,6 +2974,8 @@ mod tests {
                      DROP TABLE work_session_transitions; DROP TABLE work_session_reviews;
                      DROP TABLE work_session_intervals; DROP TABLE work_sessions;
                      DROP TABLE work_session_settings;
+                     ALTER TABLE projects DROP COLUMN default_repository;
+                     ALTER TABLE projects DROP COLUMN repositories;
                      PRAGMA user_version = 4;",
                 )
                 .unwrap();
@@ -2931,7 +2985,12 @@ mod tests {
             store.schema_version().unwrap(),
             SqliteStore::supported_schema_version()
         );
-        assert_eq!(store.load_profile(profile.id).unwrap(), Some(profile));
+        // Migration 14 stores the repository of the `repository` role.
+        let mut expected = profile.clone();
+        for project in &mut expected.projects {
+            project.materialize_repositories();
+        }
+        assert_eq!(store.load_profile(profile.id).unwrap(), Some(expected));
 
         let history = store.migration_history().unwrap();
         assert_eq!(history.len(), 1);
