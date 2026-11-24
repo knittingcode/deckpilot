@@ -79,3 +79,24 @@ fn a_schema_14_store_gets_migration_15_alone() {
     assert_eq!((last.from_version, last.to_version), (14, CURRENT));
     assert_eq!(last.result, "ok");
 }
+
+/// A failed or killed upgrade at migration 15 (after 14 ran in the same
+/// transaction) changes nothing, and the next start upgrades.
+#[test]
+fn a_failed_or_killed_migration_15_changes_nothing() {
+    for fixture in RELEASED {
+        let point = Failpoint::Migration(15);
+        let copy = copy(fixture);
+        let original = dump(&raw(&copy.database(), &copy.key));
+        let failed = failing_at(point, || copy.open());
+        assert!(failed.is_err(), "{fixture:?}");
+        assert_untouched(&copy, &original);
+        assert_next_start_upgrades(&copy);
+
+        let copy = super::copy(fixture);
+        let original = dump(&raw(&copy.database(), &copy.key));
+        kill_upgrade_at(&copy, point);
+        assert_untouched(&copy, &original);
+        assert_next_start_upgrades(&copy);
+    }
+}
