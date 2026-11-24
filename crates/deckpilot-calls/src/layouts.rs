@@ -137,6 +137,22 @@ pub struct Generated {
 }
 
 impl Generated {
+    /// The generated layout with the stored one in its place (the user's
+    /// edits, a layout of an earlier template version): the overlay's pages
+    /// are found by the stored layout's own ids, and only those it still
+    /// has are used.
+    #[must_use]
+    pub fn with_stored(mut self, layout: DeviceLayout, actions: Vec<ActionInstance>) -> Self {
+        self.pages = [Page::Incoming, Page::Outgoing, Page::Active]
+            .into_iter()
+            .map(|page| (page, page_id(layout.id, page)))
+            .filter(|(_, id)| layout.page(*id).is_some())
+            .collect();
+        self.layout = layout;
+        self.actions = actions;
+        self
+    }
+
     /// The page the overlay shows for `page`, falling back to the active
     /// page (a template without an incoming page shows the call there).
     pub fn page(&self, page: Page) -> Option<PageId> {
@@ -229,9 +245,8 @@ pub fn generate(
     );
     for (page, controls) in ordered {
         let mut taken = vec![dismiss];
-        let page_uuid = Uuid::new_v5(&layout_uuid, format!("page:{}", page.as_str()).as_bytes());
         let mut layout_page = LayoutPage::new(page.name());
-        layout_page.id = page_uuid.to_string().parse().expect("a UUID is a page id");
+        layout_page.id = page_id(layout_id, *page);
         for control in controls {
             if !is_action_id(&control.action) {
                 return Err(GenerateError::BadAction(control.action.clone()));
@@ -283,6 +298,20 @@ pub fn generate(
         dismiss: Some(dismiss),
         moved,
     })
+}
+
+/// The stable id of `page` in the layout `layout`: UUID v5 of the layout
+/// id and the page's key.
+///
+/// # Panics
+///
+/// Never: layout and page ids are UUIDs.
+pub fn page_id(layout: LayoutId, page: Page) -> PageId {
+    let layout_uuid: Uuid = layout.to_string().parse().expect("a layout id is a UUID");
+    Uuid::new_v5(&layout_uuid, format!("page:{}", page.as_str()).as_bytes())
+        .to_string()
+        .parse()
+        .expect("a UUID is a page id")
 }
 
 fn is_action_id(id: &str) -> bool {

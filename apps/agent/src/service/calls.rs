@@ -171,18 +171,20 @@ impl Agent {
             .filter(|m| !service.seeded.contains(m))
             .collect();
         for model_id in models {
-            service.seeded.insert(model_id.clone());
             let Some(model) = self.runtime.catalog().get(&model_id) else {
                 continue;
             };
             let shape = Shape::of(&model.capabilities);
             let Some(template) = service.templates.iter().find(|t| t.shape == shape) else {
+                // No template for this class: nothing to try again.
+                service.seeded.insert(model_id.clone());
                 continue;
             };
-            let mut generated = match generate(template, &model.id, &model.capabilities) {
+            let generated = match generate(template, &model.id, &model.capabilities) {
                 Ok(generated) => generated,
                 Err(error) => {
                     debug!(model = %model.id, %error, "no Calls layout for the model");
+                    service.seeded.insert(model_id.clone());
                     continue;
                 }
             };
@@ -192,16 +194,19 @@ impl Agent {
                 .and_then(|_| store.managed_layout(OWNER, &model.id))
             {
                 Ok(Some(stored)) => {
-                    generated.layout = stored.layout;
-                    generated.actions = stored.actions;
+                    // Seeded: done for this model. The stored layout is
+                    // used, found by its own ids (an edited one of an
+                    // earlier template version too).
+                    service.seeded.insert(model_id.clone());
+                    let used = generated.with_stored(stored.layout, stored.actions);
+                    service.driver.set_layout(model.id.clone(), used);
                 }
                 Ok(None) => {}
+                // Not stored: tried again at the next look.
                 Err(error) => {
                     warn!(model = %model.id, %error, "the Calls layout could not be stored");
-                    continue;
                 }
             }
-            service.driver.set_layout(model.id.clone(), generated);
         }
     }
 

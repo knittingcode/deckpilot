@@ -216,3 +216,33 @@ fn a_model_too_small_or_without_keys_is_refused() {
         Err(GenerateError::NoDismiss)
     );
 }
+
+/// An edited layout of template v1 stays the user's after a v2 template:
+/// its pages are found by its own ids.
+#[test]
+fn a_stored_layout_of_an_earlier_version_keeps_its_pages() {
+    let catalog = ModelCatalog::builtin();
+    let mk2 = catalog
+        .get(&DeviceModelId::new(models::STREAM_DECK_MK2_ID))
+        .unwrap();
+    let v1 = generate(&template_for(&mk2.capabilities), &mk2.id, &mk2.capabilities).unwrap();
+    let mut v2_template = template_for(&mk2.capabilities);
+    v2_template.version = 2;
+    let v2 = generate(&v2_template, &mk2.id, &mk2.capabilities).unwrap();
+    assert_ne!(v1.layout.id, v2.layout.id);
+    let mut stored = v1.layout.clone();
+    stored.name = "Edited".into();
+    let used = v2.with_stored(stored.clone(), v1.actions.clone());
+    assert_eq!(used.layout, stored);
+    assert_eq!(used.pages, v1.pages, "the stored layout's own page ids");
+    for page in used.pages.values() {
+        assert!(used.layout.page(*page).is_some());
+    }
+    // A page the user deleted is not used.
+    let mut fewer = v1.layout.clone();
+    let incoming = v1.pages[&Page::Incoming];
+    fewer.pages.retain(|p| p.id != incoming);
+    let used = v1.clone().with_stored(fewer, v1.actions.clone());
+    assert!(!used.pages.contains_key(&Page::Incoming));
+    assert_eq!(used.page(Page::Incoming), Some(used.pages[&Page::Active]));
+}
