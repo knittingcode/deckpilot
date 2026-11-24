@@ -192,8 +192,19 @@ nothing of a preset is stored, so no document, schema or migration
 changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
 are optional fields, left out when empty, that an older app ignores; an
 older agent sends neither, and the app then lists no presets. No IPC
-protocol change. The SDK's `LATEST_API_LEVEL` is 1.10
-(`GESTURE_PRESETS_API_LEVEL`; nothing for the guest).
+protocol change. The SDK's `GESTURE_PRESETS_API_LEVEL` is 1.10 (nothing
+for the guest).
+
+Plugin API 1.11 (unreleased, [action-contexts.md](action-contexts.md#plugin-actions)):
+additive. `contributes.actions[].contexts` validates only with `^1.11`;
+a manifest without it validates exactly as before and its actions keep
+all five contexts. An agent of 1.10 or older reports a `^1.11` version
+`incompatible`. The declaration reaches the app inside the action type
+(`ActionType.contexts`, the optional field 0.14.0's built-in contexts
+already use), so there is no IPC protocol, schema or
+document change; contexts stay advisory (reported on save, warned on
+run, never refused). The SDK's `LATEST_API_LEVEL` is 1.11
+(`ACTION_CONTEXTS_API_LEVEL`, `Action::contexts`).
 
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
