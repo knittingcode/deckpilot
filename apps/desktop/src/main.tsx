@@ -18,8 +18,12 @@ if (windowId) document.documentElement.dataset.window = windowId
 // Development only: `?showcase=dialogs` renders the Dialog Showcase on its
 // own, so it can be reviewed in any browser. Vite
 // removes this branch and the showcase from builds.
-const showcase =
-  import.meta.env.DEV && new URLSearchParams(window.location.search).get("showcase") === "dialogs"
+// `?showcase=storefront` does the same for the Marketplace against the
+// storefront fixtures (dev/storefront-preview.tsx).
+const showcaseName = import.meta.env.DEV
+  ? new URLSearchParams(window.location.search).get("showcase")
+  : null
+const showcase = showcaseName === "dialogs" || showcaseName === "storefront"
 
 // Development only: the layout probe of `vite dev` (dev/layout-probe-plugin.ts),
 // answered by the main window.
@@ -38,6 +42,20 @@ async function start(element: HTMLElement) {
   // The main window tells the agent the app's language (plugin texts, keys
   // and tray follow it).
   if (!windowId && !showcase) startAgentLocaleSync()
+  if (showcaseName === "storefront") {
+    const lang = new URLSearchParams(window.location.search).get("lang")
+    if (lang) {
+      const { i18n } = await import("./i18n")
+      await i18n.changeLanguage(lang)
+    }
+    const { StorefrontPreview } = await import("./dev/storefront-preview")
+    createRoot(element).render(
+      <StrictMode>
+        <StorefrontPreview />
+      </StrictMode>,
+    )
+    return
+  }
   if (showcase) {
     const { StandaloneShowcase } = await import("./dev/standalone-showcase")
     createRoot(element).render(

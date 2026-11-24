@@ -56,15 +56,23 @@ describe("plugin marketplace flag", () => {
     expect(loaded.size).toBe(0)
   })
 
-  it("adds Settings › Extensions › Plugins when on, without loading it before it opens", async () => {
+  it("has no Settings › Plugins page when on either: the Marketplace manages plugins", () => {
     vi.stubEnv("VITE_DECKPILOT_PLUGINS", "1")
-    const page = findSettingsPage([], "plugins")
-    expect(page).toMatchObject({ title: "Plugins", category: "extensions" })
-    expect(searchSettings(settingsPages([]), "marketplace").map((p) => p.id)).toEqual(["plugins"])
-    const { user, context } = renderWithApp(<SettingsSidebar current="modules" />)
-    await user.click(screen.getByRole("button", { name: "Plugins" }))
-    expect(context.openSettings).toHaveBeenCalledWith("plugins")
-    // The page's code loads only when the page renders.
+    expect(findSettingsPage([], "plugins")).toBeUndefined()
+    const pages = settingsPages([])
+    expect(
+      groupedSettings(pages)
+        .find((g) => g.id === "extensions")
+        ?.pages.map((p) => p.title),
+    ).toEqual(["Modules", "Permissions"])
+    // Plugin diagnostics and permissions are sections of existing pages.
+    expect(searchSettings(pages, "migration").map((p) => p.id)).toContain("diagnostics")
+    expect(searchSettings(pages, "plugins").map((p) => p.id)).toEqual(
+      expect.arrayContaining(["permissions", "diagnostics"]),
+    )
+    renderWithApp(<SettingsSidebar current="modules" />)
+    expect(screen.queryByRole("button", { name: "Plugins" })).not.toBeInTheDocument()
+    // Nothing of the plugins is loaded before such a page renders.
     expect(loaded.size).toBe(0)
   })
 })

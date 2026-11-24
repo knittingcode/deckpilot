@@ -13,7 +13,6 @@ import {
   ScrollText,
   Server,
   ShieldCheck,
-  Store,
   UserRound,
   Variable,
   type LucideIcon,
@@ -234,7 +233,7 @@ const CORE_PAGES: PageDefinition[] = [
     description: "settings:pages.permissions.description",
     category: "extensions",
     icon: KeyRound,
-    keywords: ["capabilities", "access", "privacy"],
+    keywords: ["capabilities", "access", "privacy", "plugins", "grants", "revoke"],
     view: view(() =>
       import("./pages/permissions").then((m) => ({ default: m.PermissionsSettings })),
     ),
@@ -245,7 +244,17 @@ const CORE_PAGES: PageDefinition[] = [
     description: "settings:pages.diagnostics.description",
     category: "advanced",
     icon: ScrollText,
-    keywords: ["log", "debug", "troubleshoot", "support", "ipc", "paths"],
+    keywords: [
+      "log",
+      "debug",
+      "troubleshoot",
+      "support",
+      "ipc",
+      "paths",
+      "plugins",
+      "migration",
+      "registry",
+    ],
     view: view(() =>
       import("./pages/diagnostics").then((m) => ({ default: m.DiagnosticsSettings })),
     ),
@@ -282,30 +291,6 @@ function developmentPages(): PageDefinition[] {
   return [showcasePage]
 }
 
-let pluginsPage: PageDefinition | undefined
-
-/**
- * Experimental pages, present only in builds that opt in. The plugin
- * marketplace needs `VITE_DECKPILOT_PLUGINS=1` at build time; Vite replaces
- * the check with a constant, so normal and release builds contain neither
- * the page nor its code.
- */
-function experimentalPages(): PageDefinition[] {
-  if (import.meta.env.VITE_DECKPILOT_PLUGINS !== "1") return []
-  pluginsPage ??= {
-    id: "plugins",
-    title: "settings:pages.plugins.title",
-    description: "settings:pages.plugins.description",
-    category: "extensions",
-    icon: Store,
-    keywords: ["marketplace", "plugins", "install", "community", "registry", "experimental"],
-    view: view(() =>
-      import("@/plugins/marketplace").then((m) => ({ default: m.InstalledPluginsSettings })),
-    ),
-  }
-  return [pluginsPage]
-}
-
 // `{{ … }}` (the reference syntax) is a value, so it is never read as a
 // placeholder of the translation.
 const resolve = (page: PageDefinition): SettingsPageEntry => ({
@@ -332,12 +317,7 @@ export function settingsPages(modules: ModuleInfo[]): SettingsPageEntry[] {
     view: page.view ?? null,
     module: page.module,
   }))
-  return [
-    ...CORE_PAGES.map(resolve),
-    ...experimentalPages().map(resolve),
-    ...fromModules,
-    ...developmentPages().map(resolve),
-  ]
+  return [...CORE_PAGES.map(resolve), ...fromModules, ...developmentPages().map(resolve)]
 }
 
 export function findSettingsPage(modules: ModuleInfo[], id: string) {

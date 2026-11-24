@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import { installDomStubs } from "@/test/dom"
 import { availablePlugins, createFakePluginClient, readyRuntime } from "@/test/plugins"
+import { openDetails as openPluginDetails, openInstalled } from "@/test/marketplace"
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
@@ -89,15 +90,13 @@ function render(features = ["dependencies"]) {
 
 type User = ReturnType<typeof render>["user"]
 
-async function openDetails(user: User, name: string) {
-  await user.click(await screen.findByRole("button", { name: new RegExp(name) }))
-  return screen.findByRole("heading", { name, level: 3 })
-}
+/** A plugin's page: from its tile in Discover, or (installed) from Installed. */
+const openDetails = (user: User, name: string) => openPluginDetails(user, name)
 
 /** Installs Project Dash with every permission of the plan. */
 async function installDash(user: User) {
   await openDetails(user, "Project Dash")
-  await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+  await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
   const dialog = await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
   await user.click(within(dialog).getByRole("button", { name: "Allow all 2" }))
   await user.click(within(dialog).getByRole("button", { name: "Install 2" }))
@@ -128,7 +127,7 @@ describe("plugin dependencies", () => {
   it("shows the whole plan and consents per plugin, dependencies first", async () => {
     const { user, client } = render()
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
     expect(client.planInstall).toHaveBeenCalledWith(DASH, "1.0.0", [])
     const steps = within(within(dialog).getByRole("list", { name: "Install plan" }))
@@ -163,7 +162,7 @@ describe("plugin dependencies", () => {
   it("installs an optional integration only when it is selected", async () => {
     const { user, client } = render()
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
     const plan = within(dialog).getByRole("list", { name: "Install plan" })
     expect(plan).not.toHaveTextContent(CALENDAR)
@@ -183,7 +182,7 @@ describe("plugin dependencies", () => {
     const { user, client } = render()
     await installDash(user)
     await user.click(screen.getByRole("button", { name: /Back to plugins/ }))
-    await user.click(screen.getByRole("tab", { name: /Installed/ }))
+    await openInstalled()
     await user.click(
       installedItem("Base Library").getByRole("switch", { name: "Disable Base Library" }),
     )
@@ -201,7 +200,7 @@ describe("plugin dependencies", () => {
     const { user, client } = render()
     await installDash(user)
     await user.click(screen.getByRole("button", { name: /Back to plugins/ }))
-    await user.click(screen.getByRole("tab", { name: /Installed/ }))
+    await openInstalled()
     await user.click(installedItem("Project Dash").getByRole("button", { name: "Uninstall" }))
     const confirm = screen.getByRole("alertdialog", { name: "Uninstall Project Dash?" })
     await user.click(within(confirm).getByRole("button", { name: "Uninstall" }))
@@ -222,7 +221,7 @@ describe("plugin dependencies", () => {
   it("installs one plugin at a time with an agent without dependency plans", async () => {
     const { user, client } = render([])
     await openDetails(user, "Hello Weather")
-    await user.click(screen.getByRole("button", { name: "Install 1.1.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Hello Weather" }))
     expect(
       await screen.findByRole("dialog", { name: "Install Hello Weather 1.1.0?" }),
     ).toBeInTheDocument()
@@ -240,7 +239,7 @@ describe("plugin dependencies", () => {
       ),
     )
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("alertdialog", {
       name: "Project Dash 1.0.0 cannot be installed",
     })
