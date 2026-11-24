@@ -138,6 +138,9 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- The file and folder pickers of Open and Open folder say when the bound
+  file or folder was moved or deleted, as the application picker does for
+  an application that is no longer installed.
 - The editor's previews of keys stored with the old action ids of
   built-ins that moved to a plugin (`projects.next`, `git.status`, …)
   showed them as unavailable even while the plugin served them. They now
