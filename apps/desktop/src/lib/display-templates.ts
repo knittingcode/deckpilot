@@ -31,6 +31,8 @@
 
 import { invoke } from "@tauri-apps/api/core"
 
+import { insertedReference, withoutDeprecated } from "./variable-catalog"
+
 import type {
   CatalogEntry,
   CatalogFilter,
@@ -155,6 +157,44 @@ export function resolveDisplayTemplates(
   templates: string[],
 ): Promise<ResolvedDisplayTemplate[]> {
   return invoke<ResolvedDisplayTemplate[]>("resolve_display_templates", { context, templates })
+}
+
+/** Value types a key can show as text (docs/variables.md §3.2). */
+const DISPLAYABLE_TYPES: ReadonlySet<string> = new Set(["string", "integer", "boolean"])
+
+/** References that never resolve on a key, whatever the agent lists (§3.2). */
+const NEVER_DISPLAYED = ["steps.", "workflow.", "system.device.", "workSession.", "secrets."]
+
+/**
+ * Whether the picker may offer `entry` for a key's title or label. The agent
+ * already lists display-safe references only (`listDisplayVariables`); this
+ * is a second, local check so that an older or misbehaving agent can never
+ * put a sensitive value, a secret reference, an id or a run's value into
+ * the picker. A refused reference typed by hand still shows `-` on the key.
+ */
+export function offeredOnKey(entry: CatalogEntry): boolean {
+  if (entry.sensitive === true) return false
+  if (!DISPLAYABLE_TYPES.has(entry.valueType.type)) return false
+  const reference = insertedReference(entry)
+  if (NEVER_DISPLAYED.some((prefix) => reference.startsWith(prefix))) return false
+  // Ids (`projects.current.id`, `workSession.projectId`, …) never show.
+  if (/(^|\.)(id|[a-z]+Id)$/.test(reference)) return false
+  return entry.availability !== "runtimeOnly"
+}
+
+/**
+ * The picker's entries: offered ones only, each reference once (a legacy
+ * alias is listed under its canonical id), in the agent's order.
+ */
+export function pickerEntries(entries: CatalogEntry[]): CatalogEntry[] {
+  const seen = new Set<string>()
+  return withoutDeprecated(entries).filter((entry) => {
+    if (!offeredOnKey(entry)) return false
+    const reference = insertedReference(entry)
+    if (seen.has(reference)) return false
+    seen.add(reference)
+    return true
+  })
 }
 
 /** Whether a `sharedVariablesChanged` key changes a text with `dependencies`. */

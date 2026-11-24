@@ -89,6 +89,7 @@ import type { IconState } from "./icon-library"
 import { type KeyLook, KeyLookContext } from "./key-look-context"
 import { incompleteAction, missingParameters } from "@/lib/action-completeness"
 import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
+import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
 import { missingForUse } from "@/lib/draft-actions"
 import { sameLayout } from "./same-layout"
 import {
@@ -412,6 +413,10 @@ export function LayoutEditor({
     countdown: FolderCountdown
   } | null>(null)
   const shownCountdown = deviceCountdown?.page === pageId ? deviceCountdown.countdown : null
+  // Titles and labels with variables are drawn again when the agent reports
+  // a change of what they show (profile, project, shared values), as the
+  // device is: the Canvas, the Inspector and the device agree.
+  const displayTick = useDisplayRefresh(profileId)
   const { faces, images, incompatible, reports, labelBoxes, navigation } = usePreviewFaces(
     profileId,
     draft,
@@ -419,7 +424,7 @@ export function LayoutEditor({
     `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}`,
     liveStates.live,
     keyPixels,
-    catalogVersion,
+    `${catalogVersion}|${String(displayTick)}`,
     shownCountdown,
   )
   // Scrolling titles play as on the device (unless motion is reduced).
@@ -859,7 +864,7 @@ export function LayoutEditor({
     }
     return map
   }, [model, draft, pageId, actions, workflows])
-  const resolvedTitles = useResolvedTitles(profileId, pageTitles, view.activeProjectId)
+  const resolvedTitles = useResolvedTitles(profileId, pageTitles, view.activeProjectId, displayTick)
   const summaries = useMemo(() => {
     const render = (text: string) => {
       const expanded = pageTitles.get(text) ?? text
@@ -1664,6 +1669,8 @@ function useResolvedTitles(
   profileId: string,
   titles: Map<string, string>,
   activeProject: string | null | undefined,
+  /** `useDisplayRefresh`: the agent reported a change of what titles show. */
+  tick: number,
 ): Map<string, string> {
   const templates = [...new Set(titles.values())].filter((text) => text.includes("{"))
   const key = JSON.stringify(templates)
@@ -1688,7 +1695,7 @@ function useResolvedTitles(
     return () => {
       cancelled = true
     }
-  }, [profileId, key, activeProject])
+  }, [profileId, key, activeProject, tick])
   return resolved.key === key ? resolved.texts : EMPTY_TITLES
 }
 

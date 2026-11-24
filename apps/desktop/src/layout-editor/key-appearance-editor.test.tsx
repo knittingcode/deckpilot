@@ -47,6 +47,12 @@ vi.mock("@/lib/app-context", () => ({
     refresh: vi.fn(),
   }),
 }))
+const display = vi.hoisted(() => ({ list: vi.fn(), resolve: vi.fn() }))
+vi.mock("@/lib/display-templates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/display-templates")>()),
+  listDisplayVariables: display.list,
+  resolveDisplayTemplates: display.resolve,
+}))
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 
 const plus: DeviceModel = {
@@ -223,17 +229,23 @@ beforeEach(() => {
   api.titleFonts.mockResolvedValue([{ id: "inter", name: "Inter" }])
   api.visualLibrary.mockResolvedValue(library)
   resetVisualLibrary()
+  display.list.mockReset().mockResolvedValue([])
+  display.resolve
+    .mockReset()
+    .mockImplementation((_: unknown, templates: string[]) =>
+      Promise.resolve(templates.map((template) => ({ template, text: template }))),
+    )
 })
 afterEach(cleanup)
 
-function renderEditor(model: DeviceModel = plus) {
+function renderEditor(model: DeviceModel = plus, saved: DeviceLayout = layout) {
   const user = userEvent.setup({ applyAccept: false })
   render(
     <LayoutEditor
       profileId="p"
       view={view}
       model={model}
-      saved={layout}
+      saved={saved}
       onDirtyChange={vi.fn()}
       onSaved={vi.fn()}
     />,
@@ -929,5 +941,65 @@ describe("the Inspector's two columns", { timeout: 20_000 }, () => {
     } finally {
       await i18n.changeLanguage("en")
     }
+  })
+})
+
+describe("variables in the key title", { timeout: 20_000 }, () => {
+  const formatted: ControlBinding["appearance"] = {
+    background: "#112233",
+    fontFamily: "inter",
+    bold: true,
+    text: { mode: "autoFit", align: "left" },
+  }
+  const withTitle: DeviceLayout = {
+    ...layout,
+    pages: [
+      {
+        id: "home",
+        name: "Home",
+        bindings: [{ ...press(0, "shop", formatted), label: "Team " }, press(1, "mail")],
+      },
+    ],
+  }
+
+  it("inserts the picked reference at the cursor and keeps the title's formatting", async () => {
+    display.list.mockResolvedValue([
+      {
+        reference: "shared.team.name",
+        label: "Team name",
+        group: "shared",
+        valueType: { type: "string" },
+        availability: "available",
+      },
+    ])
+    const user = renderEditor(plus, withTitle)
+    await user.click(control("Key 1"))
+    const title = header().getByRole("textbox", { name: "Key title" })
+    expect(title).toHaveValue("Team ")
+    await user.click(title)
+    await user.keyboard("{End}")
+    await user.click(header().getByRole("button", { name: "Insert a variable into the title" }))
+    await user.click(await screen.findByText("Team name"))
+    expect(title).toHaveValue("Team {{ shared.team.name }}")
+    // The preview is the agent's answer for exactly that template.
+    await waitFor(() => {
+      expect(display.resolve).toHaveBeenCalledWith({ profile: "p" }, [
+        "Team {{ shared.team.name }}",
+      ])
+    })
+    const bindings = await saved(user)
+    expect(bindings[0]?.label).toBe("Team {{ shared.team.name }}")
+    expect(bindings[0]?.appearance).toEqual(formatted)
+  })
+
+  it("accepts a title with references up to 160 characters, a plain one up to 32", async () => {
+    const user = renderEditor(plus, withTitle)
+    await user.click(control("Key 1"))
+    const title = header().getByRole("textbox", { name: "Key title" })
+    expect(title).toHaveAttribute("maxLength", "32")
+    // `{{` types one `{` in user-event.
+    await user.type(title, "{{{{ x }}")
+    expect(title).toHaveValue("Team {{ x }}")
+    expect(title).toHaveAttribute("maxLength", "160")
   })
 })

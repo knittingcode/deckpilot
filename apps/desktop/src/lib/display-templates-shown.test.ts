@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest"
 import {
   MAX_SHOWN_TITLE_CHARS,
   maxTitleLength,
+  offeredOnKey,
+  pickerEntries,
   referenceText,
   shownOnKey,
   titleSegments,
 } from "./display-templates"
+import type { CatalogEntry } from "./types"
 
 describe("what a key shows of a resolved title", () => {
   it("keeps a short title and its markers as they are", () => {
@@ -62,5 +65,50 @@ describe("title limits and insertion", () => {
     expect(maxTitleLength("Plain")).toBe(32)
     expect(maxTitleLength("{{ shared.team.name }}")).toBe(160)
     expect(referenceText("projects.current.key")).toBe("{{ projects.current.key }}")
+  })
+})
+
+describe("what the title picker offers", () => {
+  const entry = (reference: string, extra: Partial<CatalogEntry> = {}): CatalogEntry => ({
+    reference,
+    label: reference,
+    group: "shared",
+    valueType: { type: "string" },
+    availability: "available",
+    ...extra,
+  })
+
+  it("offers display-safe text, numbers and booleans", () => {
+    expect(offeredOnKey(entry("shared.team.name"))).toBe(true)
+    expect(offeredOnKey(entry("shared.count", { valueType: { type: "integer" } }))).toBe(true)
+    expect(offeredOnKey(entry("system.profile.current.name"))).toBe(true)
+  })
+
+  it("never offers secrets, sensitive values, ids or values of a run or a device", () => {
+    expect(offeredOnKey(entry("shared.token", { sensitive: true }))).toBe(false)
+    expect(offeredOnKey(entry("shared.key", { valueType: { type: "secretRef" } }))).toBe(false)
+    expect(offeredOnKey(entry("shared.blob", { valueType: { type: "json" } }))).toBe(false)
+    expect(offeredOnKey(entry("projects.current.id"))).toBe(false)
+    expect(offeredOnKey(entry("workSession.projectId"))).toBe(false)
+    expect(offeredOnKey(entry("steps.a.output"))).toBe(false)
+    expect(offeredOnKey(entry("workflow.input"))).toBe(false)
+    expect(offeredOnKey(entry("system.device.name"))).toBe(false)
+    expect(offeredOnKey(entry("shared.x", { availability: "runtimeOnly" }))).toBe(false)
+    // A name that merely ends in "id" is not an id.
+    expect(offeredOnKey(entry("shared.paid"))).toBe(true)
+  })
+
+  it("lists each reference once, a legacy alias under its canonical id", () => {
+    const listed = pickerEntries([
+      entry("plugins.deckpilot.projects.current.key", {
+        deprecated: { canonical: "projects.current.key", since: "0.10" },
+      }),
+      entry("shared.team.name"),
+      entry("shared.team.name"),
+    ])
+    expect(listed.map((e) => e.reference)).toEqual([
+      "plugins.deckpilot.projects.current.key",
+      "shared.team.name",
+    ])
   })
 })
