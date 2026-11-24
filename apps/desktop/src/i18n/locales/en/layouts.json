@@ -83,7 +83,6 @@
     }
   },
   "page": {
-    "description": "Layouts stored once and assigned to any number of profiles",
     "new": "New layout",
     "search": "Search",
     "empty": {

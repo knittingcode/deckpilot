@@ -6,6 +6,7 @@ import {
   Info,
   KeyRound,
   Languages,
+  LayoutTemplate,
   MonitorSmartphone,
   Puzzle,
   RefreshCw,
@@ -101,6 +102,15 @@ const CORE_PAGES: PageDefinition[] = [
     icon: UserRound,
     keywords: ["profile", "create", "rename", "duplicate", "delete", "active", "activate"],
     view: view(() => import("@/pages/profiles").then((m) => ({ default: m.ProfilesSettings }))),
+  },
+  {
+    id: "layouts",
+    title: "settings:pages.layouts.title",
+    description: "settings:pages.layouts.description",
+    category: "general",
+    icon: LayoutTemplate,
+    keywords: ["layouts", "layout manager", "shared", "assign", "default", "układy", "układ"],
+    view: view(() => import("@/pages/layouts").then((m) => ({ default: m.LayoutsSettings }))),
   },
   {
     id: "updates",

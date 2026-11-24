@@ -49,7 +49,7 @@ type Dialog = { kind: "new" }
  */
 export function LayoutMenu({ className }: { className?: string }) {
   const { t } = useTranslation()
-  const { editingProfileId, revision, refresh, agent, navigate } = useAppContext()
+  const { editingProfileId, revision, refresh, agent, openSettings } = useAppContext()
   const selection = useEditorSelection()
   const confirmDiscard = useConfirmDiscard()
   const profileId = editingProfileId
@@ -217,7 +217,7 @@ export function LayoutMenu({ className }: { className?: string }) {
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => {
-                navigate("layouts")
+                openSettings("layouts")
               }}
             >
               <Library /> {t("layouts:menu.manage")}

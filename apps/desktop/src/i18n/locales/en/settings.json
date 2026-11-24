@@ -21,6 +21,10 @@
       "title": "Profiles",
       "description": "Manage your profiles and their settings."
     },
+    "layouts": {
+      "title": "Layouts",
+      "description": "Layouts stored once and assigned to any number of profiles."
+    },
     "updates": {
       "title": "Updates",
       "description": "Signed updates from GitHub Releases"
