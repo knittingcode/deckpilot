@@ -5,6 +5,8 @@ import { act, cleanup, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { DialogProvider } from "@/components/dialogs"
+
 import { ActionEditor } from "./action-editor"
 import type { ActionInstance, ActionType, ModuleInfo, Project } from "@/lib/types"
 import { i18n } from "@/i18n"
@@ -421,5 +423,81 @@ describe("a draft that is run", () => {
     // Neither the agent's words nor the keys as output.
     expect(status).not.toHaveTextContent("missing required parameter")
     expect(status).not.toHaveTextContent(/^missing/)
+  })
+})
+
+describe("an edit that leaves a shared action without a required setting", () => {
+  afterEach(cleanup)
+  const complete: ActionInstance = {
+    id: "a-log",
+    name: "Write log",
+    actionType: logType.id,
+    parameters: { message: { type: "text", value: "hello" } },
+  }
+
+  function renderShared(usages: number) {
+    render(
+      <DialogProvider>
+        <ActionEditor
+          profileId="profile"
+          modules={[module("general", "General", [logType])]}
+          projects={projects}
+          action={complete}
+          references={Array.from({ length: usages }, (_, index) => ({
+            site: { type: "step" as const, workflow: "w", index },
+            ownerName: "Start Work",
+          }))}
+          canRun={false}
+          onSaved={vi.fn()}
+          onDeleted={vi.fn()}
+        />
+      </DialogProvider>,
+    )
+  }
+
+  beforeEach(() => {
+    cleanup()
+    resetApi()
+    updateAction.mockImplementation((_profile: string, saved: ActionInstance) =>
+      Promise.resolve(saved),
+    )
+  })
+
+  it("asks first, saying how many places stop running, and saves only when confirmed", async () => {
+    const user = userEvent.setup()
+    renderShared(3)
+    await user.clear(screen.getByLabelText(/^Message/))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    const ask = await screen.findByRole("alertdialog", {
+      name: "Save Write log without its required settings?",
+    })
+    expect(ask).toHaveTextContent(
+      "This action is used in 3 places. Without its required settings it stops running in all of them",
+    )
+    expect(updateAction).not.toHaveBeenCalled()
+    await user.click(within(ask).getByRole("button", { name: "Cancel" }))
+    expect(updateAction).not.toHaveBeenCalled()
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Save anyway" }),
+    )
+    expect(updateAction).toHaveBeenCalledTimes(1)
+    expect(updateAction.mock.calls[0]?.[1]).toMatchObject({ parameters: {} })
+  })
+
+  it("does not ask for an action used in one place, or when the edit keeps it complete", async () => {
+    const user = userEvent.setup()
+    renderShared(1)
+    await user.clear(screen.getByLabelText(/^Message/))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(updateAction).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+    cleanup()
+    updateAction.mockClear()
+    renderShared(3)
+    await user.type(screen.getByLabelText(/^Message/), " there")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(updateAction).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
   })
 })

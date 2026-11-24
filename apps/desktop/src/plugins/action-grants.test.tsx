@@ -4,7 +4,14 @@
 // Marketplace's permission dialog, granted with the existing request.
 import "@testing-library/jest-dom/vitest"
 
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react"
+import {
+  cleanup,
+  fireEvent,
+  render as renderPlain,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { LayoutEditor } from "@/layout-editor/editor"
@@ -17,7 +24,8 @@ import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
 import { type PluginClient, PluginClientContext } from "./api"
-import type { GrantInfo, PluginDetails } from "./types"
+import type { GrantInfo, PluginDetails, PluginSummary } from "./types"
+import { usePluginModules } from "./use-plugin-modules"
 
 vi.mock("@/lib/api", async () => (await import("@/test/api-mock")).apiModule)
 vi.mock("sonner", async () => (await import("@/test/toast")).sonnerModule)
@@ -321,6 +329,59 @@ describe("granting a permission from the library", () => {
     // The Compose actions are still not placeable; the library stays.
     expect(dragHandles("Compose down")).toHaveLength(0)
     expect(await grantButton("Compose down")).toBeEnabled()
+  })
+})
+
+describe("granting, from what the agent reports", () => {
+  /** The Docker plugin as `listPlugins` reports it: its compose actions blocked. */
+  function dockerSummary(): PluginSummary {
+    return {
+      ...details([]).summary,
+      actions: [status, ...COMPOSE].map((t) => ({
+        action: t.id.slice(DOCKER.length + 1),
+        actionType: t.id,
+        name: t.name,
+        available: t.id === status.id,
+        ...(t.id === status.id ? {} : { unavailableReason: RAW }),
+        definition: t,
+      })),
+    }
+  }
+
+  it("reads the grants of a plugin with blocked actions and offers Grant (usePluginModules)", async () => {
+    const blockedDetails = details([modify])
+    blockedDetails.summary = dockerSummary()
+    const agent = {
+      listPlugins: vi.fn(() => Promise.resolve([dockerSummary()])),
+      listKnownPlugins: vi.fn(() => Promise.resolve([])),
+      listModuleMigrations: vi.fn(() => Promise.resolve([])),
+      subscribe: vi.fn(() => () => undefined),
+      getPlugin: vi.fn(() => Promise.resolve(blockedDetails)),
+      grantPermissions: client.grantPermissions,
+    }
+    let built: ModuleInfo[] = []
+    function Probe() {
+      built = usePluginModules("agent")
+      return null
+    }
+    renderPlain(
+      <PluginClientContext value={agent as unknown as PluginClient}>
+        <Probe />
+      </PluginClientContext>,
+    )
+    // The hook asks for the blocked plugin's grants and fills `grantable` from them.
+    await waitFor(() => {
+      expect(built.find((m) => m.id === DOCKER)?.plugin?.grantable).toEqual(
+        Object.fromEntries(COMPOSE.map((t) => [t.id, ["tools:docker:modify"]])),
+      )
+    })
+    expect(agent.getPlugin).toHaveBeenCalledWith(DOCKER)
+    cleanup()
+    // The editor fed with what the hook built: Grant on every blocked action.
+    const docker = built.find((m) => m.id === DOCKER)
+    if (!docker) throw new Error("no Docker module")
+    render(docker)
+    for (const t of COMPOSE) expect(await grantButton(t.name)).toBeEnabled()
   })
 })
 
