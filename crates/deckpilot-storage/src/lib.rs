@@ -32,6 +32,7 @@ pub mod policy;
 mod project_actions;
 pub mod provenance;
 pub mod references;
+mod repositories;
 mod sqlite;
 #[cfg(all(test, feature = "sqlcipher"))]
 mod upgrade_tests;

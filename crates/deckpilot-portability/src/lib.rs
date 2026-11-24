@@ -24,8 +24,8 @@ pub use import::{
 };
 pub use payload::{
     AppSettings, ExportOptions, ExportedValue, LibraryExport, ModuleExport, PAYLOAD_VERSION,
-    PAYLOAD_VERSION_WITH_LIBRARY, PAYLOAD_VERSION_WITHOUT_LIBRARY, Payload, UpdateSettings,
-    VariablesExport, export,
+    PAYLOAD_VERSION_WITH_LABELS, PAYLOAD_VERSION_WITH_LIBRARY, PAYLOAD_VERSION_WITHOUT_LIBRARY,
+    Payload, UpdateSettings, VariablesExport, export,
 };
 
 #[derive(Debug, Error)]

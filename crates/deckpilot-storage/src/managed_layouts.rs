@@ -37,7 +37,7 @@ use crate::{Result, StorageError};
 #[path = "managed_layouts/tests.rs"]
 mod tests;
 
-/// Schema 14: the managed layouts.
+/// Schema 15: the managed layouts.
 pub(crate) const SCHEMA: &str = r"
     CREATE TABLE IF NOT EXISTS managed_layouts (
         layout_id        TEXT PRIMARY KEY NOT NULL REFERENCES layouts (id) ON DELETE RESTRICT,

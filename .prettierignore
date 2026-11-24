@@ -7,6 +7,8 @@ apps/desktop/src-tauri/icons/
 *.md
 # Written by DeckPilot itself and compared byte for byte.
 apps/agent/tests/fixtures/
+# Stores of released versions (database and vault), kept as they wrote them.
+crates/deckpilot-storage/tests/fixtures/
 # Expected outputs of tools/distribution/test.sh, compared byte for byte.
 tools/distribution/tests/expected/
 # The product website has its own toolchain and checks (website/README.md).

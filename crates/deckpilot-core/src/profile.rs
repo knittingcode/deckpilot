@@ -96,6 +96,11 @@ pub enum ProfileIssue {
     EmptyName,
     #[error("project key `{0}` is used more than once")]
     DuplicateProjectKey(String),
+    #[error("project `{project}`: {error}")]
+    Repository {
+        project: String,
+        error: crate::RepositoryError,
+    },
     #[error("workflow `{workflow}` references a missing action")]
     MissingWorkflowAction {
         workflow: String,
@@ -434,7 +439,8 @@ impl Profile {
             .collect();
 
         for project in &mut copy.projects {
-            project.id = projects[&project.id];
+            // Repositories get ids derived from the new project id.
+            *project = project.copy_with_id(projects[&project.id]);
         }
         copy.default_project = copy
             .default_project
@@ -500,6 +506,14 @@ impl Profile {
                 .any(|p| p.key.matches(project.key.as_str()));
             if duplicate {
                 issues.push(ProfileIssue::DuplicateProjectKey(project.key.to_string()));
+            }
+        }
+        for project in &self.projects {
+            if let Err(error) = project.validate_repositories() {
+                issues.push(ProfileIssue::Repository {
+                    project: project.key.to_string(),
+                    error,
+                });
             }
         }
         if self
