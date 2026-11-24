@@ -15,8 +15,6 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-11-24
-
 ### Added
 
 - Settings › Profiles › a profile: "Saved actions" lists the profile's
@@ -26,6 +24,11 @@ released either. 0.6.0 is the first version intended for publication.
   editor (the agent still refuses while anything uses it). Nothing is
   deleted by itself, and there is no "delete all". Until now a saved
   action that no key, gesture or workflow used could not be opened.
+
+## [0.15.0] - 2026-11-24
+
+### Added
+
 - Marketplace: a sidebar with search, Discover, Installed, Updates,
   Categories and collections; plugin pages with screenshots, highlights,
   what's new, version history, publisher and trust; install, update and
