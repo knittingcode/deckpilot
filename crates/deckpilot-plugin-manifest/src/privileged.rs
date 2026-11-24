@@ -282,7 +282,7 @@ pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
                 format!("permissions[{index}]"),
                 format!("the `{}` permission", permission.kind().as_str()),
             ));
-        } else if permission.opens_from_params() {
+        } else if permission.names_from_params() {
             found.push((
                 format!("permissions[{index}].fromParams"),
                 "`openUrl.fromParams`".to_owned(),

@@ -940,7 +940,10 @@
         },
         "value": { "$ref": "#/$defs/camelKey" },
         "label": { "$ref": "#/$defs/camelKey" },
-        "search": { "type": "boolean", "description": "The picker passes what the user types as the source's text parameter search." }
+        "search": {
+          "type": "boolean",
+          "description": "The picker passes what the user types as the source's text parameter search."
+        }
       }
     },
     "setting": {
@@ -1104,7 +1107,7 @@
     "apiPath": {
       "type": "string",
       "maxLength": 64,
-      "pattern": "^(/[A-Za-z0-9._~-]+)+$",
+      "pattern": "^(/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.\\.[A-Za-z0-9._~-]+))+$",
       "description": "One or more path segments; no . or .. segment, no trailing /."
     },
     "connectionType": {
@@ -1124,13 +1127,13 @@
             "api": {
               "type": "string",
               "maxLength": 256,
-              "pattern": "^https://[^/?#@]+(/[A-Za-z0-9._~-]+)*/?$",
+              "pattern": "^https://[^/?#@]+(/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.\\.[A-Za-z0-9._~-]+))*$",
               "description": "The API base, an https URL optionally with a path."
             },
             "web": {
               "type": "string",
               "maxLength": 256,
-              "pattern": "^https://[^/?#@]+/?$",
+              "pattern": "^https://[^/?#@]+$",
               "description": "The web origin pages are opened on: an https origin without a path."
             }
           }
@@ -1168,7 +1171,7 @@
                   "cloud": { "$ref": "#/$defs/httpsUrl" },
                   "selfHosted": {
                     "type": "string",
-                    "maxLength": 264,
+                    "maxLength": 261,
                     "pattern": "^\\{web\\}/",
                     "description": "{web}/...: a page on the server the user entered."
                   }

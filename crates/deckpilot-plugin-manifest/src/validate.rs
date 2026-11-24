@@ -1841,6 +1841,12 @@ fn replaced_by(c: &mut Checker, path: &str, action: &Action, actions: &[Action])
             IssueCode::UnknownReference,
             format!("`{target}` is not an action of this plugin"),
         );
+    } else if actions.iter().any(|a| &a.id == target && a.is_internal()) {
+        c.error(
+            &field,
+            IssueCode::Conflict,
+            format!("`{target}` is internal: an action is never replaced by one off the keys"),
+        );
     }
     if action.deprecated != Some(true) {
         c.error(

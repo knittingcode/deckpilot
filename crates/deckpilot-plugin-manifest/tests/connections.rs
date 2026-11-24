@@ -579,3 +579,119 @@ fn an_older_agent_refuses_the_fields_and_a_1_9_manifest_is_unchanged() {
     value["permissions"][0]["hosts"] = json!(["evil.example"]);
     assert!(Manifest::from_json(&value.to_string()).is_err());
 }
+
+#[test]
+fn an_action_is_never_replaced_by_an_internal_one() {
+    let mut value = fixture();
+    value["contributes"]["actions"][1]["deprecated"] = json!(true);
+    value["contributes"]["actions"][1]["replacedBy"] = json!("list-repositories");
+    refused(
+        &value,
+        "contributes.actions[1].replacedBy",
+        IssueCode::Conflict,
+    );
+}
+
+#[test]
+fn naming_the_new_open_url_members_at_all_needs_their_level() {
+    // `connections: false` is still a 1.14 field.
+    let mut value = fixture();
+    value["engines"]["pluginApi"] = json!("^1.9");
+    value["permissions"][1]["connections"] = json!(false);
+    value["permissions"][1]["hosts"] = json!(["gitlab.com"]);
+    let errors = parse(&value).validate_bundled().unwrap_err();
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|i| i.path == "permissions[1].connections" && i.message.contains("1.14")),
+        "{errors}"
+    );
+    // `fromParams: false` is still a 1.9 field.
+    let plain: Value =
+        serde_json::from_str(include_str!("fixtures/example-manifest.json")).unwrap();
+    let mut value = plain;
+    value["permissions"].as_array_mut().unwrap().push(json!({
+        "kind": "openUrl", "hosts": ["github.com"], "fromParams": false,
+        "justification": "Opens pull requests in the browser."
+    }));
+    let errors = parse(&value).validate().unwrap_err();
+    assert!(
+        errors
+            .0
+            .iter()
+            .any(|i| i.path.ends_with(".fromParams") && i.message.contains("1.9")),
+        "{errors}"
+    );
+}
+
+#[test]
+fn options_depend_on_parameters_of_the_same_kind() {
+    let at = "contributes.actions[1].parameters[1].options.dependsOn[0]";
+    // The source takes the connection as text.
+    let mut value = fixture();
+    value["contributes"]["actions"][0]["parameters"][0]["kind"] = json!({"type": "text"});
+    refused(&value, at, IssueCode::Conflict);
+    // The source takes fewer connection types than the dependent offers.
+    let mut value = fixture();
+    value["contributes"]["actions"][0]["parameters"][0]["kind"]["types"] = json!(["gitlab"]);
+    refused(&value, at, IssueCode::Conflict);
+    // More types on the source side are fine.
+    let mut value = fixture();
+    value["contributes"]["actions"][1]["parameters"][0]["kind"]["types"] = json!(["gitlab"]);
+    assert_eq!(issues_at(&value, at), []);
+}
+
+#[test]
+fn cloud_urls_and_api_paths_have_one_spelling() {
+    for (pointer, replacement, path, code) in [
+        (
+            "/cloud/api",
+            json!("https://api.github.com:443"),
+            "contributes.connectionTypes[0].cloud.api",
+            IssueCode::InvalidUrl,
+        ),
+        (
+            "/cloud/api",
+            json!("https://api.github.com/"),
+            "contributes.connectionTypes[0].cloud.api",
+            IssueCode::InvalidUrl,
+        ),
+        (
+            "/cloud/web",
+            json!("https://github.com/"),
+            "contributes.connectionTypes[0].cloud.web",
+            IssueCode::InvalidUrl,
+        ),
+        (
+            "/selfHosted/apiPath",
+            json!("/api/./v3"),
+            "contributes.connectionTypes[0].selfHosted.apiPath",
+            IssueCode::InvalidPath,
+        ),
+    ] {
+        let mut value = fixture();
+        *value["contributes"]["connectionTypes"][0]
+            .pointer_mut(pointer)
+            .unwrap() = replacement.clone();
+        refused(&value, path, code);
+        // The schema says the same, except the default port, which only the
+        // validator refuses.
+        if !replacement.as_str().unwrap().ends_with(":443") {
+            assert!(!schema().is_valid(&value), "{replacement}");
+        }
+    }
+    // The schema refuses `.` and `..` segments in a cloud API path too.
+    let mut value = fixture();
+    value["contributes"]["connectionTypes"][1]["cloud"]["api"] =
+        json!("https://gitlab.com/api/../v4");
+    assert!(!schema().is_valid(&value));
+    // Segments that only start with dots are fine.
+    let mut value = fixture();
+    value["contributes"]["connectionTypes"][1]["selfHosted"]["apiPath"] = json!("/.well/api");
+    assert!(schema().is_valid(&value));
+    assert_eq!(
+        issues_at(&value, "contributes.connectionTypes[1].selfHosted"),
+        []
+    );
+}

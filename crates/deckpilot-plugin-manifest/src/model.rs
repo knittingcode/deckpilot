@@ -377,6 +377,31 @@ impl Permission {
         }
     }
 
+    /// Whether an `openUrl` permission names `connections` at all (`true`
+    /// or `false`): a plugin API 1.14 field, gated like the other
+    /// constructs of the level.
+    pub fn names_connections(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                connections: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Whether an `openUrl` permission names `fromParams` at all: a plugin
+    /// API 1.9 field, gated like the other privileged constructs.
+    pub fn names_from_params(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                from_params: Some(_),
+                ..
+            }
+        )
+    }
+
     /// Whether an `openUrl` permission declares `connections` (plugin API
     /// 1.14): pages on the web origin of a connection the invocation is
     /// bound to.

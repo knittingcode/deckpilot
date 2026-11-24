@@ -40,7 +40,7 @@ const FORBIDDEN_AUTH_HEADERS: &[&str] = &[
 pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for (index, permission) in m.permissions.iter().enumerate() {
-        if permission.opens_connections() {
+        if permission.names_connections() {
             found.push((
                 format!("permissions[{index}].connections"),
                 "`openUrl.connections`".to_owned(),
@@ -175,7 +175,7 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
         .map(|(_, listed)| listed.iter().map(String::as_str).collect())
         .unwrap_or_default();
     for (index, p) in m.permissions.iter().enumerate() {
-        if p.opens_connections() && permission.is_none() {
+        if p.names_connections() && permission.is_none() {
             c.error(
                 format!("permissions[{index}].connections"),
                 IssueCode::MissingPermission,
@@ -441,13 +441,20 @@ fn check_base(text: &str, with_path: bool) -> Result<(), String> {
     if authority.starts_with("*.") {
         return Err(format!("`{authority}` must be an exact host"));
     }
-    if path.is_empty() || path == "/" {
+    // One spelling per origin: the host compares origins as written.
+    if authority.ends_with(":443") {
+        return Err(format!("`{text}` must leave out the default port 443"));
+    }
+    if text.ends_with('/') {
+        return Err(format!("`{text}` must not end with /"));
+    }
+    if path.is_empty() {
         return Ok(());
     }
     if !with_path {
         return Err(format!("`{text}` must be an origin, without a path"));
     }
-    check_api_path(path.trim_end_matches('/')).map_err(|problem| format!("`{text}` {problem}"))
+    check_api_path(path).map_err(|problem| format!("`{text}` {problem}"))
 }
 
 /// `/segment[/segment…]`: unreserved characters only, no `.` or `..`, no
@@ -674,20 +681,7 @@ fn parameter_options(
         MAX_OPTIONS_DEPENDS_ON,
     );
     c.unique(&field, options.depends_on());
-    for (i, key) in options.depends_on().iter().enumerate() {
-        let here = action.parameters.iter().any(|p| &p.key == key);
-        let there = source.parameters.iter().any(|p| &p.key == key);
-        if key == &parameter.key || !here || !there {
-            c.error(
-                format!("{field}[{i}]"),
-                IssueCode::UnknownReference,
-                format!(
-                    "`{key}` must be another parameter of this action and a parameter of `{}`",
-                    options.from
-                ),
-            );
-        }
-    }
+    depends_on(c, &field, action, parameter, source, options);
     if options.search()
         && !source
             .parameters
@@ -737,6 +731,60 @@ fn options_fields(
                 format!(
                     "`{key}` is not a field of the record schema `{}`",
                     schema.id
+                ),
+            );
+        }
+    }
+}
+
+/// `options.dependsOn`: other parameters of the action that the source has
+/// too, of the same kind; a `connection` the source takes for at least the
+/// dependent's types, so the value it receives is always one it accepts.
+fn depends_on(
+    c: &mut Checker,
+    field: &str,
+    action: &Action,
+    parameter: &crate::model::Parameter,
+    source: &Action,
+    options: &ParameterOptions,
+) {
+    for (i, key) in options.depends_on().iter().enumerate() {
+        let here = action.parameters.iter().find(|p| &p.key == key);
+        let there = source.parameters.iter().find(|p| &p.key == key);
+        let (Some(here), Some(there)) = (here, there) else {
+            c.error(
+                format!("{field}[{i}]"),
+                IssueCode::UnknownReference,
+                format!(
+                    "`{key}` must be another parameter of this action and a parameter of `{}`",
+                    options.from
+                ),
+            );
+            continue;
+        };
+        if key == &parameter.key {
+            c.error(
+                format!("{field}[{i}]"),
+                IssueCode::UnknownReference,
+                "a parameter cannot depend on itself",
+            );
+            continue;
+        }
+        let fits = match (&here.kind, &there.kind) {
+            (
+                ParameterKind::Connection { types: mine, .. },
+                ParameterKind::Connection { types: theirs, .. },
+            ) => mine.iter().all(|t| theirs.contains(t)),
+            (mine, theirs) => std::mem::discriminant(mine) == std::mem::discriminant(theirs),
+        };
+        if !fits {
+            c.error(
+                format!("{field}[{i}]"),
+                IssueCode::Conflict,
+                format!(
+                    "`{key}` is not the same kind of parameter in `{}` (a connection there must \
+                     take every type it takes here)",
+                    options.from
                 ),
             );
         }
