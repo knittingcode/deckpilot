@@ -108,6 +108,28 @@ fn watch(
     (seen, mock.image_writes(device) - writes)
 }
 
+/// Adds the distinct images `control` shows to `seen` until it holds
+/// `at_least` of them or [`TIMEOUT`] passes; returns them. That a key
+/// scrolls is waited for, not counted in a fixed window: a loaded runner
+/// draws fewer frames in one (3 in 1.2 s was seen on macOS CI). That it
+/// scrolls no faster than allowed is still measured over a fixed period.
+fn scrolls(
+    mock: &MockBackend,
+    device: &DeviceId,
+    control: ControlId,
+    at_least: usize,
+    mut seen: BTreeSet<Vec<u8>>,
+) -> BTreeSet<Vec<u8>> {
+    let until = Instant::now() + TIMEOUT;
+    while seen.len() < at_least && Instant::now() < until {
+        if let Some(frame) = mock.frames(device).get(&control) {
+            seen.insert(frame.rgb().to_vec());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    seen
+}
+
 async fn connected(agent: &TestAgent, connected: bool) {
     let deadline = tokio::time::Instant::now() + TIMEOUT;
     loop {
@@ -137,6 +159,7 @@ async fn only_visible_titles_that_are_too_wide_scroll() {
     // Key 1 scrolls: many different images; the others stay as they are.
     let period = Duration::from_millis(1500);
     let (scrolling, writes) = watch(&mock, &device, key(1), period);
+    let scrolling = scrolls(&mock, &device, key(1), 5, scrolling);
     assert!(scrolling.len() >= 5, "{} images", scrolling.len());
     for still in [key(2), key(3), key(5)] {
         let (images, _) = watch(&mock, &device, still, Duration::from_millis(300));
@@ -161,7 +184,7 @@ async fn only_visible_titles_that_are_too_wide_scroll() {
 
     // Back: key 1 scrolls again.
     mock.tap(&device, key(0));
-    let (scrolling, _) = watch(&mock, &device, key(1), Duration::from_millis(1200));
+    let scrolling = scrolls(&mock, &device, key(1), 4, BTreeSet::new());
     assert!(
         scrolling.len() >= 4,
         "{} images after Back",
@@ -180,7 +203,7 @@ async fn only_visible_titles_that_are_too_wide_scroll() {
     );
     mock.plug(&models::stream_deck_mk2(), "MK2-A");
     connected(&agent, true).await;
-    let (scrolling, _) = watch(&mock, &device, key(1), Duration::from_millis(1500));
+    let scrolling = scrolls(&mock, &device, key(1), 4, BTreeSet::new());
     assert!(
         scrolling.len() >= 4,
         "{} images after reconnecting",
