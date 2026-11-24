@@ -1050,6 +1050,7 @@
     "remove": "Delete",
     "stage": "Labels on {{control}}: click to select, drag or use the arrow keys to move",
     "text": "Text",
+    "needsText": "A label needs text: it keeps its last text until you type one.",
     "position": "Position",
     "mode": {
       "preset": "Preset",
@@ -1107,9 +1108,11 @@
       "title": "Move the key's look?",
       "description_one": "The removed binding's look has 1 label, and {{trigger}}, which the key shows now, has a look of its own.",
       "description_other": "The removed binding's look has {{count}} labels, and {{trigger}}, which the key shows now, has a look of its own.",
-      "keep": "Keep its look",
+      "keep_one": "Keep its look and delete 1 label",
+      "keep_other": "Keep its look and delete {{count}} labels",
       "replace": "Replace it",
-      "merge": "Merge the labels"
+      "merge": "Merge the labels",
+      "mergeTooMany": "Merging would give the key {{total}} labels; a key has at most {{max}}."
     },
     "preset": {
       "top": "Top",

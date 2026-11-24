@@ -19,6 +19,7 @@ import {
   newLabelId,
 } from "@/lib/key-labels"
 
+import { sameTrigger } from "@/lib/layout-model"
 import type { ControlBinding, ControlId, DeviceLayout, KeyAppearance } from "@/lib/types"
 
 import { contrastRatio, shownBinding } from "./appearance"
@@ -128,6 +129,20 @@ export function updateLabel(
   })
 }
 
+/**
+ * The change that sets a label's size (`null`: the default), lowering its
+ * smallest size with it: the backend refuses a smallest size above the size.
+ */
+export function resized(label: KeyLabel, size: number | null) {
+  const points = size ?? LABEL_DEFAULTS.size
+  return label.minSize != null && label.minSize > points ? { size, minSize: points } : { size }
+}
+
+/** Whether a label's text may be kept: the backend drops a label without text. */
+export function hasText(text: string): boolean {
+  return text.trim() !== ""
+}
+
 /** Moves label `id` one step towards the front (drawn later) or the back. */
 export function moveLabel(
   labels: readonly KeyLabel[],
@@ -228,6 +243,54 @@ export function placedAt(position: LabelPosition) {
   return { position, offsetX: null, offsetY: null }
 }
 
+const offset = (value: number) => {
+  const rounded = Math.min(LABEL_LIMITS.offset, Math.max(-LABEL_LIMITS.offset, Math.round(value)))
+  return rounded === 0 ? null : rounded
+}
+
+/**
+ * The change to mode `mode` that keeps a label where the renderer drew it
+ * (`box`). An edge label has one inset for its edges: what the box is
+ * further from the other edge of a corner, or off the middle of an edge,
+ * becomes its offsets, so it does not jump.
+ */
+export function placedFromBox(box: LabelBox, mode: LabelPosition["mode"]) {
+  const position = positionFromBox(box, mode)
+  if (position.mode !== "anchored") return placedAt(position)
+  const inset = position.inset ?? 0
+  const spot = position.to
+  const left = box.x
+  const right = box.canvas.width - box.x - box.width
+  const top = box.y
+  const bottom = box.canvas.height - box.y - box.height
+  const across =
+    spot.endsWith("Left") || spot === "left"
+      ? left - inset
+      : spot.endsWith("Right") || spot === "right"
+        ? inset - right
+        : box.x + box.width / 2 - box.canvas.width / 2
+  const down = spot.startsWith("top")
+    ? top - inset
+    : spot.startsWith("bottom")
+      ? inset - bottom
+      : box.y + box.height / 2 - box.canvas.height / 2
+  return { position, offsetX: offset(across), offsetY: offset(down) }
+}
+
+/**
+ * The box the renderer is expected to draw a label in once it is at
+ * `position`, for moves made before its next boxes arrive: an absolute
+ * position puts the box's centre there; other positions keep `box`.
+ */
+export function expectedBox(box: LabelBox, position: LabelPosition): LabelBox {
+  if (position.mode !== "absolute") return box
+  return {
+    ...box,
+    x: (position.x / LABEL_LIMITS.perMille) * box.canvas.width - box.width / 2,
+    y: (position.y / LABEL_LIMITS.perMille) * box.canvas.height - box.height / 2,
+  }
+}
+
 /**
  * A label whose box centre is moved by `dx`, `dy` units, as an absolute
  * position (a nudge or a drag; free from then on), snapped to the centre
@@ -300,11 +363,31 @@ export function labelReports(
 /** How a look moves onto a binding that already has one of its own. */
 export type LookMove = "keep" | "replace" | "merge"
 
+/** The labels of `to` with `from`'s merged in by id (`from`'s win, in front). */
+function mergedLabels(
+  from: KeyAppearance | null | undefined,
+  to: KeyAppearance | null | undefined,
+): KeyLabel[] {
+  const incoming = labelsOf(from)
+  const ids = new Set(incoming.map((l) => l.id))
+  return [...labelsOf(to).filter((l) => !ids.has(l.id)), ...incoming]
+}
+
+/** How many labels merging `from`'s into `to`'s gives. */
+export function mergedLabelCount(
+  from: KeyAppearance | null | undefined,
+  to: KeyAppearance | null | undefined,
+): number {
+  return mergedLabels(from, to).length
+}
+
 /**
  * The look `to` gets when the key's shown binding changes from `from`:
  * nothing to move keeps `to`; `to` without a look takes `from`'s whole;
  * otherwise `move` decides: keep `to`'s, replace it with `from`'s, or merge
  * the labels by id (`from`'s win) and keep `to`'s title, icon and colours.
+ * A merge never cuts labels: it is offered only within the limit
+ * (`LookTransfer.mergeable`).
  */
 export function movedLook(
   from: KeyAppearance | null | undefined,
@@ -315,12 +398,7 @@ export function movedLook(
   if (!to) return from
   if (move === "keep") return to
   if (move === "replace") return from
-  const incoming = labelsOf(from)
-  const ids = new Set(incoming.map((l) => l.id))
-  const labels = [...labelsOf(to).filter((l) => !ids.has(l.id)), ...incoming].slice(
-    -LABEL_LIMITS.labels,
-  )
-  return withLabels(labels)(to)
+  return withLabels(mergedLabels(from, to))(to)
 }
 
 /** Whether moving `from`'s look onto `to` needs the user's choice. */
@@ -337,6 +415,10 @@ export interface LookTransfer {
   conflict: boolean
   /** How many labels move. */
   labels: number
+  /** How many labels a merge gives the key. */
+  merged: number
+  /** Whether that stays within the most a key may have. */
+  mergeable: boolean
 }
 
 /** The look transfer a removal causes, `null` when the shown binding stays or nothing moves. */
@@ -348,12 +430,15 @@ export function lookTransfer(
 ): LookTransfer | null {
   const from = shownBinding(before, pageId, control)
   const to = shownBinding(after, pageId, control)
-  if (!from || !to || from.trigger.type === to.trigger.type || !from.appearance) return null
+  if (!from || !to || sameTrigger(from.trigger, to.trigger) || !from.appearance) return null
+  const merged = mergedLabelCount(from.appearance, to.appearance)
   return {
     from,
     to,
     conflict: lookConflict(from, to),
     labels: labelsOf(from.appearance).length,
+    merged,
+    mergeable: merged <= LABEL_LIMITS.labels,
   }
 }
 
@@ -372,7 +457,7 @@ export function keepLookOnRemoval(
 ): DeviceLayout {
   const was = shownBinding(before, pageId, control)
   const now = shownBinding(after, pageId, control)
-  if (!was || !now || now.trigger.type === was.trigger.type) return after
+  if (!was || !now || sameTrigger(now.trigger, was.trigger)) return after
   const appearance = movedLook(was.appearance, now.appearance, move)
   const label = now.label ?? was.label
   if (appearance === (now.appearance ?? null) && label === now.label) return after
@@ -414,7 +499,12 @@ export function defaultPlateOpacity(
   return box?.overlapsTitle ? COVER_PLATE_OPACITY : "auto"
 }
 
-/** Nudges the selected label with the arrow keys; `true` when the key was used. */
+/**
+ * Nudges the selected label with the arrow keys; `true` when the key was
+ * used. `boxes` are where the labels are now: the renderer's, or the
+ * expected ones of moves it has not drawn yet (`expectedBox`), so quick
+ * nudges add up.
+ */
 export function nudge(
   event: KeyboardEvent,
   boxes: LabelBox[],
