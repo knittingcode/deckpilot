@@ -26,7 +26,15 @@ released either. 0.6.0 is the first version intended for publication.
   repository also points the `repository` role at it. Removing a
   repository never removes its folder binding, and a missing folder is
   shown, never removed. An export carries the repositories (format 5)
-  only when a project has more than that one. The editor for them follows.
+  only when a project has more than that one.
+- Projects: the project editor has a Repositories section. Add a
+  repository by choosing its folder in the system's folder dialog (its key
+  and name are proposed from the folder name), then rename, describe,
+  reorder, choose another folder, mark the default or remove it. A
+  removal asks first and lists what else uses the folder. Keys are checked
+  as they are typed, a folder that is gone is marked "Folder not found",
+  and folders are set on this computer when the project is saved. The
+  resource role pairs move into a collapsed advanced part.
 - Marketplace: a sidebar with search, Discover, Installed, Updates,
   Categories and collections; plugin pages with screenshots, highlights,
   what's new, version history, publisher and trust; install, update and
