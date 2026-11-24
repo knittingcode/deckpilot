@@ -43,6 +43,7 @@ import {
   ownerLabel,
 } from "@/lib/variable-catalog"
 import { AVAILABILITY_LABEL, formatReference } from "@/lib/variables"
+import { compareText } from "@/i18n/format"
 
 /** Most references one preview request may ask about (agent limit). */
 const MAX_PREVIEWS = 200
@@ -99,7 +100,7 @@ export function VariablesTable({
   const owners = useMemo(() => {
     const seen = new Map<OwnerFilter, string>()
     for (const row of rows) seen.set(ownerKey(row.owner), ownerLabel(row.owner, moduleNames))
-    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+    return [...seen.entries()].sort((a, b) => compareText(a[1], b[1]))
   }, [rows, moduleNames])
   const scopes = useMemo(() => [...new Set(rows.flatMap((row) => row.scopes))].sort(), [rows])
 

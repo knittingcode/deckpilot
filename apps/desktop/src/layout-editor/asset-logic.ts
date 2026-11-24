@@ -8,6 +8,7 @@ import type { TranslationKey } from "@/i18n"
 import type { IconInfo, VisualLibrary } from "@/lib/types"
 
 import { assetPlugin, backgroundAsset, isBuiltinAsset } from "./appearance"
+import { matchesWords } from "@/lib/search"
 
 /** A checkerboard: how transparency looks. */
 export const CHECKERBOARD: CSSProperties = {
@@ -60,10 +61,9 @@ export function iconTitle(name: string): string {
   return name.replace(/-/g, " ")
 }
 
+/** Whether the texts hold every word of `query` (lib/search.ts). */
 export function matches(query: string, ...texts: string[]): boolean {
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  const haystack = texts.join(" ").toLowerCase()
-  return words.every((word) => haystack.includes(word))
+  return matchesWords(query, ...texts)
 }
 
 /** Whether an icon reference is drawn now (a plugin's needs its plugin enabled). */

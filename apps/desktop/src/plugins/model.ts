@@ -1,7 +1,7 @@
 // Pure helpers of the marketplace screens.
 
 import { type TranslationKey, currentLanguage, i18n } from "@/i18n"
-import { formatDate as formatLocalDate, formatDateTime } from "@/i18n/format"
+import { compareText, formatDate as formatLocalDate, formatDateTime } from "@/i18n/format"
 
 import { toPluginError, type PluginClient } from "./api"
 import type {
@@ -16,6 +16,7 @@ import type {
   PluginStorageUsage,
   RuntimeAvailability,
 } from "./types"
+import { matchesWords } from "@/lib/search"
 
 /** Whether and how plugins can be used, from the runtime status. */
 export function availabilityOf(status: PluginRuntimeStatus): RuntimeAvailability {
@@ -178,7 +179,7 @@ export function classifyPlugins(
     core: modules
       .filter((m) => !m.id.includes("."))
       .map((m) => ({ id: m.id, name: m.name }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+      .sort((a, b) => compareText(a.name, b.name)),
     bundled: snapshot.installed.filter(isBundledPlugin),
     installed: snapshot.installed.filter((p) => !isBundledPlugin(p)),
     available: snapshot.available.filter((p) => !installedIds.has(p.id) && !p.installed),
@@ -296,12 +297,14 @@ export function stateLabel(state: PluginState): string {
 
 /** Entries whose name, id, summary or publisher contain every word. */
 export function matchesQuery(item: AvailablePlugin, query: string): boolean {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  const text = [item.name, item.id, item.summary, item.publisher, item.publisherInfo?.displayName]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
-  return words.every((word) => text.includes(word))
+  return matchesWords(
+    query,
+    item.name,
+    item.id,
+    item.summary,
+    item.publisher,
+    item.publisherInfo?.displayName,
+  )
 }
 
 /** Entries in `category`; `null` is every category. */
@@ -338,7 +341,7 @@ export function platformsText(platforms: string[] | undefined): string {
 
 /** Every category the registry's plugins name, sorted. */
 export function categoriesOf(plugins: AvailablePlugin[]): string[] {
-  return [...new Set(plugins.flatMap((p) => p.categories ?? []))].sort((a, b) => a.localeCompare(b))
+  return [...new Set(plugins.flatMap((p) => p.categories ?? []))].sort((a, b) => compareText(a, b))
 }
 
 /** A category id (`developer-tools`) in words (`Developer tools`). */

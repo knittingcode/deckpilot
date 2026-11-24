@@ -90,6 +90,14 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
+- Lists and searches follow one rule. Lists sorted by name (Marketplace
+  collections, categories and the catalog, module settings pages,
+  workflows in the Device Editor's library, variable owners) use the
+  window's language with numbers by value, as the Installed list and
+  Settings tables already did. Every search (the Device Editor's library,
+  the action type chooser, the title variable picker, choice dialogs, the
+  Marketplace, Settings) finds an entry that holds every word typed, in
+  any order; some searches needed the words in the order of the name.
 - Plugin permissions are granted and revoked in Settings › Permissions;
   a plugin's page in the Marketplace shows them read-only, with a link
   there. Plugin diagnostics and module migrations are in Settings › Logs &

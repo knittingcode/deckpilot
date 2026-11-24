@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest"
 
+import { i18n } from "@/i18n"
+
 import {
   collator,
+  compareText,
   formatDate,
   formatDateTime,
   formatFileSize,
@@ -52,5 +55,26 @@ describe("formatting per locale", () => {
     const words = ["zebra", "łódź", "lato", "ćma", "cel"]
     expect([...words].sort(collator("pl").compare)).toEqual(["cel", "ćma", "lato", "łódź", "zebra"])
     expect(formatter("pl").compare("a", "ą")).toBeLessThan(0)
+  })
+})
+
+describe("the one order of lists sorted by name", () => {
+  it("follows the window's language, numbers by value", async () => {
+    const names = ["Zoom", "Ćwiczenia", "cel", "Plugin 10", "Plugin 2", "ąb", "ab"]
+    await i18n.changeLanguage("pl")
+    try {
+      expect([...names].sort(compareText)).toEqual([
+        "ab",
+        "ąb",
+        "cel",
+        "Ćwiczenia",
+        "Plugin 2",
+        "Plugin 10",
+        "Zoom",
+      ])
+    } finally {
+      await i18n.changeLanguage("en")
+    }
+    expect([...names].sort(compareText).slice(4, 6)).toEqual(["Plugin 2", "Plugin 10"])
   })
 })

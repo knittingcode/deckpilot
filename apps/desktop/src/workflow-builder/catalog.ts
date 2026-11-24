@@ -12,6 +12,7 @@ import type { ActionInstance, ActionType, GraphNodeKind, ModuleInfo } from "@/li
 
 import { DEFAULT_POLICY, type NodeType } from "./graph"
 import { supportsContext } from "@/lib/action-context"
+import { matchesWords, searchWords } from "@/lib/search"
 
 export interface CatalogEntry {
   key: string
@@ -171,29 +172,24 @@ export function moduleGroups(modules: ModuleInfo[], actions: ActionInstance[]): 
     })
 }
 
-function matches(text: string, query: string) {
-  return text.toLowerCase().includes(query)
-}
-
-/** Groups with the entries and types that match `query`. */
+/**
+ * Groups with the entries and types that hold every word of `query`
+ * (lib/search.ts), counting their group's title: "docker status" finds
+ * Status in the Docker group.
+ */
 export function searchCatalog(groups: CatalogGroup[], query: string): CatalogGroup[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return groups
+  if (searchWords(query).length === 0) return groups
   return groups
     .map((group) => {
-      const groupMatches = matches(group.title, q)
+      const matches = (...texts: string[]) => matchesWords(query, group.title, ...texts)
       return {
         ...group,
-        entries: group.entries.filter(
-          (e) => groupMatches || matches(e.title, q) || matches(e.description, q),
-        ),
-        types: group.types.filter(
-          (t) => groupMatches || matches(t.name, q) || matches(t.description, q),
-        ),
+        entries: group.entries.filter((e) => matches(e.title, e.description)),
+        types: group.types.filter((t) => matches(t.name, t.description)),
         ...(group.unavailableTypes
           ? {
-              unavailableTypes: group.unavailableTypes.filter(
-                ({ type: t }) => groupMatches || matches(t.name, q) || matches(t.description, q),
+              unavailableTypes: group.unavailableTypes.filter(({ type: t }) =>
+                matches(t.name, t.description),
               ),
             }
           : {}),
