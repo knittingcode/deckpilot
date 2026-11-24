@@ -51,9 +51,9 @@ Other findings:
   (`Trigger::DoubleClick`, `Trigger::LongPress`) of an action or workflow
   on the same control (`crates/deckpilot-core/src/layout.rs`,
   `components/gesture-editor/model.ts`: `setGesture`,
-  `convertToGestures`). Gesture Presets (`GesturePreset`, plugin API 1.10)
-  are unreleased and live only on the owner's `feat/gesture-presets`
-  branch; a preset carries **fixed** parameters, so it cannot express
+  `convertToGestures`). Gesture Presets (`GesturePreset`, plugin API 1.10,
+  [gestures-and-work-session.md](gestures-and-work-session.md) §3.4) are
+  unreleased; a preset carries **fixed** parameters, so it cannot express
   "close the application this key opens" anyway.
 - **Contexts (#407).** `system.open-*` are declared key, gesture, sequence
   and workflow; the contract test `every_builtin_action_declares_its_contexts`

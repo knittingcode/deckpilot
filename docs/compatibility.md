@@ -210,6 +210,19 @@ older agent refuses as unknown; a `resource.resolve` role is the user's
 role name (up to 1,024 characters, not blank), no longer a parameter key.
 No IPC protocol or document change.
 
+Plugin API 1.10 (unreleased,
+[gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
+additive. `contributes.gesturePresets` validates only with `^1.10`; a
+`^1.9` manifest without it validates exactly as before, and an agent of
+1.9 (0.15.0 and older) reports a `^1.10` version `incompatible`. Presets
+are data only: no capability operation, ABI or permission is added, and
+nothing of a preset is stored, so no document, schema or migration
+changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
+are optional fields, left out when empty, that an older app ignores; an
+older agent sends neither, and the app then lists no presets. No IPC
+protocol change. The SDK's `LATEST_API_LEVEL` is 1.10
+(`GESTURE_PRESETS_API_LEVEL`; nothing for the guest).
+
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
 `host_settings` table, after the usual encrypted backup in

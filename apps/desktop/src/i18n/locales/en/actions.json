@@ -412,5 +412,16 @@
       "interrupted": "The run was cancelled or ran out of time while the application had time to quit. Nothing was forced; it may still be running.",
       "elevated": "DeckPilot runs as root or as an administrator, so it does not close applications. Run DeckPilot as yourself."
     }
+  },
+  "gesturePresets": {
+    "deck_brightness-control": {
+      "name": "Brightness Control",
+      "description": "Single press: dimmer by 10%. Double click: full brightness. Long press: half brightness.",
+      "gestures": {
+        "click": "Decrease brightness by 10%",
+        "doubleClick": "Set brightness to 100%",
+        "longPress": "Set brightness to 50%"
+      }
+    }
   }
 }

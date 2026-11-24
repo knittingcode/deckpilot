@@ -1,4 +1,4 @@
-import { ArrowLeft, Folder, FolderPlus, ListOrdered, ListPlus } from "lucide-react"
+import { ArrowLeft, Folder, FolderPlus, Layers, ListOrdered, ListPlus } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { ActionIcon } from "@/components/action-icon"
@@ -41,6 +41,15 @@ export function dragLook(
         icon: <ActionIcon name={source.preset?.icon ?? type?.node?.icon} className={ICON} />,
       }
     }
+    case "gesturePreset":
+      return {
+        label: source.name,
+        icon: source.icon ? (
+          <ActionIcon name={source.icon} className={ICON} />
+        ) : (
+          <Layers className={ICON} aria-hidden />
+        ),
+      }
     case "newFolder":
       return {
         label: i18n.t("editor:library.newFolder"),

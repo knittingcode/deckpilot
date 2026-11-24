@@ -702,6 +702,69 @@ pub struct Contributes {
     /// first-party bundled plugins with `hostViews` only, X8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard_cards: Option<Vec<DashboardCard>>,
+    /// Gesture presets (plugin API 1.10): several of the plugin's own
+    /// actions on the gestures of one control at once. Data only: a preset
+    /// grants nothing, and each action keeps its own permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gesture_presets: Option<Vec<GesturePreset>>,
+}
+
+/// The plugin API level that introduced `contributes.gesturePresets`.
+pub const GESTURE_PRESETS_API: ApiLevel = ApiLevel::new(1, 10);
+
+/// Most gesture presets a manifest declares.
+pub const MAX_GESTURE_PRESETS: usize = 16;
+
+/// Most gestures one preset assigns.
+pub const MAX_PRESET_GESTURES: usize = 6;
+
+/// The gestures a preset may assign (`deckpilot_core::PresetGesture`).
+pub const PRESET_GESTURES: [&str; 6] = [
+    "click",
+    "doubleClick",
+    "longPress",
+    "release",
+    "rotateClockwise",
+    "rotateCounterClockwise",
+];
+
+/// `contributes.gesturePresets[]` (plugin API 1.10): one Action Library
+/// entry that assigns several gestures of a control, each to one of the
+/// plugin's own actions with predefined parameters. Registered as
+/// `<plugin id>.<preset id>`. Applying it creates ordinary actions and key
+/// bindings; nothing of the preset runs or is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GesturePreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub category: String,
+    /// Whether a control that cannot produce every gesture still takes the
+    /// others (default `false`: such a control refuses the preset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_partial: Option<bool>,
+    pub gestures: Vec<PresetAssignment>,
+}
+
+/// One gesture of a [`GesturePreset`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresetAssignment {
+    /// One of [`PRESET_GESTURES`].
+    pub gesture: String,
+    /// The id of one of the plugin's own actions (`contributes.actions[].id`).
+    pub action: String,
+    /// Over the action's defaults, checked against its parameters.
+    #[serde(
+        default,
+        deserialize_with = "crate::unique_map::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parameters: Option<BTreeMap<String, ParameterValue>>,
+    /// What the gesture does, in words: the name of the action it creates.
+    pub label: String,
 }
 
 /// A status-bar item the host draws (X8). A closed list: the plugin names
@@ -754,6 +817,11 @@ impl Contributes {
 
     pub fn actions(&self) -> &[Action] {
         self.actions.as_deref().unwrap_or_default()
+    }
+
+    /// `gesturePresets`, empty when absent.
+    pub fn gesture_presets(&self) -> &[GesturePreset] {
+        self.gesture_presets.as_deref().unwrap_or_default()
     }
 
     pub fn variables(&self) -> &[Variable] {

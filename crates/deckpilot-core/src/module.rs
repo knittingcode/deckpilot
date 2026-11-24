@@ -386,6 +386,14 @@ pub trait FeatureModule: Send + Sync {
     fn unavailable_reason(&self) -> Option<String> {
         None
     }
+
+    /// The gesture presets the module declares
+    /// ([`GesturePreset`](crate::gesture_preset::GesturePreset)): several of
+    /// its own action types on the gestures of one control at once. Checked
+    /// when the module is registered ([`ModuleError::GesturePreset`]).
+    fn gesture_presets(&self) -> Vec<crate::gesture_preset::GesturePreset> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -419,6 +427,8 @@ pub enum ModuleError {
     WindowNamespace { module: ModuleId, window: String },
     #[error(transparent)]
     Variables(#[from] VariableRegistryError),
+    #[error("{}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    GesturePreset(Vec<crate::gesture_preset::PresetIssue>),
     #[error("invalid module configuration: {}", .0.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     InvalidConfig(Vec<ParameterError>),
     #[error(
@@ -468,6 +478,9 @@ pub struct ModuleInfo {
     pub supported: bool,
     pub config_values: ActionParameters,
     pub action_types: Vec<ActionType>,
+    /// The module's gesture presets, checked against its action types.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gesture_presets: Vec<crate::gesture_preset::GesturePreset>,
 }
 
 struct Entry {
@@ -476,6 +489,8 @@ struct Entry {
     config: ActionParameters,
     /// Definitions of the module's action types, known even while disabled.
     action_types: Vec<ActionType>,
+    /// Its gesture presets, checked at registration.
+    gesture_presets: Vec<crate::gesture_preset::GesturePreset>,
 }
 
 /// Explicitly registered feature modules and their enabled state.
@@ -614,6 +629,22 @@ impl ModuleRegistry {
                 return Err(ModuleError::DuplicateActionType(action_type.id.clone()));
             }
         }
+        let gesture_presets = module.gesture_presets();
+        let mut preset_issues = Vec::new();
+        let mut preset_ids = BTreeSet::new();
+        for preset in &gesture_presets {
+            if !preset_ids.insert(preset.id.clone()) {
+                preset_issues.push(crate::gesture_preset::PresetIssue::Duplicate(
+                    preset.id.to_string(),
+                ));
+            }
+            if let Err(issues) = preset.check(&manifest.id, &action_types) {
+                preset_issues.extend(issues);
+            }
+        }
+        if !preset_issues.is_empty() {
+            return Err(ModuleError::GesturePreset(preset_issues));
+        }
         // All or nothing: a refused declaration registers nothing.
         let mut variables = self.variables.clone();
         variables.register_module(&manifest.id, &manifest.variables, module.variable_source())?;
@@ -626,6 +657,7 @@ impl ModuleRegistry {
                 enabled,
                 config,
                 action_types,
+                gesture_presets,
             },
         );
         self.sync_variables();
@@ -816,9 +848,21 @@ impl ModuleRegistry {
                     enabled: entry.enabled,
                     config_values: entry.config.clone(),
                     action_types: entry.action_types.clone(),
+                    gesture_presets: entry.gesture_presets.clone(),
                 }
             })
             .collect()
+    }
+
+    /// The gesture preset `id` and whether its module is enabled, for
+    /// diagnostics: applied presets are not stored, only their bindings.
+    pub fn gesture_preset(
+        &self,
+        id: &crate::gesture_preset::GesturePresetId,
+    ) -> Option<(&crate::gesture_preset::GesturePreset, bool)> {
+        let entry = self.modules.get(&id.owner()?)?;
+        let preset = entry.gesture_presets.iter().find(|p| &p.id == id)?;
+        Some((preset, entry.enabled))
     }
 
     /// Declared schema migrations of every registered module, enabled or
