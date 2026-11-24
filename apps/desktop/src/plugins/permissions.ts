@@ -208,6 +208,22 @@ function describe(key: string, facts: Facts): Omit<Grant, "key" | "justification
             : i18n.t("permissions:grant.device.titleState"),
         detail: i18n.t("permissions:grant.device.detail"),
       }
+    case "tools": {
+      // `tools:<executable>` (its declared read-only commands) or
+      // `tools:<executable>:modify` (also the commands that change things).
+      const [tool = target, access] = target.split(":")
+      return access === "modify"
+        ? {
+            tier: "high",
+            title: i18n.t("permissions:grant.tools.titleModify", { tool }),
+            detail: i18n.t("permissions:grant.tools.detailModify", { tool }),
+          }
+        : {
+            tier: "medium",
+            title: i18n.t("permissions:grant.tools.title", { tool }),
+            detail: i18n.t("permissions:grant.tools.detail", { tool }),
+          }
+    }
     default:
       return { tier: "medium", title: key, detail: "" }
   }
@@ -317,11 +333,28 @@ export function optionalOnByDefault(grant: Grant): boolean {
   return grant.optionalFor !== undefined && grant.tier !== "high"
 }
 
-export function grantsByTier<T extends { tier: RiskTier }>(grants: T[]) {
+export function grantsByTier<T extends { tier: RiskTier; key: string }>(grants: T[]) {
   return tiers()
-    .map((tier) => ({
-      ...tier,
-      grants: grants.filter((g) => g.tier === tier.tier),
-    }))
+    .map((tier) => {
+      const own = grants.filter((g) => g.tier === tier.tier)
+      // What the tier means for these grants, by their kind (the key's
+      // first part): running tools has its own words; the tier's general
+      // description covers the other kinds.
+      const tools = own.some((g) => kindOf(g.key) === "tools")
+      const others = own.some((g) => kindOf(g.key) !== "tools")
+      const description = [
+        others ? tier.description : null,
+        tools ? i18n.t("permissions:tier.tools") : null,
+      ]
+        .filter(Boolean)
+        .join(" ")
+      return { ...tier, description, grants: own }
+    })
     .filter((group) => group.grants.length > 0)
+}
+
+/** The kind of a grant key: `tools` of `tools:docker:modify`. */
+export function kindOf(key: string): string {
+  const colon = key.indexOf(":")
+  return colon < 0 ? key : key.slice(0, colon)
 }

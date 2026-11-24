@@ -5,6 +5,8 @@ import { act, cleanup, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { DialogProvider } from "@/components/dialogs"
+
 import { ActionEditor } from "./action-editor"
 import type { ActionInstance, ActionType, ModuleInfo, Project } from "@/lib/types"
 import { i18n } from "@/i18n"
@@ -138,13 +140,24 @@ describe("ActionEditor", () => {
   })
   afterEach(cleanup)
 
-  it("shows validation errors instead of saving incomplete actions", async () => {
+  it("needs a name, and saves a draft without its required settings", async () => {
     const user = userEvent.setup()
     renderEditor(null)
+    // A required setting not filled in: marked, said next to it.
+    expect(screen.getByText("Needs configuration")).toBeInTheDocument()
+    const message = screen.getByRole("textbox", { name: /Message/ })
+    expect(message).toHaveAttribute("aria-invalid", "true")
+    expect(message).toHaveAccessibleDescription("Required: fill this in before the action can run.")
     await user.click(screen.getByRole("button", { name: /create action/i }))
     expect(screen.getByText("Enter a name.")).toBeInTheDocument()
-    expect(screen.getByText("Message is required.")).toBeInTheDocument()
     expect(createAction).not.toHaveBeenCalled()
+    // With a name: saved as a draft, the setting left out (never blank).
+    await user.type(screen.getByLabelText("Name"), "Say hello")
+    await user.click(screen.getByRole("button", { name: /create action/i }))
+    expect(createAction).toHaveBeenCalledExactlyOnceWith(
+      "profile",
+      expect.objectContaining({ name: "Say hello", actionType: logType.id, parameters: {} }),
+    )
   })
 
   it("creates an action from the schema-generated form", async () => {
@@ -342,8 +355,13 @@ describe("ActionEditor in Polish", () => {
     expect(screen.getByLabelText("Etykieta klawisza")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Utwórz akcję" }))
     expect(screen.getByText("Wprowadź nazwę.")).toBeInTheDocument()
-    // "Message" comes from the module and is not translated.
-    expect(screen.getByText("Pole „Message” jest wymagane.")).toBeInTheDocument()
+    // "Message" comes from the module and is not translated; what it needs
+    // is said in Polish.
+    expect(screen.getByText("Message")).toBeInTheDocument()
+    expect(screen.getByText("Wymaga konfiguracji")).toBeInTheDocument()
+    expect(
+      screen.getByText("Wymagane: uzupełnij, zanim akcja będzie mogła działać."),
+    ).toBeInTheDocument()
     expect(createAction).not.toHaveBeenCalled()
   })
 
@@ -364,5 +382,122 @@ describe("ActionEditor in Polish", () => {
     expect(within(dialog).getByText(new RegExp(`^${used}`))).toBeInTheDocument()
     expect(within(dialog).getByText(new RegExp(undecided))).toBeInTheDocument()
     expect(within(dialog).getByRole("button", { name: "Zastosuj i usuń" })).toBeDisabled()
+  })
+})
+
+describe("a draft that is run", () => {
+  it("says in words that a draft cannot run yet, with what it lacks", async () => {
+    const user = userEvent.setup()
+    // The agent refuses before any handler runs (`configuration-incomplete`).
+    api.runAction.mockResolvedValue({
+      status: "failed",
+      message: "missing required parameter `message`",
+      code: "configuration-incomplete",
+      data: { missing: "message" },
+    })
+    render(
+      <ActionEditor
+        profileId="profile"
+        modules={[module("general", "General", [logType])]}
+        projects={projects}
+        action={{
+          id: "draft",
+          name: "Say hello",
+          actionType: logType.id,
+          parameters: {},
+          description: "",
+          icon: null,
+          label: null,
+        }}
+        references={[]}
+        canRun
+        onSaved={vi.fn()}
+        onDeleted={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: "Run" }))
+    const status = await screen.findByRole("status")
+    expect(status).toHaveTextContent(
+      "Say hello needs configuration before it can run. Missing: Message",
+    )
+    // Neither the agent's words nor the keys as output.
+    expect(status).not.toHaveTextContent("missing required parameter")
+    expect(status).not.toHaveTextContent(/^missing/)
+  })
+})
+
+describe("an edit that leaves a shared action without a required setting", () => {
+  afterEach(cleanup)
+  const complete: ActionInstance = {
+    id: "a-log",
+    name: "Write log",
+    actionType: logType.id,
+    parameters: { message: { type: "text", value: "hello" } },
+  }
+
+  function renderShared(usages: number) {
+    render(
+      <DialogProvider>
+        <ActionEditor
+          profileId="profile"
+          modules={[module("general", "General", [logType])]}
+          projects={projects}
+          action={complete}
+          references={Array.from({ length: usages }, (_, index) => ({
+            site: { type: "step" as const, workflow: "w", index },
+            ownerName: "Start Work",
+          }))}
+          canRun={false}
+          onSaved={vi.fn()}
+          onDeleted={vi.fn()}
+        />
+      </DialogProvider>,
+    )
+  }
+
+  beforeEach(() => {
+    cleanup()
+    resetApi()
+    updateAction.mockImplementation((_profile: string, saved: ActionInstance) =>
+      Promise.resolve(saved),
+    )
+  })
+
+  it("asks first, saying how many places stop running, and saves only when confirmed", async () => {
+    const user = userEvent.setup()
+    renderShared(3)
+    await user.clear(screen.getByLabelText(/^Message/))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    const ask = await screen.findByRole("alertdialog", {
+      name: "Save Write log without its required settings?",
+    })
+    expect(ask).toHaveTextContent(
+      "This action is used in 3 places. Without its required settings it stops running in all of them",
+    )
+    expect(updateAction).not.toHaveBeenCalled()
+    await user.click(within(ask).getByRole("button", { name: "Cancel" }))
+    expect(updateAction).not.toHaveBeenCalled()
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Save anyway" }),
+    )
+    expect(updateAction).toHaveBeenCalledTimes(1)
+    expect(updateAction.mock.calls[0]?.[1]).toMatchObject({ parameters: {} })
+  })
+
+  it("does not ask for an action used in one place, or when the edit keeps it complete", async () => {
+    const user = userEvent.setup()
+    renderShared(1)
+    await user.clear(screen.getByLabelText(/^Message/))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(updateAction).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+    cleanup()
+    updateAction.mockClear()
+    renderShared(3)
+    await user.type(screen.getByLabelText(/^Message/), " there")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(updateAction).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
   })
 })

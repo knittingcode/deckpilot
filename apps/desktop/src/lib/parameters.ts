@@ -42,9 +42,11 @@ function isEmpty(value: ParameterValue): boolean {
 }
 
 /**
- * Builds the parameter map sent to the backend. Empty optional values are
- * omitted so that backend defaults apply; empty required values are kept so
- * that the backend reports them as missing.
+ * Builds the parameter map sent to the backend. Empty values are left out:
+ * an optional one so that its default applies, a required one so that the
+ * action is saved as a draft that needs configuration
+ * (`lib/action-completeness.ts`). A blank project or choice would be
+ * refused as invalid, an absent one is simply missing.
  */
 export function buildParameters(
   specs: ParameterSpec[],
@@ -53,7 +55,7 @@ export function buildParameters(
   const result: ActionParameters = {}
   for (const spec of specs) {
     const value = values[spec.key]
-    if (!value || (!spec.required && isEmpty(value))) continue
+    if (!value || isEmpty(value)) continue
     result[spec.key] = value
   }
   return result

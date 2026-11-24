@@ -1,3 +1,4 @@
+import { runResultText } from "@/components/run-result-text"
 import { CircleCheck, CircleSlash, CircleX, ListChecks } from "lucide-react"
 
 import { ModalShell } from "@/components/modal-shell"
@@ -126,7 +127,9 @@ function Step({ step, name }: { step: StepReport; name: string }) {
         <Badge variant="outline">{t(status.label)}</Badge>
       </div>
       {step.result.message && (
-        <p className="break-words text-muted-foreground">{step.result.message}</p>
+        <p className="break-words text-muted-foreground">
+          {runResultText(step.result, name.replace(/^\d+\. /, ""))}
+        </p>
       )}
       {details.length > 0 && (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 font-mono text-xs">

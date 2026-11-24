@@ -1,3 +1,4 @@
+import { isIncompleteIssue } from "@/lib/action-completeness"
 /**
  * Pure editing operations on a workflow graph. The rules mirror the
  * engine's validation (crates/deckpilot-core/src/graph/validate.rs) so the
@@ -8,6 +9,7 @@ import { type TranslationKey, i18n } from "@/i18n"
 import type {
   ErrorPolicy,
   GraphEdge,
+  GraphIssue,
   GraphNode,
   GraphNodeKind,
   GraphPort,
@@ -409,4 +411,13 @@ export function autoLayout(graph: WorkflowGraph): WorkflowGraph {
 /** The order of nodes in the layout, for tests and crossing counts. */
 export function layoutOrder(graph: WorkflowGraph): Map<string, number> {
   return layerOrder(graph)
+}
+
+/**
+ * The issues that keep a workflow from being saved: its errors, except a
+ * node that only needs configuration (required settings not filled in yet;
+ * saved as a draft, it does not run until they are).
+ */
+export function blockingIssues(issues: GraphIssue[]): GraphIssue[] {
+  return issues.filter((issue) => issue.severity === "error" && !isIncompleteIssue(issue))
 }

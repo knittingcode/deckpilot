@@ -290,7 +290,12 @@ describe("the Page Navigator (the dock the page counter unfolds)", () => {
       })
       expect(outline).toHaveAttribute("aria-hidden")
       expect(outline).toHaveAttribute("height", "170")
-      expect(outline.querySelector("path")).toHaveClass("fill-card", "stroke-border")
+      // A frosted, translucent surface: the glass is clipped to the same silhouette.
+      expect(outline.querySelector("path")).toHaveClass("page-dock-surface")
+      const glass = document.querySelector<HTMLElement>("[data-slot=page-dock-glass]")
+      expect(glass).toHaveClass("page-dock-glass", "pointer-events-none")
+      expect(glass).toHaveAttribute("aria-hidden")
+      expect(glass?.style.height).toBe("170px")
       // The toolbar keeps its size and place; the outline is its border now.
       expect(bar()).toHaveClass("rounded-lg", "border", "p-0.5", "border-transparent")
       expect(bar()).not.toHaveClass("w-full")

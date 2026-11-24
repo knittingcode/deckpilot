@@ -1,6 +1,6 @@
 import { Download, Upload } from "lucide-react"
 
-import { SettingsGroup, SettingsRow } from "@/components/settings-layout"
+import { SettingsGroup, SettingsNote, SettingsRow } from "@/components/settings-layout"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { toastFailure } from "@/lib/failure"
@@ -19,7 +19,7 @@ export function PortabilityCard() {
   }
   return (
     <div className="grid gap-3">
-      <p className="text-sm text-muted-foreground">{t("settings:backup.intro")}</p>
+      <SettingsNote>{t("settings:backup.intro")}</SettingsNote>
       <SettingsGroup>
         <SettingsRow
           label={t("settings:backup.export")}

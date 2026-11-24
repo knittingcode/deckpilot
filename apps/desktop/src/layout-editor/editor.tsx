@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useEffectEvent,
   useRef,
   useState,
   type KeyboardEvent,
@@ -39,7 +40,9 @@ import {
   whyNotForTrigger,
   whyNotOnControl,
 } from "@/lib/compatibility"
-import { pluginActionUnavailable, withPluginTypes } from "@/lib/plugin-actions"
+import { catalogSignature, missingAction } from "@/lib/action-availability"
+import { withPluginTypes } from "@/lib/plugin-actions"
+import { missingSummary, unavailableText } from "@/components/missing-action-text"
 import { WORKFLOWS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
 import { isSystemBack, systemBackControl } from "@/lib/folder-back"
 import { isFolderControl } from "@/lib/folder-control"
@@ -48,6 +51,9 @@ import {
   controlKey,
   controlLabel,
   page as findPage,
+  sameControl,
+  sameTrigger,
+  setBinding,
   hasWayBack,
   pagePosition,
   targetLabel,
@@ -64,7 +70,6 @@ import {
 import { StepEditor } from "@/pages/workflow-steps"
 import { useOptionalEditorSelection } from "@/shell/editor-selection-context"
 import { type TranslationKey, useTranslation } from "@/i18n"
-import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
 import type {
   ActionInstance,
   ActionType,
@@ -83,8 +88,13 @@ import type {
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
 import { type KeyLook, KeyLookContext } from "./key-look-context"
+import { incompleteAction, missingParameters } from "@/lib/action-completeness"
+import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
 import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
+import { missingForUse } from "@/lib/draft-actions"
+import { sameLayout } from "./same-layout"
 import {
+  type CatalogEntry,
   catalogGroups,
   existingDefault,
   existingPreset,
@@ -104,15 +114,23 @@ import {
   type ActionPreset,
   type DragSource,
 } from "./editing"
-import { Inspector, InspectorDeselect } from "./inspector"
+import { Inspector } from "./inspector"
+import { InspectorKeyPreview } from "./key-appearance-editor"
+import { escapeEffect } from "./escape"
 import { LibraryDock } from "./library-dock"
 import { LibraryPanel, type PresetEntry } from "./library-panel"
+import { useSavedActionTools } from "./saved-actions"
+import { useActionGrants } from "@/plugins/use-action-grants"
 import { dragLook } from "./drag-look"
 import { DragPreview } from "./drag-preview"
 import { PageNavigationDock } from "./page-nav"
 import { PageNavigator } from "./page-navigator"
 import { newPageName } from "./page-navigation"
-import { markIncompatible, targetGroups } from "./targets"
+import { WORK_SESSION_MODULE, gestureOnlyGroups, markIncompatible, targetGroups } from "./targets"
+import { keyLibrary } from "./library-context"
+import { bindingMigrations, movedToWorkflow, wrappedInMultiAction } from "@/lib/context-migration"
+import { bindingAccepts } from "@/lib/action-context"
+import { contextReason } from "@/lib/action-context-text"
 import { useEditorShortcuts } from "@/hooks/use-editor-shortcuts"
 import { shortcutLabel } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
@@ -230,6 +248,30 @@ export function LayoutEditor({
   const gestureContext = useGestureContext()
   const modules = useActionModules()
   const catalog = useMemo(() => catalogGroups(modules), [modules])
+  // Plugin actions that only wait for a permission: granted from their row.
+  const grants = useActionGrants(modules)
+  const withGrant = (entry: CatalogEntry): CatalogEntry => {
+    if (entry.unavailable === undefined) return entry
+    const needed = grants.missingFor(entry.type.id)
+    if (!needed) {
+      // Another cause: its reason in words, not the agent's message.
+      return {
+        ...entry,
+        unavailable: unavailableText(modules, entry.type.id, t) ?? entry.unavailable,
+      }
+    }
+    return {
+      ...entry,
+      unavailable: t("editor:grant.required"),
+      grant: {
+        label: t("editor:grant.label", { action: entry.type.name, plugin: needed.pluginName }),
+        pending: grants.isPending(entry.type.id),
+        onGrant: () => {
+          grants.request(entry.type.id)
+        },
+      },
+    }
+  }
   // Every action type the editor knows, for compatibility
   // (docs/device-controls.md): the backend's list with the plugins', and
   // the catalog's.
@@ -238,9 +280,14 @@ export function LayoutEditor({
     for (const module of modules) for (const type of module.actionTypes) map.set(type.id, type)
     for (const group of catalog)
       for (const entry of group.entries) map.set(entry.type.id, entry.type)
-    for (const type of gestureContext.types) map.set(type.id, type)
+    // The modules' types first (with their contexts); the gesture context
+    // fills in the ones they do not have.
+    for (const type of gestureContext.types) if (!map.has(type.id)) map.set(type.id, type)
     return map
   }, [modules, catalog, gestureContext.types])
+  // A binding's saved action in the Inspector: Edit (the Action Library's
+  // editor, which says when it changes every place) and Usages.
+  const savedActionTools = useSavedActionTools({ profileId, view })
   // The profile's other layouts for this model, as "Switch to …" entries.
   const switchType = typeById.get(SWITCH_LAYOUT)
   const presets = useMemo((): PresetEntry[] => {
@@ -264,10 +311,17 @@ export function LayoutEditor({
     const action = actions.find((a) => a.id === target.action)
     return action ? typeById.get(action.actionType) : undefined
   }
-  /** Why `target` cannot run from `control` for `trigger`; `null` when it can. */
+  /**
+   * Why `target` cannot run from `control` for `trigger`; `null` when it
+   * can. Its contexts first (a key's press or display, or a gesture), then
+   * the control's inputs.
+   */
   const incompatibleFor = (control: ControlId, target: BindingTarget, trigger: Trigger) => {
     const type = typeOfTarget(target)
-    return type ? whyNotForTrigger(type, model, control, trigger) : null
+    if (!type) return null
+    const context = bindingAccepts(type, trigger)
+    if (context !== true) return contextReason(context)
+    return whyNotForTrigger(type, model, control, trigger)
   }
   // Where the editor was in this layout, when it comes back from another
   // view (the shell keeps it; nothing outside the shell).
@@ -287,7 +341,9 @@ export function LayoutEditor({
     rememberPlace?.(placeKey, { pageId, trail, selection })
   }, [rememberPlace, placeKey, pageId, trail, selection])
   const [errors, setErrors] = useState<string[]>([])
-  const dirty = JSON.stringify(draft) !== JSON.stringify(editing.baseline)
+  // Empty labels however written (`null` in the draft, left out by the
+  // agent) are the same layout: a drop that was saved is not "unsaved".
+  const dirty = !sameLayout(draft, editing.baseline)
   const { projects } = view.profile
   // Multi Actions created here, likewise until the reloaded profile has them.
   const [createdWorkflows, setCreatedWorkflows] = useState<Workflow[]>([])
@@ -321,6 +377,26 @@ export function LayoutEditor({
     [draft, pageId],
   )
   const liveStates = useLiveKeyStates(profileId, pageActions, agent)
+  // Keys whose action (any gesture) is a draft that needs configuration:
+  // marked on the canvas until it is configured.
+  const needsSetup = useMemo(() => {
+    const marks = new Map<string, string>()
+    for (const binding of findPage(draft, pageId)?.bindings ?? []) {
+      const target = binding.target
+      if (target.type !== "action") continue
+      const missing = missingForUse(target.action, target.overrides, actions, (id) =>
+        typeById.get(id),
+      )
+      const action = actions.find((a) => a.id === target.action)
+      if (missing.length > 0 && action) marks.set(controlKey(binding.control), action.name)
+    }
+    return marks
+  }, [draft, pageId, actions, typeById])
+  // What the plugins can run now, as the agent last reported it: the
+  // previews are drawn again when it changes (a plugin comes back, goes
+  // away, or a permission is granted), so a key never shows a stale
+  // missing-plugin face.
+  const catalogVersion = useMemo(() => catalogSignature(modules), [modules])
   // The key size the canvas shows the device at (device-viewport.tsx: its
   // zoom), once the zoom has rested.
   const [unit, setUnit] = useState<number>(KEY_SIZE.fallback)
@@ -346,9 +422,10 @@ export function LayoutEditor({
     profileId,
     draft,
     pageId,
-    `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}|${String(displayTick)}`,
+    `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}`,
     liveStates.live,
     keyPixels,
+    `${catalogVersion}|${String(displayTick)}`,
     shownCountdown,
   )
   // Scrolling titles play as on the device (unless motion is reduced).
@@ -357,10 +434,29 @@ export function LayoutEditor({
     ...library,
     usage: (icon) => effectiveUsage(icon.usages, icon.id, editing.baseline, draft),
   }
+  // The key the Inspector's fixed preview column shows: the one selected
+  // key, unless it is the folder's protected Back (nothing to set there).
+  const previewControl =
+    selected.length === 1 && selection.focus && !isSystemBack(model, draft, pageId, selection.focus)
+      ? selection.focus
+      : null
+  // The settings column starts at its top for every newly selected key.
+  const inspectorScroll = useRef<HTMLDivElement>(null)
+  const focusKey = selection.focus ? controlKey(selection.focus) : null
+  useEffect(() => {
+    const scroller = inspectorScroll.current
+    if (!scroller) return
+    scroller.scrollTop = 0
+    scroller.closest("[data-slot=inspector-region]")?.removeAttribute("data-scrolled")
+  }, [focusKey])
+  // An icon the key menu could not import or paste, for the selected key.
+  const [lookProblem, setLookProblem] = useState<string | null>(null)
   // What the Inspector's key header and its popovers read: the Canvas's
   // images of the keys, the icons and the one way to restyle the selection.
   const keyLook: KeyLook = {
     profileId,
+    problem: lookProblem,
+    setProblem: setLookProblem,
     draft,
     pageId,
     defaults: defaultAppearanceOf(model),
@@ -385,14 +481,25 @@ export function LayoutEditor({
         profile,
         draft,
         pageId,
-        (type) => pluginActionUnavailable(modules, type),
+        (type) => {
+          // An assigned action whose plugin is missing: the short reason
+          // in words (never the plugin's id or the agent's raw reason).
+          const lost = missingAction(modules, type)
+          if (lost) return missingSummary(lost, t)
+          // Only permissions to grant: said in words, never the permission id.
+          return grants.missingFor(type)
+            ? t("editor:grant.required")
+            : unavailableText(modules, type, t)
+        },
         workflowsActive,
         view.workflowEntries,
+        (type) => missingAction(modules, type),
       ),
     // The groups' labels are translated: rebuilt when the language changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [profile, draft, pageId, modules, language, workflowsActive, view.workflowEntries],
   )
+  const workSessionOn = modules.some((m) => m.id === WORK_SESSION_MODULE && m.enabled)
   const bound = boundControls(draft, pageId)
   const controls = orderedControls(model)
 
@@ -404,6 +511,13 @@ export function LayoutEditor({
     })
   // The library is for the selected control, when exactly one is.
   const libraryControl = selected.length === 1 ? (selected[0] ?? null) : null
+  // What can go on a key, display-only types apart (their contexts).
+  const keyLib = keyLibrary(
+    libraryControl ? groupsFor(libraryControl) : groups,
+    catalog,
+    presets,
+    (id) => typeById.get(id),
+  )
 
   /**
    * Why what is dragged cannot be dropped on `control`, in words; `null`
@@ -432,13 +546,22 @@ export function LayoutEditor({
     ) {
       return t("editor:folderControl.needsFreeKey")
     }
+    // A drop on a key binds its press (or click): the type's contexts
+    // must allow a key (or a display), as for every other way of assigning.
+    const onKey = (type: ActionType) => {
+      const context = bindingAccepts(type, { type: "press" })
+      return context === true ? whyNotOnControl(type, model, control) : contextReason(context)
+    }
     if (source.type === "actionType") {
       const type = typeById.get(source.actionType)
-      return type ? whyNotOnControl(type, model, control) : null
+      return type ? onKey(type) : null
     }
     if (source.type === "target") {
+      // A stateful key (the Work Session controller) needs gestures: it
+      // goes on a gesture card in the Inspector.
+      if (source.target.type === "stateful") return t("editor:library.gestureOnly")
       const type = typeOfTarget(source.target)
-      return type ? whyNotOnControl(type, model, control) : null
+      return type ? onKey(type) : null
     }
     if (source.type === "control") {
       const moves = [
@@ -527,7 +650,9 @@ export function LayoutEditor({
    * The action a dropped type stands for: the profile's action that is
    * exactly a new one of the type, else a new action with the type's
    * default settings, saved to the profile at once (a key can only run a
-   * saved action). What it is put on is part of the draft as usual.
+   * saved action). What it is put on is part of the draft as usual. A type
+   * whose required settings have no defaults is a new draft on every drop
+   * (never shared with another key), with those settings left out.
    */
   const actionOfType = async (
     typeId: string,
@@ -540,13 +665,18 @@ export function LayoutEditor({
     try {
       let action = preset ? existingPreset(actions, type, preset) : existingDefault(actions, type)
       if (!action) {
-        action = await api.createAction(
+        const made = await api.createAction(
           profileId,
           preset ? newPresetAction(actions, type, preset) : newAction(actions, type),
         )
-        const made = action
+        action = made
         setCreated((current) => [...current, made])
         refresh()
+        // A draft (required settings not filled in yet, e.g. the app of
+        // "Open application"): saved and placed as it is, its first
+        // missing setting focused in the Inspector.
+        const incomplete = made.incomplete ?? missingParameters(type, made.parameters)
+        if (incomplete.length > 0) savedActionTools.focusSetupOf(made.id)
       }
       return { type: "action", action: action.id }
     } catch (e) {
@@ -580,6 +710,85 @@ export function LayoutEditor({
       return null
     }
   }
+
+  /**
+   * The saved bindings of `control` whose action does not work where it is
+   * (a key's press or display, a gesture), each with what it can become.
+   * They stay as saved until the user picks a change and confirms it.
+   */
+  const contextNotRun = (control: ControlId) =>
+    (findPage(draft, pageId)?.bindings ?? [])
+      .filter((binding) => sameControl(binding.control, control))
+      .flatMap((binding) => {
+        const type = typeOfTarget(binding.target)
+        const reason = type ? bindingAccepts(type, binding.trigger) : true
+        if (reason === true) return []
+        const target = binding.target
+        const action =
+          target.type === "action" ? actions.find((a) => a.id === target.action) : undefined
+        const offers = bindingMigrations(reason, workflowsActive)
+        // The binding's own settings go with the action into the step or node.
+        const overrides = target.type === "action" ? target.overrides : undefined
+        const repoint = async (
+          workflow: Workflow,
+          done: "editor:migrate.wrapped" | "editor:migrate.moved",
+        ) => {
+          if (!action) return
+          try {
+            const saved = await api.saveWorkflow(profileId, workflow)
+            const created: Workflow = { ...workflow, id: saved.id }
+            setCreatedWorkflows((current) => [...current, created])
+            refresh()
+            // Applied to the latest draft: edits made while the workflow
+            // was being saved stay. The binding is repointed only if it
+            // still runs that action.
+            commands.update((latest) => {
+              const current = findPage(latest, pageId)?.bindings.find(
+                (b) =>
+                  sameControl(b.control, binding.control) &&
+                  sameTrigger(b.trigger, binding.trigger),
+              )
+              if (current?.target.type !== "action" || current.target.action !== action.id) {
+                return latest
+              }
+              return setBinding(latest, pageId, {
+                ...current,
+                target: { type: "workflow", workflow: created.id },
+              })
+            })
+            toast.success(t(done, { name: action.name }))
+          } catch (e) {
+            toast.error(t("editor:migrate.failed", { name: action.name }), {
+              description: errorMessage(e),
+            })
+          }
+        }
+        return [
+          {
+            trigger: binding.trigger,
+            reason: `${contextReason(reason)} ${t("editor:context.kept")}`,
+            migrate: action
+              ? {
+                  name: action.name,
+                  wrap: offers.wrap
+                    ? () =>
+                        repoint(
+                          wrappedInMultiAction(workflows, action, overrides),
+                          "editor:migrate.wrapped",
+                        )
+                    : undefined,
+                  move: offers.move
+                    ? () =>
+                        repoint(
+                          movedToWorkflow(workflows, action, overrides),
+                          "editor:migrate.moved",
+                        )
+                    : undefined,
+                }
+              : undefined,
+          },
+        ]
+      })
 
   const placeMultiAction = async (control: ControlId) => {
     const target = await multiAction()
@@ -723,8 +932,6 @@ export function LayoutEditor({
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault()
       if (selected.length > 0) commands.clear()
-    } else if (event.key === "Escape") {
-      commands.clearSelection()
     } else if (mod && event.key.toLowerCase() === "a") {
       event.preventDefault()
       commands.selectAll(controls)
@@ -734,6 +941,36 @@ export function LayoutEditor({
       navigate(control)
     }
   }
+
+  // Escape anywhere in the editor (escape.ts): after overlays, drags and
+  // text fields have had it, it clears the selection.
+  const editorRoot = useRef<HTMLDivElement>(null)
+  const onEscape = (event: {
+    key: string
+    defaultPrevented: boolean
+    target: EventTarget | null
+  }) => {
+    const effect = escapeEffect(event, dragging !== null)
+    if (effect === "leaveField" && event.target instanceof HTMLElement) event.target.blur()
+    else if (effect === "deselect" && selected.length > 0) commands.clearSelection()
+  }
+  const onPageEscape = useEffectEvent((event: globalThis.KeyboardEvent) => {
+    onEscape(event)
+  })
+  // With the focus nowhere (on the page itself) while the editor is shown.
+  useEffect(() => {
+    const listener = (event: globalThis.KeyboardEvent) => {
+      const root = editorRoot.current
+      const nowhere = event.target === document.body || event.target === document.documentElement
+      // Not while another view of the window (the settings) hides the editor.
+      if (!nowhere || !root?.isConnected || root.closest("[hidden], [inert]")) return
+      onPageEscape(event)
+    }
+    document.addEventListener("keydown", listener)
+    return () => {
+      document.removeEventListener("keydown", listener)
+    }
+  }, [])
 
   // The device shows and runs the draft while the editor is open, and the
   // editor follows where the device goes (use-live-preview.ts).
@@ -947,7 +1184,12 @@ export function LayoutEditor({
         drops onto the device (centre) and onto the gestures of the
         inspector (below the device).
       */}
-      <div data-slot="device-editor" className="relative flex min-h-0 flex-1 max-[859px]:flex-col">
+      <div
+        ref={editorRoot}
+        data-slot="device-editor"
+        className="relative flex min-h-0 flex-1 max-[859px]:flex-col"
+        onKeyDown={onEscape}
+      >
         {/*
           The workspace: one dark surface (`dark workspace-scope`, see
           index.css) in either app theme, in three parts that never move
@@ -969,6 +1211,9 @@ export function LayoutEditor({
             role="toolbar"
             aria-label={t("editor:bar.label")}
             data-slot="editing-bar"
+            // The live preview's state, for tools (dev/layout-probe.ts): the
+            // bar shows only when the device does not show the draft.
+            data-live-status={live.status}
             className="z-10 box-content flex h-(--toolbar-height) shrink-0 items-center gap-1 border-b bg-workspace px-3"
           >
             <p
@@ -1094,6 +1339,7 @@ export function LayoutEditor({
                   animations={animations}
                   faces={faces}
                   unavailable={noWayBack}
+                  needsSetup={needsSetup}
                   system={systemControls}
                   icons={icons}
                   captions={summaries}
@@ -1188,8 +1434,7 @@ export function LayoutEditor({
             The inspector region: a frosted curtain (index.css,
             `.inspector-curtain`) over the top of the scrolling content once
             it is scrolled; it never scrolls itself, takes no space and no
-            pointer events. Above it: the deselect button (z-10) and the
-            page dock on the divider (z-20).
+            pointer events. Above it: the page dock on the divider (z-20).
           */}
           <div data-slot="inspector-region" className="relative flex min-h-0 flex-1 flex-col">
             <div aria-hidden data-slot="inspector-curtain" className="inspector-curtain">
@@ -1197,118 +1442,151 @@ export function LayoutEditor({
               <span />
               <span />
             </div>
+            {/*
+              Two columns: the selected key's preview, fixed (never inside
+              the scroll container, so it never moves or scrolls), and the
+              settings, the region's only scroll container.
+            */}
             <div
-              data-slot="inspector-scroll"
-              // Below the bar that straddles the divider (device-viewport.tsx):
-              // half its height is kept free at the top.
-              className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-[calc(var(--canvas-divider-half,0px)+0.75rem)] pb-6"
-              onScroll={(event) => {
-                // Only whether it is scrolled at all (no state, no render): the
-                // curtain fades in from 2px so fractional offsets don't flicker.
-                event.currentTarget.parentElement?.toggleAttribute(
-                  "data-scrolled",
-                  event.currentTarget.scrollTop > 2,
-                )
-              }}
+              data-slot="inspector-columns"
+              className="mx-auto flex min-h-0 w-full max-w-[52rem] flex-1 pl-4"
             >
-              <InspectorDeselect
-                selection={selected}
-                focus={selection.focus}
-                onClose={commands.clearSelection}
-              />
-              <div
-                className={cn(
-                  "mx-auto grid w-full max-w-3xl gap-3",
-                  // A notice above the inspector keeps the deselect button's width free.
-                  selected.length > 0 && "[&>:first-child:not([data-slot=inspector])]:pr-9",
-                )}
-              >
-                {(notices !== undefined || errors.length > 0) && (
-                  <div
-                    data-slot="workspace-notices"
-                    className="grid w-full max-w-3xl gap-2 empty:hidden"
-                  >
-                    {errors.length > 0 && (
-                      <ErrorNotice error={errors.map(readableTriggers).join(" ")} />
-                    )}
-                    {notices}
-                  </div>
-                )}
-                {hasControls && bound.size === 0 && (
-                  <div
-                    data-slot="page-empty"
-                    className="mx-auto grid max-w-md gap-0.5 text-center text-xs text-muted-foreground"
-                  >
-                    <p className="font-medium text-foreground">
-                      {isFolderPage ? t("editor:shell.folderEmpty") : t("editor:shell.pageEmpty")}
-                    </p>
-                    <p>{t("editor:shell.emptyHint")}</p>
-                  </div>
-                )}
-                {isFolderPage && !systemBack && !hasWayBack(draft, pageId) && (
-                  <p
-                    className="mx-auto max-w-md text-center text-xs text-muted-foreground"
-                    role="note"
-                  >
-                    {t("editor:shell.noBackKey")}
-                  </p>
-                )}
+              <div className="peer shrink-0 pt-[calc(var(--canvas-divider-half,0px)+0.75rem)] empty:hidden">
                 <KeyLookContext.Provider value={keyLook}>
-                  <Inspector
-                    model={model}
-                    draft={draft}
-                    pageId={pageId}
-                    selection={selected}
-                    focus={selection.focus}
-                    groups={groups}
-                    folder={folder}
-                    profile={profile}
-                    types={gestureContext.types}
-                    gestureDefaults={gestureContext.defaults}
-                    issues={errors}
-                    onChange={commands.change}
-                    onClear={commands.clear}
-                    resolveDrop={resolveSlotDrop}
-                    onEditWorkflow={setStepsOf}
-                    incompatible={incompatibleFor}
-                    layoutNavigation={{
-                      profileId,
-                      modelName: model.name,
-                      layouts: switchableLayouts(view.profile.layouts, model.id),
-                      defaultLayout:
-                        view.profile.activeLayouts?.[model.id] ??
-                        switchableLayouts(view.profile.layouts, model.id)[0]?.id ??
-                        null,
-                      usages: view.actionUsages,
-                      device,
-                      onActionSaved: (action) => {
-                        remember(action)
-                        refresh()
-                      },
-                    }}
-                    notRun={
-                      selection.focus
-                        ? (incompatible.get(controlKey(selection.focus)) ?? []).map((found) => ({
-                            trigger: found.trigger,
-                            reason: describeIncompatibility(
-                              found.reason,
-                              model,
-                              selection.focus ? controlCapabilities(model, selection.focus) : null,
-                            ),
-                          }))
-                        : []
-                    }
-                  />
+                  <InspectorKeyPreview control={previewControl} />
                 </KeyLookContext.Provider>
+              </div>
+              <div
+                ref={inspectorScroll}
+                data-slot="inspector-scroll"
+                // Below the bar that straddles the divider (device-viewport.tsx):
+                // half its height is kept free at the top. It never hands its
+                // scrolling on to the Canvas, and its scrollbar takes its room
+                // from the start, so nothing shifts when it appears.
+                className="relative min-h-0 min-w-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto overscroll-contain pt-[calc(var(--canvas-divider-half,0px)+0.75rem)] pr-4 pb-6 pl-3 peer-empty:pl-0"
+                onScroll={(event) => {
+                  // Only whether it is scrolled at all (no state, no render): the
+                  // curtain fades in from 2px so fractional offsets don't flicker.
+                  event.currentTarget
+                    .closest("[data-slot=inspector-region]")
+                    ?.toggleAttribute("data-scrolled", event.currentTarget.scrollTop > 2)
+                }}
+              >
+                <div className={cn("mx-auto grid w-full max-w-3xl gap-3")}>
+                  {(notices !== undefined || errors.length > 0) && (
+                    <div
+                      data-slot="workspace-notices"
+                      className="grid w-full max-w-3xl gap-2 empty:hidden"
+                    >
+                      {errors.length > 0 && (
+                        <ErrorNotice error={errors.map(readableTriggers).join(" ")} />
+                      )}
+                      {notices}
+                    </div>
+                  )}
+                  {hasControls && bound.size === 0 && (
+                    <div
+                      data-slot="page-empty"
+                      className="mx-auto grid max-w-md gap-0.5 text-center text-xs text-muted-foreground"
+                    >
+                      <p className="font-medium text-foreground">
+                        {isFolderPage ? t("editor:shell.folderEmpty") : t("editor:shell.pageEmpty")}
+                      </p>
+                      <p>{t("editor:shell.emptyHint")}</p>
+                    </div>
+                  )}
+                  {isFolderPage && !systemBack && !hasWayBack(draft, pageId) && (
+                    <p
+                      className="mx-auto max-w-md text-center text-xs text-muted-foreground"
+                      role="note"
+                    >
+                      {t("editor:shell.noBackKey")}
+                    </p>
+                  )}
+                  <KeyLookContext.Provider value={keyLook}>
+                    <Inspector
+                      model={model}
+                      draft={draft}
+                      pageId={pageId}
+                      selection={selected}
+                      focus={selection.focus}
+                      groups={groups}
+                      folder={folder}
+                      profile={profile}
+                      types={gestureContext.types}
+                      gestureDefaults={gestureContext.defaults}
+                      issues={errors}
+                      onChange={commands.change}
+                      onClear={commands.clear}
+                      resolveDrop={resolveSlotDrop}
+                      onEditWorkflow={setStepsOf}
+                      incompatible={incompatibleFor}
+                      actionSettings={savedActionTools.settingsFor}
+                      layoutNavigation={{
+                        profileId,
+                        modelName: model.name,
+                        layouts: switchableLayouts(view.profile.layouts, model.id),
+                        defaultLayout:
+                          view.profile.activeLayouts?.[model.id] ??
+                          switchableLayouts(view.profile.layouts, model.id)[0]?.id ??
+                          null,
+                        usages: view.actionUsages,
+                        device,
+                        isDraft: (id) => incompleteAction(view, id).length > 0,
+                        onActionSaved: (action) => {
+                          remember(action)
+                          refresh()
+                        },
+                      }}
+                      notRun={
+                        selection.focus
+                          ? [
+                              // What the agent reports it does not run.
+                              ...(incompatible.get(controlKey(selection.focus)) ?? []).map(
+                                (found) => ({
+                                  trigger: found.trigger,
+                                  reason: describeIncompatibility(
+                                    found.reason,
+                                    model,
+                                    selection.focus
+                                      ? controlCapabilities(model, selection.focus)
+                                      : null,
+                                  ),
+                                }),
+                              ),
+                              // Saved uses whose action does not work there (its contexts).
+                              ...contextNotRun(selection.focus),
+                            ]
+                          : []
+                      }
+                    />
+                  </KeyLookContext.Provider>
+                </div>
               </div>
             </div>
           </div>
         </div>
         <LibraryDock>
           <LibraryPanel
-            groups={libraryControl ? groupsFor(libraryControl) : groups}
-            catalog={catalog}
-            presets={presets}
+            groups={[
+              // Types only: no saved actions ("My actions") in the library;
+              // the Inspector reaches the ones a control uses.
+              ...keyLib.groups.filter((group) => group.id !== "actions"),
+              // The Work Session controller goes on gestures only; the
+              // library is the one place it is chosen from.
+              ...gestureOnlyGroups(workSessionOn),
+            ]}
+            // Switch layout is offered as its presets ("Switch to …"), not bare.
+            catalog={keyLib.catalog
+              .map((group) => ({
+                ...group,
+                entries: group.entries
+                  .filter((entry) => presets.length === 0 || entry.type.id !== SWITCH_LAYOUT)
+                  .map(withGrant),
+              }))
+              .filter((group) => group.entries.length > 0)}
+            presets={keyLib.presets}
+            displays={{ options: [], catalog: keyLib.displays.catalog.map(withGrant) }}
             multiAction
             variant="plain"
             compatibility={{
@@ -1365,12 +1643,13 @@ export function LayoutEditor({
           />
         </ModalShell>
       )}
+      {savedActionTools.dialogs}
+      {grants.dialog}
     </DndContext>
   )
 }
 
 const LIVE_LABELS: Partial<Record<LiveStatus, TranslationKey>> = {
-  live: "editor:live.live",
   suspended: "editor:live.suspended",
   connecting: "editor:live.connecting",
   disconnected: "editor:live.disconnected",
@@ -1379,7 +1658,10 @@ const LIVE_LABELS: Partial<Record<LiveStatus, TranslationKey>> = {
   refused: "editor:live.refused",
 }
 
-/** Whether the device shows the draft, in the editing bar. */
+/**
+ * Why the device does not show the draft, in the editing bar. Nothing while it
+ * does: the live preview is automatic, so only exceptions are worth a word.
+ */
 function LiveBadge({ status, problem }: { status: LiveStatus; problem: string | null }) {
   const { t } = useTranslation()
   const label = LIVE_LABELS[status]
@@ -1389,15 +1671,8 @@ function LiveBadge({ status, problem }: { status: LiveStatus; problem: string | 
       data-slot="live-preview-status"
       data-status={status}
       title={problem ?? undefined}
-      className="ms-2 inline-flex items-center gap-1.5"
+      className="ms-2"
     >
-      <span
-        aria-hidden
-        className={cn(
-          "size-1.5 rounded-full",
-          status === "live" ? "bg-success" : "bg-muted-foreground/50",
-        )}
-      />
       {t(label)}
     </span>
   )

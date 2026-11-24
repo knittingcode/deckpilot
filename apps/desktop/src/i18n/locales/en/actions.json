@@ -2,10 +2,11 @@
   "completeness": {
     "badge": "Needs configuration",
     "missing": "Missing: {{parameters}}",
-    "runRefused": "{{name}} needs configuration before it can run."
+    "runRefused": "{{name}} needs configuration before it can run.",
+    "fieldRequired": "Required: fill this in before the action can run.",
+    "badgeLabel": "{{name}} needs configuration"
   },
   "library": {
-    "description": "Actions you configured, ready for workflows and keys",
     "new": "New action",
     "search": "Search",
     "listTitle": "Actions",
@@ -131,14 +132,19 @@
       "title": "This action changes things",
       "body": "Running it changes state on this computer or elsewhere (for example a command, a request or containers). Some modules only allow that after it is turned on in their settings on each computer."
     },
-    "parameterRequired": "{{label}} is required.",
     "save": "Save",
     "create": "Create action",
     "duplicate": "Duplicate",
     "run": "Run",
     "runHint": "Runs in the agent for the active profile",
     "usedIn": "Used in",
-    "deleteHint": "To delete the action, choose for each reference whether it uses another action or is unbound."
+    "deleteHint": "To delete the action, choose for each reference whether it uses another action or is unbound.",
+    "sharedDraft": {
+      "title": "Save {{name}} without its required settings?",
+      "description_one": "This action is used in {{count}} place. Without its required settings it stops running there until it is configured again.",
+      "description_other": "This action is used in {{count}} places. Without its required settings it stops running in all of them until it is configured again.",
+      "confirm": "Save anyway"
+    }
   },
   "references": {
     "notUsed": "Not used in any workflow or layout.",
@@ -263,6 +269,22 @@
     "trigger": "Workflow “{{workflow}}” starts by trigger: {{trigger}}",
     "triggerPaused": "Workflow “{{workflow}}” starts by trigger: {{trigger}} (paused)",
     "aTrigger": "a trigger"
+  },
+  "categories": {
+    "navigation": "Navigation",
+    "device": "Device",
+    "general": "General",
+    "system": "System",
+    "deck": "Multi actions",
+    "http": "HTTP",
+    "notifications": "Notifications"
+  },
+  "contexts": {
+    "key": "Key",
+    "sequence": "Multi Action step",
+    "workflow": "Workflow node",
+    "display": "Key display",
+    "gesture": "Gesture"
   },
   "system": {
     "names": {

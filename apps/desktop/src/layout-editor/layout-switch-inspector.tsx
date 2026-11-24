@@ -62,6 +62,12 @@ export interface LayoutNavigationContext {
   usages: Record<string, Usage[]>
   /** The connected device the editor is for, if any. */
   device: DeviceInfo | null
+  /**
+   * Whether the saved action `id` still needs configuration (a draft):
+   * its required settings are asked for in the binding's own setup, so a
+   * type's panel waits until it is complete.
+   */
+  isDraft?: (id: string) => boolean
   /** An action was created or changed: the editor shows it at once. */
   onActionSaved: (action: ActionInstance) => void
 }

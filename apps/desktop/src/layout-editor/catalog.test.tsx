@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ActionInput } from "@/lib/api"
+import { i18n } from "@/i18n"
 import { moduleInfo } from "@/lib/test-fixtures"
 import type {
   ActionInstance,
@@ -26,7 +27,6 @@ import {
   existingDefault,
   filterCatalog,
   freeActionName,
-  needsNoInput,
   newAction,
 } from "./catalog"
 import { LayoutEditor } from "./editor"
@@ -70,6 +70,14 @@ const openUrl: ActionType = {
     { key: "url", label: "URL", kind: { type: "text", multiline: false }, required: true },
   ],
 }
+const lockScreen: ActionType = {
+  id: "system.lock",
+  name: "Lock screen",
+  description: "Locks the computer.",
+  category: "System",
+  requiresProject: false,
+  parameters: [],
+}
 const oldNext: ActionType = {
   ...nextPage,
   id: "projects.next",
@@ -101,6 +109,9 @@ const modules: ModuleInfo[] = [
   moduleInfo({ id: "general", name: "General", actionTypes: [wait], enabled: false }),
 ]
 
+/** Modules a test adds to the editor's (the catalog's own tests use `modules`). */
+let extraModules: ModuleInfo[] = []
+
 const instance = (over: Partial<ActionInstance>): ActionInstance => ({
   id: "a",
   name: "Next page",
@@ -113,19 +124,33 @@ const instance = (over: Partial<ActionInstance>): ActionInstance => ({
 })
 
 describe("the catalog of action types", () => {
-  it("offers types that need no input, of enabled modules, by category", () => {
-    expect(needsNoInput(nextPage)).toBe(true)
-    expect(needsNoInput(indicator)).toBe(true)
-    // A URL has to be typed: that action is made in the Action Library.
-    expect(needsNoInput(openUrl)).toBe(false)
+  it("offers every type of enabled modules and plugins, by category, each once", () => {
+    // Types that need a value are offered too (the Inspector asks for it);
+    // deprecated ones (a legacy id routed to a plugin) and disabled modules'
+    // are not.
     expect(catalogGroups(modules).map((g) => [g.label, g.entries.map((e) => e.type.id)])).toEqual([
       ["Navigation", ["deck.next-page", "deck.page-indicator"]],
+      ["System", ["system.open-url"]],
     ])
-    // An enabled module's types appear; plugins are left to the Action Library.
     const enabled = modules.map((m) => ({ ...m, enabled: true }))
-    expect(catalogGroups(enabled).map((g) => g.label)).toEqual(["Navigation", "General"])
-    const asPlugin = enabled.map((m) => (m.id === "general" ? { ...m, plugin: true } : m))
-    expect(catalogGroups(asPlugin as ModuleInfo[]).map((g) => g.label)).toEqual(["Navigation"])
+    expect(catalogGroups(enabled).map((g) => g.label)).toEqual(["Navigation", "System", "General"])
+    // A plugin's types are listed, with why one cannot be placed now.
+    const asPlugin = enabled.map((m) =>
+      m.id === "general"
+        ? { ...m, plugin: { unavailable: { "general.wait": "needs a permission" } } }
+        : m,
+    ) as unknown as ModuleInfo[]
+    const general = catalogGroups(asPlugin).find((g) => g.label === "General")
+    expect(general?.entries.map((e) => [e.type.id, e.unavailable])).toEqual([
+      ["general.wait", "needs a permission"],
+    ])
+    // The same type from two providers: listed once.
+    const twice = [...modules, moduleInfo({ id: "copy", actionTypes: [nextPage] })]
+    expect(
+      catalogGroups(twice)
+        .flatMap((g) => g.entries)
+        .filter((e) => e.type.id === nextPage.id),
+    ).toHaveLength(1)
   })
 
   it("creates an action with the type's defaults and a name of its own", () => {
@@ -168,7 +193,7 @@ describe("the catalog of action types", () => {
     const groups = catalogGroups(modules)
     const ids = (query: string) =>
       filterCatalog(groups, query).flatMap((g) => g.entries.map((e) => e.type.id))
-    expect(ids("")).toHaveLength(2)
+    expect(ids("")).toHaveLength(3)
     expect(ids("indicator")).toEqual(["deck.page-indicator"])
     expect(ids("NAVIGATION")).toHaveLength(2)
     expect(ids("deck")).toHaveLength(2)
@@ -215,7 +240,7 @@ vi.mock("@/lib/api", () => ({
   errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
 }))
 vi.mock("@/lib/app-context", () => ({
-  useActionModules: () => modules,
+  useActionModules: () => [...modules, ...extraModules],
   useAppContext: () => ({ profiles: { activeProfileId: null, profiles: [] }, refresh }),
 }))
 vi.mock("sonner", () => ({
@@ -287,12 +312,14 @@ afterEach(cleanup)
 describe("the catalog in the layout editor", { timeout: 20_000 }, () => {
   it("puts a type on a key by creating its action once", async () => {
     renderEditor()
-    const section = screen.getByRole("region", { name: "New: Navigation" })
+    const section = screen.getByRole("region", { name: "Navigation" })
     expect(within(section).getByText("Next page")).toBeInTheDocument()
     expect(within(section).getByText("Page indicator")).toBeInTheDocument()
-    // Types that need settings, deprecated types and disabled modules' are
-    // not offered here.
-    expect(screen.queryByText("Open web page")).not.toBeInTheDocument()
+    // Types that need settings are offered (the Inspector asks for them);
+    // deprecated types and disabled modules' are not.
+    expect(
+      within(screen.getByRole("region", { name: "System" })).getByText("Website"),
+    ).toBeInTheDocument()
     expect(screen.queryByText("Next project")).not.toBeInTheDocument()
     expect(screen.queryByText("Wait")).not.toBeInTheDocument()
 
@@ -308,12 +335,10 @@ describe("the catalog in the layout editor", { timeout: 20_000 }, () => {
       icon: "chevron-right",
       label: null,
     })
-    // The profile is reloaded, so the Action Library shows the new action.
+    // The profile is reloaded with the new action; the library still lists
+    // types only, not the profile's actions.
     expect(refresh).toHaveBeenCalledTimes(1)
-    // It is in the library now, as an action of the profile.
-    expect(
-      within(screen.getByRole("region", { name: "Actions" })).getByText("Next page"),
-    ).toBeInTheDocument()
+    expect(screen.queryByRole("region", { name: "My actions" })).not.toBeInTheDocument()
 
     // The same type on another key: the same action, nothing is created.
     drop(catalogDragId("deck.next-page"), "key:1")
@@ -350,19 +375,21 @@ describe("the catalog in the layout editor", { timeout: 20_000 }, () => {
 
   it("searches the whole library and folds its groups", async () => {
     const user = renderEditor([instance({ id: "mine", name: "Forward" })])
+    // Saved actions are not listed: the library is the types.
+    expect(screen.queryByText("Forward")).not.toBeInTheDocument()
     const search = screen.getByRole("searchbox", { name: "Search the library" })
     await user.type(search, "indicator")
     expect(screen.getByText("Page indicator")).toBeInTheDocument()
-    expect(screen.queryByText("Forward")).not.toBeInTheDocument()
+    expect(screen.queryByText("Next page")).not.toBeInTheDocument()
     expect(screen.queryByText("New folder")).not.toBeInTheDocument()
     await user.clear(search)
     await user.type(search, "zzz")
     expect(screen.getByText("Nothing matches.")).toBeInTheDocument()
     await user.clear(search)
-    expect(screen.getByText("Forward")).toBeInTheDocument()
+    expect(screen.getByText("Next page")).toBeInTheDocument()
     expect(screen.getByText("New folder")).toBeInTheDocument()
 
-    const fold = screen.getByRole("button", { name: /New: Navigation/ })
+    const fold = screen.getByRole("button", { name: /^Navigation/ })
     expect(fold).toHaveAttribute("aria-expanded", "true")
     await user.click(fold)
     expect(fold).toHaveAttribute("aria-expanded", "false")
@@ -370,5 +397,69 @@ describe("the catalog in the layout editor", { timeout: 20_000 }, () => {
     // A search shows what it finds, also in a folded group.
     await user.type(search, "indicator")
     expect(screen.getByText("Page indicator")).toBeInTheDocument()
+  })
+})
+
+describe("the library's categories", { timeout: 20_000 }, () => {
+  beforeEach(() => {
+    extraModules = [moduleInfo({ id: "lock", name: "Lock", actionTypes: [lockScreen] })]
+  })
+  afterEach(() => {
+    extraModules = []
+  })
+  const sections = () =>
+    screen.getAllByRole("region").map((section) => section.getAttribute("aria-label"))
+  const count = (name: string) =>
+    within(screen.getByRole("region", { name }))
+      .getByRole("button", { expanded: true })
+      .querySelector("[aria-hidden].tabular-nums")?.textContent
+
+  it("are named, not prefixed, with navigation in one section", () => {
+    renderEditor()
+    expect(document.body.textContent).not.toMatch(/New:/)
+    // One Navigation section: the pages, New folder and the navigation types.
+    expect(sections().filter((name) => name === "Navigation")).toHaveLength(1)
+    const navigation = within(screen.getByRole("region", { name: "Navigation" }))
+    for (const name of ["New folder", "Next page", "Page indicator"]) {
+      expect(navigation.getByText(name)).toBeInTheDocument()
+    }
+    const entries = screen
+      .getByRole("region", { name: "Navigation" })
+      .querySelectorAll(":scope > ul > *").length
+    expect(entries).toBeGreaterThanOrEqual(3)
+    expect(count("Navigation")).toBe(String(entries))
+    const system = within(screen.getByRole("region", { name: "System" }))
+    expect(system.getByText("Lock screen")).toBeInTheDocument()
+    expect(system.getByText("Website")).toBeInTheDocument()
+    expect(count("System")).toBe("2")
+  })
+
+  it("are in Polish in a Polish window, and found by their Polish names", async () => {
+    await act(async () => {
+      await i18n.changeLanguage("pl")
+    })
+    try {
+      const user = renderEditor()
+      expect(document.body.textContent).not.toMatch(/Nowe:|New:/)
+      expect(sections()).toContain("Nawigacja")
+      expect(sections()).not.toContain("Navigation")
+      expect(sections()).toContain("System")
+      const search = screen.getByRole("searchbox")
+      await user.type(search, "nawigacja")
+      expect(screen.getByText("Page indicator")).toBeInTheDocument()
+      expect(screen.queryByText("Lock screen")).not.toBeInTheDocument()
+      // The action and its stable type are the same whatever the language.
+      drop(catalogDragId("system.lock"), "key:0")
+      await waitFor(() => {
+        expect(createAction).toHaveBeenCalledWith(
+          "p",
+          expect.objectContaining({ actionType: "system.lock" }),
+        )
+      })
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage("en")
+      })
+    }
   })
 })

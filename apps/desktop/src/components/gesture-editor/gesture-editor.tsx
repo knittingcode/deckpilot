@@ -1,5 +1,6 @@
+import { keepShownLook } from "@/layout-editor/appearance"
 import { useDndMonitor } from "@dnd-kit/core"
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/dialogs"
@@ -48,6 +49,8 @@ import {
   triggerFor,
   type ClickTiming,
 } from "./model"
+import type { MigrationOffer } from "@/components/context-migrations"
+import { contextOf, isDisplayOnly } from "@/lib/action-context"
 
 export type { GestureTargetGroup } from "./gesture-card"
 
@@ -89,7 +92,7 @@ export interface GestureEditorProps {
    */
   incompatible?: (target: BindingTarget, trigger: Trigger) => string | null
   /** Bindings of the control kept although they cannot run, with the reason. */
-  notRun?: { trigger: Trigger; reason: string }[]
+  notRun?: { trigger: Trigger; reason: string; migrate?: MigrationOffer | undefined }[]
   /** The placeholder of a binding's label, e.g. the title it shows without one. */
   labelPlaceholder?: (binding: ControlBinding) => string | undefined
   /**
@@ -97,6 +100,8 @@ export interface GestureEditorProps {
    * Inspector's key header (not again in its card).
    */
   titleInHeader?: (binding: ControlBinding) => boolean
+  /** The saved action `id` a gesture runs: shared with whom, and its definition. */
+  actionSettings?: (id: string) => ReactNode
 }
 
 /** The reason a binding of `trigger` is kept but not run, if it is. */
@@ -107,6 +112,16 @@ function notRunReason(
 ): string | undefined {
   if (!binding) return undefined
   return notRun?.find((n) => n.trigger.type === trigger.type)?.reason
+}
+
+/** What the kept binding of `trigger` can become, if anything. */
+function notRunMigrate(
+  notRun: GestureEditorProps["notRun"],
+  trigger: Trigger,
+  binding: ControlBinding | undefined,
+): MigrationOffer | undefined {
+  if (!binding) return undefined
+  return notRun?.find((n) => n.trigger.type === trigger.type)?.migrate
 }
 
 /**
@@ -163,9 +178,11 @@ export function GestureEditor(props: GestureEditorProps) {
   const base = `gesture-${controlKey(control)}`
 
   const assign = (gesture: Gesture, target: BindingTarget | null) => {
-    // A drop of an action that cannot run from this gesture is refused
-    // (the selects offer such actions disabled).
-    const refused = target ? props.incompatible?.(target, triggerFor(mode, gesture)) : null
+    // A drop of an action that cannot run from this gesture, or whose
+    // plugin cannot run it now, is refused (the library offers neither).
+    const refused = target
+      ? (props.incompatible?.(target, triggerFor(mode, gesture)) ?? notPlaceable(target))
+      : null
     if (refused) {
       toast.error(
         t("editor:gesture.refused", {
@@ -180,7 +197,35 @@ export function GestureEditor(props: GestureEditorProps) {
       setPending({ gesture, target })
       return
     }
-    onChange(setGesture(draft, pageId, control, gesture, target))
+    const next = setGesture(draft, pageId, control, gesture, target)
+    // Removing an action keeps the key's title and look (on the binding now shown).
+    onChange(target ? next : keepShownLook(draft, next, pageId, control))
+  }
+
+  /**
+   * Why `target` cannot be newly assigned (a plugin action whose plugin is
+   * missing, a read-only workflow); `null` when it can, and for what the
+   * gesture already does.
+   */
+  /** A press or click bound to an action that only shows something (its contexts). */
+  const displayOnlyBinding = (binding: ControlBinding | undefined): boolean => {
+    const target = binding?.target
+    if (!binding || target?.type !== "action") return false
+    if (contextOf({ kind: "binding", trigger: binding.trigger }) !== "key") return false
+    const action = props.profile.actions.find((a) => a.id === target.action)
+    const type = props.types.find((ty) => ty.id === action?.actionType)
+    return type !== undefined && isDisplayOnly(type)
+  }
+  const notPlaceable = (target: BindingTarget): string | null => {
+    const value = props.encode(target)
+    if (bindingsFor(draft, pageId, control).some((b) => props.encode(b.target) === value)) {
+      return null
+    }
+    for (const group of props.groups) {
+      const option = group.options.find((o) => o.value === value)
+      if (option) return option.unavailable ?? null
+    }
+    return null
   }
 
   const confirmConversion = () => {
@@ -193,7 +238,11 @@ export function GestureEditor(props: GestureEditorProps) {
   /** What the raw release does (keys without gestures); `null` removes it. */
   const assignRelease = (target: BindingTarget | null) => {
     const trigger: Trigger = { type: "release" }
-    const refused = target ? props.incompatible?.(target, trigger) : null
+    const refused = !target
+      ? null
+      : target.type === "stateful"
+        ? t("editor:library.gestureOnly")
+        : (props.incompatible?.(target, trigger) ?? notPlaceable(target))
     if (refused) {
       toast.error(
         t("editor:gesture.refused", {
@@ -213,7 +262,7 @@ export function GestureEditor(props: GestureEditorProps) {
             label: release?.label ?? null,
             ...(release?.appearance ? { appearance: release.appearance } : {}),
           })
-        : removeBinding(draft, pageId, control, trigger),
+        : keepShownLook(draft, removeBinding(draft, pageId, control, trigger), pageId, control),
     )
   }
 
@@ -253,6 +302,8 @@ export function GestureEditor(props: GestureEditorProps) {
       decode: props.decode,
       incompatible: props.incompatible,
       notRun: notRunReason(props.notRun, trigger, binding),
+      migrate: notRunMigrate(props.notRun, trigger, binding),
+      displayOnly: displayOnlyBinding(binding),
       slot: props.resolveDrop ? gestureSlotId(control, gesture) : undefined,
       pageId,
       timing: timingOf(gesture),
@@ -269,6 +320,7 @@ export function GestureEditor(props: GestureEditorProps) {
         onEditWorkflow: props.onEditWorkflow,
         labelPlaceholder: props.labelPlaceholder,
         titleInHeader: props.titleInHeader,
+        actionSettings: props.actionSettings,
       },
     }
   })
@@ -284,6 +336,7 @@ export function GestureEditor(props: GestureEditorProps) {
       decode: props.decode,
       incompatible: props.incompatible,
       notRun: notRunReason(props.notRun, trigger, release),
+      migrate: notRunMigrate(props.notRun, trigger, release),
       help: t("editor:gesture.releaseHint"),
       slot: props.resolveDrop ? releaseSlotId(control) : undefined,
       pageId,
