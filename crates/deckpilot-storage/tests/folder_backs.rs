@@ -275,3 +275,61 @@ fn settings_survive_saving_reloading_and_sharing() {
         })
     );
 }
+
+/// Exit after action completes is the folder's stored `autoReturn`
+/// (`docs/data-model.md`, "Exit after action completes"): no schema change.
+/// A folder stored with it, and with Auto Exit, keeps both through every
+/// upgrade (after its encrypted backup) and through saving and loading;
+/// a folder without it keeps it off.
+#[test]
+fn exit_after_completion_and_auto_exit_survive_upgrades_and_saving() {
+    let dir = temp_dir();
+    let path = dir.0.join("deckpilot.db");
+    let encryption = Encryption::Key(DatabaseKey::random().unwrap());
+    let mut f = fixture();
+    let main = f
+        .work
+        .layouts
+        .iter_mut()
+        .find(|l| l.id == f.main.id)
+        .unwrap();
+    let tools = main.page_mut(f.tools).unwrap();
+    tools.auto_return = true;
+    tools.auto_exit = Some(AutoExit {
+        enabled: true,
+        seconds: 15,
+    });
+    schema_10(&path, &encryption, &f);
+    let store = SqliteStore::open(&path, &encryption).unwrap();
+    let loaded = store.load_profile(f.work.id).unwrap().unwrap();
+    let layout = loaded.layout(f.main.id).unwrap();
+    let tools = layout.page(f.tools).unwrap();
+    assert!(tools.auto_return);
+    assert_eq!(
+        tools.auto_exit,
+        Some(AutoExit {
+            enabled: true,
+            seconds: 15
+        })
+    );
+    assert!(!layout.page(f.git).unwrap().auto_return);
+    // Saved again and reloaded: unchanged; switched off: not stored.
+    let mut edited = loaded.clone();
+    store.save_profile(&edited).unwrap();
+    assert_eq!(store.load_profile(f.work.id).unwrap().unwrap(), loaded);
+    let main = edited
+        .layouts
+        .iter_mut()
+        .find(|l| l.id == f.main.id)
+        .unwrap();
+    main.page_mut(f.tools).unwrap().auto_return = false;
+    store.save_profile(&edited).unwrap();
+    drop(store);
+    let store = SqliteStore::open(&path, &encryption).unwrap();
+    let reloaded = store.load_profile(f.work.id).unwrap().unwrap();
+    let tools = reloaded.layout(f.main.id).unwrap().page(f.tools).unwrap();
+    assert!(!tools.auto_return);
+    assert_eq!(tools.auto_exit.map(|a| a.seconds), Some(15));
+    let json = serde_json::to_value(tools).unwrap();
+    assert!(json.get("autoReturn").is_none());
+}
