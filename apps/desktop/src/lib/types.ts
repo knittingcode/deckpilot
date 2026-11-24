@@ -412,6 +412,29 @@ export interface Project {
   key: string
   name: string
   resources: Record<string, string>
+  /** In order; left out when there are none (docs/data-model.md, "Repositories"). */
+  repositories?: Repository[]
+  defaultRepository?: string
+}
+
+/** A repository of a project; its folder is the machine binding of `resource`. */
+export interface Repository {
+  id: string
+  key: string
+  name: string
+  resource: string
+  description?: string
+  /** Written only by the app (Git Providers); kept by every save. */
+  remotes?: RepositoryRemote[]
+}
+
+export interface RepositoryRemote {
+  name: string
+  primary?: boolean
+  connectionId?: string
+  remoteRepositoryId?: string
+  remoteUrl?: string
+  defaultBranch?: string
 }
 
 export type TouchGesture = "tap" | "longPress" | "swipe"

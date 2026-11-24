@@ -296,8 +296,12 @@ export function MachineResourceField({
   )
 }
 
-/** A chosen file or folder: its name, its path, and the native dialogs. */
-function LocationRow({
+/**
+ * A chosen file or folder: its name, its path, the native dialogs, and
+ * whether a bound one is still there (`resource_status`). Also the folder
+ * field of a project's repositories.
+ */
+export function LocationRow({
   id,
   resource,
   path,

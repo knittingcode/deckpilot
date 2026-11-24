@@ -14,7 +14,17 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { ArrowLeftRight, Copy, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react"
+import {
+  ArrowLeftRight,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  GripVertical,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -41,15 +51,18 @@ import { useAsync } from "@/hooks/use-async"
 import { useEditingProfile } from "@/hooks/use-profile"
 import { Trans, useTranslation } from "@/i18n"
 import { api } from "@/lib/api"
-import { failureMessage, toastFailure } from "@/lib/failure"
+import { failureDetail, failureMessage, toastFailure } from "@/lib/failure"
 import { useTitlebar } from "@/hooks/use-titlebar"
 import { useAppContext } from "@/lib/app-context"
 import type { Project, ProfileView, ResourceCheck, ResourceStatus } from "@/lib/types"
+import type { ProjectInput } from "@/lib/api"
 
 import { StatusIcon } from "@/components/resource-status-icon"
 import { STATUS } from "@/lib/resource-status"
 
 import { ProjectSwitcher } from "./project-switcher"
+import { type RepositoryRow, repositoryRows, rowsValid } from "./repositories"
+import { RepositoriesEditor } from "./repositories-editor"
 
 export function ProjectsPage() {
   const { t } = useTranslation()
@@ -320,6 +333,7 @@ function ProjectCycle({
           key={dialog.mode === "edit" ? dialog.project.id : "new"}
           profileId={profileId}
           project={dialog.mode === "edit" ? dialog.project : null}
+          checks={checks}
           onClose={() => {
             setDialog(null)
           }}
@@ -390,6 +404,20 @@ function SortableProject({
             </span>
           )}
         </div>
+        {(project.repositories?.length ?? 0) > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t("workspace:projects.repositories.summary", {
+              count: project.repositories?.length ?? 0,
+              keys: (project.repositories ?? [])
+                .map((r) =>
+                  r.id === project.defaultRepository
+                    ? t("workspace:projects.repositories.summaryDefault", { key: r.key })
+                    : r.key,
+                )
+                .join(", "),
+            })}
+          </p>
+        )}
         {resources.length > 0 && (
           <ul className="grid gap-0.5 text-xs text-muted-foreground">
             {resources.map(([role, key]) => (
@@ -510,15 +538,23 @@ class InvalidInput extends Error {}
 function ProjectForm({
   profileId,
   project,
+  checks,
   onClose,
   onDone,
 }: {
   profileId: string
   project: Project | null
+  checks: ResourceCheck[]
   onClose: () => void
   onDone: () => void
 }) {
   const { t } = useTranslation()
+  const [initialRepositories] = useState<RepositoryRow[]>(() => repositoryRows(project))
+  const initialDefault = project?.defaultRepository ?? null
+  const [repositories, setRepositories] = useState<RepositoryRow[]>(initialRepositories)
+  const [defaultRepository, setDefaultRepository] = useState<string | null>(initialDefault)
+  // The role/key pairs are advanced once a project has repositories.
+  const [rolesOpen, setRolesOpen] = useState(initialRepositories.length === 0)
   const initialRows = Object.entries(project?.resources ?? {}).map(([role, resource]) => ({
     role,
     key: resource,
@@ -529,7 +565,9 @@ function ProjectForm({
   const dirty =
     key !== (project?.key ?? "") ||
     name !== (project?.name ?? "") ||
-    JSON.stringify(rows) !== JSON.stringify(initialRows)
+    JSON.stringify(rows) !== JSON.stringify(initialRows) ||
+    JSON.stringify(repositories) !== JSON.stringify(initialRepositories) ||
+    defaultRepository !== initialDefault
   const update = (index: number, patch: Partial<ResourceRow>) => {
     setRows((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   }
@@ -548,9 +586,48 @@ function ProjectForm({
       throw new InvalidInput(t("workspace:projects.form.repeatedRole", { role: repeated }))
     }
     const resources = Object.fromEntries(filled.map((r) => [r.role, r.key]))
-    if (project) await api.updateProject(profileId, project.id, { key, name, resources })
-    else await api.createProject(profileId, { key, name, resources })
-    toast.success(t("workspace:projects.form.saved"))
+    // Repositories are sent when there are (or were) any; their remotes
+    // and other metadata the form does not edit are kept by the backend.
+    const withRepositories = repositories.length > 0 || initialRepositories.length > 0
+    const input: ProjectInput = withRepositories
+      ? {
+          key,
+          name,
+          resources,
+          repositories: repositories.map((r) => ({
+            id: r.id,
+            key: r.key.trim(),
+            name: r.name.trim(),
+            ...(r.resource ? { resource: r.resource } : {}),
+            ...(r.description.trim() ? { description: r.description.trim() } : {}),
+          })),
+          defaultRepository,
+        }
+      : { key, name, resources }
+    const saved = project
+      ? await api.updateProject(profileId, project.id, input)
+      : await api.createProject(profileId, input)
+    // Folders chosen here are bound on this computer now, under the
+    // repository's resource key (new ones got theirs when saved).
+    const failed: string[] = []
+    for (const row of repositories) {
+      if (!row.pendingPath) continue
+      const resource =
+        saved.repositories?.find((r) => r.id === row.id)?.resource ?? row.resource ?? null
+      if (!resource) continue
+      try {
+        await api.setResourceBinding(resource, "directory", row.pendingPath)
+      } catch (e) {
+        failed.push(`${row.key}: ${failureDetail(e)}`)
+      }
+    }
+    if (failed.length > 0) {
+      toast.error(t("workspace:projects.repositories.bindFailed"), {
+        description: failed.join("\n"),
+      })
+    } else {
+      toast.success(t("workspace:projects.form.saved"))
+    }
     onDone()
   }
   return (
@@ -568,7 +645,7 @@ function ProjectForm({
         />
       }
       submitLabel={t("workspace:projects.form.save")}
-      canSubmit={Boolean(key.trim())}
+      canSubmit={Boolean(key.trim()) && rowsValid(repositories)}
       dirty={dirty}
       onClose={onClose}
       onSubmit={submit}
@@ -603,56 +680,84 @@ function ProjectForm({
           />
         </div>
       </div>
+      <RepositoriesEditor
+        rows={repositories}
+        onChange={setRepositories}
+        defaultId={defaultRepository}
+        onDefault={setDefaultRepository}
+        initialDefaultId={initialDefault}
+        roleResource={
+          // As the form has it now: the advanced section may change the role.
+          rows.find((r) => r.role.trim() === "repository")?.key.trim() || null
+        }
+        checks={checks}
+      />
       <div className="grid gap-2">
-        <Label>{t("workspace:projects.form.resources")}</Label>
-        {rows.map((row, index) => (
-          <div
-            key={index}
-            role="group"
-            aria-label={t("workspace:projects.form.resource", { number: index + 1 })}
-            className="grid grid-cols-[1fr_1fr_auto] gap-2"
-          >
-            <Input
-              aria-label={t("workspace:projects.form.role")}
-              value={row.role}
-              placeholder="repository"
-              onChange={(e) => {
-                update(index, { role: e.target.value })
-              }}
-            />
-            <Input
-              aria-label={t("workspace:projects.form.resourceKey")}
-              value={row.key}
-              placeholder="shop.repository"
-              onChange={(e) => {
-                update(index, { key: e.target.value })
-              }}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("workspace:projects.form.removeResource")}
-              onClick={() => {
-                setRows((current) => current.filter((_, i) => i !== index))
-              }}
-            >
-              <X />
-            </Button>
-          </div>
-        ))}
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setRows((current) => [...current, { role: "", key: "" }])
-            }}
-          >
-            <Plus /> {t("workspace:projects.form.addResource")}
-          </Button>
-        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="justify-self-start px-1"
+          aria-expanded={rolesOpen}
+          onClick={() => {
+            setRolesOpen(!rolesOpen)
+          }}
+        >
+          {rolesOpen ? <ChevronDown /> : <ChevronRight />}
+          {t("workspace:projects.form.resourcesAdvanced")}
+        </Button>
+        {rolesOpen && (
+          <>
+            {rows.map((row, index) => (
+              <div
+                key={index}
+                role="group"
+                aria-label={t("workspace:projects.form.resource", { number: index + 1 })}
+                className="grid grid-cols-[1fr_1fr_auto] gap-2"
+              >
+                <Input
+                  aria-label={t("workspace:projects.form.role")}
+                  value={row.role}
+                  placeholder="repository"
+                  onChange={(e) => {
+                    update(index, { role: e.target.value })
+                  }}
+                />
+                <Input
+                  aria-label={t("workspace:projects.form.resourceKey")}
+                  value={row.key}
+                  placeholder="shop.repository"
+                  onChange={(e) => {
+                    update(index, { key: e.target.value })
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("workspace:projects.form.removeResource")}
+                  onClick={() => {
+                    setRows((current) => current.filter((_, i) => i !== index))
+                  }}
+                >
+                  <X />
+                </Button>
+              </div>
+            ))}
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setRows((current) => [...current, { role: "", key: "" }])
+                }}
+              >
+                <Plus /> {t("workspace:projects.form.addResource")}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </FormDialog>
   )

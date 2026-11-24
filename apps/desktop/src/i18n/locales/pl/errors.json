@@ -277,6 +277,7 @@
     "tooManyRemotes": "repozytorium może mieć najwyżej {{max}} zdalnych repozytoriów",
     "duplicateRemote": "zdalne repozytorium `{{name}}` występuje więcej niż raz",
     "severalPrimaryRemotes": "tylko jedno zdalne repozytorium może być główne",
-    "notFound": "repozytorium nie istnieje w tym projekcie"
+    "notFound": "repozytorium nie istnieje w tym projekcie",
+    "lastWithRole": "nie można usunąć ostatniego repozytorium, dopóki projekt ma rolę repozytorium; najpierw usuń tę rolę"
   }
 }
