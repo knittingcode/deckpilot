@@ -83,6 +83,9 @@ impl MockProvider {
         Self::with_capabilities(capabilities)
     }
 
+    /// # Panics
+    ///
+    /// Never: `mock` is a valid provider id.
     pub fn with_capabilities(capabilities: CapabilitySet) -> Self {
         Self {
             id: ProviderId::new(ProviderId::MOCK).expect("a valid id"),
@@ -129,7 +132,12 @@ impl MockProvider {
         self.timeline.insert(index, (at, event));
     }
 
-    fn observation(key: &str, phase: ObservedPhase, direction: Option<Direction>, at: Instant) -> CallObservation {
+    fn observation(
+        key: &str,
+        phase: ObservedPhase,
+        direction: Option<Direction>,
+        at: Instant,
+    ) -> CallObservation {
         CallObservation {
             key: CallKey::new(key).expect("a valid key"),
             kind: CallKind::OneToOne,
@@ -145,13 +153,15 @@ impl MockProvider {
 
     /// An incoming call `key` rings at `at`.
     pub fn ring(&mut self, at: Instant, key: &str) {
-        let observation = Self::observation(key, ObservedPhase::Ringing, Some(Direction::Incoming), at);
+        let observation =
+            Self::observation(key, ObservedPhase::Ringing, Some(Direction::Incoming), at);
         self.script(at, ProviderEvent::Call(observation));
     }
 
     /// An outgoing call `key` dials at `at`.
     pub fn dial(&mut self, at: Instant, key: &str) {
-        let observation = Self::observation(key, ObservedPhase::Dialing, Some(Direction::Outgoing), at);
+        let observation =
+            Self::observation(key, ObservedPhase::Dialing, Some(Direction::Outgoing), at);
         self.script(at, ProviderEvent::Call(observation));
     }
 
@@ -182,9 +192,12 @@ impl MockProvider {
                 reason: DisconnectReason::AppExited,
             },
         );
-        self.script(back, ProviderEvent::Connected {
-            session: ProviderSession(0),
-        });
+        self.script(
+            back,
+            ProviderEvent::Connected {
+                session: ProviderSession(0),
+            },
+        );
     }
 
     /// When the mock has something to report next.
@@ -260,7 +273,9 @@ impl CallProvider for MockProvider {
         self.session = Some(cx.session);
         self.timeline.push_front((
             Instant::ZERO,
-            ProviderEvent::Connected { session: cx.session },
+            ProviderEvent::Connected {
+                session: cx.session,
+            },
         ));
         Ok(())
     }
@@ -284,7 +299,8 @@ impl CallProvider for MockProvider {
                 }
                 ProviderEvent::Disconnected { .. } => self.pending.clear(),
                 ProviderEvent::Call(observation) => {
-                    self.calls.insert(observation.key.clone(), observation.clone());
+                    self.calls
+                        .insert(observation.key.clone(), observation.clone());
                 }
                 ProviderEvent::CallGone { key } => {
                     self.calls.remove(key);
@@ -293,8 +309,9 @@ impl CallProvider for MockProvider {
             }
             events.push(event);
         }
-        let (due, waiting): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.pending).into_iter().partition(|(t, _, _)| *t <= now);
+        let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending)
+            .into_iter()
+            .partition(|(t, _, _)| *t <= now);
         self.pending = waiting;
         for (at, token, command) in due {
             events.push(ProviderEvent::CommandOutcome {

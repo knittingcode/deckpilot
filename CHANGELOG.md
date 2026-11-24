@@ -44,6 +44,10 @@ released either. 0.6.0 is the first version intended for publication.
     capability class with stable ids. They are regenerated only while
     unedited, and "Restore defaults" first keeps your version as a layout
     of your own. This adds storage schema 14, which is additive.
+- Calls (tests): a mock call provider with full control (answer, reject,
+  cancel, end, microphone, camera), used only by tests. It runs the
+  "Back to work" scenarios on a virtual clock. No real call app is
+  driven.
 
 ## [0.15.0] - 2026-11-24
 

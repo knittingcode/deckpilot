@@ -13,15 +13,16 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use deckpilot_core::{
     ActionHandler, ActionInstance, ActionInstanceId, ActionParameters, ActionRegistry,
     ActionResult, ActionType, ActionTypeId, AutoExit, BindingTarget, ControlBinding, DeviceLayout,
-    Engine as CoreEngine, ExecutionContext, LayoutPage, MachineConfig, Os, PageId,
-    ParameterValue, Profile, Runtime, RuntimeOutcome, Trigger,
+    Engine as CoreEngine, ExecutionContext, LayoutPage, MachineConfig, Os, PageId, ParameterValue,
+    Profile, Runtime, RuntimeOutcome, Trigger,
 };
-use deckpilot_device::{ControlId, ControlInput, DeviceEvent, DeviceId, DeviceModelId, ModelCatalog, models};
+use deckpilot_device::{
+    ControlId, ControlInput, DeviceEvent, DeviceId, DeviceModelId, ModelCatalog, models,
+};
 
 use super::*;
 use crate::driver::{CallsDriver, KeyOutcome};
@@ -55,6 +56,7 @@ fn echo_type() -> ActionTypeId {
     ActionTypeId::new("test.echo").unwrap()
 }
 
+#[allow(clippy::default_trait_access)]
 fn echo(runs: Arc<AtomicUsize>) -> Echo {
     Echo(
         ActionType {
@@ -62,7 +64,17 @@ fn echo(runs: Arc<AtomicUsize>) -> Echo {
             name: "Echo".into(),
             description: String::new(),
             category: "Test".into(),
-            parameters: Vec::new(),
+            parameters: vec![deckpilot_core::ParameterSpec {
+                key: "message".into(),
+                label: "message".into(),
+                description: None,
+                kind: deckpilot_core::ParameterKind::Text {
+                    multiline: false,
+                    max_length: Some(100),
+                },
+                required: true,
+                default: None,
+            }],
             requires_project: false,
             node: Default::default(),
             deprecated: false,
@@ -113,24 +125,35 @@ fn own() -> Own {
         enabled: true,
         seconds: 30,
     });
-    tools
-        .bindings
-        .push(ControlBinding::new(key(2), Trigger::Press, BindingTarget::action(ok_id)));
+    tools.bindings.push(ControlBinding::new(
+        key(2),
+        Trigger::Press,
+        BindingTarget::action(ok_id),
+    ));
     let other = LayoutPage::new("Other");
     let (tools_id, other_id) = (tools.id, other.id);
     layout.pages.extend([tools, other]);
     layout.explicit_tree = true;
     layout.page_mut(home).unwrap().bindings.extend([
         ControlBinding::new(key(10), Trigger::Press, BindingTarget::action(ok_id)),
-        ControlBinding::new(key(1), Trigger::Press, BindingTarget::OpenPage { page: tools_id }),
+        ControlBinding::new(
+            key(1),
+            Trigger::Press,
+            BindingTarget::OpenPage { page: tools_id },
+        ),
         ControlBinding::new(key(2), Trigger::Press, BindingTarget::action(ok_id)),
-        ControlBinding::new(key(3), Trigger::Press, BindingTarget::OpenPage { page: other_id }),
+        ControlBinding::new(
+            key(3),
+            Trigger::Press,
+            BindingTarget::OpenPage { page: other_id },
+        ),
         ControlBinding::new(key(4), Trigger::Press, BindingTarget::action(fail_id)),
     ]);
     profile.layouts.push(layout);
-    profile
-        .layouts
-        .push(DeviceLayout::new("Main", DeviceModelId::new(models::STREAM_DECK_PLUS_ID)));
+    profile.layouts.push(DeviceLayout::new(
+        "Main",
+        DeviceModelId::new(models::STREAM_DECK_PLUS_ID),
+    ));
     Own {
         profile,
         home,
@@ -167,15 +190,16 @@ fn consent() -> ConsentState {
 
 impl H {
     fn new() -> Self {
-        Self::with(MockProvider::new(), ActionParameters::new())
+        Self::with(MockProvider::new(), &ActionParameters::new())
     }
 
     /// With the "Back to work" parameters `back`.
+    #[allow(clippy::needless_pass_by_value)]
     fn back(back: ActionParameters) -> Self {
-        Self::with(MockProvider::new(), back)
+        Self::with(MockProvider::new(), &back)
     }
 
-    fn with(mut mock: MockProvider, back: ActionParameters) -> Self {
+    fn with(mut mock: MockProvider, back: &ActionParameters) -> Self {
         let runs = Arc::new(AtomicUsize::new(0));
         let mut registry = ActionRegistry::default();
         registry.register(Box::new(echo(runs.clone()))).unwrap();
@@ -192,13 +216,19 @@ impl H {
         let mut driver = CallsDriver::new(engine);
         for model in catalog.iter() {
             let shape = Shape::of(&model.capabilities);
-            let mut template = builtin_templates().into_iter().find(|t| t.shape == shape).unwrap();
+            let mut template = builtin_templates()
+                .into_iter()
+                .find(|t| t.shape == shape)
+                .unwrap();
             for (_, controls) in &mut template.pages {
                 for control in controls.iter_mut().filter(|c| c.action == "return-to-work") {
                     control.parameters = back.clone();
                 }
             }
-            driver.set_layout(model.id.clone(), generate(&template, &model.id, &model.capabilities).unwrap());
+            driver.set_layout(
+                model.id.clone(),
+                generate(&template, &model.id, &model.capabilities).unwrap(),
+            );
         }
         mock.connect(&ProviderCx {
             consent: consent(),
@@ -275,7 +305,12 @@ impl H {
             .unwrap();
     }
 
-    fn input(&mut self, device: &DeviceId, control: ControlId, input: ControlInput) -> RuntimeOutcome {
+    fn input(
+        &mut self,
+        device: &DeviceId,
+        control: ControlId,
+        input: ControlInput,
+    ) -> RuntimeOutcome {
         self.runtime
             .handle_event(&DeviceEvent::Input {
                 device: device.clone(),
@@ -288,7 +323,11 @@ impl H {
     /// A press as the agent handles it: overlay keys go to the driver
     /// (commands to the mock), keys of a suspended device's own
     /// presentation are held for its return session.
-    fn press(&mut self, device: &DeviceId, control: ControlId) -> (RuntimeOutcome, Option<KeyOutcome>) {
+    fn press(
+        &mut self,
+        device: &DeviceId,
+        control: ControlId,
+    ) -> (RuntimeOutcome, Option<KeyOutcome>) {
         let outcome = self.input(device, control, ControlInput::Press);
         let handled = match &outcome {
             RuntimeOutcome::OverlayAction {
@@ -336,7 +375,11 @@ impl H {
         (outcome, handled)
     }
 
-    fn tap(&mut self, device: &DeviceId, control: ControlId) -> (RuntimeOutcome, Option<KeyOutcome>) {
+    fn tap(
+        &mut self,
+        device: &DeviceId,
+        control: ControlId,
+    ) -> (RuntimeOutcome, Option<KeyOutcome>) {
         let pressed = self.press(device, control);
         self.input(device, control, ControlInput::Release);
         pressed
@@ -373,11 +416,15 @@ impl H {
             .control
     }
 
+    #[allow(clippy::unused_self)]
     fn driver_layout(&self, device: &DeviceId) -> crate::layouts::Generated {
         let catalog = ModelCatalog::builtin();
         let model = catalog.get(&device.model).unwrap();
         let shape = Shape::of(&model.capabilities);
-        let template = builtin_templates().into_iter().find(|t| t.shape == shape).unwrap();
+        let template = builtin_templates()
+            .into_iter()
+            .find(|t| t.shape == shape)
+            .unwrap();
         generate(&template, &model.id, &model.capabilities).unwrap()
     }
 
@@ -429,7 +476,11 @@ fn an_incoming_call_is_answered_through_the_mock() {
     assert_eq!(h.page(&mk2), Some(Page::Incoming));
     let answer = h.overlay_control(&mk2, "answer");
     h.tap(&mk2, answer);
-    assert_eq!(h.state(), CallState::Incoming, "not before the app confirms");
+    assert_eq!(
+        h.state(),
+        CallState::Incoming,
+        "not before the app confirms"
+    );
     h.at_millis(1200);
     assert_eq!(h.state(), CallState::Active);
     assert_eq!(h.page(&mk2), Some(Page::Active));
@@ -464,7 +515,11 @@ fn reject_cancel_and_end_are_confirmed_by_the_mock() {
     let causes: Vec<_> = h.mock.sent().iter().map(|c| c.action).collect();
     assert_eq!(
         causes,
-        [CallAction::Reject, CallAction::CancelOutgoing, CallAction::End]
+        [
+            CallAction::Reject,
+            CallAction::CancelOutgoing,
+            CallAction::End
+        ]
     );
 }
 
@@ -512,7 +567,7 @@ fn rejected_never_answered_and_unknown_commands_change_nothing() {
 
 #[test]
 fn a_detection_only_provider_sends_nothing() {
-    let mut h = H::with(MockProvider::detection_only(), ActionParameters::new());
+    let mut h = H::with(MockProvider::detection_only(), &ActionParameters::new());
     let mk2 = h.mk2.clone();
     h.mock.join(Instant::from_secs(1), "m");
     h.at(1);
@@ -856,13 +911,21 @@ fn the_folder_and_page_are_kept_through_the_call() {
     h.mock.join(Instant::from_secs(1), "m");
     h.at(1);
     h.back_to_work(&mk2);
-    assert_eq!(h.runtime.current_page(&mk2), Some(h.own.tools), "the folder, as left");
+    assert_eq!(
+        h.runtime.current_page(&mk2),
+        Some(h.own.tools),
+        "the folder, as left"
+    );
     h.at(21);
     assert!(h.shows(&mk2));
     h.mock.hang_up(Instant::from_secs(100), "m");
     h.at(100);
     assert!(!h.shows(&mk2));
-    assert_eq!(h.runtime.current_page(&mk2), Some(h.own.tools), "after the call");
+    assert_eq!(
+        h.runtime.current_page(&mk2),
+        Some(h.own.tools),
+        "after the call"
+    );
     let _ = h.own.home;
 }
 
@@ -879,7 +942,11 @@ fn nothing_runs_during_the_switch() {
     h.press(&mk2, back);
     let release = h.input(&mk2, back, ControlInput::Release);
     assert!(matches!(release, RuntimeOutcome::Ignored { .. }));
-    assert_eq!(h.runs.load(Ordering::SeqCst), before, "key 10 underneath did not run");
+    assert_eq!(
+        h.runs.load(Ordering::SeqCst),
+        before,
+        "key 10 underneath did not run"
+    );
     // A real press afterwards does.
     h.tap(&mk2, key(10));
     assert_eq!(h.runs.load(Ordering::SeqCst), before + 1);

@@ -306,3 +306,42 @@ frames in step. All of it runs on the engine clock.
   started from the restored presentation are reported with `run_started`
   and `run_finished`.
 - The watchdog pops any Calls frame the driver does not hold.
+
+## Mock provider (`deckpilot-calls::testing`, feature `testing`)
+
+The only provider that exercises **full control**: answer, reject, cancel,
+end, microphone and camera. It is deterministic and runs on the engine
+clock:
+
+- a scripted timeline (ring, dial, join, hang up, the call app restarting,
+  a lost connection);
+- configurable capabilities, including a detection-only set like the
+  Teams adapter's;
+- a configurable response per action: confirmed after a delay (the call
+  then shows the change), rejected with a code, never answered, or
+  unknown.
+
+It never drives a real call app. Its tests (`testing/tests.rs`) run the
+owner's list on the mock, the driver and a real core runtime:
+
+- full control, with confirmed, rejected, unanswered and unknown outcomes;
+- detection only, where nothing is sent;
+- the call app restarting, and a lost provider;
+- *Back to work*:
+  - 20, 30 and 60 s, and a custom time;
+  - after success, failure and cancellation, in each setting;
+  - after a workflow's real end;
+  - navigation counted only when set;
+  - the 60 s maximum, and an early completion winning;
+  - the meeting ending mid-return;
+  - an agent restart;
+  - a device disconnecting and reconnecting;
+  - an incoming call preempting;
+  - other devices, and `returnAllDevices`;
+  - repeated presses with one session and no duplicate timer;
+  - no stale restore;
+  - the folder and page kept;
+  - nothing run during the switch.
+
+What the mock does not cover yet: the agent wiring (C3b), and with it
+scripting the mock over the test-hooks IPC and the dev seed option.
