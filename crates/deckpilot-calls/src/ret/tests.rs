@@ -95,7 +95,7 @@ fn a_qualifying_run_resumes_when_it_really_ends() {
     let (id, _) = c.suspend("deck", ReturnSettings::default(), at(0));
     assert!(c.hold(&"deck", id, RunToken(1), RunKind::Workflow));
     // Pressing the key is not the end: nothing until the run reports it.
-    assert!(c.tick(at(10)).is_empty());
+    assert_eq!(c.tick(at(10)).len(), 0);
     let ended = c
         .run_finished(&"deck", RunToken(1), RunEnd::Succeeded)
         .unwrap();
@@ -231,7 +231,7 @@ fn one_session_per_device_and_stale_ids_are_ignored() {
     );
     // The first session's deadline (60 s) never fires.
     assert_eq!(c.tick(at(35))[0].id, second);
-    assert!(c.tick(at(60)).is_empty());
+    assert_eq!(c.tick(at(60)).len(), 0);
     assert_eq!(c.scheduled(), 0);
 }
 
@@ -290,7 +290,7 @@ fn an_incoming_call_preempts_and_resumes() {
     let ended = c.preempt();
     assert_eq!(ended[0].reason, ReturnReason::Preempted);
     assert!(ended[0].resumes());
-    assert!(c.preempt().is_empty());
+    assert_eq!(c.preempt().len(), 0);
 }
 
 #[test]

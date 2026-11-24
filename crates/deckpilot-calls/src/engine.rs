@@ -349,7 +349,7 @@ impl Engine {
             ProviderEvent::Call(observation) => self.observe(id, observation, now),
             ProviderEvent::CallGone { key } => self.gone(id, &key, now),
             ProviderEvent::CommandOutcome { token, outcome } => {
-                self.outcome(id, token, outcome, now)
+                self.outcome(id, token, outcome, now);
             }
         }
         self.after_change();
@@ -438,8 +438,7 @@ impl Engine {
             ObservedPhase::Ringing if obs.direction != Some(Direction::Outgoing) => {
                 CallState::Incoming
             }
-            ObservedPhase::Dialing => CallState::Outgoing,
-            ObservedPhase::Ringing => CallState::Outgoing,
+            ObservedPhase::Dialing | ObservedPhase::Ringing => CallState::Outgoing,
             ObservedPhase::Connected => CallState::Active,
             // Not a way into a call (§ transitions): nothing is tracked.
             ObservedPhase::Connecting
@@ -534,11 +533,8 @@ impl Engine {
             track.signal_lost_at = None;
         }
         let to = match (&from, obs.phase) {
-            (CallState::Incoming, ObservedPhase::Ringing)
-            | (CallState::Outgoing, ObservedPhase::Dialing | ObservedPhase::Ringing)
-            | (CallState::Connecting, ObservedPhase::Connecting)
-            | (CallState::Active, ObservedPhase::Connected)
-            | (CallState::Ending, ObservedPhase::Ending) => None,
+            // The same phase again (incoming ringing, active connected, ...)
+            // is no transition; see the last arm.
             (CallState::Incoming | CallState::Outgoing, ObservedPhase::Connecting) => {
                 Some(CallState::Connecting)
             }
@@ -824,7 +820,8 @@ impl Engine {
         if track.state == to {
             return;
         }
-        let from = std::mem::replace(&mut track.state, to.clone());
+        let from = std::mem::replace(&mut track.state, to);
+        let to = track.state.clone();
         track.entered = now;
         if to == CallState::Active {
             track.connected_at = Some(now);

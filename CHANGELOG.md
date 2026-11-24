@@ -27,6 +27,13 @@ released either. 0.6.0 is the first version intended for publication.
   DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
   detected, not controlled: Microsoft retired its device API on
   2026-06-30 (`docs/calls.md`).
+- Calls (groundwork): the call state engine (incoming, outgoing,
+  connecting, active, ending, ended, failed, unknown) with a timeout on
+  every live state, missed, rejected and remote hang-up, provider and app
+  restarts, meeting-to-meeting moves and simultaneous calls; and the
+  "Back to work" return sessions (timer, real completion, or whichever
+  comes first, 60 s by default), one per device. Tested on a virtual clock;
+  nothing user-visible yet.
 - Marketplace: a sidebar with search, Discover, Installed, Updates,
   Categories and collections; plugin pages with screenshots, highlights,
   what's new, version history, publisher and trust; install, update and

@@ -81,6 +81,7 @@ fn check_invariants(engine: &Engine, step: usize) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(seed: u64) {
     let mut rng = Rng(seed);
     let mut engine = Engine::default();
@@ -197,7 +198,7 @@ fn run(seed: u64) {
 
 #[test]
 fn no_state_without_an_exit_over_random_event_orders() {
-    for seed in 1..=64 {
+    for seed in 1..=64_u64 {
         run(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
     }
 }

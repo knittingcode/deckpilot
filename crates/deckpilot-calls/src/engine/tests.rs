@@ -190,7 +190,7 @@ fn phases_that_do_not_start_a_call_track_nothing() {
         let mut h = Harness::new();
         h.see("a", phase, None);
         assert_eq!(h.state(), CallState::Idle, "{phase:?}");
-        assert!(h.engine.tracks().is_empty());
+        assert_eq!(h.engine.tracks().len(), 0);
     }
 }
 
@@ -243,7 +243,7 @@ fn active_ending_ended_idle() {
     assert_eq!(h.ended(), Some(EndCause::Left));
     h.at(2);
     assert_eq!(h.state(), CallState::Idle);
-    assert!(h.engine.tracks().is_empty());
+    assert_eq!(h.engine.tracks().len(), 0);
 }
 
 #[test]
@@ -723,7 +723,7 @@ fn a_command_without_confirmation_changes_nothing() {
         outcome: CommandOutcome::Confirmed,
     });
     assert_eq!(h.engine.snapshot().mic_muted, Tri::Known(false));
-    assert!(h.done().is_empty());
+    assert_eq!(h.done().len(), 0);
     h.at(5);
     assert_eq!(h.done(), [(token, CommandEnd::Unconfirmed)]);
     let snap = h.engine.snapshot();
@@ -822,7 +822,7 @@ fn stale_and_forged_outcomes_are_dropped() {
             outcome: CommandOutcome::Rejected { code: "no".into() },
         });
     }
-    assert!(h.done().is_empty());
+    assert_eq!(h.done().len(), 0);
     assert_eq!(h.engine.snapshot().pending, Some(CallAction::Answer));
     // A reconnect makes the old command unconfirmable.
     h.connect();
