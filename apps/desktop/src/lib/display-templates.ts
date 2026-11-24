@@ -31,6 +31,8 @@
 
 import { invoke } from "@tauri-apps/api/core"
 
+import { insertedReference, withoutDeprecated } from "./variable-catalog"
+
 import type {
   CatalogEntry,
   CatalogFilter,
@@ -157,6 +159,44 @@ export function resolveDisplayTemplates(
   return invoke<ResolvedDisplayTemplate[]>("resolve_display_templates", { context, templates })
 }
 
+/** Value types a key can show as text (docs/variables.md §3.2). */
+const DISPLAYABLE_TYPES: ReadonlySet<string> = new Set(["string", "integer", "boolean"])
+
+/** References that never resolve on a key, whatever the agent lists (§3.2). */
+const NEVER_DISPLAYED = ["steps.", "workflow.", "system.device.", "workSession.", "secrets."]
+
+/**
+ * Whether the picker may offer `entry` for a key's title or label. The agent
+ * already lists display-safe references only (`listDisplayVariables`); this
+ * is a second, local check so that an older or misbehaving agent can never
+ * put a sensitive value, a secret reference, an id or a run's value into
+ * the picker. A refused reference typed by hand still shows `-` on the key.
+ */
+export function offeredOnKey(entry: CatalogEntry): boolean {
+  if (entry.sensitive === true) return false
+  if (!DISPLAYABLE_TYPES.has(entry.valueType.type)) return false
+  const reference = insertedReference(entry)
+  if (NEVER_DISPLAYED.some((prefix) => reference.startsWith(prefix))) return false
+  // Ids (`projects.current.id`, `workSession.projectId`, …) never show.
+  if (/(^|\.)(id|[a-z]+Id)$/.test(reference)) return false
+  return entry.availability !== "runtimeOnly"
+}
+
+/**
+ * The picker's entries: offered ones only, each reference once (a legacy
+ * alias is listed under its canonical id), in the agent's order.
+ */
+export function pickerEntries(entries: CatalogEntry[]): CatalogEntry[] {
+  const seen = new Set<string>()
+  return withoutDeprecated(entries).filter((entry) => {
+    if (!offeredOnKey(entry)) return false
+    const reference = insertedReference(entry)
+    if (seen.has(reference)) return false
+    seen.add(reference)
+    return true
+  })
+}
+
 /** Whether a `sharedVariablesChanged` key changes a text with `dependencies`. */
 export function dependsOn(dependencies: DisplayDependency[] | undefined, key: string): boolean {
   return (dependencies ?? []).some(
@@ -180,4 +220,65 @@ function legacyAliases(reference: string): string[] {
     return [canonical, `plugins.deckpilot.${canonical}`]
   }
   return [canonical]
+}
+
+/** Most characters a key shows of a title; a longer one is cut, `…` last. */
+export const MAX_SHOWN_TITLE_CHARS = 32
+
+/** Most characters of a title with references, as stored. */
+export const MAX_TITLE_TEMPLATE_CHARS = 160
+
+/** Whether `title` uses references (`{{ … }}`), so it may be stored longer than the key shows. */
+export function hasReferences(title: string): boolean {
+  return title.includes("{{")
+}
+
+/** The longest title the editor accepts for `title` as typed. */
+export function maxTitleLength(title: string): number {
+  return hasReferences(title) ? MAX_TITLE_TEMPLATE_CHARS : MAX_SHOWN_TITLE_CHARS
+}
+
+/** The insertion of `reference` into a title. */
+export function referenceText(reference: string): string {
+  return `{{ ${reference} }}`
+}
+
+/** What a key shows of a resolved title: cut, and only the markers it still shows. */
+export interface ShownTitle {
+  text: string
+  /** Markers inside `text`, never past the cut. */
+  markers: MarkerSpan[]
+  /** The title was cut (its last character is `…`). */
+  cut: boolean
+}
+
+/**
+ * What the key shows of `display`, cut as the agent cuts a title with
+ * references: at most `max` characters (code points), the last one `…`
+ * when longer. A marker past the cut, or cut through, is left out, so it
+ * never points beyond the text.
+ */
+export function shownOnKey(display: DisplayText, max = MAX_SHOWN_TITLE_CHARS): ShownTitle {
+  const markers = display.markers ?? []
+  // Code points, as the agent counts (`cut_title`).
+  const chars = Array.from(display.text)
+  if (chars.length <= max) return { text: display.text, markers, cut: false }
+  const kept = chars.slice(0, max - 1).join("")
+  // UTF-16 length of what is kept: markers are UTF-16 offsets.
+  const end = kept.length
+  return { text: `${kept}…`, markers: markers.filter((m) => m.end <= end), cut: true }
+}
+
+/** `shown.text` split into plain text and its markers, in order. */
+export function titleSegments(shown: ShownTitle): { text: string; marker?: MarkerSpan }[] {
+  const segments: { text: string; marker?: MarkerSpan }[] = []
+  let at = 0
+  for (const marker of [...shown.markers].sort((a, b) => a.start - b.start)) {
+    if (marker.start < at) continue
+    if (marker.start > at) segments.push({ text: shown.text.slice(at, marker.start) })
+    segments.push({ text: shown.text.slice(marker.start, marker.end), marker })
+    at = marker.end
+  }
+  if (at < shown.text.length) segments.push({ text: shown.text.slice(at) })
+  return segments
 }

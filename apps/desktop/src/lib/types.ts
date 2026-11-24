@@ -1263,6 +1263,12 @@ export interface KeyFace {
   series?: number[] | null
   /** The key's icon by name (lib/icons.ts), drawn by the renderer. */
   symbol?: string | null
+  /**
+   * The key's action cannot run now (its plugin is missing, disabled or
+   * unavailable): the compact missing-plugin face, with the `plug` icon in
+   * place of any icon and the key's title. Never stored.
+   */
+  unavailable?: boolean
   /** The labels the key shows, resolved (lib/key-labels.ts); omitted when none. */
   labels?: FaceLabel[]
 }

@@ -56,6 +56,8 @@ export function useVariableRefresh(context: ResolutionContext, enabled: boolean)
       stop = listen<VariableContextEvent>(VARIABLES_EVENT, ({ payload }) => {
         if (eventAffects(payload, current)) setTick((t) => t + 1)
       })
+      // Outside Tauri (tests, a browser) the subscription fails: no events.
+      stop.catch(() => undefined)
     } catch {
       // Outside Tauri there are no agent events.
     }
@@ -68,6 +70,33 @@ export function useVariableRefresh(context: ResolutionContext, enabled: boolean)
       )
     }
   }, [contextKey, enabled])
+  return tick
+}
+
+/** Shortest time between two redraws of the editor's keys for variable changes. */
+export const DISPLAY_REFRESH_MS = 250
+
+/**
+ * A counter for what keys show (titles and labels, docs/variables.md §3.4):
+ * it goes up when the agent reports a change of the profile, its project
+ * or a shared value, at most once per `DISPLAY_REFRESH_MS` (the last change
+ * always counts), as the agent coalesces device redraws. No polling.
+ */
+export function useDisplayRefresh(profileId: string, enabled = true): number {
+  const events = useVariableRefresh({ profile: profileId }, enabled)
+  const [tick, setTick] = useState(events)
+  const last = useRef(0)
+  useEffect(() => {
+    if (events === 0) return
+    const wait = Math.max(0, last.current + DISPLAY_REFRESH_MS - Date.now())
+    const timer = setTimeout(() => {
+      last.current = Date.now()
+      setTick(events)
+    }, wait)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [events])
   return tick
 }
 

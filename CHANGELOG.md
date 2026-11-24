@@ -15,8 +15,32 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Added
+
+- Device Editor: the key's title field has a picker of the variables a key
+  can show, which inserts `{{ reference }}` at the cursor, and shows under
+  the field what the key shows as the agent resolves it (cut to 32
+  characters as on the key, with each `-` that stands for a variable
+  marked and why it has no value). The title itself is not changed. The
+  Canvas summaries show the agent's answers instead of replacing
+  `{profile}`, `{project.key}` and `{project.name}` themselves.
+
+### Changed
+
+- A key whose plugin is missing, disabled, incompatible, waiting for a
+  permission or briefly away keeps its assignment, title, icon and look,
+  and shows a compact face: a plug icon with the key's title and colours,
+  no warning text. A key whose other gesture still works keeps its normal
+  look. The device, the simulated device and the editor's previews draw
+  the same face, and the key comes back as it was once the plugin can run
+  the action again.
+
 ### Fixed
 
+- The editor's previews of keys stored with the old action ids of
+  built-ins that moved to a plugin (`projects.next`, `git.status`, …)
+  showed them as unavailable even while the plugin served them. They now
+  follow the plugin, as the agent does.
 - Settings › Resources called an application chosen with the application
   or browser picker "missing", because it is stored by its bundle id,
   desktop-file id or App Paths name rather than a path, and never checked a

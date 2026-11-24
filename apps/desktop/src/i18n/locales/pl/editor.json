@@ -981,5 +981,24 @@
     "noPluginBackgrounds": "Żadna zainstalowana wtyczka nie dodaje teł.",
     "backgroundDisabled": "Tło tego klawisza należy do wyłączonej wtyczki: klawisz pokazuje domyślne tło urządzenia, dopóki wtyczka nie zostanie ponownie włączona.",
     "backgroundMissing": "Tło tego klawisza nie jest tu dostępne (jego wtyczka nie jest zainstalowana): klawisz pokazuje domyślne tło urządzenia, dopóki nie będzie."
+  },
+  "titleVariables": {
+    "insert": "Wstaw zmienną do tytułu",
+    "search": "Szukaj zmiennych",
+    "list": "Zmienne, które może pokazać klawisz",
+    "loading": "Wczytywanie…",
+    "none": "Żadna zmienna nie pasuje.",
+    "unavailable": "Zmienne są dostępne, gdy działa agent DeckPilota.",
+    "shows": "Klawisz pokazuje:",
+    "cut": "Klawisz pokazuje najwyżej 32 znaki.",
+    "unresolved": "{{reference}} pokazuje „-”: {{reason}}",
+    "invalid": "„{{text}}” nie jest zmienną i jest pokazywane tak, jak wpisano.",
+    "reason": {
+      "notDisplayable": "nigdy nie jest pokazywana na klawiszu (poufna, sekret lub identyfikator).",
+      "missing": "nie ma teraz wartości.",
+      "unavailable": "jej moduł lub wtyczka jest niedostępna.",
+      "notText": "jej wartość nie jest tekstem.",
+      "runtimeOnly": "istnieje tylko podczas działania przepływu."
+    }
   }
 }
