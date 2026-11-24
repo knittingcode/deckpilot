@@ -236,7 +236,9 @@ free. It adds no execution path, trigger or stored shape:
   own module's action types. `ModuleRegistry::register` checks every
   preset (`GesturePreset::check`: texts, unique gestures, no release next
   to a double or long press, known action types, parameters the type
-  accepts, a gesture the action can run from) and lists them in
+  accepts, a gesture the action can run from, and a gesture whose
+  [context](action-contexts.md) the action declares: `gesture` for a
+  double or long press, `key` otherwise) and lists them in
   `ModuleInfo.gesturePresets`; `gesture_preset(id)` finds one for
   diagnostics.
 - **Applied** by the layout editor (`apps/desktop/src/layout-editor/gesture-presets.ts`,
@@ -255,8 +257,12 @@ free. It adds no execution path, trigger or stored shape:
   `ControlBinding`s, committed as one draft change (one undo step). On an
   empty key the single press is titled with the preset's name; on an
   occupied key the look, the title and the gestures the preset does not
-  declare stay, and only the declared gestures change target. A raw key
-  whose release could not stay next to the new gestures refuses the preset.
+  declare stay, and only the declared gestures change target. A preset
+  never switches an occupied raw key to gestures (D2): a raw key with a
+  press refuses a preset that needs a double or long press, and says to
+  switch it in the Inspector first, where the conversion asks; a raw key
+  with a release refuses it too. A preset that keeps the key raw (single
+  press, release) goes on it.
   Dropped on one gesture card, only that gesture's action is assigned.
 - Nothing of the preset is stored (no schema or document change); every
   gesture is then edited, replaced or removed on its own. Timing stays in

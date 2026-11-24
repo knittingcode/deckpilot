@@ -579,10 +579,8 @@ export function LibraryPanel({
   )
   const presetsOf = (category: string) =>
     shownPresets.filter((p) => actionCategoryId(p.category) === actionCategoryId(category))
-  const shownGesturePresets = gesturePresets.filter(
-    (p) =>
-      matches(`${p.label} ${p.summary} ${p.category} ${actionCategoryLabel(p.category)}`, needle) &&
-      !(hiding && p.incompatible !== undefined),
+  const shownGesturePresets = gesturePresets.filter((p) =>
+    matches(`${p.label} ${p.summary} ${p.category} ${actionCategoryLabel(p.category)}`, needle),
   )
   const gesturePresetsOf = (category: string) =>
     shownGesturePresets.filter((p) => actionCategoryId(p.category) === actionCategoryId(category))

@@ -1150,6 +1150,7 @@
     "nothing": "None of its gestures fits {{control}}.",
     "releaseWithGestures": "A release cannot go next to a double click or long press.",
     "releaseInTheWay": "{{control}} has a Release action, which cannot stay next to a double click or long press. Remove it first.",
+    "switchFirst": "{{control}} acts as soon as it is pressed, and this preset does not change that. Drop it on its double click or long press in the Inspector first (it asks before switching the key to gestures), or use an empty key.",
     "list": "{{items}} and {{last}}"
   }
 }

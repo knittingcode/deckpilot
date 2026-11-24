@@ -71,7 +71,9 @@ released either. 0.6.0 is the first version intended for publication.
   10% on a single press, sets 100% on a double click and 50% on a long
   press. Dropped on a key it creates ordinary actions and gesture bindings
   in one undo step (keeping an occupied key's look and its other
-  gestures), or nothing when the key cannot take it; dropped on one
+  gestures), or nothing when the key cannot take it. A key that acts on
+  its press at once is never switched to gestures by a preset: switch it
+  in the Inspector first, which asks; dropped on one
   gesture card only that gesture changes. Every gesture stays editable on
   its own; nothing of the preset is stored.
 - Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare

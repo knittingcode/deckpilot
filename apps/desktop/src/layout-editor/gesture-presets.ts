@@ -29,7 +29,7 @@ import type {
   Trigger,
 } from "@/lib/types"
 import type { ActionInput } from "@/lib/api"
-import { GESTURE_LABELS, convertToGestures, keyMode } from "@/components/gesture-editor/model"
+import { GESTURE_LABELS, keyMode } from "@/components/gesture-editor/model"
 
 import { existingPreset, newPresetAction } from "./catalog"
 
@@ -173,8 +173,6 @@ export type PresetPlan =
       items: PlannedGesture[]
       /** Gestures left out (only with `allowPartial`), each with why. */
       skipped: { gesture: PresetGesture; reason: string }[]
-      /** The control's raw press first becomes a click (it gets a double or long press). */
-      convert: boolean
     }
   | { ok: false; reason: string }
 
@@ -194,8 +192,14 @@ export function presetTrigger(gesture: PresetGesture, gestures: boolean): Trigge
  * touch exists) and the actions' declared controls. A double or long press
  * puts the control in gesture mode, where a single press is a click and a
  * release cannot be. A gesture the control cannot take refuses the whole
- * preset, unless it allows a partial application; a release that is on
- * the control and could not stay next to the new gestures refuses it too.
+ * preset, unless it allows a partial application.
+ *
+ * A preset never switches an occupied raw control to gestures (decision D2
+ * of docs/gestures-and-work-session.md: an existing press stays immediate,
+ * and only the gesture editor converts it, after asking). Such a control
+ * refuses a preset that needs a double or long press until the user has
+ * switched it there; a release on it refuses it too, as the conversion
+ * would remove it. Empty controls and controls in gesture mode take it.
  */
 export function planPreset({
   preset,
@@ -255,11 +259,17 @@ export function planPreset({
   if (items.length === 0) {
     return { ok: false, reason: i18n.t("editor:gesturePreset.nothing", { control: name }) }
   }
-  const convert = gestures && mode === "raw"
-  if (convert && bindingsFor(layout, pageId, control).some((b) => b.trigger.type === "release")) {
-    return { ok: false, reason: i18n.t("editor:gesturePreset.releaseInTheWay", { control: name }) }
+  if (gestures && mode === "raw") {
+    const release = bindingsFor(layout, pageId, control).some((b) => b.trigger.type === "release")
+    return {
+      ok: false,
+      reason: i18n.t(
+        release ? "editor:gesturePreset.releaseInTheWay" : "editor:gesturePreset.switchFirst",
+        { control: name },
+      ),
+    }
   }
-  return { ok: true, items, skipped, convert }
+  return { ok: true, items, skipped }
 }
 
 /**
@@ -278,10 +288,9 @@ export function applyPreset(
   title: string | null,
 ): DeviceLayout {
   const empty = keyMode(layout, pageId, control) === "empty"
-  const base = plan.convert ? convertToGestures(layout, pageId, control).layout : layout
   return {
-    ...base,
-    pages: base.pages.map((page) => {
+    ...layout,
+    pages: layout.pages.map((page) => {
       if (page.id !== pageId) return page
       const bindings = [...page.bindings]
       plan.items.forEach((item, index) => {

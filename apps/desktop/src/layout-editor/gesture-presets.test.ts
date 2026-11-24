@@ -89,7 +89,6 @@ describe("planning a preset for a control", () => {
       ["longPress", "longPress"],
     ])
     expect(result.skipped).toEqual([])
-    expect(result.convert).toBe(false)
   })
 
   it("keeps a single press and release raw: the press fires at once", () => {
@@ -189,15 +188,43 @@ describe("applying a plan", () => {
     expect(layout.pages[0]?.bindings).toEqual([])
   })
 
-  it("keeps an occupied key's look and other gestures, replacing only the declared ones", () => {
+  it("never switches an occupied raw key to gestures (D2): the press stays immediate", () => {
+    const layout = layoutWith([
+      { control: key(0), trigger: { type: "press" }, target: { type: "back" }, label: "Mine" },
+    ])
+    for (const preset of [BRIGHTNESS_CONTROL, { ...BRIGHTNESS_CONTROL, gestures: [gestureAt(2)] }]) {
+      const refused = plan(preset, layout)
+      expect(refused.ok).toBe(false)
+      if (refused.ok) throw new Error("unreachable")
+      expect(refused.reason).toBe(
+        "Key 1 acts as soon as it is pressed, and this preset does not change that. Drop it on its double click or long press in the Inspector first (it asks before switching the key to gestures), or use an empty key.",
+      )
+    }
+    // Even partial: nothing of it goes on the raw key.
+    expect(plan({ ...BRIGHTNESS_CONTROL, allowPartial: true }, layout).ok).toBe(false)
+    // A preset that keeps the key raw (single press and release) still fits.
+    const raw: GesturePreset = {
+      ...BRIGHTNESS_CONTROL,
+      gestures: [gestureAt(0)],
+    }
+    expect(ok(plan(raw, layout)).items.map((i) => i.trigger)).toEqual([{ type: "press" }])
+  })
+
+  it("keeps a key's look and other gestures, replacing only the declared ones", () => {
     const look = { background: "#112233", textColor: "#ffcc00" }
+    // The key is in gesture mode already (the user switched it in the Inspector).
     const layout = layoutWith([
       {
         control: key(0),
-        trigger: { type: "press" },
+        trigger: { type: "click" },
         target: { type: "back" },
         label: "Mine",
         appearance: look,
+      },
+      {
+        control: key(0),
+        trigger: { type: "doubleClick" },
+        target: { type: "action", action: "other" },
       },
       { control: key(1), trigger: { type: "press" }, target: { type: "back" } },
     ])
@@ -206,8 +233,6 @@ describe("applying a plan", () => {
       gestures: [gestureAt(2)],
     }
     const result = ok(plan(longOnly, layout))
-    // The raw press becomes a click next to the long press, as the editor converts it.
-    expect(result.convert).toBe(true)
     const next = applyPreset(layout, "home", key(0), result, targets(1), "Brightness Control")
     expect(next.pages[0]?.bindings).toEqual([
       {
@@ -216,6 +241,11 @@ describe("applying a plan", () => {
         target: { type: "back" },
         label: "Mine",
         appearance: look,
+      },
+      {
+        control: key(0),
+        trigger: { type: "doubleClick" },
+        target: { type: "action", action: "other" },
       },
       { control: key(1), trigger: { type: "press" }, target: { type: "back" } },
       {

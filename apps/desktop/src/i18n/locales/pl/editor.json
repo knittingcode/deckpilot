@@ -1198,6 +1198,7 @@
     "nothing": "Żaden z jego gestów nie pasuje do „{{control}}”.",
     "releaseWithGestures": "Zwolnienie nie może być obok dwukrotnego kliknięcia ani długiego naciśnięcia.",
     "releaseInTheWay": "„{{control}}” ma akcję zwolnienia, która nie może zostać obok dwukrotnego kliknięcia ani długiego naciśnięcia. Najpierw ją usuń.",
+    "switchFirst": "„{{control}}” działa od razu po naciśnięciu i ten wpis tego nie zmienia. Najpierw upuść go na dwukrotne kliknięcie lub długie naciśnięcie w Inspektorze (zapyta przed przełączeniem klawisza na gesty) albo użyj pustego klawisza.",
     "list": "{{items}} i {{last}}"
   }
 }

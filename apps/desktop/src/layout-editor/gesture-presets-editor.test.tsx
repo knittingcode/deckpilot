@@ -342,11 +342,35 @@ describe("dropped on an occupied key", () => {
     parameters: {},
   }
 
-  it("keeps the key's look and its other gestures; replaces only the declared ones", async () => {
+  it("is refused on a raw key, which keeps its immediate press (D2)", () => {
     const layout = layoutWith([
       {
         control: { kind: "key", index: 2 },
         trigger: { type: "press" },
+        target: { type: "action", action: mine.id },
+        label: "Lights",
+      },
+    ])
+    render(layout, [], [mine])
+    drop(BRIGHTNESS_ENTRY, "key:2")
+    expect(toasts.error).toHaveBeenCalledWith(
+      "Brightness Control was not put on Key 3",
+      expect.objectContaining({
+        description: expect.stringContaining(
+          "Key 3 acts as soon as it is pressed, and this preset does not change that.",
+        ) as unknown,
+      }),
+    )
+    expect(made).toEqual([])
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled()
+  })
+
+  it("keeps the key's look and its other gestures; replaces only the declared ones", async () => {
+    // In gesture mode already: the user switched it in the Inspector.
+    const layout = layoutWith([
+      {
+        control: { kind: "key", index: 2 },
+        trigger: { type: "click" },
         target: { type: "action", action: mine.id },
         label: "Lights",
         appearance: look,
