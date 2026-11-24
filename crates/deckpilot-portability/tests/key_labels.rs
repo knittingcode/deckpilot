@@ -12,8 +12,8 @@ use deckpilot_device::{ControlId, DeviceModelId, ModelCatalog, models};
 use deckpilot_portability::import::validate;
 use deckpilot_portability::payload::{self, ExportOptions, Payload};
 use deckpilot_portability::{
-    ImportMode, ImportOptions, PAYLOAD_VERSION, PAYLOAD_VERSION_WITHOUT_LIBRARY, PortabilityError,
-    plan,
+    ImportMode, ImportOptions, PAYLOAD_VERSION, PAYLOAD_VERSION_WITH_LABELS,
+    PAYLOAD_VERSION_WITHOUT_LIBRARY, PortabilityError, plan,
 };
 use deckpilot_storage::crypto::{KdfParams, Password};
 use deckpilot_storage::{ConfigStore, SqliteStore};
@@ -84,8 +84,8 @@ fn label(text: &str) -> KeyLabel {
 fn an_export_with_labels_is_version_4_and_keeps_them() {
     let (store, profile) = store_with(vec![label("{project.key}")]);
     let payload = exported(&store, &profile);
-    assert_eq!(payload.version, PAYLOAD_VERSION);
-    assert_eq!(PAYLOAD_VERSION, 4);
+    assert_eq!(payload.version, PAYLOAD_VERSION_WITH_LABELS);
+    assert_eq!(PAYLOAD_VERSION_WITH_LABELS, 4);
     validate(&payload, &ModelCatalog::builtin()).unwrap();
     let target = SqliteStore::open_in_memory().unwrap();
     let options = ImportOptions {
@@ -149,6 +149,6 @@ fn a_later_version_is_refused() {
     let bytes = payload::seal(&payload, &password, KdfParams::for_tests()).unwrap();
     assert!(matches!(
         payload::open(&bytes, &password),
-        Err(PortabilityError::UnsupportedVersion(5))
+        Err(PortabilityError::UnsupportedVersion(6))
     ));
 }

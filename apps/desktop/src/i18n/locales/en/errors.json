@@ -248,5 +248,19 @@
     "plugin-error": "the plugin reported an error",
     "plugin-unavailable": "the plugin is not available",
     "invalid-result": "the plugin returned an invalid result"
+  },
+  "repository": {
+    "invalidKey": "repository key `{{key}}` is not valid: use a lowercase letter, then up to 31 lowercase letters, digits or `_`",
+    "duplicateKey": "repository key `{{key}}` is used more than once in this project",
+    "duplicateId": "a repository id is used more than once in this project",
+    "invalidName": "the name of repository `{{key}}` must be 1 to 64 characters",
+    "descriptionTooLong": "the description of repository `{{key}}` is longer than 500 characters",
+    "tooMany": "a project can have at most {{max}} repositories",
+    "unknownDefault": "the default repository is not a repository of this project",
+    "invalidRemote": "the remote link of a repository is not valid ({{field}})",
+    "tooManyRemotes": "a repository can have at most {{max}} remotes",
+    "duplicateRemote": "remote `{{name}}` is listed more than once",
+    "severalPrimaryRemotes": "only one remote of a repository can be the primary one",
+    "notFound": "the repository does not exist in this project"
   }
 }

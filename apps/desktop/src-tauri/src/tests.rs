@@ -756,6 +756,202 @@ fn projects_reorder_and_resources_are_checked() {
     assert_eq!(status("shop.repository"), None);
 }
 
+/// Repositories of a project (`docs/data-model.md`, "Repositories"): the
+/// derived one is shown, several are saved with unique keys, the default
+/// follows into the `repository` role, remotes survive every editor save,
+/// removing never deletes a binding, and a missing folder is only a status.
+#[test]
+#[allow(clippy::too_many_lines)] // One editing session, step by step.
+fn project_repositories_are_edited_and_never_deleted_automatically() {
+    let h = Harness::new();
+    let work = new_profile(&h, "Work");
+    let shop = h.ok(
+        "create_project",
+        json!({ "profileId": work, "project": { "key": "SHOP", "name": "Online Shop",
+            "resources": { "repository": "shop.repository", "docs": "shop.docs" } } }),
+    );
+    let shop_id = shop["id"].as_str().unwrap().to_owned();
+    // Nothing is stored yet; the view shows the derived repository (R3).
+    assert!(shop.get("repositories").is_none());
+    let view = h.ok("get_profile", json!({ "profileId": work }));
+    let shown = &view["profile"]["projects"][0];
+    let derived = deckpilot_core::RepositoryId::derived(shop_id.parse().unwrap()).to_string();
+    assert_eq!(shown["repositories"][0]["id"], json!(derived));
+    assert_eq!(shown["repositories"][0]["key"], "main");
+    assert_eq!(shown["repositories"][0]["name"], "Online Shop");
+    assert_eq!(shown["repositories"][0]["resource"], "shop.repository");
+    assert_eq!(shown["defaultRepository"], json!(derived));
+
+    let roles = json!({ "repository": "shop.repository", "docs": "shop.docs" });
+    let save = |repositories: Value, default: Value| {
+        h.call_raw(
+            "update_project",
+            json!({ "profileId": work, "projectId": shop_id, "project": {
+                "key": "SHOP", "name": "Online Shop", "resources": roles,
+                "repositories": repositories, "defaultRepository": default } }),
+        )
+    };
+    // Several repositories; a new one gets a resource key of its own.
+    let saved = save(
+        json!([
+            { "id": derived, "key": "main", "name": "Online Shop", "resource": "shop.repository" },
+            { "key": "cms", "name": "  CMS  ", "description": "Content" },
+        ]),
+        json!(derived),
+    )
+    .unwrap();
+    let cms = saved["repositories"][1].clone();
+    let cms_id = cms["id"].as_str().unwrap().to_owned();
+    assert_eq!(cms["resource"], "shop.cms");
+    assert_eq!(cms["name"], "CMS");
+    assert_eq!(saved["resources"], roles);
+
+    // Duplicate and invalid keys are refused with their codes.
+    let refused = save(
+        json!([
+            { "id": derived, "key": "main", "name": "A", "resource": "shop.repository" },
+            { "id": cms_id, "key": "main", "name": "B", "resource": "shop.cms" },
+        ]),
+        Value::Null,
+    )
+    .unwrap_err();
+    assert_eq!(refused["code"], "repository.duplicateKey", "{refused}");
+    assert_eq!(refused["params"]["key"], "main");
+    let refused = save(json!([{ "key": "Bad-Key", "name": "x" }]), Value::Null).unwrap_err();
+    assert_eq!(refused["code"], "repository.invalidKey", "{refused}");
+    let refused = save(
+        json!([{ "key": "a", "name": "x" }]),
+        json!(deckpilot_core::RepositoryId::new()),
+    )
+    .unwrap_err();
+    assert_eq!(refused["code"], "repository.unknownDefault", "{refused}");
+
+    // The app (Git Providers, later) links a remote; editor saves keep it.
+    {
+        let state = h.window.state::<AppState>();
+        let store = state.store().unwrap();
+        let mut profile = crate::state::load_profile(&store, work.parse().unwrap()).unwrap();
+        let project = &mut profile.projects[0];
+        project
+            .set_repository_remotes(
+                cms_id.parse().unwrap(),
+                vec![deckpilot_core::RepositoryRemote {
+                    name: "origin".into(),
+                    primary: true,
+                    connection_id: Some("conn-1".into()),
+                    remote_repository_id: Some("gh:R_1".into()),
+                    remote_url: Some("https://github.com/example/cms.git".into()),
+                    default_branch: Some("main".into()),
+                }],
+            )
+            .unwrap();
+        deckpilot_storage::ConfigStore::save_profile(&*store, &profile).unwrap();
+    }
+    // Rename (same id, new key and name) and reorder.
+    let saved = save(
+        json!([
+            { "id": cms_id, "key": "content", "name": "Content", "resource": "shop.cms" },
+            { "id": derived, "key": "main", "name": "Online Shop", "resource": "shop.repository" },
+        ]),
+        json!(derived),
+    )
+    .unwrap();
+    assert_eq!(saved["repositories"][0]["id"], json!(cms_id));
+    assert_eq!(saved["repositories"][0]["key"], "content");
+    assert_eq!(
+        saved["repositories"][0]["remotes"][0]["connectionId"],
+        "conn-1"
+    );
+    // A save without repositories (an older editor) keeps them all.
+    let kept = h.ok(
+        "update_project",
+        json!({ "profileId": work, "projectId": shop_id, "project": {
+            "key": "SHOP", "name": "Shop", "resources": roles } }),
+    );
+    assert_eq!(kept["repositories"], saved["repositories"]);
+    assert_eq!(kept["defaultRepository"], json!(derived));
+
+    // R2: marking the default points the role at it, other roles stay.
+    let marked = h.ok(
+        "set_default_repository",
+        json!({ "profileId": work, "projectId": shop_id, "repositoryId": cms_id }),
+    );
+    assert_eq!(marked["defaultRepository"], json!(cms_id));
+    assert_eq!(marked["resources"]["repository"], "shop.cms");
+    assert_eq!(marked["resources"]["docs"], "shop.docs");
+    let refused = h
+        .call_raw(
+            "set_default_repository",
+            json!({ "profileId": work, "projectId": shop_id,
+                "repositoryId": deckpilot_core::RepositoryId::new() }),
+        )
+        .unwrap_err();
+    assert_eq!(refused["code"], "repository.notFound", "{refused}");
+
+    // A folder that is gone is reported, never removed.
+    h.ok(
+        "set_resource_binding",
+        json!({ "key": "shop.cms", "kind": "directory", "value": "/definitely/missing/cms" }),
+    );
+    let checks = h.ok("check_resources", json!({ "profileId": work }));
+    let check = |key: &str| {
+        checks
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["key"] == key)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(check("shop.cms")["status"], "missing");
+    assert_eq!(
+        check("shop.cms")["usedBy"],
+        json!(["SHOP repository", "SHOP repositories.content"])
+    );
+    assert_eq!(check("shop.repository")["status"], "unbound");
+
+    // Removing the default repository: the entry goes, the binding and the
+    // role stay, and the project has no default.
+    let marked_roles = marked["resources"].clone();
+    let removed = h
+        .call_raw(
+            "update_project",
+            json!({ "profileId": work, "projectId": shop_id, "project": {
+                "key": "SHOP", "name": "Shop", "resources": marked_roles,
+                "repositories": [{ "id": derived, "key": "main", "name": "Online Shop",
+                    "resource": "shop.repository" }],
+                "defaultRepository": null } }),
+        )
+        .unwrap();
+    assert_eq!(removed["repositories"].as_array().unwrap().len(), 1);
+    assert!(removed.get("defaultRepository").is_none());
+    assert_eq!(removed["resources"]["repository"], "shop.cms");
+    let checks = h.ok("check_resources", json!({ "profileId": work }));
+    let cms = checks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["key"] == "shop.cms")
+        .unwrap();
+    assert_eq!(cms["value"], "/definitely/missing/cms");
+
+    // Profile isolation: a copy in another profile has ids of its own.
+    let home = new_profile(&h, "Home");
+    let copy = h.ok(
+        "copy_project",
+        json!({ "profileId": work, "projectId": shop_id, "targetProfileId": home }),
+    );
+    assert_ne!(copy["id"], json!(shop_id));
+    assert_ne!(copy["repositories"][0]["id"], json!(derived));
+    assert_eq!(copy["repositories"][0]["key"], "main");
+    let home_view = h.ok("get_profile", json!({ "profileId": home }));
+    let work_view = h.ok("get_profile", json!({ "profileId": work }));
+    assert_ne!(
+        home_view["profile"]["projects"][0]["repositories"][0]["id"],
+        work_view["profile"]["projects"][0]["repositories"][0]["id"]
+    );
+}
+
 #[test]
 fn layouts_are_designed_offline_and_validated() {
     let h = Harness::new();

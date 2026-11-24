@@ -264,5 +264,19 @@
     "plugin-error": "wtyczka zgłosiła błąd",
     "plugin-unavailable": "wtyczka jest niedostępna",
     "invalid-result": "wtyczka zwróciła nieprawidłowy wynik"
+  },
+  "repository": {
+    "invalidKey": "klucz repozytorium `{{key}}` jest nieprawidłowy: użyj małej litery, a po niej najwyżej 31 małych liter, cyfr lub `_`",
+    "duplicateKey": "klucz repozytorium `{{key}}` jest użyty w tym projekcie więcej niż raz",
+    "duplicateId": "identyfikator repozytorium jest użyty w tym projekcie więcej niż raz",
+    "invalidName": "nazwa repozytorium `{{key}}` musi mieć od 1 do 64 znaków",
+    "descriptionTooLong": "opis repozytorium `{{key}}` jest dłuższy niż 500 znaków",
+    "tooMany": "projekt może mieć najwyżej {{max}} repozytoriów",
+    "unknownDefault": "repozytorium domyślne nie należy do tego projektu",
+    "invalidRemote": "powiązanie repozytorium ze zdalnym repozytorium jest nieprawidłowe ({{field}})",
+    "tooManyRemotes": "repozytorium może mieć najwyżej {{max}} zdalnych repozytoriów",
+    "duplicateRemote": "zdalne repozytorium `{{name}}` występuje więcej niż raz",
+    "severalPrimaryRemotes": "tylko jedno zdalne repozytorium może być główne",
+    "notFound": "repozytorium nie istnieje w tym projekcie"
   }
 }

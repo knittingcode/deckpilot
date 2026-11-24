@@ -218,10 +218,100 @@ state either way.
 
 ## Projects
 
-- **Project** – `id`, `key`, `name`, `resources: { role → ResourceKey }`.
+- **Project** – `id`, `key`, `name`, `resources: { role → ResourceKey }`,
+  `repositories: Repository[]` (ordered; left out when empty) and
+  `defaultRepository` (a repository id; left out when none).
 - **ProjectSwitcher** – cyclic selection with wrap-around in both directions.
 - **ActiveProjectContext** – bound to exactly one profile; using it with
   another profile is an error. Stale selections fall back to the first project.
+
+### Repositories
+
+A project lists any number of repositories (at most 256, a sanity bound
+for IPC and display, not a product limit):
+
+| Field | Rule |
+|---|---|
+| `id` | `RepositoryId`, a UUID; stable, never reused |
+| `key` | `^[a-z][a-z0-9_]{0,31}$`, unique in the project. It is the variable segment of `projects.current.repositories.<key>`, so it has one spelling; `default` is an ordinary key |
+| `name` | 1–64 characters, trimmed; the user's text |
+| `resource` | a `ResourceKey` whose machine binding (kind `directory`) holds the folder on this computer |
+| `description` | optional, at most 500 characters |
+| `remotes` | optional, at most 8 `RepositoryRemote` (below) |
+
+**The folder is not part of the project.** A repository names a resource
+key; each computer binds that key to a folder (Settings › Resources,
+`set_resource_binding`). Exports therefore never carry a path. A new
+repository without a resource gets `<project key, lowercased>.<key>`, with
+`-2`, `-3`, … appended while a project or binding of this computer already
+uses that key.
+
+**Remotes** (shared with Git Providers, decisions K1–K3): each
+`RepositoryRemote` has `name` (the git remote name: a letter or digit,
+then up to 63 letters, digits, `.`, `_`, `-`; unique per repository),
+`primary` (at most one; the variable member `remote` is the primary one),
+and optionally `connectionId` (opaque, local to this computer, never
+exported), `remoteRepositoryId` (`^(gh|gl|bb):[0-9A-Za-z{}_-]{1,64}$`, a
+provider's immutable id; names such as `group/proj` are refused),
+`remoteUrl` (`https://`, `ssh://` or `user@host:path`; never a password, a
+query or a fragment, and no user name for `https`; at most 2048
+characters) and `defaultBranch` (Git's branch name grammar, at most 255
+characters). Only the app writes remotes (`Project::set_repository_remotes`,
+after the user confirms, from Git Providers); every editor save keeps them.
+
+**Default repository** (decision OD-3): the repository `defaultRepository`
+names; with none named, the only repository when there is exactly one;
+otherwise none. Never the first by position.
+
+**Compatibility with the `repository` role** (normative):
+
+- **R1.** The role `repository` resolves exactly as before; Git, Docker,
+  Workspace and the *Repository* action are unchanged.
+- **R2.** Marking a repository as the default (`set_default_repository`,
+  or a save that changes the default) also sets `resources.repository` to
+  its resource, adding the role when it is missing. Nothing else writes
+  the role. Removing a repository never edits `resources` and never
+  removes a binding; when it was the default, the project has no default
+  and the role keeps its old key.
+- **R3.** A project with the role and no stored repositories has one
+  *derived* repository: key `main`, the project's name (cut to 64
+  characters), the role's resource, and the id
+  `uuid_v5(namespace, "<project id>\0repository")`, so every computer,
+  export and import agrees on it. It is the default. It is shown
+  (`get_profile`) and used as present, and stored when the project is
+  saved with its repositories.
+- **R4.** Existing ids, keys, resource keys, bindings, action parameters
+  and stored `{{ … }}` references are never rewritten.
+- **R5.** An older DeckPilot refuses the newer schema. If one wrote the
+  `projects` table anyway, its statements name their columns, so the
+  repository columns survive.
+
+**Storage.** Schema 14 adds the columns `projects.repositories` (JSON,
+default `[]`) and `projects.default_repository`, and stores the derived
+repository of every project that has the role (R3); nothing else is
+written. Repositories are read and written whole with their project, like
+`resources`.
+
+**Export and import.** An export leaves out a project's repositories when
+the derived one is all it has (the importer derives it again), and is then
+written as before; otherwise it is payload version 5, with every field but
+`connectionId`. The repositories' resource keys are listed in `resources`
+with kind `directory`; unbound ones are reported as missing on import. An
+import as a copy (new project id) gives the derived repository the copy's
+derived id and the others `uuid_v5` of the new project id and their old
+id. A `connectionId` in an archive is dropped.
+
+**Commands** (configuration app): `create_project` and `update_project`
+take `repositories` (`[{ id?, key, name, resource?, description? }]`, in
+order) and `defaultRepository`; without `repositories`, the stored ones
+are kept. Remotes are kept by repository id. `set_default_repository
+{ profileId, projectId, repositoryId | null }` applies R2 in one save.
+Errors have the codes `repository.<code>` (`invalidKey`, `duplicateKey`,
+`duplicateId`, `invalidName`, `descriptionTooLong`, `tooMany`,
+`unknownDefault`, `invalidRemote`, `tooManyRemotes`, `duplicateRemote`,
+`severalPrimaryRemotes`, `notFound`). `check_resources` lists a
+repository's resource as used by `PROJECT repositories.<key>`; a missing
+folder is a status, never removed.
 
 ## Machine resources
 
