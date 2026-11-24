@@ -17,6 +17,9 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- The file and folder pickers of Open and Open folder say when the bound
+  file or folder was moved or deleted, as the application picker does for
+  an application that is no longer installed.
 - Settings › Resources called an application chosen with the application
   or browser picker "missing", because it is stored by its bundle id,
   desktop-file id or App Paths name rather than a path, and never checked a
