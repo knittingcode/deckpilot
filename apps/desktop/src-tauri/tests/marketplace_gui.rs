@@ -521,8 +521,9 @@ impl Driver for Gui {
                     .unwrap();
             }
         }
+        // The tile names the publisher; a compact tile shows its summary
+        // only on hover, and the plugin's page its description (`inspect`).
         let text = self.text_of(&card);
-        assert!(text.contains("Sample plugin"), "{text}");
         assert!(text.to_lowercase().contains("acme"), "{text}");
         vec![Via::Ui]
     }
@@ -534,6 +535,12 @@ impl Driver for Gui {
             lit(NAME)
         ));
         assert_eq!(self.text_of("//h3[@id='plugin-detail-name']"), NAME);
+        // The registry's description (the summary is the tile's hover text).
+        let page = self.text_of("//article[@aria-labelledby='plugin-detail-name']");
+        assert!(
+            page.contains("Greets someone and shows the temperature of a city."),
+            "{page}"
+        );
         let permissions = self.text_of("//section[@aria-labelledby='plugin-detail-permissions']");
         assert!(permissions.contains("api.open-meteo.com"), "{permissions}");
         let versions = self.text_of("//ul[@aria-label='Versions']");
@@ -555,14 +562,22 @@ impl Driver for Gui {
         self.wait_plugin("version", "1.0.0");
         // The page shows it: 1.0.0 as the version, marked Installed in the
         // versions.
+        // Found in the page as rendered (they may be scrolled out of view).
         wait_until(WAIT, "Installed 1.0.0 in the details", || {
-            let about = self.wd().find("//dl[@aria-label='About']").ok().flatten()?;
-            let about = self.wd().text(&about).ok()?;
-            let marked = self.visible(
-                "//ul[@aria-label='Versions']/li[.//span[normalize-space(.)='1.0.0'] \
-                 and .//*[@data-slot='badge' and normalize-space(.)='Installed']]",
-            );
-            (about.contains("1.0.0") && marked).then_some(())
+            let version = self
+                .wd()
+                .find("//dl[@aria-label='About']//dd[normalize-space(.)='1.0.0']")
+                .ok()
+                .flatten();
+            let marked = self
+                .wd()
+                .find(
+                    "//ul[@aria-label='Versions']/li[.//span[normalize-space(.)='1.0.0'] \
+                     and .//*[@data-slot='badge' and normalize-space(.)='Installed']]",
+                )
+                .ok()
+                .flatten();
+            (version.is_some() && marked.is_some()).then_some(())
         });
         vec![Via::Ui]
     }
