@@ -127,6 +127,16 @@ export function useLayoutEditing(
   const commands = {
     change,
     /**
+     * Changes the latest draft with `edit`: for a change that is decided
+     * after something asynchronous finished, so edits made meanwhile stay.
+     */
+    update: (edit: (layout: DeviceLayout) => DeviceLayout, group?: string) => {
+      setState((s) => {
+        const next = edit(s.present)
+        return next === s.present ? s : commit(s, next, group ?? null)
+      })
+    },
+    /**
      * Changes the look of the selected keys. Applied to the latest draft, so
      * a change that arrives later (after an icon import) does not undo edits
      * made meanwhile.

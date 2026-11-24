@@ -142,7 +142,15 @@
     "run": "Uruchom",
     "runHint": "Działa w agencie dla aktywnego profilu",
     "usedIn": "Używana w",
-    "deleteHint": "Aby usunąć akcję, wybierz dla każdego odwołania, czy ma używać innej akcji, czy zostać odpięte."
+    "deleteHint": "Aby usunąć akcję, wybierz dla każdego odwołania, czy ma używać innej akcji, czy zostać odpięte.",
+    "sharedDraft": {
+      "title": "Zapisać {{name}} bez wymaganych ustawień?",
+      "description_one": "Ta akcja jest używana w {{count}} miejscu. Bez wymaganych ustawień przestanie tam działać, dopóki nie zostanie ponownie skonfigurowana.",
+      "description_few": "Ta akcja jest używana w {{count}} miejscach. Bez wymaganych ustawień przestanie działać we wszystkich, dopóki nie zostanie ponownie skonfigurowana.",
+      "description_many": "Ta akcja jest używana w {{count}} miejscach. Bez wymaganych ustawień przestanie działać we wszystkich, dopóki nie zostanie ponownie skonfigurowana.",
+      "description_other": "Ta akcja jest używana w {{count}} miejsca. Bez wymaganych ustawień przestanie działać we wszystkich, dopóki nie zostanie ponownie skonfigurowana.",
+      "confirm": "Zapisz mimo to"
+    }
   },
   "references": {
     "notUsed": "Nieużywana w żadnym przepływie pracy ani układzie.",
