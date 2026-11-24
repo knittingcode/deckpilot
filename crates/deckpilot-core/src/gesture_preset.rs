@@ -37,8 +37,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    ActionInstanceId, ActionParameters, ActionType, ActionTypeId, BindingTarget, ControlBinding,
-    IdentifierError, ModuleId, Trigger,
+    ActionContext, ActionInstanceId, ActionParameters, ActionType, ActionTypeId, BindingTarget,
+    ControlBinding, IdentifierError, ModuleId, Trigger,
 };
 
 /// Most gestures one preset declares.
@@ -141,6 +141,13 @@ impl PresetGesture {
             Self::RotateClockwise => Trigger::RotateClockwise,
             Self::RotateCounterClockwise => Trigger::RotateCounterClockwise,
         }
+    }
+
+    /// The context ([`ActionContext::of_trigger`]) of the binding it makes,
+    /// the same in either mode: `gesture` for a double or long press, `key`
+    /// for everything else.
+    pub fn context(self) -> ActionContext {
+        ActionContext::of_trigger(self.trigger(self.needs_gesture_mode()))
     }
 
     /// The inputs a control must produce for it, in either mode.
@@ -257,6 +264,20 @@ pub enum PresetIssue {
         preset: String,
         gesture: PresetGesture,
         action: String,
+    },
+    /// The action declares contexts (`docs/action-contexts.md`) without the
+    /// one its gesture binds it in: `key` for a single press, a release or
+    /// a rotation, `gesture` for a double or long press. An action without
+    /// a declaration has all five and never gets this.
+    #[error(
+        "gesture preset `{preset}` ({gesture}): action `{action}` does not declare the \
+         `{context}` context its gesture binds it in"
+    )]
+    UnsupportedContext {
+        preset: String,
+        gesture: PresetGesture,
+        action: String,
+        context: ActionContext,
     },
 }
 
@@ -493,7 +514,19 @@ fn check_assignment(
         issues.push(PresetIssue::UnsupportedGesture {
             preset: preset.to_owned(),
             gesture: assignment.gesture,
+            action: action.clone(),
+        });
+    }
+    // A declaration check, like the controls above: what the preset puts on
+    // a control must be a use its action declares. Stored bindings are
+    // never checked here (contexts stay advisory for them).
+    let context = assignment.gesture.context();
+    if !definition.effective_contexts().contains(context) {
+        issues.push(PresetIssue::UnsupportedContext {
+            preset: preset.to_owned(),
+            gesture: assignment.gesture,
             action,
+            context,
         });
     }
 }

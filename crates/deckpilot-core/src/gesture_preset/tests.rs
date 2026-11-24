@@ -41,6 +41,7 @@ fn dim(dials: bool) -> ActionType {
         }),
         editor_navigation: None,
         title: None,
+        contexts: None,
     }
 }
 
@@ -195,6 +196,60 @@ fn an_action_must_run_from_its_gesture_somewhere() {
     )]);
     assert_eq!(turn.check(&module(), &[dim(true)]), Ok(()));
     assert!(turn.check(&module(), &[dim(false)]).is_err());
+}
+
+#[test]
+fn an_action_that_declares_contexts_must_declare_its_gestures_context() {
+    use crate::{ActionContext, ActionContexts};
+    // Without a declaration (every plugin action up to plugin API 1.10) an
+    // action has all five contexts: nothing changes.
+    assert_eq!(dimmer().check(&module(), &types()), Ok(()));
+    // Keys only: the double and long press (`gesture`) are refused.
+    let keys_only = ActionType {
+        contexts: Some(ActionContexts::of([ActionContext::Key])),
+        ..dim(true)
+    };
+    let issues = dimmer().check(&module(), &[keys_only]).unwrap_err();
+    assert_eq!(
+        issues
+            .iter()
+            .map(|issue| match issue {
+                PresetIssue::UnsupportedContext {
+                    gesture, context, ..
+                } => (*gesture, *context),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect::<Vec<_>>(),
+        [
+            (PresetGesture::DoubleClick, ActionContext::Gesture),
+            (PresetGesture::LongPress, ActionContext::Gesture),
+        ]
+    );
+    // Gestures only: the single press, a release and a rotation are `key`.
+    let gestures_only = ActionType {
+        contexts: Some(ActionContexts::of([ActionContext::Gesture])),
+        ..dim(true)
+    };
+    let turn = preset(vec![assign(
+        PresetGesture::RotateClockwise,
+        "lights.dim",
+        None,
+    )]);
+    assert!(matches!(
+        &turn.check(&module(), &[gestures_only]).unwrap_err()[..],
+        [PresetIssue::UnsupportedContext {
+            context: ActionContext::Key,
+            ..
+        }]
+    ));
+    for gesture in PresetGesture::ALL {
+        let expected = if gesture.needs_gesture_mode() {
+            ActionContext::Gesture
+        } else {
+            ActionContext::Key
+        };
+        assert_eq!(gesture.context(), expected, "{gesture}");
+    }
 }
 
 #[test]
