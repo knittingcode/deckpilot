@@ -753,7 +753,7 @@ impl Engine {
                 }
             }
             CommandOutcome::Rejected { code } => {
-                let code = FailureCode::new(&code).as_str().to_owned();
+                let code = code.as_str().to_owned();
                 self.finish_pending(index, CommandEnd::Rejected { code });
             }
             CommandOutcome::Unknown => self.unconfirmed(index, now),

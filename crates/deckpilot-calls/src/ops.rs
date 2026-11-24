@@ -161,36 +161,57 @@ pub fn gate(input: GateInput<'_>, action: CallAction) -> Result<Plan, GateError>
         CallAction::CameraSet { on } => input.camera_on.known() == Some(on),
         _ => false,
     };
-    if already && (support.allows_command() || caps.get(toggle_of(action)).allows_command()) {
+    // Only a state the provider reads from the app itself is trusted.
+    if already
+        && caps.get(read_of(action)).allows_command()
+        && (support.allows_command() || caps.get(toggle_of(action)).allows_command())
+    {
         return Ok(Plan::AlreadyThere);
     }
     if support.allows_command() {
         return Ok(Plan::Send(action));
     }
-    let toggle = |capability: Capability, toggle: CallAction, state: Tri, wanted: bool| {
-        if !caps.get(capability).allows_command() {
-            return Err(unsupported(support));
-        }
-        match state.known() {
-            Some(current) if current == wanted => Ok(Plan::AlreadyThere),
-            Some(_) => Ok(Plan::Send(toggle)),
-            None => Err(GateError::Unsupported(UnsupportedReason::ToggleOnly)),
-        }
-    };
+    let toggle =
+        |capability: Capability, read: Capability, toggle: CallAction, state: Tri, wanted: bool| {
+            if !caps.get(capability).allows_command() {
+                return Err(unsupported(support));
+            }
+            // The state is trusted only when the provider reads it from the
+            // app itself: an inferred or unreadable state would make a set
+            // answer "already there" while the app says otherwise.
+            if !caps.get(read).allows_command() {
+                return Err(GateError::Unsupported(UnsupportedReason::ToggleOnly));
+            }
+            match state.known() {
+                Some(current) if current == wanted => Ok(Plan::AlreadyThere),
+                Some(_) => Ok(Plan::Send(toggle)),
+                None => Err(GateError::Unsupported(UnsupportedReason::ToggleOnly)),
+            }
+        };
     match action {
         CallAction::MicSet { muted } => toggle(
             Capability::MicToggle,
+            Capability::MicReadState,
             CallAction::MicToggle,
             input.mic_muted,
             muted,
         ),
         CallAction::CameraSet { on } => toggle(
             Capability::CameraToggle,
+            Capability::CameraReadState,
             CallAction::CameraToggle,
             input.camera_on,
             on,
         ),
         _ => Err(unsupported(support)),
+    }
+}
+
+/// The capability that reads the state a set changes.
+fn read_of(action: CallAction) -> Capability {
+    match action {
+        CallAction::CameraSet { .. } => Capability::CameraReadState,
+        _ => Capability::MicReadState,
     }
 }
 
@@ -314,7 +335,12 @@ mod tests {
     /// state; with an unknown state it is refused instead of guessed.
     #[test]
     fn a_set_on_a_toggle_only_provider_needs_the_confirmed_state() {
-        let toggle_only = caps(&[Capability::MicToggle, Capability::CameraToggle]);
+        let toggle_only = caps(&[
+            Capability::MicToggle,
+            Capability::MicReadState,
+            Capability::CameraToggle,
+            Capability::CameraReadState,
+        ]);
         let active = CallState::Active;
         let mute = CallAction::MicSet { muted: true };
         assert_eq!(
@@ -338,6 +364,47 @@ mod tests {
         assert_eq!(
             gate(input(&active, &neither, Tri::Known(false)), mute),
             Err(GateError::Unsupported(UnsupportedReason::ProviderHasNoApi))
+        );
+    }
+
+    /// A state that is inferred (operating-system signals) or not readable
+    /// is never trusted for a set: "already there" or a toggle would be a
+    /// guess, so it is refused.
+    #[test]
+    fn a_set_via_toggle_needs_a_state_read_from_the_app() {
+        let active = CallState::Active;
+        let unmute = CallAction::MicSet { muted: false };
+        for read in [
+            Support::Inferred,
+            Support::ReadOnly,
+            Support::Unsupported {
+                reason: UnsupportedReason::ProviderHasNoApi,
+            },
+        ] {
+            let (set, _) = CapabilitySet::from_reported([
+                (Capability::MicToggle, Support::Supported),
+                (Capability::MicReadState, read),
+            ]);
+            for state in [Tri::Known(true), Tri::Known(false), Tri::Unknown] {
+                assert_eq!(
+                    gate(input(&active, &set, state), unmute),
+                    Err(GateError::Unsupported(UnsupportedReason::ToggleOnly)),
+                    "{read:?} {state:?}"
+                );
+            }
+        }
+        let (conditional, _) = CapabilitySet::from_reported([
+            (Capability::MicToggle, Support::Supported),
+            (
+                Capability::MicReadState,
+                Support::Conditional {
+                    when: crate::provider::Condition::InCall,
+                },
+            ),
+        ]);
+        assert_eq!(
+            gate(input(&active, &conditional, Tri::Known(true)), unmute),
+            Ok(Plan::Send(CallAction::MicToggle))
         );
     }
 
@@ -392,5 +459,16 @@ mod tests {
         assert!(
             serde_json::from_str::<CallControlRequest>(r#"{"action":{"kind":"dial"}}"#).is_err()
         );
+        // Nor a field an action does not have.
+        for extra in [
+            r#"{"action":{"kind":"micSet","muted":true,"call":"x"}}"#,
+            r#"{"action":{"kind":"cameraSet","on":true,"provider":"mock"}}"#,
+            r#"{"action":{"kind":"end","call":"x"}}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<CallControlRequest>(extra).is_err(),
+                "{extra}"
+            );
+        }
     }
 }
