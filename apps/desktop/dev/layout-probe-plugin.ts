@@ -34,8 +34,15 @@ export const PROBE_COMMANDS = [
   "dblclick",
   "edit",
   "keymenu",
+  "marketplace",
+  "fill",
+  "dragto",
+  "flownode",
 ] as const
 const VIEWS = ["designer", "marketplace", "settings", "plugin"]
+const MARKETPLACE = ["refresh", "tab", "open", "back", "search", "press", "reveal", "width"]
+/** A plugin name, a tab id, a button label, a heading id or a width: plain text only. */
+const MARKETPLACE_VALUE = /^[\p{L}\p{N} .:&’'…_-]{0,64}$/u
 
 const SELECT_KEY = /^[\w:.-]{1,64}$/
 const SLOTS = ["sidebar-inset", "device-editor-main", "inspector-scroll", "library-scroll"]
@@ -101,6 +108,26 @@ function validate(command: unknown, args: unknown): string | null {
   }
   if (command === "navigate" && !VIEWS.includes(String(a.view))) {
     return `navigate needs a view: ${VIEWS.join(", ")}`
+  }
+  if (
+    command === "marketplace" &&
+    (!MARKETPLACE.includes(String(a.to)) ||
+      (a.value !== undefined && (typeof a.value !== "string" || !MARKETPLACE_VALUE.test(a.value))))
+  ) {
+    return `marketplace needs to: ${MARKETPLACE.join(", ")} and a plain-text value`
+  }
+  const plain = (v: unknown) => typeof v === "string" && MARKETPLACE_VALUE.test(v)
+  if (command === "fill" && (!plain(a.label) || !plain(a.value))) {
+    return "fill needs a plain-text label and value"
+  }
+  if (command === "flownode" && !plain(a.title)) {
+    return "flownode needs a plain-text title"
+  }
+  if (
+    command === "dragto" &&
+    (!plain(a.entry) || !Number.isInteger(a.key) || (a.key as number) < 0 || (a.key as number) > 31)
+  ) {
+    return "dragto needs a plain-text entry and a key from 0 to 31"
   }
   return null
 }
