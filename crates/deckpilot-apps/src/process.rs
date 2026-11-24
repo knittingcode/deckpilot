@@ -19,7 +19,8 @@ pub struct ProcessInfo {
     pub session: Option<u32>,
     /// When it started, in seconds since the Unix epoch, when known. With
     /// the id, the executable and the owner it tells a process from a later
-    /// one the system gave the same id.
+    /// one the system gave the same id. `None` (not readable) never
+    /// matches, so such a process is never signalled.
     pub started: Option<u64>,
 }
 

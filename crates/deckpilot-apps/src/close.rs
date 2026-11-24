@@ -575,13 +575,12 @@ fn still_same(process: &ProcessInfo) -> bool {
         && same_start(started, process.started)
 }
 
-/// The same start time, when both are known: a process started later
-/// with the same id (and even the same executable) is another instance.
+/// The same, known start time: a process started later with the same id
+/// (and even the same executable) is another instance. A start time that
+/// cannot be read on either side is never taken as the same process, so
+/// nothing is signalled and a wait ends as "not running".
 fn same_start(now: Option<u64>, matched: Option<u64>) -> bool {
-    match (now, matched) {
-        (Some(now), Some(matched)) => now == matched,
-        _ => true,
-    }
+    matches!((now, matched), (Some(a), Some(b)) if a == b)
 }
 
 /// `SIGTERM`, or `SIGKILL` when forced, after checking that the process

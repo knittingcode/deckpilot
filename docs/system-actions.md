@@ -204,7 +204,12 @@ such a handle; on macOS a bundle's instance is found by its process id and
 its bundle id checked again. Wherever a process is checked again (before a
 signal, and while waiting for it to exit), its id, executable, owner and
 start time must all still match, so a later process the system gave the
-same id, even of the same program, is never taken for the matched one.
+same id, even of the same program, is never taken for the matched one. A
+start time that cannot be read is never a match: nothing is signalled and
+the process counts as gone. The only source is `sysinfo` (`/proc` on Linux,
+`proc_pidinfo` on macOS, `GetProcessTimes` on Windows), which reads it for
+the user's own processes on all three systems; `the_real_snapshot_knows_this_process`
+and the real close tests assert it on each CI runner.
 
 DeckPilot's own processes are protected by name (the app, the agent, the
 plugin host) and, on macOS and Windows, by their installation folder (the
