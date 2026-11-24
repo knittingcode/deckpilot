@@ -231,6 +231,8 @@ pub(crate) enum Command {
     #[cfg(feature = "test-hooks")]
     CallsInstallMock {
         mock: Box<deckpilot_calls::testing::MockProvider>,
+        /// The parameters of "Back to work" in the templates.
+        back: deckpilot_core::ActionParameters,
         reply: oneshot::Sender<()>,
     },
     /// Edits the installed mock provider (tests).
@@ -499,12 +501,17 @@ impl AgentHandle {
     /// Installs Calls with the mock provider (tests): the only way Calls
     /// runs in this build.
     #[cfg(feature = "test-hooks")]
-    pub async fn install_calls_mock(&self, mock: deckpilot_calls::testing::MockProvider) {
+    pub async fn install_calls_mock(
+        &self,
+        mock: deckpilot_calls::testing::MockProvider,
+        back: deckpilot_core::ActionParameters,
+    ) {
         let (reply, done) = oneshot::channel();
         if self
             .commands
             .send(Command::CallsInstallMock {
                 mock: Box::new(mock),
+                back,
                 reply,
             })
             .is_ok()
@@ -1123,10 +1130,7 @@ impl Agent {
                 hold,
                 calls,
             } => {
-                let calls_end = match &result {
-                    Ok(result) if result.is_success() => deckpilot_calls::ret::RunEnd::Succeeded,
-                    _ => deckpilot_calls::ret::RunEnd::Failed,
-                };
+                let calls_end = calls::detached_end(&result);
                 self.calls_run_ended(calls, calls_end);
                 // Over: a result (success or a handled failure) ran; an
                 // engine error means it could not run at all.
@@ -1184,8 +1188,14 @@ impl Agent {
                 Flow::Continue
             }
             #[cfg(feature = "test-hooks")]
-            Command::CallsInstallMock { mock, reply } => {
-                self.install_calls(mock);
+            Command::CallsInstallMock { mock, back, reply } => {
+                // Tests only: the consent a test grants.
+                let consent = deckpilot_calls::provider::ConsentState {
+                    observe: true,
+                    control: true,
+                    titles: false,
+                };
+                self.install_calls(mock, consent, calls::templates_with_back(&back));
                 let _ = reply.send(());
                 Flow::Continue
             }
@@ -1960,7 +1970,8 @@ impl Agent {
             running.fetch_sub(1, Ordering::SeqCst);
             warn!(%error, "no thread for the action");
             self.release_folder_run(hold, deckpilot_core::HoldEnd::NotRun);
-            self.calls_run_ended(calls, deckpilot_calls::ret::RunEnd::Failed);
+            // No thread: it never ran, nothing completed.
+            self.calls_run_ended(calls, deckpilot_calls::ret::RunEnd::Interrupted);
         }
     }
 

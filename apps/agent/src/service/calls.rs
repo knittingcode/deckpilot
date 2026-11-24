@@ -19,17 +19,18 @@
 //!   its `DetachedFinished`, a workflow at its `Execution::Finished`.
 
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use deckpilot_calls::clock::Instant;
 use deckpilot_calls::driver::{CallsDriver, KeyOutcome};
 use deckpilot_calls::engine::{Engine, Request};
-use deckpilot_calls::layouts::{Shape, builtin_templates, generate};
+use deckpilot_calls::layouts::{OWNER, Shape, Template, generate};
 use deckpilot_calls::provider::{CallProvider, ConsentState, ProviderCx, ProviderSession};
 use deckpilot_calls::ret::{RunEnd, RunKind, RunToken};
+use deckpilot_core::{ActionResult, EngineError};
 use deckpilot_core::{ExecutionId, ExecutionState, RuntimeOutcome};
-use deckpilot_device::DeviceId;
+use deckpilot_device::{DeviceId, DeviceModelId};
 use tracing::{debug, info, warn};
 
 use super::Agent;
@@ -49,6 +50,21 @@ impl<T: CallProvider + 'static> Provider for T {
     }
 }
 
+/// How a plugin's detached action ended, for a return session: a result
+/// that says it was cancelled is a cancellation; an engine error (the
+/// action could not run at all) is no completion; any other failure is a
+/// failure.
+pub(crate) fn detached_end(result: &Result<ActionResult, EngineError>) -> RunEnd {
+    match result {
+        Ok(result) if result.is_success() => RunEnd::Succeeded,
+        Ok(result) if result.code.as_deref() == Some("cancelled") => RunEnd::Cancelled,
+        Ok(_) => RunEnd::Failed,
+        // It never ran: nothing completed (counts for nothing, like an
+        // interrupted run).
+        Err(_) => RunEnd::Interrupted,
+    }
+}
+
 /// A run of a suspended device's key that counts for its return session.
 #[derive(Debug, Clone)]
 pub(crate) struct CallsRun {
@@ -60,6 +76,10 @@ struct Service {
     driver: CallsDriver,
     provider: Box<dyn Provider>,
     origin: std::time::Instant,
+    /// The templates of the managed layouts (the plugin's).
+    templates: Vec<Template>,
+    /// Models whose managed layout is loaded.
+    seeded: BTreeSet<DeviceModelId>,
 }
 
 impl std::fmt::Debug for Service {
@@ -94,30 +114,26 @@ impl Agent {
         ))
     }
 
-    /// Installs Calls with `provider`: the managed layouts for every known
-    /// model, the provider connected with the user's consent.
-    pub(crate) fn install_calls(&mut self, mut provider: Box<dyn Provider>) {
+    /// Installs Calls with `provider` and the consent the user gave
+    /// (`calls:observe`, `calls:control`, the title opt-in; from the
+    /// plugin's grants: never assumed here). The managed layouts are seeded
+    /// for the models that connect (`calls_seed_connected`).
+    pub(crate) fn install_calls(
+        &mut self,
+        mut provider: Box<dyn Provider>,
+        consent: ConsentState,
+        templates: Vec<Template>,
+    ) {
+        if !consent.observe {
+            info!("calls not installed: no consent to observe calls");
+            return;
+        }
         let now = Instant::ZERO;
         let discovery = provider.discover(now);
         let id = provider.id();
-        let consent = ConsentState {
-            observe: true,
-            control: true,
-            titles: false,
-        };
         let mut engine = Engine::default();
         engine.add_provider(id.clone(), consent, discovery.capabilities);
-        let mut driver = CallsDriver::new(engine);
-        for model in self.runtime.catalog().iter() {
-            let shape = Shape::of(&model.capabilities);
-            let Some(template) = builtin_templates().into_iter().find(|t| t.shape == shape) else {
-                continue;
-            };
-            match generate(&template, &model.id, &model.capabilities) {
-                Ok(generated) => driver.set_layout(model.id.clone(), generated),
-                Err(error) => debug!(model = %model.id, %error, "no Calls layout for the model"),
-            }
-        }
+        let driver = CallsDriver::new(engine);
         if let Err(error) = provider.connect(&ProviderCx {
             consent,
             session: ProviderSession(1),
@@ -129,14 +145,71 @@ impl Agent {
             driver,
             provider,
             origin: self.runtime.folder_clock(),
+            templates,
+            seeded: BTreeSet::new(),
         }));
         self.calls_wake();
+    }
+
+    /// Seeds the managed layout of every connected model that has none
+    /// loaded yet (`managed_layouts`: created once, regenerated while
+    /// unedited, an edited one kept) and loads the stored one into the
+    /// driver, so the user's edits are what the overlay shows. While the
+    /// configuration is locked nothing is seeded; it is tried again.
+    fn calls_seed_connected(&mut self) {
+        let Some(service) = self.calls.service.as_mut() else {
+            return;
+        };
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+        let models: BTreeSet<DeviceModelId> = self
+            .runtime
+            .devices()
+            .connected()
+            .map(|d| d.model.clone())
+            .filter(|m| !service.seeded.contains(m))
+            .collect();
+        for model_id in models {
+            service.seeded.insert(model_id.clone());
+            let Some(model) = self.runtime.catalog().get(&model_id) else {
+                continue;
+            };
+            let shape = Shape::of(&model.capabilities);
+            let Some(template) = service.templates.iter().find(|t| t.shape == shape) else {
+                continue;
+            };
+            let mut generated = match generate(template, &model.id, &model.capabilities) {
+                Ok(generated) => generated,
+                Err(error) => {
+                    debug!(model = %model.id, %error, "no Calls layout for the model");
+                    continue;
+                }
+            };
+            let version = format!("{}.0.0", template.version);
+            match store
+                .seed_managed_layout(OWNER, &generated.layout, &generated.actions, &version)
+                .and_then(|_| store.managed_layout(OWNER, &model.id))
+            {
+                Ok(Some(stored)) => {
+                    generated.layout = stored.layout;
+                    generated.actions = stored.actions;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(model = %model.id, %error, "the Calls layout could not be stored");
+                    continue;
+                }
+            }
+            service.driver.set_layout(model.id.clone(), generated);
+        }
     }
 
     /// Handles what is due and says how long until Calls next has to be
     /// looked at (`None`: Calls is not installed).
     pub(super) fn calls_wake(&mut self) -> Option<Duration> {
         let now = self.calls_now()?;
+        self.calls_seed_connected();
         let service = self.calls.service.as_mut()?;
         let id = service.provider.id();
         let events = service.provider.poll(now);
@@ -212,6 +285,8 @@ impl Agent {
         let Some(now) = self.calls_now() else {
             return;
         };
+        // A new model gets its managed layout first.
+        self.calls_seed_connected();
         if let Some(service) = self.calls.service.as_mut() {
             service.driver.device_connected(&mut self.runtime, now);
         }
@@ -302,6 +377,21 @@ impl Agent {
     }
 }
 
+/// The reference templates with `back` as the parameters of "Back to
+/// work" (tests).
+#[cfg(feature = "test-hooks")]
+pub(crate) fn templates_with_back(back: &deckpilot_core::ActionParameters) -> Vec<Template> {
+    let mut templates = deckpilot_calls::layouts::builtin_templates();
+    for template in &mut templates {
+        for (_, controls) in &mut template.pages {
+            for control in controls.iter_mut().filter(|c| c.action == "return-to-work") {
+                control.parameters = back.clone();
+            }
+        }
+    }
+    templates
+}
+
 /// What the test hooks see of Calls.
 #[cfg(feature = "test-hooks")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,6 +400,9 @@ pub struct CallsView {
     /// Per device with an overlay frame: shown now, and the name of the
     /// overlay page (`In a call`, `Incoming call`, `Calling`).
     pub devices: Vec<(DeviceId, bool, Option<String>)>,
+    /// The name of the overlay layout each device shows (the stored
+    /// managed layout's).
+    pub layouts: Vec<String>,
     pub scheduled_returns: usize,
 }
 
@@ -349,9 +442,20 @@ impl Agent {
                 (device, shown, page)
             })
             .collect();
+        let layouts = self
+            .runtime
+            .all_overlays()
+            .into_iter()
+            .filter_map(|(device, _)| {
+                self.runtime
+                    .overlay_page(&device)
+                    .map(|(l, _)| l.name.clone())
+            })
+            .collect();
         CallsView {
             state,
             devices,
+            layouts,
             scheduled_returns: self.calls_driver().map_or(0, |d| d.returns().scheduled()),
         }
     }
@@ -367,5 +471,37 @@ impl Agent {
             (edit.0)(mock, now);
         }
         self.calls_wake();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_detached_runs_end_counts_as_it_ended() {
+        assert_eq!(
+            detached_end(&Ok(ActionResult::success("ok"))),
+            RunEnd::Succeeded
+        );
+        assert_eq!(
+            detached_end(&Ok(ActionResult::failure("no"))),
+            RunEnd::Failed
+        );
+        assert_eq!(
+            detached_end(&Ok(ActionResult::error("cancelled", "stopped"))),
+            RunEnd::Cancelled
+        );
+        assert_eq!(
+            detached_end(&Ok(ActionResult::error("plugin-host-failed", "crashed"))),
+            RunEnd::Failed
+        );
+        assert_eq!(
+            detached_end(&Err(EngineError::UnknownAction(
+                deckpilot_core::ActionInstanceId::new()
+            ))),
+            RunEnd::Interrupted,
+            "could not run: no completion"
+        );
     }
 }

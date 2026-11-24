@@ -363,6 +363,17 @@ mock through the test hooks (`AgentHandle::install_calls_mock`,
     cancelled; interrupted counts for nothing).
 - **Connecting.** A device that connects during a call gets the overlay.
   One that was away past its return deadline comes back to the call.
+- **Consent.** Calls is installed only with the user's consent, taken from
+  the plugin's grants: observing (`calls:observe`), controlling
+  (`calls:control`), the title opt-in. Nothing in the agent assumes it.
+  Only the test-hook path grants it.
+- **Managed layouts** are seeded into the configuration for every model
+  that connects (`managed_layouts`, retried while the configuration is
+  locked). The overlay shows the stored layout, so the user's edits and a
+  restored version are what it shows.
+- **A plugin action's end** counts as it ended: success, a cancellation
+  (`cancelled`) as a cancellation, other errors as failures. An action
+  that could not run at all is no completion.
 
 Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 
@@ -373,9 +384,14 @@ Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 - the meeting ending mid-return (T-R5);
 - unplugged and plugged in again (T-R6);
 - an incoming call preempting (T-R7);
-- the release of "Wróć do pracy" running nothing underneath (T-R10).
+- the release of "Wróć do pracy" running nothing underneath, and a long
+  press held across the switch running nothing (T-R10);
+- a failed action and a cancelled workflow, for each `onFailure` and
+  `onCancel` value (T-R2);
+- a Multi Action brought back at its last step (T-R3);
+- the stored layout seeded, a user edit shown, and an agent restart
+  without a stale suspension (T-R6).
 
-Still to come: a provider in a build (C5), the plugin (C7), the managed
-layouts seeded into storage when the plugin is enabled (the agent uses the
-generated layouts in memory until then), and the IPC event for the editor
-(C6).
+Still to come: a provider in a build (C5); the plugin (C7), whose
+enabling with consent installs Calls; and the IPC event for the editor
+(C6, a release blocker).

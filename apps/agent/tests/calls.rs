@@ -41,8 +41,11 @@ fn press(index: u16, target: BindingTarget) -> ControlBinding {
 
 struct Fixture {
     profile: Profile,
+    /// A Multi Action of one log step.
     quick: WorkflowId,
     long: WorkflowId,
+    /// A graph workflow that waits a minute (cancellable).
+    wait: WorkflowId,
 }
 
 /// Home: key 1 opens Other (navigation only), key 2 a quick workflow, key
@@ -61,6 +64,8 @@ fn fixture() -> Fixture {
     };
     let first = log("first");
     let under = log("under");
+    // Fails: no project is active.
+    let broken = log("{project.key}");
     let delay = registry
         .create_instance(
             "Delay",
@@ -76,8 +81,11 @@ fn fixture() -> Fixture {
     let mut profile = Profile::new("Work");
     let (quick_id, long_id) = (quick.id, slow.id);
     let under_id = under.id;
-    profile.actions.extend([first, under, delay]);
-    profile.workflows.extend([quick, slow]);
+    let broken_id = broken.id;
+    profile.actions.extend([first, under, broken, delay]);
+    let wait = support::waiting_workflow("Wait", 60_000);
+    let wait_id = wait.id;
+    profile.workflows.extend([quick, slow, wait]);
     let mut layout = DeviceLayout::new("Main", models::stream_deck_mk2().id);
     let home = layout.home_page;
     let other = LayoutPage::new("Other");
@@ -88,12 +96,21 @@ fn fixture() -> Fixture {
         press(2, BindingTarget::Workflow { workflow: quick_id }),
         press(3, BindingTarget::Workflow { workflow: long_id }),
         press(10, BindingTarget::action(under_id)),
+        press(5, BindingTarget::action(broken_id)),
+        press(6, BindingTarget::Workflow { workflow: wait_id }),
+        // A long press runs the quick workflow (a gesture key).
+        ControlBinding::new(
+            key(4),
+            Trigger::LongPress,
+            BindingTarget::Workflow { workflow: quick_id },
+        ),
     ]);
     profile.layouts.push(layout);
     Fixture {
         profile,
         quick: quick_id,
         long: long_id,
+        wait: wait_id,
     }
 }
 
@@ -106,6 +123,11 @@ struct Deck {
 }
 
 async fn start(f: &Fixture) -> Deck {
+    start_with(f, ActionParameters::new()).await
+}
+
+/// With the "Back to work" parameters `back`.
+async fn start_with(f: &Fixture, back: ActionParameters) -> Deck {
     let dir = TempDir::new("deckpilot-calls");
     let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
     let mock = MockBackend::new();
@@ -122,7 +144,7 @@ async fn start(f: &Fixture) -> Deck {
     };
     deck.agent
         .handle
-        .install_calls_mock(MockProvider::new())
+        .install_calls_mock(MockProvider::new(), back)
         .await;
     deck
 }
@@ -379,5 +401,168 @@ async fn an_incoming_call_takes_a_device_that_went_back_to_work() {
             .any(|(_, _, page)| page.as_deref() == Some("Incoming call"))
     );
     assert_eq!(view.scheduled_returns, 0, "the return session ended");
+    deck.agent.shutdown().await;
+}
+
+fn choice(key: &str, value: &str) -> ActionParameters {
+    ActionParameters::new().with(key, ParameterValue::Choice(value.into()))
+}
+
+/// T-R2: a failed action resumes by default and stays with
+/// `onFailure: stay`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_action_resumes_or_stays_as_set() {
+    let f = fixture();
+    for (back, resumes) in [
+        (ActionParameters::new(), true),
+        (choice("onFailure", "stay"), false),
+    ] {
+        let deck = start_with(&f, back).await;
+        deck.join().await;
+        deck.back_to_work().await;
+        deck.tap(5);
+        deck.agent.status().await;
+        deck.agent.status().await;
+        assert_eq!(deck.shows_overlay().await, resumes, "resumes: {resumes}");
+        deck.agent.shutdown().await;
+    }
+}
+
+/// T-R2: a cancelled workflow stays by default and resumes with
+/// `onCancel: resume`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_workflow_stays_or_resumes_as_set() {
+    let f = fixture();
+    for (back, resumes) in [
+        (ActionParameters::new(), false),
+        (choice("onCancel", "resume"), true),
+    ] {
+        let deck = start_with(&f, back).await;
+        deck.join().await;
+        deck.back_to_work().await;
+        deck.tap(6);
+        let run = deck
+            .agent
+            .wait_for_runs(f.wait, |runs| !runs.is_empty())
+            .await[0]
+            .id;
+        deck.agent
+            .request(deckpilot_ipc::Request::CancelExecution { execution: run })
+            .await
+            .unwrap();
+        deck.wait_run(f.wait, ExecutionState::Cancelled).await;
+        deck.agent.status().await;
+        assert_eq!(deck.shows_overlay().await, resumes, "resumes: {resumes}");
+        deck.agent.shutdown().await;
+    }
+}
+
+/// T-R3 (Multi Action): the quick workflow is a Multi Action; in mode B the
+/// call comes back when its last step is over.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_multi_action_brings_the_call_back_when_its_last_step_is_over() {
+    let f = fixture();
+    let deck = start_with(&f, choice("mode", "completion")).await;
+    deck.join().await;
+    deck.back_to_work().await;
+    deck.tap(2);
+    deck.wait_run(f.quick, ExecutionState::Succeeded).await;
+    deck.wait_overlay(true).await;
+    deck.agent.shutdown().await;
+}
+
+/// T-R10 for gesture keys: a long press that started before the overlay
+/// came and went does not run when it fires; without a switch it does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_press_across_a_switch_runs_nothing() {
+    use deckpilot_device::ControlInput;
+    let f = fixture();
+    let deck = start(&f).await;
+    deck.mock
+        .send_input(&deck.device, key(4), ControlInput::Press);
+    deck.agent.status().await;
+    deck.join().await;
+    deck.hang_up().await;
+    deck.wait_overlay(false).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    deck.mock
+        .send_input(&deck.device, key(4), ControlInput::Release);
+    deck.agent.status().await;
+    assert!(
+        deck.agent.runs(f.quick).await.is_empty(),
+        "the long press ran"
+    );
+    // The same long press without a switch runs.
+    deck.mock
+        .send_input(&deck.device, key(4), ControlInput::Press);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    deck.mock
+        .send_input(&deck.device, key(4), ControlInput::Release);
+    deck.wait_run(f.quick, ExecutionState::Succeeded).await;
+    deck.agent.shutdown().await;
+}
+
+/// The managed layout is seeded into the configuration for the model that
+/// connects, and the user's edit of it is what the overlay shows; an agent
+/// restart (T-R6) shows the call again without a stale suspension.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_stored_managed_layout_is_seeded_and_survives_a_restart() {
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-restart");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let device = mock.plug(&models::stream_deck_mk2(), "CALLS-R");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::new(), ActionParameters::new())
+        .await;
+    agent.status().await;
+    let mk2 = models::stream_deck_mk2().id;
+    let seeded = agent
+        .store()
+        .managed_layout("deckpilot.calls", &mk2)
+        .unwrap()
+        .expect("seeded for the connected model");
+    assert!(!seeded.edited);
+    let deck = Deck {
+        agent,
+        mock: mock.clone(),
+        device: device.clone(),
+        clock: clock.clone(),
+        _dir: TempDir::new("deckpilot-calls-unused"),
+    };
+    deck.join().await;
+    deck.back_to_work().await;
+    deck.agent.shutdown().await;
+
+    // The user renames the layout (an edit); the agent restarts.
+    let store = support::open_store(&paths, &db);
+    store
+        .rename_shared_layout(seeded.layout.id, "Moje Rozmowy")
+        .unwrap();
+    drop(store);
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::new(), ActionParameters::new())
+        .await;
+    let deck = Deck {
+        agent,
+        mock,
+        device,
+        clock,
+        _dir: dir,
+    };
+    deck.join().await;
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!(
+        view.scheduled_returns, 0,
+        "no suspension survives a restart"
+    );
+    assert_eq!(view.layouts, ["Moje Rozmowy"], "the user's edit is shown");
     deck.agent.shutdown().await;
 }
