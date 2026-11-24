@@ -9,7 +9,8 @@
     "marketplace": "Marketplace",
     "settings": "Settings",
     "settingsUpdate": "Settings, an update is available",
-    "withShortcut": "{{label}} ({{shortcut}})"
+    "withShortcut": "{{label}} ({{shortcut}})",
+    "selection": "Current selection"
   },
   "rail": {
     "label": "Workspace",
@@ -19,7 +20,6 @@
   "pages": {
     "designer": "Device Editor",
     "layouts": "Layouts",
-    "dashboard": "Dashboard",
     "actions": "Action Library",
     "workflows": "Workflows",
     "projects": "Projects"
@@ -35,20 +35,17 @@
     "selectorNotConnected": "Device: {{device}}, not connected",
     "connectedGroup": "Connected devices",
     "connected": "Connected",
-    "modelsGroup": "Device models",
-    "otherModels": "Other models",
-    "models": "Models",
+    "notConnectedGroup": "Devices not connected",
+    "notConnected": "Not connected",
     "noModels": "No device models",
     "optionConnected": "Connected · {{serial}}",
-    "optionNotInCatalog": "Connected · {{serial}} · not in the device catalog",
-    "optionNotConnected": "Not connected"
+    "optionNotInCatalog": "Connected · {{serial}} · not in the device catalog"
   },
   "profile": {
     "choose": "Choose the profile to edit",
     "selector": "Profile: {{profile}}",
     "selectorActive": "Profile: {{profile}}, active on the device",
     "none": "No profile",
-    "edit": "Edit profile",
     "noProfiles": "No profiles yet",
     "onDevice": "on device",
     "manage": "Manage profiles…"

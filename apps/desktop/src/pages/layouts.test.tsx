@@ -4,7 +4,8 @@ import "@testing-library/jest-dom/vitest"
 import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { LayoutsPage } from "@/pages/layouts"
+import { setLayoutProfileFilter } from "@/lib/layout-filter"
+import { LayoutsSettings as LayoutsPage } from "@/pages/layouts"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { deviceModel, profiles } from "@/test/fixtures"
@@ -36,6 +37,7 @@ beforeEach(() => {
   resetToasts()
   api.listSharedLayouts.mockResolvedValue([desk, spare, old])
   api.listDeviceModels.mockResolvedValue([deviceModel()])
+  setLayoutProfileFilter(null)
 })
 afterEach(cleanup)
 
@@ -135,7 +137,7 @@ describe("Layouts page", () => {
     api.duplicateSharedLayout.mockResolvedValue(sharedLayout({ id: "layout-3" }))
     const { user } = await renderPage()
     await user.click(row("Desk").getByRole("button", { name: "More actions for Desk" }))
-    await user.click(screen.getByRole("menuitem", { name: /Duplicate/ }))
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate…" }))
     const dialog = await screen.findByRole("dialog", { name: "Duplicate layout" })
     expect(within(dialog).getByRole("textbox", { name: "Name of the copy" })).toHaveValue(
       "Desk copy",
@@ -229,6 +231,126 @@ describe("Layouts page", () => {
     })
     await waitFor(() => {
       expect(context.navigate).toHaveBeenCalledWith("designer")
+    })
+  })
+
+  describe("for the profile being edited (moved from the editor's layout menu)", () => {
+    const alt = sharedLayout({
+      id: "layout-4",
+      name: "Alt",
+      profiles: [assignment("profile-1", "Work", { position: 1 })],
+    })
+
+    it("sets a layout as its default for the model, explicitly", async () => {
+      api.listSharedLayouts.mockResolvedValue([desk, alt, spare])
+      api.activateLayout.mockResolvedValue(null)
+      const { user } = await renderPage()
+      await user.click(row("Alt").getByRole("button", { name: "More actions for Alt" }))
+      await user.click(screen.getByRole("menuitem", { name: "Set as default in “Work”" }))
+      await waitFor(() => {
+        expect(api.activateLayout).toHaveBeenCalledWith("profile-1", "layout-4")
+      })
+      expect(toast.success).toHaveBeenCalledWith("Alt is used for Stream Deck MK.2")
+    })
+
+    it("does not offer the default again", async () => {
+      const { user } = await renderPage()
+      await user.click(row("Desk").getByRole("button", { name: "More actions for Desk" }))
+      expect(screen.getByRole("menuitem", { name: "Default in “Work”" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      )
+    })
+
+    it("duplicates into it, asking for the name as the editor did", async () => {
+      api.duplicateLayout.mockResolvedValue("layout-5")
+      const { user } = await renderPage()
+      await user.click(row("Desk").getByRole("button", { name: "More actions for Desk" }))
+      await user.click(screen.getByRole("menuitem", { name: "Duplicate into “Work”…" }))
+      const dialog = await screen.findByRole("dialog", { name: "Duplicate “Desk”" })
+      expect(dialog).toHaveTextContent("The copy is added to this profile.")
+      expect(api.duplicateLayout).not.toHaveBeenCalled()
+      await user.click(within(dialog).getByRole("button", { name: "Duplicate" }))
+      await waitFor(() => {
+        expect(api.duplicateLayout).toHaveBeenCalledWith("profile-1", "layout-1", "Desk (copy)")
+      })
+      expect(api.duplicateSharedLayout).not.toHaveBeenCalled()
+    })
+
+    it("offers neither for a layout it does not use", async () => {
+      const { user } = await renderPage()
+      await user.click(row("Spare").getByRole("button", { name: "More actions for Spare" }))
+      expect(screen.queryByRole("menuitem", { name: /“Work”/ })).not.toBeInTheDocument()
+      // Delete still asks first.
+      await user.click(screen.getByRole("menuitem", { name: "Delete…" }))
+      expect(await screen.findByRole("alertdialog")).toBeInTheDocument()
+      expect(api.deleteSharedLayout).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("filtered to a profile (from Settings › Profiles)", () => {
+    const alt = sharedLayout({
+      id: "layout-4",
+      name: "Alt",
+      profiles: [assignment("profile-1", "Work", { position: 1 })],
+    })
+    beforeEach(() => {
+      api.listSharedLayouts.mockResolvedValue([desk, alt, spare, old])
+      api.profileLayouts.mockResolvedValue([
+        { layout: desk, position: 0, isDefault: true, unavailable: [] },
+        { layout: alt, position: 1, isDefault: false, unavailable: [] },
+      ])
+      api.reorderProfileLayouts.mockResolvedValue(null)
+      api.setDefaultLayout.mockResolvedValue(null)
+      api.unassignLayout.mockResolvedValue(null)
+      api.assignLayout.mockResolvedValue(null)
+      setLayoutProfileFilter("profile-1")
+    })
+
+    it("shows the profile's layouts in its order, with a chip that clears the filter", async () => {
+      const { user } = renderWithApp(<LayoutsPage />, { profiles: PROFILES })
+      const section = await screen.findByRole("region", { name: "Layouts of Work" })
+      expect(api.profileLayouts).toHaveBeenCalledWith("profile-1")
+      expect(
+        (await within(section).findAllByRole("listitem")).map((i) => i.getAttribute("aria-label")),
+      ).toEqual(["Desk", "Alt"])
+      expect(screen.queryByRole("table")).not.toBeInTheDocument()
+      expect(screen.getByText("Profile: Work")).toBeInTheDocument()
+      await user.click(
+        screen.getByRole("button", { name: "Show the layouts of every profile, not only Work" }),
+      )
+      expect(await screen.findByRole("table")).toBeInTheDocument()
+      expect(screen.queryByRole("region", { name: "Layouts of Work" })).not.toBeInTheDocument()
+    })
+
+    it("orders, sets the default, assigns and removes, as Settings › Profiles did", async () => {
+      const { user } = renderWithApp(<LayoutsPage />, { profiles: PROFILES })
+      const section = await screen.findByRole("region", { name: "Layouts of Work" })
+      await user.click(await within(section).findByRole("button", { name: "Move Alt up" }))
+      await waitFor(() => {
+        expect(api.reorderProfileLayouts).toHaveBeenCalledWith("profile-1", [
+          "layout-4",
+          "layout-1",
+        ])
+      })
+      await user.click(within(section).getByRole("button", { name: /Make default/ }))
+      await waitFor(() => {
+        expect(api.setDefaultLayout).toHaveBeenCalledWith("profile-1", "layout-4")
+      })
+      await user.click(within(section).getByRole("button", { name: "Assign layout" }))
+      await user.click(await screen.findByRole("menuitem", { name: /Spare/ }))
+      await waitFor(() => {
+        expect(api.assignLayout).toHaveBeenCalledWith("profile-1", "layout-2")
+      })
+      // Removing from the profile asks first; the layout itself stays.
+      await user.click(within(section).getByRole("button", { name: "Remove Alt from the profile" }))
+      const confirm = await screen.findByRole("alertdialog")
+      expect(api.unassignLayout).not.toHaveBeenCalled()
+      await user.click(within(confirm).getByRole("button", { name: /Remove/ }))
+      await waitFor(() => {
+        expect(api.unassignLayout).toHaveBeenCalledWith("profile-1", "layout-4")
+      })
+      expect(api.deleteSharedLayout).not.toHaveBeenCalled()
     })
   })
 

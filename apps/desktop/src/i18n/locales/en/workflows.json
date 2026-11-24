@@ -115,7 +115,6 @@
   },
   "sharedVariables": {
     "intro": "Every value actions, workflows and keys can read. Insert one with {{syntax}}. For shared variables, a value set for a project wins over the profile's, which wins over the global one.",
-    "title": "Variables",
     "new": "New variable",
     "empty": {
       "title": "No shared variables yet",

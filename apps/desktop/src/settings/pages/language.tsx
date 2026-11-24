@@ -1,6 +1,6 @@
 import { useId } from "react"
 
-import { SettingsGroup, SettingsSection } from "@/components/settings-layout"
+import { SettingsGroup } from "@/components/settings-layout"
 import { useTranslation } from "@/i18n"
 import { LANGUAGE_NAMES, SUPPORTED_LANGUAGES } from "@/i18n/config"
 import { setLanguagePreference, useLanguagePreference } from "@/i18n/language"
@@ -25,33 +25,24 @@ export function LanguageSettings() {
     })),
   ]
   return (
-    <SettingsSection
-      title={t("settings:language.sectionTitle")}
-      description={t("settings:language.sectionDescription")}
-    >
-      <SettingsGroup role="radiogroup" aria-label={t("settings:language.sectionTitle")}>
-        {choices.map((choice) => (
-          <label
-            key={choice.value}
-            className="flex cursor-pointer items-center gap-3 py-2.5 text-sm"
-          >
-            <input
-              type="radio"
-              name={name}
-              value={choice.value}
-              className="accent-primary"
-              checked={preference === choice.value}
-              onChange={() => {
-                void setLanguagePreference(choice.value)
-              }}
-            />
-            <span lang={choice.lang} className="font-medium">
-              {choice.label}
-            </span>
-          </label>
-        ))}
-      </SettingsGroup>
-      <p className="text-caption text-muted-foreground">{t("settings:language.systemHint")}</p>
-    </SettingsSection>
+    <SettingsGroup role="radiogroup" aria-label={t("settings:pages.language.title")}>
+      {choices.map((choice) => (
+        <label key={choice.value} className="flex cursor-pointer items-center gap-3 py-2.5 text-sm">
+          <input
+            type="radio"
+            name={name}
+            value={choice.value}
+            className="accent-primary"
+            checked={preference === choice.value}
+            onChange={() => {
+              void setLanguagePreference(choice.value)
+            }}
+          />
+          <span lang={choice.lang} className="font-medium">
+            {choice.label}
+          </span>
+        </label>
+      ))}
+    </SettingsGroup>
   )
 }

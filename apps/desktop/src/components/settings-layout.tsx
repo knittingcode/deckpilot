@@ -4,18 +4,80 @@
 // flat; cards are left for things that are functional containers (a plugin
 // tile, a configuration panel), never for a single setting or a section.
 
-import { type ComponentProps, type ReactNode, useId } from "react"
+import {
+  type ComponentProps,
+  type ReactNode,
+  createContext,
+  createElement,
+  useContext,
+  useId,
+} from "react"
 
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 
-/** Title and lead text at the top of a settings page. */
+// The spacing scale of a settings page, one for every page (SettingsPage):
+//   title → description          4px  (gap-1)
+//   header → first content      24px  (gap-6)
+//   section → section           32px  (gap-8)
+//   section heading → content   12px  (gap-3, SettingsSection)
+//   row                          10px above and below (py-2.5, SettingsRow)
+// Content is at most 48rem wide (max-w-3xl), centred, with the page's own
+// horizontal padding. Help text is `text-caption text-muted-foreground`
+// (SettingsNote, row and section descriptions).
+
+/** The heading level of sections: h2 on a settings page (under its h1), else h3. */
+const SectionLevel = createContext<"h2" | "h3">("h3")
+
+/** Title and lead text at the top of a settings page: the page's one h1. */
 export function SettingsHeader({ title, description }: { title: string; description?: string }) {
   return (
-    <header className="grid gap-1">
-      <h2 className="text-lg leading-7 font-semibold tracking-tight">{title}</h2>
+    <header data-slot="settings-header" className="grid gap-1">
+      <h1 className="text-lg leading-7 font-semibold tracking-tight">{title}</h1>
       {description && <p className="text-sm text-muted-foreground">{description}</p>}
     </header>
+  )
+}
+
+/**
+ * A settings page: its title and description, then its content. Every
+ * settings page uses it (settings/settings-view.tsx), so they share one
+ * width, one spacing scale and one heading hierarchy. A page with a
+ * single group of controls puts them here directly, without a section
+ * heading that would repeat the title.
+ */
+export function SettingsPage({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <div
+      data-slot="settings-page"
+      className="mx-auto grid w-full max-w-3xl content-start gap-6 pb-4"
+    >
+      <SettingsHeader title={title} description={description} />
+      <SectionLevel value="h2">
+        <div data-slot="settings-content" className="grid content-start gap-8 [&>*]:min-w-0">
+          {children}
+        </div>
+      </SectionLevel>
+    </div>
+  )
+}
+
+/** Help and supporting text of a page or a group: an explanation, not a heading. */
+export function SettingsNote({ className, ...props }: ComponentProps<"p">) {
+  return (
+    <p
+      data-slot="settings-note"
+      className={cn("text-caption text-muted-foreground", className)}
+      {...props}
+    />
   )
 }
 
@@ -28,7 +90,7 @@ export function SectionHeader({
   description,
   actions,
   id,
-  as: Heading = "h3",
+  as,
   className,
 }: {
   title: ReactNode
@@ -38,19 +100,22 @@ export function SectionHeader({
   as?: "h2" | "h3" | "h4"
   className?: string
 }) {
+  const level = useContext(SectionLevel)
   return (
     <div
       data-slot="section-header"
       className={cn("flex flex-wrap items-end justify-between gap-x-4 gap-y-2", className)}
     >
       <div className="grid min-w-0 flex-1 basis-64 gap-0.5">
-        <Heading
-          id={id}
-          data-slot="section-title"
-          className="flex items-center gap-2 text-sm leading-6 font-semibold"
-        >
-          {title}
-        </Heading>
+        {createElement(
+          as ?? level,
+          {
+            id,
+            "data-slot": "section-title",
+            className: "flex items-center gap-2 text-sm leading-6 font-semibold",
+          },
+          title,
+        )}
         {description && (
           <div className="text-caption text-muted-foreground [&_p+p]:mt-1">{description}</div>
         )}
@@ -69,11 +134,34 @@ export function SettingsSection({
   children,
   ...props
 }: Omit<ComponentProps<"section">, "title"> & {
-  title: ReactNode
+  /**
+   * Its heading; none for the single group of a page, whose title is the
+   * page's (its commands, if any, then stand alone at the right).
+   */
+  title?: ReactNode
   description?: ReactNode
   actions?: ReactNode
 }) {
   const id = useId()
+  if (title === undefined) {
+    return (
+      <div data-slot="settings-section" className={cn("grid gap-3", className)}>
+        {(description || actions) && (
+          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+            {description ? (
+              <div className="min-w-0 flex-1 basis-64 text-caption text-muted-foreground">
+                {description}
+              </div>
+            ) : (
+              <span className="flex-1" />
+            )}
+            {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+          </div>
+        )}
+        {children}
+      </div>
+    )
+  }
   return (
     <section
       data-slot="settings-section"
@@ -235,6 +323,7 @@ export function Panel({
   actions?: ReactNode
 }) {
   const id = useId()
+  const level = useContext(SectionLevel)
   return (
     <div
       role="group"
@@ -248,6 +337,7 @@ export function Panel({
         title={title}
         description={description}
         actions={actions}
+        as={level === "h2" ? "h3" : "h4"}
         className="border-b px-4 py-2.5"
       />
       <div className="grid gap-4 p-4">{children}</div>

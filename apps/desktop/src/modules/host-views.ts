@@ -12,12 +12,7 @@ import type { PageId } from "@/lib/app-context"
 import type { HostViewKind, PluginFeatures } from "@/lib/plugin-features"
 import type { ToolbarContext } from "@/lib/toolbar-context"
 
-import {
-  ActiveProjectCardView,
-  ActiveProjectStatus,
-  PROJECTS_PAGE,
-  ProjectsPageView,
-} from "./projects"
+import { ActiveProjectStatus, PROJECTS_PAGE, ProjectsPageView } from "./projects"
 
 type View = React.LazyExoticComponent<() => React.JSX.Element>
 
@@ -80,12 +75,5 @@ export function isHostPageAvailable(
 export function hostStatusItems(features: Pick<PluginFeatures, "statusItems">) {
   return features.statusItems.has("activeProject")
     ? [{ key: "deckpilot.projects:activeProject", component: ActiveProjectStatus }]
-    : []
-}
-
-/** Dashboard cards of the active plugins. */
-export function hostDashboardCards(features: Pick<PluginFeatures, "dashboardCards">) {
-  return features.dashboardCards.has("activeProject")
-    ? [{ key: "deckpilot.projects:activeProject", card: ActiveProjectCardView }]
     : []
 }

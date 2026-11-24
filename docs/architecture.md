@@ -211,11 +211,11 @@ Tauri 2 application. The Rust side (`src-tauri`) exposes commands that load
 configuration from storage, apply one change through the domain model,
 persist it and notify the agent. Runtime changes and action execution are
 forwarded to the agent; a background task subscribes to agent events and
-forwards them to the window. The main window opens with the device editor;
-Layouts (every layout, the profiles that use it, its fit on each model),
-Dashboard, Action Library and Workflows are in its navigation rail, the
+forwards them to the window. The main window opens with the device editor.
+The Action Library and Workflows are in its navigation rail, the
 plugin Marketplace (builds with plugins) in its toolbar. The settings
-(general, profiles, devices, agent, security, updates, plugins, diagnostics,
+(general, profiles, layouts (every layout, the profiles that use it, its
+fit on each model), devices, agent, security, updates, plugins, diagnostics,
 modules, …) are a window of their own. Settings › Devices shows the
 connected devices and the supported models, Settings › Profiles the
 profiles; the former Device Models and Profiles pages and links to them lead

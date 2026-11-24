@@ -13,8 +13,3 @@ export const PROJECTS_PAGE = "projects/projects"
 export const ProjectsPageView = lazy(() =>
   import("./projects-page").then((m) => ({ default: m.ProjectsPage })),
 )
-
-/** The dashboard card of the active project (`dashboardCards: activeProject`). */
-export const ActiveProjectCardView = lazy(() =>
-  import("./active-project-card").then((m) => ({ default: m.ActiveProjectCard })),
-)

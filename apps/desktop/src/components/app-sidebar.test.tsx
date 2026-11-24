@@ -22,16 +22,24 @@ afterEach(() => {
 describe("main navigation", () => {
   it("leads to the device editor and the other workspace pages", async () => {
     const onNavigate = vi.fn()
-    const { user } = renderWithApp(<AppSidebar current="dashboard" onNavigate={onNavigate} />)
-    expect(screen.getByRole("button", { name: "Dashboard" })).toHaveAttribute(
+    const { user } = renderWithApp(<AppSidebar current="designer" onNavigate={onNavigate} />)
+    expect(screen.getByRole("button", { name: "Device Editor" })).toHaveAttribute(
       "aria-current",
       "page",
     )
+    // One page marked at a time.
+    expect(
+      screen.getAllByRole("button").filter((b) => b.getAttribute("aria-current")),
+    ).toHaveLength(1)
+    // The Dashboard is gone: the Device Editor is where the app starts.
+    expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Device Editor" }))
     expect(onNavigate).toHaveBeenCalledWith("designer")
-    for (const name of ["Layouts", "Action Library", "Workflows"]) {
+    for (const name of ["Action Library", "Workflows"]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument()
     }
+    // The Layout Manager is in Settings › Layouts, not on the rail.
+    expect(screen.queryByRole("button", { name: "Layouts" })).not.toBeInTheDocument()
   })
 
   it("leaves out what moved to the toolbar and the settings window", () => {

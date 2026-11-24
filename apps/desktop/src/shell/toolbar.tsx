@@ -1,5 +1,15 @@
-import { Check, ChevronDown, Cpu, Ellipsis, Puzzle, Settings, Store, UserRound } from "lucide-react"
-import { useState, useSyncExternalStore } from "react"
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Cpu,
+  Ellipsis,
+  Puzzle,
+  Settings,
+  Store,
+  UserRound,
+} from "lucide-react"
+import { Children, Fragment, type ReactNode, useState, useSyncExternalStore } from "react"
 
 import { CONTROL, CONTROL_ICON } from "@/components/app-titlebar"
 import { NotificationsButton } from "@/components/notifications"
@@ -46,19 +56,66 @@ import {
 } from "./plugin-navigation"
 
 // Narrower windows truncate the selectors' names; their tooltips and
-// accessible names keep the whole name.
-const SELECTOR = cn(
-  CONTROL,
-  "max-w-56 justify-start font-normal max-[1100px]:max-w-40 max-[820px]:max-w-28",
+// accessible names keep the whole name. In the trail Device › Profile ›
+// Layout the layout's name gives way first, then the profile's, then the
+// device's: the device says what the others are for, and a layout is
+// recognised by its first letters as well. Both by their caps per width and
+// by how much each shrinks when the toolbar has no room left (flex-shrink).
+const SELECTOR = cn(CONTROL, "min-w-0 justify-start overflow-hidden font-normal")
+const DEVICE_SELECTOR = cn(SELECTOR, "max-w-56 shrink max-[1100px]:max-w-48 max-[820px]:max-w-36")
+const PROFILE_SELECTOR = cn(
+  SELECTOR,
+  "max-w-56 shrink-[2] max-[1100px]:max-w-40 max-[820px]:max-w-28",
+)
+const LAYOUT_SELECTOR = cn(
+  SELECTOR,
+  "max-w-56 shrink-[4] max-[1100px]:max-w-32 max-[820px]:max-w-24",
 )
 
-function Dot({ on, className }: { on: boolean; className?: string }) {
+/**
+ * The selectors as a trail, Device › Profile › Layout: what the page works
+ * on, from the device down. The chevrons between them only show the order;
+ * each selector stays its own menu button.
+ */
+export function SelectorTrail({ children }: { children: ReactNode }) {
+  const { t } = useTranslation()
+  const shown = Children.toArray(children)
+  return (
+    <div
+      role="group"
+      aria-label={t("navigation:toolbar.selection")}
+      data-slot="selector-trail"
+      className="flex min-w-0 items-center gap-0.5"
+    >
+      {shown.map((selector, index) => (
+        <Fragment key={index}>
+          {index > 0 && (
+            <ChevronRight
+              aria-hidden
+              data-slot="selector-separator"
+              className="pointer-events-none size-3.5 shrink-0 text-muted-foreground/60"
+            />
+          )}
+          {selector}
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+function Dot({
+  on,
+  className,
+  ...props
+}: { on: boolean; className?: string } & { "data-state"?: string }) {
   return (
     <span
       aria-hidden
+      data-slot="connection-dot"
+      {...props}
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        on ? "bg-emerald-500" : "bg-muted-foreground/40",
+        on ? "bg-success" : "bg-muted-foreground/40",
         className,
       )}
     />
@@ -105,9 +162,11 @@ export function DeviceSelector({ onChosen }: { onChosen?: () => void }) {
       <Check className={cn(option.key !== current?.key && "invisible")} />
       <span className="grid min-w-0 flex-1">
         <span className="truncate">{option.label}</span>
-        <span className="truncate text-xs text-muted-foreground">{option.detail}</span>
+        {option.detail && (
+          <span className="truncate text-xs text-muted-foreground">{option.detail}</span>
+        )}
       </span>
-      <Dot on={option.connected} />
+      <Dot on={option.connected} data-state={option.connected ? "connected" : "disconnected"} />
     </DropdownMenuItem>
   )
   return (
@@ -116,14 +175,13 @@ export function DeviceSelector({ onChosen }: { onChosen?: () => void }) {
         <Button
           variant="ghost"
           size="sm"
-          className={SELECTOR}
+          className={DEVICE_SELECTOR}
           aria-label={label}
           title={label}
           disabled={selection.models.status !== "ready"}
         >
           <Cpu />
           <span className="truncate">{current?.label ?? t("navigation:device.placeholder")}</span>
-          {current && <Dot on={current.connected} />}
           <ChevronDown className="opacity-60" />
         </Button>
       </DropdownMenuTrigger>
@@ -136,12 +194,8 @@ export function DeviceSelector({ onChosen }: { onChosen?: () => void }) {
         )}
         {connected.length > 0 && others.length > 0 && <DropdownMenuSeparator />}
         {others.length > 0 && (
-          <DropdownMenuGroup aria-label={t("navigation:device.modelsGroup")}>
-            <DropdownMenuLabel>
-              {connected.length > 0
-                ? t("navigation:device.otherModels")
-                : t("navigation:device.models")}
-            </DropdownMenuLabel>
+          <DropdownMenuGroup aria-label={t("navigation:device.notConnectedGroup")}>
+            <DropdownMenuLabel>{t("navigation:device.notConnected")}</DropdownMenuLabel>
             {others.map(item)}
           </DropdownMenuGroup>
         )}
@@ -169,16 +223,20 @@ export function ProfileSelector() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className={SELECTOR} aria-label={label} title={label}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={PROFILE_SELECTOR}
+          aria-label={label}
+          title={label}
+        >
           <UserRound />
           <span className="truncate">{editing?.name ?? t("navigation:profile.none")}</span>
-          {editing && <Dot on={onDevice} />}
           <ChevronDown className="opacity-60" />
         </Button>
       </DropdownMenuTrigger>
+      {/* Starts with the profiles; the trigger names the menu (aria-labelledby). */}
       <DropdownMenuContent className="w-64" align="start">
-        <DropdownMenuLabel>{t("navigation:profile.edit")}</DropdownMenuLabel>
-        <DropdownMenuSeparator />
         {profiles.profiles.length === 0 && (
           <DropdownMenuItem disabled>{t("navigation:profile.noProfiles")}</DropdownMenuItem>
         )}
@@ -220,7 +278,7 @@ export function ProfileSelector() {
  * device's model, and the layouts' management (layout-editor/layout-management.tsx).
  */
 export function LayoutSelector() {
-  return <LayoutMenu className={SELECTOR} />
+  return <LayoutMenu className={LAYOUT_SELECTOR} />
 }
 
 function PluginIcon({ item }: { item: PluginNavigationItem }) {

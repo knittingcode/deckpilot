@@ -91,3 +91,28 @@ describe("Modules settings with the built-in modules", () => {
     expect(screen.getByText("No modules found")).toBeInTheDocument()
   })
 })
+
+describe("Modules settings and plugins", () => {
+  it("lists only DeckPilot's native modules, never a plugin, and points to the Marketplace", async () => {
+    vi.stubEnv("VITE_DECKPILOT_PLUGINS", "1")
+    const modules = builtInModules()
+    const plugin = {
+      ...(modules[0] as (typeof modules)[number]),
+      id: "deckpilot.github",
+      name: "GitHub plugin",
+    }
+    const { user, context } = renderWithApp(<ModulesSettings />, {
+      modules: [...modules, plugin],
+    })
+    expect(screen.getByRole("switch", { name: "Disable HTTP" })).toBeInTheDocument()
+    expect(screen.queryByText("GitHub plugin")).not.toBeInTheDocument()
+    expect(screen.getByText(/Separately packaged plugins/)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Open Marketplace" }))
+    expect(context.navigate).toHaveBeenCalledWith("marketplace")
+  })
+
+  it("says nothing about the Marketplace in builds without plugins", () => {
+    renderWithApp(<ModulesSettings />, { modules: builtInModules() })
+    expect(screen.queryByText(/Marketplace/)).not.toBeInTheDocument()
+  })
+})

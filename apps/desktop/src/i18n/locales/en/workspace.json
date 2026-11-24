@@ -1,33 +1,4 @@
 {
-  "dashboard": {
-    "title": "Dashboard",
-    "description": "What is running right now",
-    "activateFailed": "The profile was not activated",
-    "updated": {
-      "title": "DeckPilot was updated",
-      "description": "Updated from {{from}} to {{to}}. Your configuration was kept."
-    },
-    "updateAvailable": "Version {{version}} is available",
-    "viewUpdate": "View update",
-    "now": "Now",
-    "activeProfile": "Active profile",
-    "activeProfileHint": "The profile that runs on the device.",
-    "chooseProfile": "Choose a profile",
-    "createProfile": "Create a profile",
-    "agent": "Background agent",
-    "agentSummary_one": "Version {{version}} · {{count}} device",
-    "agentSummary_other": "Version {{version}} · {{count}} devices",
-    "noDevice": {
-      "title": "No Stream Deck detected",
-      "description": "Connect a supported device; it is picked up automatically."
-    },
-    "inProfile": "In {{profile}}",
-    "counts": {
-      "actions": "Actions",
-      "workflows": "Workflows",
-      "layouts": "Layouts"
-    }
-  },
   "profiles": {
     "new": "New profile",
     "toast": {
@@ -36,10 +7,6 @@
       "activateFailed": "{{profile}} was not activated",
       "deleted": "Profile deleted"
     },
-    "all": {
-      "title": "All profiles",
-      "description": "The active profile runs on the device. Any profile can be edited: select it here or in the toolbar."
-    },
     "empty": {
       "title": "No profiles yet",
       "body": "Create your first profile with New profile in the toolbar."
@@ -47,22 +14,19 @@
     "table": {
       "label": "Profiles",
       "name": "Name",
-      "modified": "Last modified",
       "status": "Status",
-      "actions": "Actions"
+      "actions": "Actions",
+      "description": "Description",
+      "contents": "Contents"
     },
-    "beingEdited": "Being edited",
-    "editProfile": "Edit {{profile}}",
     "runsOnDevice": "Runs on the device",
     "active": "Active",
     "inactive": "Inactive",
     "makeActive": "Make active",
     "makeActiveLabel": "Make {{profile}} active",
     "editing": {
-      "description": "The profile being edited.",
       "editDetails": "Edit details…",
       "details": "Details of {{profile}}",
-      "description_label": "Description",
       "noDescription": "No description",
       "actions": "Actions",
       "workflows": "Workflows",
@@ -70,6 +34,7 @@
     },
     "menu": {
       "more": "More for {{profile}}",
+      "open": "Open",
       "rename": "Rename…",
       "duplicate": "Duplicate…",
       "delete": "Delete…"
@@ -93,6 +58,25 @@
       "save": "Save",
       "name": "Name",
       "description": "Description"
+    },
+    "summary": "{{layouts}} · {{actions}}",
+    "layoutCount_one": "{{count}} layout",
+    "layoutCount_other": "{{count}} layouts",
+    "actionCount_one": "{{count}} action",
+    "actionCount_other": "{{count}} actions",
+    "detail": {
+      "open": "Open {{profile}}",
+      "back": "All profiles",
+      "status": "Status",
+      "activeOn": "Active on {{devices}}",
+      "activeNoDevice": "Active; no device is connected",
+      "inactive": "Not active; devices show {{profile}}",
+      "noneActive": "Not active; no profile is active",
+      "layouts": "Layouts",
+      "noLayouts": "No layouts yet",
+      "layoutsShared": "Layouts are shared: this profile refers to them, and other profiles can use the same ones.",
+      "manageLayouts": "Manage layouts…",
+      "openInEditor": "Open in the editor"
     }
   },
   "pluginView": {
@@ -150,13 +134,6 @@
       "description": "Switching only changes which project actions refer to. Nothing is checked out, restarted or launched.",
       "inactiveWithProject": "{{profile}} is not active on the device. Its active project is {{key}}; it is restored when the profile is activated.",
       "inactiveNoProject": "{{profile}} is not active on the device. Its active project is not set; it is restored when the profile is activated."
-    },
-    "card": {
-      "label": "Active project",
-      "project": "{{key}} · {{project}}",
-      "projectInProfile": "{{key}} · {{project}} in {{profile}}",
-      "none": "None",
-      "noActiveProfile": "Activate a profile to switch projects."
     },
     "actions": {
       "new": "New project",
@@ -220,8 +197,7 @@
       "addResource": "Add resource"
     },
     "machine": {
-      "title": "Resources on this machine",
-      "description": "Logical resources used by projects, mapped to paths, applications or URLs on this computer. These mappings are never part of a profile.",
+      "description": "These mappings are never part of a profile.",
       "add": "Add mapping",
       "empty": "No resources used or mapped yet",
       "value": "{{kind}}: {{value}}",

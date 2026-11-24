@@ -24,8 +24,6 @@ export interface FrontendModule {
       context?: ToolbarContext
     }
   >
-  /** Cards shown on the dashboard while the module is enabled. */
-  dashboardCards?: View[]
   /**
    * Views of the native windows declared in the module's manifest, by
    * window identifier (`<module>.<name>`). The backend decides whether a

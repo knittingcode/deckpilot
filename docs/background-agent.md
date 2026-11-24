@@ -436,7 +436,7 @@ debug` logs the device ID).
 3. Check that the keys show the action names, unbound keys are black, and the
    text is upright and not mirrored.
 4. Press the project key repeatedly: SHOP → CMR → CMS → SHOP. The key's second
-   line and the Dashboard follow; each press switches exactly once.
+   line follows; each press switches exactly once.
 5. Hold a key for several seconds: no repeated execution.
 6. Change brightness in Settings; the device follows.
 7. Switch profile from the tray; keys change without restarting the agent.
