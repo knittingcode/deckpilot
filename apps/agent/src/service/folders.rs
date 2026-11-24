@@ -54,6 +54,11 @@ impl Agent {
     /// countdown runs: on the runtime's clock, which tests move. A look
     /// that was due already (the clock moved past it while the loop
     /// handled something else) is taken first, so no second is skipped.
+    ///
+    /// The next look is planned from the same `now` the due one was
+    /// checked against: planned from a later reading, a second that began
+    /// in between would be planned past without ever being drawn, and only
+    /// a look already due catches it up.
     pub(super) fn next_folder_wake(&mut self) -> Option<Duration> {
         let now = self.runtime.folder_clock();
         if self
@@ -63,7 +68,7 @@ impl Agent {
         {
             self.on_folder_wake();
         }
-        let wake = self.runtime.next_folder_wake();
+        let wake = self.runtime.folder_timers().next_wake(now);
         self.folder_runs.planned = wake;
         Some(wake?.saturating_duration_since(self.runtime.folder_clock()))
     }
