@@ -30,6 +30,7 @@ const api = vi.hoisted(() => ({
   listBrowsers: vi.fn(),
   applicationIcon: vi.fn(),
   applicationPresent: vi.fn(),
+  resourceStatus: vi.fn(),
 }))
 const dialog = vi.hoisted(() => ({ open: vi.fn() }))
 
@@ -47,6 +48,7 @@ beforeEach(() => {
   api.getMachineConfig.mockImplementation(() => Promise.resolve({ os: "macOs", bindings }))
   api.applicationIcon.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=")
   api.applicationPresent.mockResolvedValue(true)
+  api.resourceStatus.mockResolvedValue("ok")
   api.listBrowsers.mockResolvedValue({
     browsers: [
       { name: "Firefox", id: "org.mozilla.firefox", kind: "bundle", browser: true },
@@ -448,6 +450,61 @@ describe("the machine-local pickers", () => {
       })
     })
     expect(dialog.open).toHaveBeenCalledWith({ directory: false, multiple: false })
+  })
+
+  it("say when a bound file or folder is not there any more", async () => {
+    api.resourceStatus.mockResolvedValue("missing")
+    bindings = [{ key: "folder.reports", kind: "directory", value: "/Users/me/Reports" }]
+    render(
+      <MachineResourceField
+        id="f"
+        pick="folder"
+        value={{ type: "fixed", key: "folder.reports" }}
+        optional={false}
+        onChange={vi.fn()}
+      />,
+    )
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This file or folder is not on this computer any more",
+    )
+    // Asked by its key, never by its path.
+    expect(api.resourceStatus).toHaveBeenCalledWith("folder.reports")
+    // The bound path is still shown, to choose it again.
+    expect(screen.getByText("/Users/me/Reports")).toBeInTheDocument()
+  })
+
+  it("show no alert for a bound file that is there or cannot be checked", async () => {
+    bindings = [{ key: "file.notes", kind: "other", value: "/Users/me/notes.txt" }]
+    for (const answer of ["ok", "unchecked"]) {
+      api.resourceStatus.mockReset().mockResolvedValue(answer)
+      const view = render(
+        <MachineResourceField
+          id="f"
+          pick="location"
+          value={{ type: "fixed", key: "file.notes" }}
+          optional={false}
+          onChange={vi.fn()}
+        />,
+      )
+      await waitFor(() => {
+        expect(api.resourceStatus).toHaveBeenCalledWith("file.notes")
+      })
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+      view.unmount()
+    }
+    // Nothing bound: not asked (the unbound hint says so instead).
+    api.resourceStatus.mockReset()
+    render(
+      <MachineResourceField
+        id="f"
+        pick="location"
+        value={{ type: "fixed", key: "file.unbound" }}
+        optional={false}
+        onChange={vi.fn()}
+      />,
+    )
+    expect(await screen.findByRole("alert")).toHaveTextContent("choose it again")
+    expect(api.resourceStatus).not.toHaveBeenCalled()
   })
 
   it("open folders with the folder dialog only", async () => {

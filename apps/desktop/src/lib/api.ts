@@ -15,6 +15,7 @@ import type {
   CatalogFilter,
   ControlFace,
   ControlId,
+  FolderCountdown,
   IconInfo,
   VisualLibrary,
   LivePreview,
@@ -362,6 +363,12 @@ export const api = {
    * when that cannot be checked (an AppUserModelID, a bare name).
    */
   applicationPresent: (id: string) => invoke<boolean | null>("application_present", { id }),
+  /**
+   * Whether what resource `key` is bound to on this computer is still there
+   * (a picked file, folder or application): `missing` when it was moved or
+   * deleted, `unchecked` when it cannot be checked.
+   */
+  resourceStatus: (key: string) => invoke<ResourceStatus>("resource_status", { key }),
   /** A picked application file as a binding stores it (bundle id, App Paths name, desktop id, path). */
   describeApplication: (path: string) => invoke<InstalledApp>("describe_application", { path }),
   /** This computer's default gesture timings (`gestures.defaults`). */
@@ -412,6 +419,11 @@ export const api = {
      * size. Without it, at the device's own size.
      */
     keyPixels?: number | null,
+    /**
+     * The agent's Auto Exit countdown of this page (live preview: the
+     * device shows it): drawn on the folder's protected Back key.
+     */
+    folderCountdown?: FolderCountdown | null,
   ) =>
     invoke<ControlFace[]>("preview_layout", {
       profileId,
@@ -421,6 +433,7 @@ export const api = {
       render,
       live: live ?? null,
       keyPixels: keyPixels ?? null,
+      folderCountdown: folderCountdown ?? null,
     }),
   /**
    * One cycle of the scrolling title of `control` as the device shows it,
@@ -576,3 +589,6 @@ export const UPDATE_STATE_EVENT = "update-state"
  * by code where a translation exists (`src/lib/backend-error.ts`).
  */
 export { errorCode, errorMessage, rawErrorMessage } from "./backend-error"
+
+/** What `resourceStatus` says about a bound resource on this computer. */
+export type ResourceStatus = "ok" | "missing" | "unbound" | "unchecked"

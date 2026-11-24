@@ -431,7 +431,7 @@
   "pageSettings": {
     "name": "Nazwa strony",
     "delete": "Usuń stronę",
-    "autoReturn": "Zamknij po użyciu klawisza",
+    "autoReturn": "Wyjdź po zakończeniu akcji",
     "sheetTitle": "Strony"
   },
   "deletePage": {
@@ -834,11 +834,12 @@
   "folderSettings": {
     "title": "Ustawienia folderu",
     "autoExit": "Automatyczne wyjście",
-    "exitAfter": "Wyjdź po",
-    "seconds_one": "sekundzie",
-    "seconds_few": "sekundach",
-    "seconds_many": "sekundach",
-    "seconds_other": "sekundy",
+    "autoExitAfter_one": "Automatyczne wyjście po <field/> sekundzie",
+    "autoExitAfter_few": "Automatyczne wyjście po <field/> sekundach",
+    "autoExitAfter_many": "Automatyczne wyjście po <field/> sekundach",
+    "autoExitAfter_other": "Automatyczne wyjście po <field/> sekundy",
+    "timeout": "Czas automatycznego wyjścia w sekundach",
+    "exitAfterCompletion": "Wyjdź po zakończeniu akcji",
     "invalid": {
       "whole": "Wpisz całkowitą liczbę sekund.",
       "range": "Wpisz od {{min}} do {{max}} sekund."

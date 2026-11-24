@@ -200,6 +200,8 @@ pub(crate) enum Command {
         name: String,
         result: Result<ActionResult, deckpilot_core::EngineError>,
         reply: Option<oneshot::Sender<Result<Response, IpcError>>>,
+        /// The folder the key that started it is in (`folders.rs`).
+        hold: Option<deckpilot_core::FolderHold>,
     },
     /// A plugin's project operation or profile read (plugin API 1.9, X6
     /// and X9), which the broker allowed, from its lane thread.
@@ -629,6 +631,8 @@ pub struct Agent {
     /// Detached actions (plugin actions from keys and `runAction`) running
     /// on their own threads.
     detached: Arc<AtomicUsize>,
+    /// The runs keys of folders started and their folders (`folders.rs`).
+    folder_runs: folders::FolderRuns,
     /// The editor's live preview sessions (protocol 16).
     live_previews: live_preview::LivePreviews,
     handle: AgentHandle,
@@ -763,6 +767,7 @@ impl Agent {
             plugins: crate::plugins::PluginRuntime::default(),
             locale: None,
             detached: Arc::default(),
+            folder_runs: folders::FolderRuns::default(),
             live_previews: live_preview::LivePreviews::default(),
             handle,
             commands,
@@ -782,6 +787,17 @@ impl Agent {
     #[must_use]
     pub fn with_marquee_clock(mut self, clock: crate::marquee::MarqueeClock) -> Self {
         self.marquee_clock = clock;
+        self
+    }
+
+    /// Measures folders' Auto Exit countdowns with `clock` instead of the
+    /// system's monotonic clock (before [`Agent::run`]; tests move it).
+    #[must_use]
+    pub fn with_folder_clock(
+        mut self,
+        clock: impl Fn() -> std::time::Instant + Send + Sync + 'static,
+    ) -> Self {
+        self.runtime.set_clock(clock);
         self
     }
 
@@ -849,11 +865,10 @@ impl Agent {
                 || tokio::time::Instant::now() + Duration::from_secs(3600),
                 tokio::time::Instant::from_std,
             );
-            // Sleeps until the next folder's Auto Exit, if a countdown runs.
-            let folder_due = self.next_folder_exit().map_or_else(
-                || tokio::time::Instant::now() + Duration::from_secs(3600),
-                tokio::time::Instant::from_std,
-            );
+            // Sleeps until the next folder's Auto Exit, or until the
+            // seconds its Back key shows change, if a countdown runs.
+            let folder_due = tokio::time::Instant::now()
+                + self.next_folder_wake().unwrap_or(Duration::from_secs(3600));
             // Sleeps until a coalesced variable redraw is due, if any.
             let display_due = self.display_redraws.next_due().map_or_else(
                 || tokio::time::Instant::now() + Duration::from_secs(3600),
@@ -906,7 +921,7 @@ impl Agent {
                     Flow::Continue
                 }
                 () = tokio::time::sleep_until(folder_due) => {
-                    self.on_folder_exit_due();
+                    self.on_folder_wake();
                     Flow::Continue
                 }
                 () = tokio::time::sleep_until(face_due) => {
@@ -1029,7 +1044,16 @@ impl Agent {
                 name,
                 result,
                 reply,
+                hold,
             } => {
+                // Over: a result (success or a handled failure) ran; an
+                // engine error means it could not run at all.
+                let end = if result.is_ok() {
+                    deckpilot_core::HoldEnd::Ran
+                } else {
+                    deckpilot_core::HoldEnd::NotRun
+                };
+                self.release_folder_run(hold, end);
                 self.detached_finished(action, &name, result, reply);
                 Flow::Continue
             }
@@ -1794,6 +1818,7 @@ impl Agent {
         let running = self.detached.clone();
         if running.fetch_add(1, Ordering::SeqCst) >= MAX_DETACHED {
             running.fetch_sub(1, Ordering::SeqCst);
+            // Refused before it started: a key's folder is not held.
             let result = Ok(ActionResult::error(
                 "busy",
                 format!("{MAX_DETACHED} actions of plugins are already running; try again later"),
@@ -1802,11 +1827,14 @@ impl Agent {
             return;
         }
         let commands = self.handle.commands.clone();
+        // A key of a folder started it: the folder waits for its end.
+        let hold = self.hold_folder_for_run();
         let spawned = std::thread::Builder::new()
             .name("detached action".into())
             .spawn({
                 let running = running.clone();
                 let name = name.clone();
+                let hold = hold.clone();
                 move || {
                     let result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run()))
@@ -1822,12 +1850,14 @@ impl Agent {
                         name,
                         result,
                         reply,
+                        hold,
                     });
                 }
             });
         if let Err(error) = spawned {
             running.fetch_sub(1, Ordering::SeqCst);
             warn!(%error, "no thread for the action");
+            self.release_folder_run(hold, deckpilot_core::HoldEnd::NotRun);
         }
     }
 

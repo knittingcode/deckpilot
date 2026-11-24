@@ -20,17 +20,20 @@
 //! ([`DeviceLayout::automatic_back`]).
 //!
 //! **Auto Exit.** A folder page may leave itself after a number of seconds
-//! ([`AutoExit`]); the agent's timer is in [`FolderTimers`].
+//! ([`AutoExit`]) and, with [`crate::LayoutPage::auto_return`] ("Exit after
+//! action completes"), once what one of its keys started is over. Both are
+//! run by [`FolderTimers`] (`folder/timers.rs`), which the agent's loop
+//! drives and which pauses while a key's run is not over.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use deckpilot_device::{ControlId, ControlKind, DeviceCapabilities, DeviceId};
+use deckpilot_device::{ControlId, ControlKind, DeviceCapabilities};
 
-use crate::{BindingTarget, DeviceLayout, LayoutId, PageId};
+use crate::{BindingTarget, DeviceLayout, PageId};
 
 /// Where a folder page's Back is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -294,182 +297,8 @@ impl DeviceLayout {
     }
 }
 
-/// A due Auto Exit of one folder entry: what [`FolderTimers::due`] hands
-/// out and [`crate::Runtime::exit_folder`] takes back. `generation` is the
-/// entry's own: an exit whose entry was left or entered again since does
-/// nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderExit {
-    pub device: DeviceId,
-    pub layout: LayoutId,
-    pub page: PageId,
-    pub generation: u64,
-}
-
-/// One folder a device is in, since it entered it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FolderEntry {
-    page: PageId,
-    generation: u64,
-    /// When it leaves the folder; `None`: Auto Exit was off when it entered.
-    due: Option<Instant>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DeviceFolders {
-    layout: LayoutId,
-    /// The folders that contain the shown page, outermost first.
-    entries: Vec<FolderEntry>,
-}
-
-/// The Auto Exit timers of the devices, per device (devices that show the
-/// same layout have their own).
-///
-/// A device **enters** a folder when the page it shows comes to be inside
-/// the folder (the folder page itself or any page inside it) and was not
-/// before: from the folder's parent, from anywhere else, by any navigation.
-/// The countdown runs from entering. Moving between pages of the same
-/// folder (into a folder inside it and back) does not restart it; leaving
-/// the folder (Back, Home, another layout or profile, locking,
-/// disconnecting) cancels it, and entering again starts it anew. A device
-/// that reconnects, or an agent that restarts, starts no countdown for the
-/// page it shows: only entering does. Deadlines live in memory only.
-#[derive(Debug, Default)]
-pub struct FolderTimers {
-    devices: BTreeMap<DeviceId, DeviceFolders>,
-    next_generation: u64,
-}
-
-impl FolderTimers {
-    /// Follows what `device` shows now: `stack` of `layout` (`None`:
-    /// nothing). Folders it left are cancelled; folders it entered start
-    /// their countdown at `now` unless `quiet` (a reconnect, a restored
-    /// page), which takes the folders as they are without starting any.
-    pub(crate) fn follow(
-        &mut self,
-        device: &DeviceId,
-        shown: Option<(&DeviceLayout, PageId)>,
-        now: Instant,
-        quiet: bool,
-    ) {
-        let Some((layout, page)) = shown else {
-            self.devices.remove(device);
-            return;
-        };
-        let parents = layout.page_parents();
-        // The shown page and its folders, outermost first; only pages
-        // inside a folder are folders one can leave.
-        let mut chain: Vec<PageId> = Vec::new();
-        let mut current = Some(page);
-        while let Some(id) = current {
-            if chain.contains(&id) || !parents.contains_key(&id) {
-                break;
-            }
-            chain.push(id);
-            current = parents.get(&id).copied();
-        }
-        chain.reverse();
-        let previous = self
-            .devices
-            .remove(device)
-            .filter(|state| state.layout == layout.id)
-            .map(|state| state.entries)
-            .unwrap_or_default();
-        let mut entries = Vec::with_capacity(chain.len());
-        for folder in chain {
-            if let Some(kept) = previous.iter().find(|entry| entry.page == folder) {
-                // Still inside: the countdown goes on, unless Auto Exit was
-                // switched off meanwhile.
-                let mut kept = kept.clone();
-                if layout.auto_exit(folder).is_none() {
-                    kept.due = None;
-                }
-                entries.push(kept);
-                continue;
-            }
-            self.next_generation += 1;
-            let due = if quiet {
-                None
-            } else {
-                layout.auto_exit(folder).map(|after| now + after)
-            };
-            entries.push(FolderEntry {
-                page: folder,
-                generation: self.next_generation,
-                due,
-            });
-        }
-        if !entries.is_empty() {
-            self.devices.insert(
-                device.clone(),
-                DeviceFolders {
-                    layout: layout.id,
-                    entries,
-                },
-            );
-        }
-    }
-
-    /// Forgets `device` (disconnected): its countdowns are cancelled.
-    pub(crate) fn forget(&mut self, device: &DeviceId) {
-        self.devices.remove(device);
-    }
-
-    /// Cancels every countdown (profile changed, locked).
-    pub(crate) fn clear(&mut self) {
-        self.devices.clear();
-    }
-
-    /// When the next countdown ends.
-    pub fn next_due(&self) -> Option<Instant> {
-        self.devices
-            .values()
-            .flat_map(|state| state.entries.iter().filter_map(|entry| entry.due))
-            .min()
-    }
-
-    /// The exits due at `now`: per device the outermost folder whose
-    /// countdown ended (leaving it leaves the folders inside it too).
-    pub fn due(&self, now: Instant) -> Vec<FolderExit> {
-        self.devices
-            .iter()
-            .filter_map(|(device, state)| {
-                let entry = state
-                    .entries
-                    .iter()
-                    .find(|entry| entry.due.is_some_and(|due| due <= now))?;
-                Some(FolderExit {
-                    device: device.clone(),
-                    layout: state.layout,
-                    page: entry.page,
-                    generation: entry.generation,
-                })
-            })
-            .collect()
-    }
-
-    /// Whether `exit` is still the device's current entry of its folder.
-    pub(crate) fn is_current(&self, exit: &FolderExit) -> bool {
-        self.devices.get(&exit.device).is_some_and(|state| {
-            state.layout == exit.layout
-                && state
-                    .entries
-                    .iter()
-                    .any(|entry| entry.page == exit.page && entry.generation == exit.generation)
-        })
-    }
-
-    /// The countdown of the folder `page` that `device` is in: when it
-    /// ends. `None`: not in it, or no countdown runs.
-    pub fn due_of(&self, device: &DeviceId, page: PageId) -> Option<Instant> {
-        self.devices
-            .get(device)?
-            .entries
-            .iter()
-            .find(|entry| entry.page == page)?
-            .due
-    }
-}
+mod timers;
+pub use timers::{FolderCountdown, FolderExit, FolderHold, FolderTimers, HoldEnd};
 
 #[cfg(test)]
 mod tests;

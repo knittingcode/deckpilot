@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useTranslation } from "@/i18n"
-import { api } from "@/lib/api"
+import { type ResourceStatus, api } from "@/lib/api"
 import { failureDetail } from "@/lib/failure"
 import { applicationFilters, baseName, bindingKeyFor, isLocalReference } from "@/lib/system-actions"
 import type {
@@ -253,6 +253,7 @@ export function MachineResourceField({
       ) : (
         <LocationRow
           id={id}
+          resource={bound ? key : null}
           path={bound?.value ?? null}
           folder={pick === "folder" || bound?.kind === "directory"}
           busy={busy}
@@ -298,6 +299,7 @@ export function MachineResourceField({
 /** A chosen file or folder: its name, its path, and the native dialogs. */
 function LocationRow({
   id,
+  resource,
   path,
   folder,
   files,
@@ -305,6 +307,8 @@ function LocationRow({
   onBrowse,
 }: {
   id: string
+  /** The bound resource's key, to check that `path` is still there. */
+  resource: string | null
   path: string | null
   folder: boolean
   /** Files can be chosen (Open); otherwise folders only (Open folder). */
@@ -314,6 +318,27 @@ function LocationRow({
 }) {
   const { t } = useTranslation()
   const Icon = folder ? Folder : File
+  // A bound file or folder may have been moved or deleted since: asked by
+  // its key (never by path), again whenever it is bound to another path.
+  const [status, setStatus] = useState<{ for: string; status: ResourceStatus | null } | null>(null)
+  const checked = resource !== null && path !== null ? `${resource}\u0000${path}` : null
+  useEffect(() => {
+    if (checked === null || resource === null) return
+    let cancelled = false
+    api.resourceStatus(resource).then(
+      (answer) => {
+        if (!cancelled) setStatus({ for: checked, status: answer })
+      },
+      () => {
+        // It cannot be checked (an older app, no store): no alert.
+        if (!cancelled) setStatus({ for: checked, status: null })
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [checked, resource])
+  const gone = checked !== null && status?.for === checked && status.status === "missing"
   return (
     <div className="grid gap-1.5">
       <div className="flex min-w-0 items-center gap-2" id={id}>
@@ -357,6 +382,11 @@ function LocationRow({
           <FolderOpen /> {t("actions:system.picker.chooseFolder")}
         </Button>
       </div>
+      {gone && (
+        <p className="text-xs text-destructive" role="alert">
+          {t("actions:system.picker.locationGone")}
+        </p>
+      )}
     </div>
   )
 }

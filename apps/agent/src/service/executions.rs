@@ -267,6 +267,11 @@ impl Agent {
                 purpose,
             },
         ));
+        // Started from a key of a folder: the folder waits for the whole
+        // run, not for its first step.
+        if let Some(hold) = self.hold_folder_for_run() {
+            self.folder_runs.executions.insert(id, hold);
+        }
         let _ = self.handle.events.send(AgentEvent::ExecutionStarted {
             execution: summary.clone(),
         });
@@ -456,6 +461,9 @@ impl Agent {
         if let Some((purpose, end)) = ended {
             self.work_session_run_ended(purpose, &end);
         }
+        // Whatever its end (succeeded, failed, cancelled), the run is over:
+        // its folder goes on or is left.
+        self.execution_left_folder(execution);
         self.after_change();
     }
 
@@ -580,6 +588,7 @@ impl Agent {
                 execution: run.record.summary.clone(),
             });
             self.switch_run_ended(&run.record.summary);
+            self.execution_left_folder(id);
             if let Some(purpose) = run.purpose {
                 self.work_session_run_ended(purpose, &RunEnd::cancelled());
             }

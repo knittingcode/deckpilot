@@ -712,8 +712,11 @@ fn page_preview(
 /// agent's renderer: at the device's own size, or with `key_pixels` at the
 /// size the app shows it ([`preview_size`]), and with how its title comes
 /// out on the device (`text`). With `live`, keys show the live states the
-/// agent reported for them (`watch_key_states`). A scrolling title is drawn
-/// still, cut with `…`; [`preview_marquee`] has its frames.
+/// agent reported for them (`watch_key_states`). With `folder_countdown`
+/// (the agent's, from the live preview: the device shows this page), the
+/// folder's protected Back key shows that Auto Exit countdown, drawn as the
+/// device draws it. A scrolling title is drawn still, cut with `…`;
+/// [`preview_marquee`] has its frames.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri passes each argument by name.
 pub async fn preview_layout(
@@ -725,6 +728,7 @@ pub async fn preview_layout(
     render: Option<bool>,
     live: Option<LivePreview>,
     key_pixels: Option<u32>,
+    folder_countdown: Option<deckpilot_core::FolderCountdown>,
 ) -> CommandResult<Vec<ControlFace>> {
     let (preview, by_agent) = resolved_preview(
         &state,
@@ -739,10 +743,16 @@ pub async fn preview_layout(
     let icons = render
         .unwrap_or(false)
         .then(|| state.visual_assets.icons(&preview.profile));
+    let counting_back = folder_countdown.and_then(|_| layout.system_back(page_id, capabilities));
     Ok(preview
         .faces
         .into_iter()
         .map(|(control, face)| {
+            let face = if counting_back == Some(control) {
+                deckpilot_core::device_runtime::folder_back_face(folder_countdown)
+            } else {
+                face
+            };
             let native = image_size(capabilities, control);
             let drawn = icons.as_ref().zip(native).and_then(|(icons, native)| {
                 let (width, height) = preview_size(capabilities, native, key_pixels);

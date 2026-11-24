@@ -234,7 +234,7 @@ describe("previews drawn for the display", { timeout: 20_000 }, () => {
     await waitFor(() => {
       expect(previewLayout).toHaveBeenCalled()
     })
-    expect(previewLayout.mock.calls[0]?.slice(4)).toEqual([true, null, 128])
+    expect(previewLayout.mock.calls[0]?.slice(4)).toEqual([true, null, 128, null])
   })
 
   it("asks for the CSS size on a 1x display, and never for a fraction", () => {

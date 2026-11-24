@@ -1070,3 +1070,60 @@ fn keys_whose_plugin_is_missing_show_the_plug_and_keep_their_title_and_colours()
     back.symbol = Some("cpu".into());
     assert_ne!(render_with(&back, 72, 72, &icons).rgb(), drawn.rgb());
 }
+
+/// The folder's Back with its Auto Exit countdown
+/// (`docs/data-model.md`, "Auto Exit"): the icon moves up to make room for
+/// the seconds under it, a paused countdown adds the pause mark in the top
+/// right corner, and a face without a countdown is drawn as before.
+#[test]
+fn the_folder_back_shows_its_countdown_under_the_icon_and_a_pause_mark() {
+    use deckpilot_core::FolderCountdown;
+    use deckpilot_core::device_runtime::{folder_back_face, system_back_face};
+
+    let white = [255, 255, 255];
+    let plain = render(&system_back_face(), 72, 72);
+    assert_eq!(render(&folder_back_face(None), 72, 72), plain);
+    let counting = folder_back_face(Some(FolderCountdown {
+        seconds: 7,
+        paused: false,
+    }));
+    assert_eq!(counting.title, "7");
+    let frame = render(&counting, 72, 72);
+    assert_ne!(frame, plain);
+    // Icon and seconds reach further down than the centred icon alone.
+    let lowest = |frame: &Frame| rows_with(frame, white).last().copied().unwrap_or(0);
+    let highest = |frame: &Frame| rows_with(frame, white).first().copied().unwrap_or(0);
+    assert!(
+        lowest(&frame) > lowest(&plain),
+        "the seconds are under the icon"
+    );
+    assert!(highest(&frame) < highest(&plain), "the icon moved up");
+    // Other seconds, other pixels; the same seconds, the same frame.
+    let eight = folder_back_face(Some(FolderCountdown {
+        seconds: 8,
+        paused: false,
+    }));
+    assert_ne!(render(&eight, 72, 72), frame);
+    assert_eq!(render(&counting.clone(), 72, 72), frame);
+    // Paused: the pause mark in the top right corner, nothing else moves.
+    let paused = folder_back_face(Some(FolderCountdown {
+        seconds: 7,
+        paused: true,
+    }));
+    let held = render(&paused, 72, 72);
+    let corner = |frame: &Frame| {
+        (52..70)
+            .flat_map(|x| (2..20).map(move |y| (x, y)))
+            .filter(|(x, y)| frame.pixel(*x, *y) != Some(BLACK))
+            .count()
+    };
+    assert_eq!(corner(&frame), 0);
+    assert!(corner(&held) > 10, "the pause mark is drawn");
+    let below = |frame: &Frame| {
+        (0..72)
+            .flat_map(|x| (24..72).map(move |y| (x, y)))
+            .map(|(x, y)| frame.pixel(x, y))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(below(&held), below(&frame));
+}
