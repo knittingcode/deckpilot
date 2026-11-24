@@ -434,8 +434,36 @@ fn catalog_code(error: &CatalogError) -> (String, Params) {
         CatalogError::InUse(count) => ("inUse", params([("count", (*count).into())])),
         CatalogError::IdInUse => ("idInUse", Params::new()),
         CatalogError::SameProfile => ("sameProfile", Params::new()),
+        CatalogError::Repository(error) => return repository_code(error),
     };
     (format!("catalog.{kind}"), values)
+}
+
+/// `repository.<code>`, with the key or field the text names.
+fn repository_code(error: &deckpilot_core::RepositoryError) -> (String, Params) {
+    use deckpilot_core::RepositoryError as E;
+    let values = match error {
+        E::InvalidKey(key)
+        | E::DuplicateKey(key)
+        | E::InvalidName(key)
+        | E::DescriptionTooLong(key) => params([("key", key.clone().into())]),
+        E::DuplicateRemote(name) => params([("name", name.clone().into())]),
+        E::InvalidRemote(field) => params([("field", (*field).into())]),
+        E::TooMany => params([(
+            "max",
+            deckpilot_core::project::MAX_REPOSITORIES_PER_PROJECT.into(),
+        )]),
+        E::TooManyRemotes => params([(
+            "max",
+            deckpilot_core::project::MAX_REMOTES_PER_REPOSITORY.into(),
+        )]),
+        E::DuplicateId
+        | E::UnknownDefault
+        | E::SeveralPrimaryRemotes
+        | E::NotFound
+        | E::LastWithRole => Params::new(),
+    };
+    (format!("repository.{}", error.code()), values)
 }
 
 fn profile_code(error: &ProfileIssue) -> (String, Params) {
@@ -444,6 +472,7 @@ fn profile_code(error: &ProfileIssue) -> (String, Params) {
         ProfileIssue::DuplicateProjectKey(key) => {
             ("duplicateProjectKey", params([("key", key.clone().into())]))
         }
+        ProfileIssue::Repository { error, .. } => return repository_code(error),
         ProfileIssue::MissingWorkflowAction { workflow, .. } => (
             "missingWorkflowAction",
             params([("workflow", workflow.clone().into())]),

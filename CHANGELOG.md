@@ -17,6 +17,16 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Projects: a project can list several repositories, each with a key
+  (`cms`, unique in the project), a name, a description, the folder's
+  resource (bound on each computer, never exported) and a default. An
+  existing project with a `repository` role gets that one as its
+  repository `main` when the configuration is upgraded (schema 14); its
+  roles, resources and folder bindings are not changed. Marking a default
+  repository also points the `repository` role at it. Removing a
+  repository never removes its folder binding, and a missing folder is
+  shown, never removed. An export carries the repositories (format 5)
+  only when a project has more than that one. The editor for them follows.
 - Calls (groundwork, nothing user-visible yet): the provider contract
   with capability discovery, where every capability a provider does not
   offer is explicitly unsupported with a reason; the sanitised call state;
@@ -43,7 +53,7 @@ released either. 0.6.0 is the first version intended for publication.
   - **Managed Calls layouts.** One per device model, generated for its
     capability class with stable ids. They are regenerated only while
     unedited, and "Restore defaults" first keeps your version as a layout
-    of your own. This adds storage schema 14, which is additive.
+    of your own. This adds storage schema 15, which is additive.
 
 ## [0.15.0] - 2026-11-24
 

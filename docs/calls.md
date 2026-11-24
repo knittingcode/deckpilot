@@ -245,7 +245,7 @@ saved.
   disconnected device. If what was covered is gone when the frame goes,
   the device falls back as after a reload.
 
-## Managed layouts (`deckpilot-calls::layouts`, storage schema 14)
+## Managed layouts (`deckpilot-calls::layouts`, storage schema 15)
 
 One managed layout per device model, generated from the template of the
 model's capability class (`grid-small` ≤ 6 keys, `grid` 7–15, `grid-large`,
@@ -257,7 +257,7 @@ nothing is dropped on a small grid. The model's last key is always the
 protected dismiss key. A model without keys, or one too small for a page,
 is refused rather than given an overlay it could not leave.
 
-Storage (`managed_layouts` table, additive migration 14), following D2:
+Storage (`managed_layouts` table, additive migration 15), following D2:
 
 - A layout is created only when the owner has none for the model, in one
   transaction, and never touches another layout. A layout without a row is

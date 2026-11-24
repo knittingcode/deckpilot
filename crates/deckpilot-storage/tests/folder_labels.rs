@@ -73,7 +73,7 @@ fn the_upgrade_makes_the_folder_name_the_key_title_and_keeps_differing_titles() 
     store.save_profile(&work).unwrap();
     store
         .connection_for_tests()
-        .execute_batch("DELETE FROM migration_history; PRAGMA user_version = 12;")
+        .execute_batch("DELETE FROM migration_history; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 12;")
         .unwrap();
     drop(store);
 
