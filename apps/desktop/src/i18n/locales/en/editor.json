@@ -948,5 +948,24 @@
     "noPluginBackgrounds": "No installed plugin adds backgrounds.",
     "backgroundDisabled": "This key's background belongs to a disabled plugin: the key shows the device default until the plugin is enabled again.",
     "backgroundMissing": "This key's background is not available here (its plugin is not installed): the key shows the device default until it is."
+  },
+  "titleVariables": {
+    "insert": "Insert a variable into the title",
+    "search": "Search variables",
+    "list": "Variables a key can show",
+    "loading": "Loading…",
+    "none": "No variable matches.",
+    "unavailable": "Variables are available while DeckPilot's agent runs.",
+    "shows": "The key shows:",
+    "cut": "The key shows at most 32 characters.",
+    "unresolved": "{{reference}} shows “-”: {{reason}}",
+    "invalid": "“{{text}}” is not a variable and is shown as typed.",
+    "reason": {
+      "notDisplayable": "it is never shown on a key (sensitive, a secret or an id).",
+      "missing": "it has no value now.",
+      "unavailable": "its module or plugin is not available.",
+      "notText": "its value is not text.",
+      "runtimeOnly": "it exists only while a workflow runs."
+    }
   }
 }
