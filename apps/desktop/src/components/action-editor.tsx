@@ -1,9 +1,10 @@
 import { isIncompleteRefusal, runResultText } from "@/components/run-result-text"
 import { Ban, Copy, Play, Save, Trash2, TriangleAlert } from "lucide-react"
-import { useState } from "react"
+import { useContext, useState } from "react"
 import { toast } from "sonner"
 
 import { DeleteActionDialog, ReferenceList } from "@/components/action-references"
+import { DialogsContext } from "@/components/dialogs/use-dialogs"
 import { IconPicker } from "@/components/icon-picker"
 import { ErrorNotice } from "@/components/page"
 import { ParameterField } from "@/components/parameter-field"
@@ -97,6 +98,7 @@ export function ActionEditor({
   onOpenReference?: (reference: ActionReference) => void
 }) {
   const { t } = useTranslation()
+  const dialogs = useContext(DialogsContext)
   // Types a new action can have: not deprecated, and (plugin actions)
   // available now.
   const offered = (m: ModuleInfo | undefined) =>
@@ -145,6 +147,18 @@ export function ActionEditor({
     event.preventDefault()
     setSubmitted(true)
     if (!type || unavailable || nameMissing) return
+    // A complete action used in several places that this edit leaves
+    // without a required setting stops running in all of them: asked first.
+    const places = references.length
+    const wasComplete = action ? missingParameters(type, action.parameters).length === 0 : false
+    if (action && wasComplete && missing.length > 0 && places > 1 && dialogs) {
+      const confirmed = await dialogs.confirm({
+        title: t("actions:editor.sharedDraft.title", { name: action.name }),
+        description: t("actions:editor.sharedDraft.description", { count: places }),
+        confirmLabel: t("actions:editor.sharedDraft.confirm"),
+      })
+      if (!confirmed) return
+    }
     setError(null)
     const fields = {
       name,

@@ -51,16 +51,57 @@ export function ActionSetup({
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latest = useRef(values)
+  // The settings typed here and not saved yet; every other one follows the
+  // stored action, which may change elsewhere meanwhile (the shared editor,
+  // a rename).
+  const dirty = useRef(new Set<string>())
+  // The action as it is now, for the save: a delayed save never sends an
+  // older name or definition back.
+  const current = useRef(action)
+  useEffect(() => {
+    current.current = action
+  })
   const container = useRef<HTMLDivElement>(null)
   const idPrefix = `setup-${action.id}`
+
+  // A change of the stored action: the settings not being typed follow it.
+  const stored = JSON.stringify(action.parameters)
+  useEffect(() => {
+    const next = { ...latest.current }
+    let changed = false
+    for (const spec of type.parameters) {
+      if (dirty.current.has(spec.key)) continue
+      const value = action.parameters[spec.key]
+      if (JSON.stringify(next[spec.key]) === JSON.stringify(value)) continue
+      next[spec.key] = value ?? initialValue(spec)
+      changed = true
+    }
+    if (!changed) return
+    latest.current = next
+    setValues(next)
+    // Only when what is stored changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stored])
 
   const save = () => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
-    const parameters = buildParameters(type.parameters, latest.current)
-    if (JSON.stringify(parameters) === JSON.stringify(action.parameters)) return
-    api.updateAction(profileId, { ...action, parameters }).then(
+    const base = current.current
+    // What is typed here over what is stored now.
+    const merged: Record<string, ParameterValue> = { ...base.parameters }
+    for (const key of dirty.current) {
+      const value = latest.current[key]
+      if (value !== undefined) merged[key] = value
+    }
+    const parameters = buildParameters(type.parameters, merged)
+    const sent = new Set(dirty.current)
+    if (JSON.stringify(parameters) === JSON.stringify(base.parameters)) {
+      dirty.current.clear()
+      return
+    }
+    api.updateAction(profileId, { ...base, parameters }).then(
       () => {
+        for (const key of sent) dirty.current.delete(key)
         setError(null)
         onSaved()
       },
@@ -118,6 +159,7 @@ export function ActionSetup({
           onChange={(next) => {
             const updated = { ...latest.current, [spec.key]: next }
             latest.current = updated
+            dirty.current.add(spec.key)
             setValues(updated)
             if (timer.current) clearTimeout(timer.current)
             timer.current = setTimeout(save, SAVE_DELAY_MS)
