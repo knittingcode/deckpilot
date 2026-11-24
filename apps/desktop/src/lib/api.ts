@@ -15,6 +15,7 @@ import type {
   CatalogFilter,
   ControlFace,
   ControlId,
+  FolderCountdown,
   IconInfo,
   VisualLibrary,
   LivePreview,
@@ -418,6 +419,11 @@ export const api = {
      * size. Without it, at the device's own size.
      */
     keyPixels?: number | null,
+    /**
+     * The agent's Auto Exit countdown of this page (live preview: the
+     * device shows it): drawn on the folder's protected Back key.
+     */
+    folderCountdown?: FolderCountdown | null,
   ) =>
     invoke<ControlFace[]>("preview_layout", {
       profileId,
@@ -427,6 +433,7 @@ export const api = {
       render,
       live: live ?? null,
       keyPixels: keyPixels ?? null,
+      folderCountdown: folderCountdown ?? null,
     }),
   /**
    * One cycle of the scrolling title of `control` as the device shows it,

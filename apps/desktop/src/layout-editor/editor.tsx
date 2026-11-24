@@ -73,6 +73,7 @@ import type {
   DeviceInfo,
   DeviceLayout,
   DeviceModel,
+  FolderCountdown,
   GestureTimings,
   ProfileView,
   Trigger,
@@ -329,6 +330,14 @@ export function LayoutEditor({
   // preview: the device draws its own images.
   const pixelRatio = useDevicePixelRatio()
   const keyPixels = previewPixels(displayPixels(unit - 2 * keyBorderPixels(unit), pixelRatio))
+  // The Auto Exit countdown the agent reports for the folder the device
+  // shows in the live preview (use-live-preview.ts): the Canvas draws it on
+  // the folder's Back key, as the device does, while it shows that page.
+  const [deviceCountdown, setDeviceCountdown] = useState<{
+    page: string
+    countdown: FolderCountdown
+  } | null>(null)
+  const shownCountdown = deviceCountdown?.page === pageId ? deviceCountdown.countdown : null
   // Titles and labels with variables are drawn again when the agent reports
   // a change of what they show (profile, project, shared values), as the
   // device is: the Canvas, the Inspector and the device agree.
@@ -340,6 +349,7 @@ export function LayoutEditor({
     `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}|${String(displayTick)}`,
     liveStates.live,
     keyPixels,
+    shownCountdown,
   )
   // Scrolling titles play as on the device (unless motion is reduced).
   const animations = useMarqueeFrames(profileId, draft, pageId, reports, liveStates.live, keyPixels)
@@ -736,6 +746,9 @@ export function LayoutEditor({
     trail,
     draft,
     onDevice: (shown) => {
+      const counting = shown.inScope && shown.connected ? shown.folderCountdown : undefined
+      const shownPage = shown.stack.at(-1)
+      setDeviceCountdown(counting && shownPage ? { page: shownPage, countdown: counting } : null)
       if (shown.profile !== profileId || !shown.layout) return
       const page = shown.stack.at(-1)
       const through = shown.stack.slice(0, -1)
@@ -758,6 +771,9 @@ export function LayoutEditor({
       shell.selectLayout(other.id)
     },
   })
+
+  // Without a live preview the agent reports no countdown: the plain Back.
+  if (live.status !== "live" && deviceCountdown !== null) setDeviceCountdown(null)
 
   const save = async (): Promise<boolean> => {
     setErrors([])

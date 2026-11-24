@@ -234,7 +234,7 @@ describe("folder keys in the editor", { timeout: 20_000 }, () => {
     expect(fields[0]).toBe(within(region).getByRole("textbox", { name: "Folder name" }))
     expect(fields[0]).toHaveValue("Tools")
     expect(within(settings).queryByRole("textbox")).toBeNull()
-    expect(within(settings).getByRole("switch", { name: "Auto Exit" })).toBeInTheDocument()
+    expect(within(settings).getByRole("switch", { name: "Automatic exit" })).toBeInTheDocument()
     // No explanations about what is missing.
     expect(within(region).queryByText(/gesture.*not|cannot/i)).toBeNull()
     // An action key and a key that opens a top-level page keep their gestures.

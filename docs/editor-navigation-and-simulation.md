@@ -230,7 +230,11 @@ key, the protected Back, a page key, Switch layout, Back to previous layout,
 Auto Exit, a reload or revert that removed the page shown, a profile switch)
 and `ended {session, reason}` (`locked`, `replaced`). A navigation carries
 `profile`, `layout`, the page `stack`, `connected`, `inScope` (the device
-shows the session's layout: otherwise the preview is suspended) and `seq`,
+shows the session's layout: otherwise the preview is suspended), optional
+`folderCountdown {seconds, paused}` (the Auto Exit countdown of the folder
+shown, which the Canvas draws on the protected Back key with the device's
+renderer, `preview_layout`'s `folderCountdown`; it changes once a second,
+so it is pushed then; older apps ignore it) and `seq`,
 which grows with every state reported, so an answer and an event that cross
 each other can be ordered. Refusal reasons are in
 `deckpilot_ipc::live_preview::reason` (`staleRevision`, `unknownSession`,

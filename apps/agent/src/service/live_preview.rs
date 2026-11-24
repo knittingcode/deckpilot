@@ -433,6 +433,7 @@ impl Agent {
             stack: state.stack,
             connected: state.connected,
             seq: 0,
+            folder_countdown: self.runtime.folder_countdown(device),
         }
     }
 
@@ -473,6 +474,7 @@ impl Agent {
                     stack: state.stack,
                     connected: state.connected,
                     seq: self.live_previews.seq,
+                    folder_countdown: self.runtime.folder_countdown(device),
                 },
                 frames: controls
                     .into_iter()
