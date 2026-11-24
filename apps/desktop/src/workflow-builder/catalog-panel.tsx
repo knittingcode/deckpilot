@@ -91,7 +91,8 @@ export function CatalogPanel({
                   </span>
                   <span className="grid min-w-0">
                     <span className="truncate text-sm">{entry.title}</span>
-                    <span className="truncate text-xs text-muted-foreground">
+                    {/* The reason in full (two lines, then the tooltip): never cut to one. */}
+                    <span className="line-clamp-2 text-xs break-words text-muted-foreground">
                       {t("workflows:catalog.unavailable", { reason: entry.unavailable })}
                     </span>
                   </span>
@@ -110,14 +111,21 @@ export function CatalogPanel({
                     onAdd(entry)
                   }}
                   className="flex cursor-grab items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:cursor-grabbing"
-                  title={t("workflows:catalog.addHint", { title: entry.title })}
+                  title={
+                    entry.description
+                      ? `${entry.description}\n${t("workflows:catalog.addHint", { title: entry.title })}`
+                      : t("workflows:catalog.addHint", { title: entry.title })
+                  }
                 >
                   <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
                     <EntryIcon entry={entry} />
                   </span>
                   <span className="grid min-w-0">
                     <span className="truncate text-sm">{entry.title}</span>
-                    <span className="truncate text-xs text-muted-foreground">
+                    <span
+                      className="line-clamp-2 text-xs break-words text-muted-foreground"
+                      data-slot="catalog-description"
+                    >
                       {entry.description}
                     </span>
                   </span>

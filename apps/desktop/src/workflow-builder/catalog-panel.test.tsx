@@ -33,4 +33,39 @@ describe("node catalog", () => {
     fireEvent.change(screen.getByLabelText("Search nodes"), { target: { value: "zzz" } })
     expect(screen.getByText("No matching nodes")).toBeTruthy()
   })
+
+  it("never cuts a long description or reason to one line, and shows it whole on hover", () => {
+    const long =
+      "Stops and removes a Compose project's containers and networks. Volumes and images are kept. Needs the Docker plugin's permission to start, stop and restart containers."
+    const [first] = flowEntries(undefined)
+    if (!first) throw new Error("no flow entry")
+    const docker = [
+      {
+        id: "docker",
+        title: "Docker",
+        entries: [
+          { ...first, key: "docker:down", title: "Compose down", description: long },
+          {
+            ...first,
+            key: "docker:up",
+            title: "Compose up",
+            description: "",
+            unavailable:
+              "Docker is not reachable in this context; start Docker Desktop or choose another context.",
+          },
+        ],
+        types: [],
+      },
+    ]
+    render(<CatalogPanel groups={docker} onAdd={vi.fn()} onCreateAction={vi.fn()} />)
+    const down = screen.getByRole("listitem", { name: /Compose down/ })
+    const text = down.querySelector("[data-slot=catalog-description]")
+    expect(text?.textContent).toBe(long)
+    expect(text?.className).toContain("line-clamp-2")
+    expect(text?.className).not.toContain("truncate")
+    expect(down.getAttribute("title")).toContain(long)
+    const up = screen.getByRole("listitem", { name: /Compose up/ })
+    expect(up.textContent).toContain("start Docker Desktop or choose another context.")
+    expect(up.querySelector(".truncate.text-xs")).toBeNull()
+  })
 })

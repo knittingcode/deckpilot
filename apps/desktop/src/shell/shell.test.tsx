@@ -672,7 +672,12 @@ describe("context-aware toolbar", { timeout: 20_000 }, () => {
     // Settings › Layouts (its content: pages/layouts.test.tsx).
     const layouts = within(nav).getByRole("button", { name: "Layouts" })
     await user.click(layouts)
-    expect(layouts).toHaveAttribute("aria-current", "page")
+    await waitFor(() => {
+      expect(within(nav).getByRole("button", { name: "Layouts" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      )
+    })
   })
 
   it("starts in the Device Editor, also from a session that was on the removed Dashboard", async () => {
