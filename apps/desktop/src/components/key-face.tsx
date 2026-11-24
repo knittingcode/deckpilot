@@ -99,7 +99,10 @@ export function FaceTile({
         ) : Glyph ? (
           <Glyph className={glyph} aria-hidden />
         ) : style === "action" ? (
-          <ActionIcon name={icon} className={glyph} />
+          // The core's icon for the key (`symbol`: the action's own, the
+          // automatic one of an Open key's file or folder, or the type's),
+          // as the device draws it; the action's icon until a face says.
+          <ActionIcon name={face?.symbol ?? icon} className={glyph} />
         ) : null)}
       {face?.title && !folderBack && (
         <span

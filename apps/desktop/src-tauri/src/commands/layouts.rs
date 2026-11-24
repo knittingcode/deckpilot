@@ -643,6 +643,10 @@ fn page_preview(
         foreign: state.workflows_sharing_layouts(&store, &profile).ok(),
         graphs_off: state.require_feature(WORKFLOWS_PLUGIN).is_err(),
     };
+    // Open keys show a folder or a document for what they open, looked at
+    // as the agent does for the device (metadata only, cached).
+    let machine = crate::state::machine_config(&store)?;
+    let targets = state.open_targets(&store, layout.id)?.on(&machine, project);
     let empty = std::collections::BTreeMap::new();
     let (faces, titles) = core_display(&profile, project, |core| {
         let agent = ResolvedTemplates {
@@ -663,6 +667,7 @@ fn page_preview(
             Some(&model.capabilities),
             &collect,
             &scope,
+            &targets,
         );
         (faces, collect.seen.into_inner())
     });

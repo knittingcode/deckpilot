@@ -315,7 +315,7 @@
       "open": "Otwiera plik, folder lub aplikację wybrane na tym komputerze w domyślnej aplikacji albo plik w wybranej aplikacji.",
       "openApplication": "Uruchamia aplikację zainstalowaną na tym komputerze, opcjonalnie z argumentami.",
       "closeApplication": "Zamyka aplikację wybraną na tym komputerze: każde uruchomione przez Ciebie wystąpienie, najpierw łagodnie. Nigdy programów innych użytkowników ani systemu.",
-      "openFolder": "Otwiera zasób folderu albo folder w nim w menedżerze plików."
+      "openFolder": "Otwiera zasób folderu albo folder w nim w menedżerze plików. Zachowane dla zapisanych klawiszy: Otwórz otwiera też foldery."
     },
     "parameters": {
       "url": {
@@ -374,6 +374,7 @@
       "chooseApplication": "Wybierz aplikację…",
       "chooseFile": "Wybierz plik…",
       "chooseFolder": "Wybierz folder…",
+      "fileOrFolder": "Wybierz plik, aby otworzyć go w jego aplikacji, albo folder, aby otworzyć go w menedżerze plików. Klawisz pokazuje wtedy dokument albo folder, chyba że nadasz mu własną ikonę.",
       "clear": "Wyczyść",
       "search": "Szukaj aplikacji",
       "loading": "Wyszukiwanie zainstalowanych aplikacji…",

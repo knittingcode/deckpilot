@@ -11,6 +11,11 @@ export const WEBSITE = "system.open-url"
 export const OPEN = "system.open-file"
 export const OPEN_APPLICATION = "system.open-app"
 export const CLOSE_APPLICATION = "system.close-app"
+/**
+ * Open folder: replaced by Open (which opens folders too) and deprecated,
+ * so it is not offered for new keys; saved ones keep running, keep their
+ * folder icon and stay editable (docs/system-actions.md).
+ */
 export const OPEN_FOLDER = "system.open-directory"
 
 /** The longest address that opens (`paths::MAX_URL_LEN`). */

@@ -311,7 +311,10 @@ function LocationRow({
   resource: string | null
   path: string | null
   folder: boolean
-  /** Files can be chosen (Open); otherwise folders only (Open folder). */
+  /**
+   * Files and folders can be chosen (Open); otherwise folders only (the
+   * legacy Open folder, kept for saved keys).
+   */
   files: boolean
   busy: boolean
   onBrowse: (directory: boolean) => void
@@ -339,6 +342,7 @@ function LocationRow({
     }
   }, [checked, resource])
   const gone = checked !== null && status?.for === checked && status.status === "missing"
+  const hintId = useId()
   return (
     <div className="grid gap-1.5">
       <div className="flex min-w-0 items-center gap-2" id={id}>
@@ -363,6 +367,7 @@ function LocationRow({
             variant="outline"
             size="sm"
             disabled={busy}
+            aria-describedby={hintId}
             onClick={() => {
               onBrowse(false)
             }}
@@ -375,6 +380,7 @@ function LocationRow({
           variant="outline"
           size="sm"
           disabled={busy}
+          aria-describedby={files ? hintId : undefined}
           onClick={() => {
             onBrowse(true)
           }}
@@ -382,6 +388,11 @@ function LocationRow({
           <FolderOpen /> {t("actions:system.picker.chooseFolder")}
         </Button>
       </div>
+      {files && (
+        <p id={hintId} className="text-xs text-muted-foreground" data-slot="file-or-folder">
+          {t("actions:system.picker.fileOrFolder")}
+        </p>
+      )}
       {gone && (
         <p className="text-xs text-destructive" role="alert">
           {t("actions:system.picker.locationGone")}

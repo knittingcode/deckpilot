@@ -299,7 +299,7 @@
       "open": "Opens a file, folder or application chosen on this computer with its default application, or a file with a chosen one.",
       "openApplication": "Starts an application installed on this computer, optionally with arguments.",
       "closeApplication": "Quits an application chosen on this computer: every instance you run, gracefully first. Never another user's programs or the system's.",
-      "openFolder": "Opens a folder resource, or a folder inside it, in the file manager."
+      "openFolder": "Opens a folder resource, or a folder inside it, in the file manager. Kept for saved keys: Open opens folders too."
     },
     "parameters": {
       "url": {
@@ -358,6 +358,7 @@
       "chooseApplication": "Choose application…",
       "chooseFile": "Choose file…",
       "chooseFolder": "Choose folder…",
+      "fileOrFolder": "Choose a file to open it in its application, or a folder to open it in the file manager. The key shows a document or a folder to match, unless you give it an icon of your own.",
       "clear": "Clear",
       "search": "Search applications",
       "loading": "Looking for installed applications…",

@@ -66,6 +66,14 @@ pub struct AppState {
     /// last read, with the database's write generation then: previews
     /// reuse it until something is written.
     workflow_sharing: Mutex<Option<WorkflowSharing>>,
+    /// What the targets of the previews' Open keys are (a file or a
+    /// folder, for their automatic icon), kept while nothing is written to
+    /// the database and the same layout is previewed
+    /// ([`AppState::open_targets`]); never polled.
+    open_targets: deckpilot_core::TargetCache,
+    /// The database's write generation and the layout the answers of
+    /// `open_targets` belong to.
+    open_targets_at: Mutex<Option<((i64, u64), deckpilot_core::LayoutId)>>,
 }
 
 /// See [`AppState::workflows_sharing_layouts`].
@@ -136,6 +144,8 @@ impl AppState {
             key_watch: crate::commands::key_states::KeyStateWatch::default(),
             visual_assets: crate::commands::assets::VisualAssets::default(),
             workflow_sharing: Mutex::new(None),
+            open_targets: deckpilot_core::TargetCache::new(),
+            open_targets_at: Mutex::new(None),
         })
     }
 
@@ -219,6 +229,29 @@ impl AppState {
         let sharing = store.workflows_sharing_layouts(profile)?;
         *cached = Some((profile.id, generation, sharing.clone()));
         Ok(sharing)
+    }
+
+    /// The cache of the previews' Open targets
+    /// ([`deckpilot_core::target_kind`]), as the agent keeps its own: what
+    /// it knew is forgotten when something was written to the database
+    /// (an action, a resource binding, a layout, a profile) or another
+    /// layout is previewed, so the preview and the device look at a target
+    /// again at the same kind of event, and never on a timer.
+    pub fn open_targets(
+        &self,
+        store: &SqliteStore,
+        layout: deckpilot_core::LayoutId,
+    ) -> CommandResult<&deckpilot_core::TargetCache> {
+        let generation = store.write_generation()?;
+        let mut at = self
+            .open_targets_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if *at != Some((generation, layout)) {
+            self.open_targets.clear();
+            *at = Some((generation, layout));
+        }
+        Ok(&self.open_targets)
     }
 
     pub fn is_unlocked(&self) -> bool {

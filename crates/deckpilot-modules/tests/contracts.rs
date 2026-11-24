@@ -2704,8 +2704,9 @@ fn every_builtin_action_declares_its_contexts() {
     listed.sort();
     assert_eq!(seen, listed);
     // The registries the agent and the app build, on every platform, hold
-    // only types that declare contexts; Wait is deprecated, hidden from new
-    // actions, and still runs.
+    // only types that declare contexts; Wait (replaced by Delay) and Open
+    // folder (replaced by Open, docs/system-actions.md) are deprecated,
+    // hidden from new actions, and still run.
     for os in [Os::Linux, Os::MacOs, Os::Windows, Os::Other] {
         let mut registry = builtin(os);
         for info in registry.modules() {
@@ -2720,11 +2721,16 @@ fn every_builtin_action_declares_its_contexts() {
             );
             assert_eq!(
                 definition.deprecated,
-                definition.id.as_str() == general::WAIT,
+                [general::WAIT, system::actions::OPEN_DIRECTORY].contains(&definition.id.as_str()),
                 "{}",
                 definition.id
             );
         }
         assert!(actions.definition(&general::wait_id()).is_some());
+        assert!(
+            actions
+                .definition(&system::actions::id(system::actions::OPEN_DIRECTORY))
+                .is_some()
+        );
     }
 }
