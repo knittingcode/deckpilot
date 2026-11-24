@@ -150,6 +150,9 @@ pub fn render(face: &KeyFace, width: u32, height: u32) -> Frame {
 
 /// Largest icon above a title, as a share of the key's shorter side.
 pub(crate) const MARK_WITH_TEXT: f32 = 0.42;
+/// How far the missing-plugin icon of [`KeyFace::unavailable`] is mixed
+/// towards the key's background.
+const UNAVAILABLE_MARK_FADE: f32 = 0.3;
 /// Largest icon on a key without text.
 pub(crate) const MARK_ALONE: f32 = 0.54;
 
@@ -704,6 +707,22 @@ fn own_icon<'a>(look: &'a KeyAppearance, icons: &'a Icons) -> Option<OwnIcon<'a>
     }
 }
 
+/// The key's own icon as this face draws it: none on the compact face of
+/// a key whose action cannot run ([`KeyFace::unavailable`]), which shows
+/// the missing-plugin icon instead. The icon stays the binding's: it is
+/// drawn again once the action can run.
+fn shown_own_icon<'a>(
+    face: &KeyFace,
+    look: &'a KeyAppearance,
+    icons: &'a Icons,
+) -> Option<OwnIcon<'a>> {
+    if face.unavailable {
+        None
+    } else {
+        own_icon(look, icons)
+    }
+}
+
 /// The mark a face is drawn with: what the layout depends on besides the
 /// face and whether it is drawn over a picture.
 fn mark_of<'a>(face: &'a KeyFace, own: Option<OwnIcon<'a>>) -> Option<Mark<'a>> {
@@ -735,7 +754,7 @@ pub fn text_report(face: &KeyFace, width: u32, height: u32, icons: &Icons) -> Op
     let default_look = KeyAppearance::default();
     let look = face.appearance.as_ref().unwrap_or(&default_look);
     // As drawn: an icon that is not in `icons` is not drawn.
-    let own = own_icon(look, icons);
+    let own = shown_own_icon(face, look, icons);
     let over_icon = matches!(own, Some(OwnIcon::Image(..)));
     layout(
         &Request {
@@ -789,7 +808,7 @@ fn draw_face(
 ) -> Frame {
     let default_look = KeyAppearance::default();
     let look = face.appearance.as_ref().unwrap_or(&default_look);
-    let own = own_icon(look, icons);
+    let own = shown_own_icon(face, look, icons);
     let folder_back = is_folder_back(face) && own.is_none();
     let colors = key_colors(face, defaults);
     let fill = colors.background;
@@ -856,6 +875,16 @@ fn draw_face(
     if let (Some(mark), Some((left, top, side))) = (mark, placed.mark) {
         match mark {
             Mark::Glyph(glyph) => marks::draw_glyph_in(&mut frame, glyph, (left, top, side), ink),
+            // The missing-plugin icon is drawn a little softer than the
+            // title: a neutral mark, not an alarm.
+            Mark::Symbol(name) if face.unavailable => text::draw_icon(
+                &mut frame,
+                name,
+                left,
+                top,
+                side,
+                text::mix(ink, fill, UNAVAILABLE_MARK_FADE),
+            ),
             Mark::Symbol(name) => text::draw_icon(&mut frame, name, left, top, side, ink),
         }
     }
