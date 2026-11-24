@@ -86,7 +86,7 @@ import {
 import { LabelOutlines } from "./label-outlines"
 import { NumberField } from "./text-appearance"
 import { TitleVariablePicker } from "./title-variables"
-import { useExpectedBoxes } from "./use-expected-boxes"
+import { type ExpectedBoxes, useExpectedBoxes } from "./use-expected-boxes"
 
 const OPEN_KEY = "deckpilot.editor.labelsOpen"
 
@@ -181,10 +181,13 @@ export function LabelsSection({ look, control }: { look: KeyLook; control: Contr
   // until it is closed again.
   const [closedAt, setClosedAt] = useState(0)
   const open = openState || (editRequest !== 0 && editRequest !== closedAt)
+  const boxes = look.labelBoxes?.get(key) ?? []
+  // Where labels moved by a drag or a nudge are, until the renderer's next
+  // boxes arrive: the stage and the settings (a mode change) start there.
+  const expected = useExpectedBoxes(boxes)
   const binding = shownBinding(look.draft, look.pageId, control)
   if (!binding) return null
   const labels = labelsOf(binding.appearance)
-  const boxes = look.labelBoxes?.get(key) ?? []
   const shown = look.faces.get(key)?.labels ?? []
   const colors = keyColors(binding.appearance ?? {}, look.defaults)
   const setOpen = (next: boolean) => {
@@ -245,6 +248,7 @@ export function LabelsSection({ look, control }: { look: KeyLook; control: Contr
               look={look}
               control={control}
               boxes={boxes}
+              expected={expected}
               selected={selected}
               onSelect={setSelected}
               onEdit={(id) => {
@@ -271,7 +275,7 @@ export function LabelsSection({ look, control }: { look: KeyLook; control: Contr
               look={look}
               label={current}
               editRequest={editRequest}
-              box={boxes.find((b) => b.id === current.id)}
+              box={expected.boxes.find((b) => b.id === current.id)}
               reports={labelReports(
                 current,
                 boxes.find((b) => b.id === current.id),
@@ -536,6 +540,7 @@ function LabelStage({
   look,
   control,
   boxes,
+  expected,
   selected,
   onSelect,
   onEdit,
@@ -544,6 +549,8 @@ function LabelStage({
   look: KeyLook
   control: ControlId
   boxes: LabelBox[]
+  /** The section's expected boxes (`useExpectedBoxes`), shared with the settings. */
+  expected: ExpectedBoxes
   selected: string | null
   onSelect: (id: string | null) => void
   onEdit: (id: string) => void
@@ -555,7 +562,6 @@ function LabelStage({
   const canvas = boxes[0]?.canvas ?? { width: LABEL_LIMITS.canvas, height: LABEL_LIMITS.canvas }
   // Nudges and drags start from where a label was moved to, until the
   // renderer's next boxes arrive.
-  const expected = useExpectedBoxes(boxes)
   const moveTo = (id: string, position: LabelPosition) => {
     onMove(id, position)
     expected.moved(id, position)

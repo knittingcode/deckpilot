@@ -188,6 +188,22 @@ describe("removing a gesture whose look moves onto one with a look of its own", 
     ])
   })
 
+  it("says so when a merge no longer fits once chosen, and changes nothing", async () => {
+    const user = await removeSinglePress(layoutWith(moving, own))
+    // While the dialog is open the long press gets 6 more labels: 2 + 7 > 8.
+    act(() => {
+      state.edit?.(
+        layoutWith(moving, { ...own, labels: labels("c", "d", "e", "f", "g", "h", "i") }),
+      )
+    })
+    const before = state.draft
+    await user.click(screen.getByRole("button", { name: "Merge the labels" }))
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Nothing was changed: the key changed while you chose. Try again.",
+    )
+    expect(state.draft).toBe(before)
+  })
+
   it("does not offer a merge past 8 labels (5 and 5)", async () => {
     await removeSinglePress(
       layoutWith(
