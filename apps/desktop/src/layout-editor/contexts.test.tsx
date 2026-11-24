@@ -238,7 +238,11 @@ describe("saved bindings whose action does not work there", { timeout: 20_000 },
       {
         control: { kind: "key", index: 0 },
         trigger: { type: "press" },
-        target: { type: "action", action: "log", overrides: { message: "from the key" } },
+        target: {
+          type: "action",
+          action: "log",
+          overrides: { message: { type: "text", value: "from the key" } },
+        },
       },
     ])
 
@@ -258,7 +262,9 @@ describe("saved bindings whose action does not work there", { timeout: 20_000 },
       steps: { action: string; overrides?: Record<string, unknown> }[]
     }
     expect(workflow.steps).toHaveLength(1)
-    expect(workflow.steps[0]?.overrides).toEqual({ message: "from the key" })
+    expect(workflow.steps[0]?.overrides).toEqual({
+      message: { type: "text", value: "from the key" },
+    })
   })
 
   it("moves with the binding's own settings as the node's", async () => {
@@ -277,7 +283,7 @@ describe("saved bindings whose action does not work there", { timeout: 20_000 },
       graph?: { nodes: { type: string; overrides?: Record<string, unknown> }[] }
     }
     const node = workflow.graph?.nodes.find((n) => n.type === "action")
-    expect(node?.overrides).toEqual({ message: "from the key" })
+    expect(node?.overrides).toEqual({ message: { type: "text", value: "from the key" } })
   })
 
   it("keeps edits made while the new workflow is being saved", async () => {
