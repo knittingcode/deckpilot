@@ -25,8 +25,11 @@ released either. 0.6.0 is the first version intended for publication.
   connected (by serial) and the models without a device; the layout menu
   lists only the layouts of the profile being edited that fit the device,
   a new layout and the way to the Layout Manager.
-- The Layout Manager (Layouts) duplicates, renames, sets defaults, deletes
-  and assigns layouts to profiles, and can be filtered to one profile.
+- The Layout Manager moved from the rail to Settings › Layouts. It
+  duplicates, renames, sets defaults, deletes and assigns layouts to
+  profiles, and can be filtered to one profile; "Manage layouts…" in the
+  Device Editor's layout menu and in Settings › Profiles opens it there. An
+  old link to the Layouts page opens the settings page.
 - Settings › Profiles lists every profile in one table and shows a
   profile's details in a view of its own; opening a profile neither
   activates it nor changes what a device shows.
