@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(resolve(&source(true), &with_project, 1), value("SHOP"));
     }
 
-    fn repository_variable(id: &str, source: &str, value_type: serde_json::Value) -> Variable {
+    fn repository_variable(id: &str, source: &str, value_type: &serde_json::Value) -> Variable {
         serde_json::from_value(serde_json::json!({
             "id": id, "name": id, "valueType": value_type, "scope": "project",
             "source": source
@@ -571,6 +571,7 @@ mod tests {
     /// its default one, with folders from this computer's bindings only
     /// for a reader that may see paths; never published by the plugin.
     #[test]
+    #[allow(clippy::too_many_lines)] // one fixture, every reader
     fn host_repositories_hide_folders_from_readers_without_paths() {
         use deckpilot_core::variables::{NoLiveState, ProjectSource, ResolutionContext};
         use deckpilot_core::{
@@ -582,12 +583,12 @@ mod tests {
             repository_variable(
                 "current.repositories",
                 "host:project.repositories",
-                serde_json::json!({"type": "map", "of": "repository"}),
+                &serde_json::json!({"type": "map", "of": "repository"}),
             ),
             repository_variable(
                 "current.repository",
                 "host:project.repository",
-                serde_json::json!({"type": "object", "shape": "repository"}),
+                &serde_json::json!({"type": "object", "shape": "repository"}),
             ),
         ];
         let namespace = "plugins.deckpilot.projects";
