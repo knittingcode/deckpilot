@@ -30,7 +30,7 @@ fn a_duplicate_never_widens_support() {
             .map(|c| (c, Support::Supported))
             .chain([(Capability::End, Support::ReadOnly)]),
     );
-    assert!(missing.is_empty());
+    assert_eq!(missing, []);
     assert_eq!(set.get(Capability::End), Support::ReadOnly);
     let (set, _) = CapabilitySet::from_reported([
         (Capability::End, Support::ReadOnly),

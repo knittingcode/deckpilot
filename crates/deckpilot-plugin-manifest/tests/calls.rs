@@ -255,7 +255,7 @@ fn a_template_places_own_actions_on_controls_its_shape_has() {
     refused(
         |v| {
             v["contributes"]["layoutTemplates"][0]["pages"][1]["controls"][0]["control"] =
-                json!("dial")
+                json!("dial");
         },
         &format!("{page}[0].index"),
         IssueCode::Range,
