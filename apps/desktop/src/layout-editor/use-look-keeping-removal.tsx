@@ -74,6 +74,13 @@ export function useLookKeepingRemoval({
       }
       return keepLookOnRemoval(latest, after, pageId, control, move)
     }
+    // A choice that no longer applies to the key as it is now (a merge that
+    // stopped fitting, a binding gone meanwhile) changes nothing: said, not
+    // silent.
+    if (edit(draft) === draft) {
+      toast.warning(t("editor:labels.move.stale"))
+      return
+    }
     if (onUpdate) onUpdate(edit)
     else onChange(edit(draft))
   }
