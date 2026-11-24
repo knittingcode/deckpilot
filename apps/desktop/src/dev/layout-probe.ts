@@ -24,9 +24,13 @@
  * - `dock`: unfolds or folds the page navigation dock (its page counter),
  *   or presses Escape in it; starts or cancels renaming the page shown
  *   (a double click on its breadcrumb, Escape), as a user would.
+ * - `marketplace`: refreshes the registry, switches a tab, opens a plugin's
+ *   page by name or goes back, searches, presses a button by its label,
+ *   scrolls a heading into view, or lays the document out at a width.
  */
 
 import { i18n } from "@/i18n"
+import type { ActionType } from "@/lib/types"
 
 interface Box {
   top: number
@@ -452,6 +456,39 @@ function gestureCards() {
  * its corners and centre (the Inspector, its curtain), whether anything in
  * it scrolls, and the heights of its controls.
  */
+/** The selected key's preview, in the Inspector's fixed left column. */
+const PREVIEW = '[data-slot="inspector-preview-column"] [data-slot="key-preview"]'
+
+/**
+ * The Inspector's two columns: the fixed preview column and the settings
+ * column (the only one that scrolls), whether the preview is outside the
+ * scroll container, and whether anything overflows sideways.
+ */
+function inspectorColumns() {
+  const columns = document.querySelector('[data-slot="inspector-columns"]')
+  const scroll = document.querySelector('[data-slot="inspector-scroll"]')
+  const column = document.querySelector('[data-slot="inspector-preview-column"]')
+  const preview = document.querySelector(PREVIEW)
+  if (!columns || !scroll) return null
+  const scrollsY = (e: Element) =>
+    ["auto", "scroll"].includes(getComputedStyle(e).overflowY) &&
+    e.scrollHeight > e.clientHeight + 1
+  return {
+    columns: rect(columns),
+    scroll: rect(scroll),
+    column: column ? rect(column) : null,
+    preview: preview ? rect(preview) : null,
+    previewInScroll: preview ? scroll.contains(preview) : false,
+    previews: document.querySelectorAll('[data-slot="key-preview"]').length,
+    overflowX:
+      scroll.scrollWidth > scroll.clientWidth + 1 || columns.scrollWidth > columns.clientWidth + 1,
+    /** Vertical scroll containers inside the settings column that scroll. */
+    nested: [...scroll.querySelectorAll("*")].filter(scrollsY).map(describe),
+    overscroll: getComputedStyle(scroll).overscrollBehaviorY,
+    gutter: getComputedStyle(scroll).scrollbarGutter,
+  }
+}
+
 function titleLook() {
   const header = document.querySelector('[data-slot="inspector"] [data-slot="key-appearance"]')
   const trigger = document.querySelector(
@@ -502,7 +539,8 @@ function titleLook() {
           rect: rect(header),
           overflowsX: header.scrollWidth > header.clientWidth + 1,
           preview: (() => {
-            const p = header.querySelector('[data-slot="key-preview"]')
+            // In the Inspector's fixed preview column, next to the header.
+            const p = document.querySelector(PREVIEW)
             return p ? rect(p) : null
           })(),
         }
@@ -683,6 +721,7 @@ function measure() {
   return {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     devicePixelRatio: window.devicePixelRatio,
+    inspectorColumns: inspectorColumns(),
     curtain,
     editingBar,
     controls,
@@ -725,10 +764,116 @@ function measure() {
 
 type Command = { id: string; command: string; args: Record<string, unknown> }
 
+/**
+ * Read only: the profile's saved actions with what uses them, its layouts
+ * and workflows, and every action type the app knows (modules and
+ * plugins), for an audit. `profile`: an id, or "current" (the one edited).
+ */
+async function profileAudit(profile: string) {
+  const { api } = await import("@/lib/api")
+  const { createTauriPluginClient } = await import("@/plugins/client")
+  let id = profile
+  if (profile === "current") {
+    try {
+      id = localStorage.getItem("deckpilot.editingProfile") ?? ""
+    } catch {
+      id = ""
+    }
+  }
+  const [profiles, view, modules, types, plugins] = await Promise.all([
+    api.listProfiles(),
+    api.getProfile(id),
+    api.listModules(),
+    api.listActionTypes(),
+    createTauriPluginClient()
+      .listPlugins()
+      .catch((e: unknown) => ({ error: String(e) })),
+  ])
+  // The module migrations: the legacy ids the agent routes to plugins.
+  const migrations = await createTauriPluginClient()
+    .listModuleMigrations()
+    .catch((e: unknown) => ({ error: String(e) }))
+  return { profileId: id, profiles, view, modules, types, plugins, migrations }
+}
+
+/** The action types the app receives from the agent, by id prefix: the raw IPC answers. */
+async function actionTypesSent(prefix: string) {
+  const { api } = await import("@/lib/api")
+  const pick = (types: ActionType[]) =>
+    types
+      .filter((t) => t.id.startsWith(prefix))
+      .map((t) => ({
+        id: t.id,
+        contexts: "contexts" in t ? (t.contexts ?? null) : "absent",
+        deprecated: t.deprecated ?? false,
+      }))
+  const [modules, types] = await Promise.all([api.listModules(), api.listActionTypes()])
+  let mock: string | null
+  try {
+    mock = localStorage.getItem("deckpilot.dev.mockActionContexts")
+  } catch {
+    mock = "unreadable"
+  }
+  return {
+    listModules: pick(modules.flatMap((m) => m.actionTypes)),
+    listActionTypes: pick(types),
+    devMockContexts: mock,
+  }
+}
+
+async function dragTo(entry: string, key: number) {
+  const source = [
+    ...document.querySelectorAll<HTMLElement>('[aria-roledescription="draggable"]'),
+  ].find((element) => element.textContent.trim() === entry)
+  const target = document.querySelector<HTMLElement>(`[data-control="key:${key}"]`)
+  if (!source) return { error: `no library entry ${entry}` }
+  if (!target) return { error: `no key ${key}` }
+  const from = source.getBoundingClientRect()
+  const to = target.getBoundingClientRect()
+  const start = { x: from.left + 12, y: from.top + from.height / 2 }
+  const end = { x: to.left + to.width / 2, y: to.top + to.height / 2 }
+  const frame = () =>
+    new Promise((resolve) => {
+      setTimeout(resolve, 30)
+    })
+  const pointer = (type: string, at: { x: number; y: number }, element: EventTarget) => {
+    element.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: at.x,
+        clientY: at.y,
+      }),
+    )
+  }
+  pointer("pointerdown", start, source)
+  await frame()
+  for (let step = 1; step <= 12; step += 1) {
+    const at = {
+      x: start.x + ((end.x - start.x) * step) / 12,
+      y: start.y + ((end.y - start.y) * step) / 12,
+    }
+    pointer("pointermove", at, document)
+    await frame()
+  }
+  pointer("pointerup", end, document)
+  await frame()
+  return { ok: true }
+}
+
 function run({ command, args }: Command): unknown {
   switch (command) {
     case "measure":
-      return measure()
+      // `{"actionTypes": "general."}`: what the agent sends for those types
+      // over IPC (list_modules and list_action_types), contexts included.
+      // `{"profileAudit": "current"}`: the edited profile's saved actions and their uses.
+      if (typeof args.profileAudit === "string") return profileAudit(args.profileAudit)
+      return typeof args.actionTypes === "string" ? actionTypesSent(args.actionTypes) : measure()
     case "keys":
       return [...document.querySelectorAll("[data-control]")].map((e) =>
         e.getAttribute("data-control"),
@@ -883,9 +1028,7 @@ function run({ command, args }: Command): unknown {
       // Show title switch. Opening a picker changes nothing; toggling Show
       // title twice leaves the draft as it was.
       const to = String(args.to)
-      const preview = document.querySelector<HTMLElement>(
-        '[data-slot="inspector"] [data-slot="key-preview"]',
-      )
+      const preview = document.querySelector<HTMLElement>(PREVIEW)
       if (!preview) return { ok: true, absent: true }
       const settle = (ms = 300) =>
         new Promise((resolve) =>
@@ -938,7 +1081,9 @@ function run({ command, args }: Command): unknown {
         ...document.querySelectorAll('[data-slot="page-nav"] [data-slot="page-name"]'),
       ].map((e) => e.textContent.trim())
       return {
-        live: status?.getAttribute("data-status") ?? null,
+        live:
+          document.querySelector('[data-slot="editing-bar"]')?.getAttribute("data-live-status") ??
+          null,
         text: status?.textContent.trim() ?? null,
         unsaved: document.querySelector('[data-slot="editing-state"]')?.textContent.trim() ?? null,
         page: crumbs.at(-1) ?? null,
@@ -1062,8 +1207,286 @@ function run({ command, args }: Command): unknown {
       target.click()
       return { ok: true }
     }
+    case "fill": {
+      // Types `value` into the text field labelled `label` (its aria-label,
+      // or its <label>), as React sees typing.
+      const label = String(args.label)
+      const value = typeof args.value === "string" ? args.value : ""
+      const fields = [...document.querySelectorAll<HTMLInputElement>("input, textarea")]
+      const field =
+        fields.find((f) => f.getAttribute("aria-label") === label) ??
+        fields.find((f) => f.labels?.[0]?.textContent.trim().startsWith(label))
+      if (!field) return { error: `no field ${label}` }
+      field.focus()
+      const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+      Object.getOwnPropertyDescriptor(proto.prototype, "value")?.set?.call(field, value)
+      field.dispatchEvent(new Event("input", { bubbles: true }))
+      return { ok: true }
+    }
+    case "flownode": {
+      // Selects the workflow builder's node whose title is `title`, as a
+      // click on it does.
+      const title = typeof args.title === "string" ? args.title : ""
+      const node = [...document.querySelectorAll<HTMLElement>(".react-flow__node")].find((n) =>
+        n.textContent.trim().startsWith(title),
+      )
+      if (!node) return { error: `no node ${title}` }
+      const rect = node.getBoundingClientRect()
+      const at = { clientX: rect.left + 20, clientY: rect.top + 20, bubbles: true, button: 0 }
+      node.dispatchEvent(new PointerEvent("pointerdown", { ...at, pointerId: 1, isPrimary: true }))
+      node.dispatchEvent(new MouseEvent("mousedown", at))
+      node.dispatchEvent(new PointerEvent("pointerup", { ...at, pointerId: 1, isPrimary: true }))
+      node.dispatchEvent(new MouseEvent("mouseup", at))
+      node.dispatchEvent(new MouseEvent("click", at))
+      return { ok: true }
+    }
+    case "dragto":
+      // A real pointer drag (dnd-kit's PointerSensor) of the library entry
+      // named `entry` onto key `key` (0-based) of the Canvas.
+      return dragTo(String(args.entry), Number(args.key))
+    case "marketplace":
+      return marketplace(String(args.to), typeof args.value === "string" ? args.value : "")
     default:
       return { error: "unknown command" }
+  }
+}
+
+/**
+ * The Marketplace's layout (with `width`): where its divider starts and
+ * ends against the title bar and the status bar, the left edge of its
+ * content blocks, its sidebar items' heights, how many are active, and
+ * whether a column scrolls sideways.
+ */
+function marketplaceLayout() {
+  const sidebar = document.querySelector('[data-slot="marketplace-sidebar"]')
+  const content = document.querySelector('[data-slot="marketplace-content"]')
+  if (!sidebar || !content) return null
+  const titlebar = document.querySelector('[data-slot="titlebar"]')
+  const statusbar = document.querySelector('[data-slot="statusbar"]')
+  const scroller = (el: Element) =>
+    [...el.querySelectorAll("*")].find((e) => getComputedStyle(e).overflowY === "auto") ?? el
+  const sidebarScroller = scroller(sidebar)
+  const left = (selector: string) => {
+    const el = content.querySelector(selector)
+    return el ? Math.round(el.getBoundingClientRect().left * 10) / 10 : null
+  }
+  const items = [...sidebar.querySelectorAll('[data-sidebar="menu-button"]')]
+  return {
+    divider: {
+      top: rect(sidebar).top,
+      bottom: rect(sidebar).bottom,
+      width: getComputedStyle(sidebar).borderRightWidth,
+      color: getComputedStyle(sidebar).borderRightColor,
+    },
+    titlebarBottom: titlebar ? rect(titlebar).bottom : null,
+    statusbarTop: statusbar ? rect(statusbar).top : null,
+    sidebarWidth: rect(sidebar).right - rect(sidebar).left,
+    lefts: {
+      heading: left("h2"),
+      description: left("h2 + p"),
+      toolbar: left('[role="toolbar"]'),
+      chips: left('[role="group"]'),
+      section: left("h3"),
+      grid: left("ul"),
+    },
+    itemHeights: [...new Set(items.map((i) => Math.round(i.getBoundingClientRect().height)))],
+    // Between consecutive items, in order: all equal in one continuous list.
+    itemGaps: [
+      ...new Set(
+        items
+          .slice(1)
+          .map((item, i) =>
+            Math.round(
+              item.getBoundingClientRect().top -
+                (items[i] as Element).getBoundingClientRect().bottom,
+            ),
+          ),
+      ),
+    ],
+    items: items.length,
+    active: items.filter((i) => i.getAttribute("data-active") === "true").length,
+    footer: (() => {
+      const footer = sidebar.querySelector('[data-sidebar="footer"]')
+      return footer
+        ? {
+            top: rect(footer).top,
+            bottom: rect(footer).bottom,
+            border: getComputedStyle(footer).borderTopWidth,
+          }
+        : null
+    })(),
+    // Separators inside the sidebar (borders on its descendants).
+    separators: [...sidebar.querySelectorAll("*")].filter((e) => {
+      const style = getComputedStyle(e)
+      return (
+        style.borderTopWidth !== "0px" &&
+        style.borderTopStyle !== "none" &&
+        e.closest('[data-sidebar="footer"]') === e
+      )
+    }).length,
+    content: { clientWidth: content.clientWidth, scrollWidth: content.scrollWidth },
+    sidebarScroll: {
+      clientWidth: sidebarScroller.clientWidth,
+      scrollWidth: sidebarScroller.scrollWidth,
+    },
+    documentScrolls: document.documentElement.scrollHeight > window.innerHeight,
+  }
+}
+
+/**
+ * The Marketplace, as a user would drive it (dev only): read the registry
+ * again, switch a tab, open a plugin's page by its name and go back,
+ * search, press a button by its label, bring a heading into view, or lay
+ * the document out at a width (`width`, in px; empty for the window's).
+ */
+function marketplace(to: string, value: string): unknown {
+  // Buttons, and labels of radio buttons and checkboxes (a choice in a group).
+  // An open dialog's buttons first: they are what a press means while it
+  // is open (the page behind may have buttons of the same name).
+  const buttons = () => {
+    const all = [...document.querySelectorAll<HTMLElement>("button, label:has(input)")]
+    const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]')
+    return dialog
+      ? [...all.filter((b) => dialog.contains(b)), ...all.filter((b) => !dialog.contains(b))]
+      : all
+  }
+  // An open menu's items first (also by the name before a note, as
+  // "Work" · "on the device"): they are what a press means while it is open.
+  const menuItem = (label: string) => {
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="option"]')]
+    return (
+      items.find((b) => b.getAttribute("aria-label") === label || b.textContent.trim() === label) ??
+      items.find((b) => b.textContent.trim().startsWith(label))
+    )
+  }
+  const byLabel = (label: string) =>
+    menuItem(label) ??
+    buttons().find(
+      (b) => b.getAttribute("aria-label") === label || b.textContent.trim() === label,
+    ) ??
+    // A choice by the start of its label ("System default" of "… (recommended)").
+    [...document.querySelectorAll<HTMLElement>("label:has(input)")].find((b) =>
+      b.textContent.trim().startsWith(label),
+    ) ??
+    // A button by the start of its name, for names a probe value cannot
+    // spell (quotes, slashes): "Ustawienia akcji" of "… „Next project”".
+    buttons().find(
+      (b) =>
+        (b.getAttribute("aria-label") ?? "").startsWith(label) ||
+        b.textContent.trim().startsWith(label),
+    )
+  switch (to) {
+    case "refresh": {
+      const button = byLabel(i18n.t("marketplace:refresh"))
+      if (!button) return { error: "no refresh button here" }
+      button.click()
+      return { ok: true }
+    }
+    case "tab": {
+      const tab = document.querySelector<HTMLElement>(`[role="tab"][id$="-trigger-${value}"]`)
+      if (!tab) return { error: `no tab ${value}` }
+      // Radix tabs activate on mouse down.
+      tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+      return { ok: true }
+    }
+    case "open": {
+      const name = buttons().find(
+        (b) => b.id.startsWith("plugin-tile-") && b.textContent.trim() === value,
+      )
+      if (!name) return { error: `no plugin ${value} listed` }
+      name.click()
+      return { ok: true }
+    }
+    case "back": {
+      const back = byLabel(i18n.t("marketplace:details.back"))
+      if (!back) return { error: "not on a plugin page" }
+      back.click()
+      return { ok: true }
+    }
+    case "search": {
+      // A search field, else a text field that says it searches (e.g. the
+      // workflow builder's nodes).
+      const input =
+        document.querySelector<HTMLInputElement>('input[type="search"]') ??
+        document.querySelector<HTMLInputElement>(
+          'input[placeholder^="Szukaj"], input[placeholder^="Search"]',
+        )
+      if (!input) return { error: "no search field" }
+      // Through the prototype's setter, so React sees the change as typing.
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value)
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+      return { ok: true }
+    }
+    case "press": {
+      // "label::2": the second of several with that label (rows of a table).
+      const [, name, nth] = /^(.*?)(?:::(\d+))?$/.exec(value) ?? []
+      const button = nth
+        ? buttons().filter((b) => b.getAttribute("aria-label") === name)[Number(nth) - 1]
+        : byLabel(value)
+      if (!button) return { error: `no button ${value}` }
+      if (button.getAttribute("role") === "tab") {
+        button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))
+      } else if (
+        button.getAttribute("aria-haspopup") === "menu" ||
+        button.getAttribute("role") === "combobox"
+      ) {
+        // Radix menus open on pointer down.
+        button.dispatchEvent(
+          new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
+        )
+      } else button.click()
+      return { ok: true }
+    }
+    case "reveal": {
+      const element = document.getElementById(value)
+      if (!element) return { error: `no element ${value}` }
+      element.scrollIntoView({ block: "start" })
+      return { ok: true }
+    }
+    case "width": {
+      // `W` or `WxH` (px): lays the document out that wide and, with a height,
+      // the app's frame that tall (a short window); empty for the window's.
+      const root = document.documentElement
+      const frame = document.querySelector<HTMLElement>('[data-slot="sidebar-wrapper"]')
+      const [w, h] = value.split("x")
+      if (!w) root.style.removeProperty("width")
+      else root.style.width = `${String(Number(w))}px`
+      if (frame) {
+        if (h) {
+          frame.style.height = `${String(Number(h))}px`
+          frame.style.minHeight = `${String(Number(h))}px`
+        } else {
+          frame.style.removeProperty("height")
+          frame.style.removeProperty("min-height")
+        }
+      }
+      const market = marketplaceLayout()
+      const workspace = document.querySelector('[data-slot="sidebar-inset"]')
+      const toolbar = document.querySelector('[role="toolbar"]')
+      return {
+        ok: true,
+        width: root.getBoundingClientRect().width,
+        market,
+        // Anything wider than the workspace scrolls it sideways.
+        workspace: workspace && {
+          clientWidth: workspace.clientWidth,
+          scrollWidth: workspace.scrollWidth,
+        },
+        // The Discover toolbar: each control's box and whether its label shows.
+        toolbar: toolbar && {
+          box: rect(toolbar),
+          controls: [...toolbar.querySelectorAll("input, button")].map((c) => ({
+            name: c.getAttribute("aria-label"),
+            box: rect(c),
+            label: [...c.querySelectorAll("span")].some(
+              (span) => getComputedStyle(span).display !== "none",
+            ),
+          })),
+        },
+      }
+    }
+    default:
+      return { error: "unknown marketplace step" }
   }
 }
 
@@ -1094,7 +1517,8 @@ export function startLayoutProbe() {
         message.command === "page" ||
         message.command === "dock" ||
         message.command === "dblclick" ||
-        message.command === "edit"
+        message.command === "edit" ||
+        message.command === "marketplace"
         ? 500
         : 0,
     )
