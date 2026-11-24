@@ -140,6 +140,9 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- Marketplace: an install or update that failed and was done later
+  (another window, a retry elsewhere) no longer shows its old error and
+  Retry again after the plugin is uninstalled.
 - Key labels: putting a label against the edges right after moving it no
   longer undoes the move, and a choice of how a key's look moves that no
   longer applies says so instead of doing nothing.
