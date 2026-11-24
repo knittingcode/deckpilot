@@ -5,7 +5,7 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { setLayoutProfileFilter } from "@/lib/layout-filter"
-import { LayoutsPage } from "@/pages/layouts"
+import { LayoutsSettings as LayoutsPage } from "@/pages/layouts"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { deviceModel, profiles } from "@/test/fixtures"

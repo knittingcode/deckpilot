@@ -135,6 +135,8 @@ const MOVED_TO_SETTINGS: Record<string, string> = {
   devices: "devices",
   models: "devices",
   profiles: "profiles",
+  // The Layout Manager (Settings › Layouts).
+  layouts: "layouts",
 }
 
 function movedToSettings(page: string) {

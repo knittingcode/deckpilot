@@ -519,9 +519,11 @@ describe("main window shell", { timeout: 20_000 }, () => {
     expect(rail).toHaveAttribute("data-state", "collapsed")
 
     // Every page has its name as label (and tooltip); the current one is marked.
-    for (const name of ["Device Editor", "Layouts", "Workflows"]) {
+    for (const name of ["Device Editor", "Workflows"]) {
       expect(screen.getAllByRole("button", { name }).length).toBeGreaterThan(0)
     }
+    // The Layout Manager is in Settings › Layouts.
+    expect(screen.queryByRole("button", { name: "Layouts" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Action Library" })).not.toBeInTheDocument()
     const editor = screen.getByRole("button", { name: "Device Editor" })
@@ -658,18 +660,19 @@ describe("context-aware toolbar", { timeout: 20_000 }, () => {
     })
   })
 
-  it("shows only the profile for the profile's pages, nothing on the Layouts page", async () => {
+  it("shows only the profile for the profile's pages, and has the Layout Manager in Settings", async () => {
     const { user, toolbar } = await renderShell()
     await user.click(screen.getByRole("button", { name: "Workflows" }))
     await waitFor(() => {
       expect(toolbar).toHaveAttribute("data-context", "profile")
     })
     expect(selectorsOf(toolbar)).toEqual(["Profile: Work, active on the device"])
-    await user.click(screen.getByRole("button", { name: "Layouts" }))
-    await waitFor(() => {
-      expect(toolbar).toHaveAttribute("data-context", "none")
-    })
-    expect(selectorsOf(toolbar)).toEqual([])
+    await user.click(gearOf(toolbar))
+    const nav = await screen.findByRole("generic", { name: "Settings" })
+    // Settings › Layouts (its content: pages/layouts.test.tsx).
+    const layouts = within(nav).getByRole("button", { name: "Layouts" })
+    await user.click(layouts)
+    expect(layouts).toHaveAttribute("aria-current", "page")
   })
 
   it("starts in the Device Editor, also from a session that was on the removed Dashboard", async () => {

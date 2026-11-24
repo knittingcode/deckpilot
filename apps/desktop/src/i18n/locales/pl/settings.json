@@ -21,6 +21,10 @@
       "title": "Profile",
       "description": "Zarządzaj profilami i ich ustawieniami."
     },
+    "layouts": {
+      "title": "Układy",
+      "description": "Układy przechowywane raz i przypisywane do dowolnej liczby profili."
+    },
     "updates": {
       "title": "Aktualizacje",
       "description": "Podpisane aktualizacje z GitHub Releases"

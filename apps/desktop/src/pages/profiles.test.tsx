@@ -249,7 +249,9 @@ describe("Settings › Profiles: a profile's details", () => {
     await user.click(screen.getByRole("button", { name: "Open Home" }))
     const details = await screen.findByRole("region", { name: /Home/ })
     await user.click(within(details).getByRole("button", { name: "Manage layouts…" }))
-    expect(context.navigate).toHaveBeenCalledWith("layouts")
+    // The Layout Manager is a settings page.
+    expect(context.openSettings).toHaveBeenCalledWith("layouts")
+    expect(context.navigate).not.toHaveBeenCalled()
     const { result } = renderHook(() => useLayoutProfileFilter())
     expect(result.current).toBe("profile-2")
     act(() => {

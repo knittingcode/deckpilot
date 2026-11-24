@@ -23,8 +23,11 @@ afterEach(() => {
 describe("main navigation", () => {
   it("leads to the device editor and the other workspace pages", async () => {
     const onNavigate = vi.fn()
-    const { user } = renderWithApp(<AppSidebar current="layouts" onNavigate={onNavigate} />)
-    expect(screen.getByRole("button", { name: "Layouts" })).toHaveAttribute("aria-current", "page")
+    const { user } = renderWithApp(<AppSidebar current="designer" onNavigate={onNavigate} />)
+    expect(screen.getByRole("button", { name: "Device Editor" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    )
     // One page marked at a time.
     expect(
       screen.getAllByRole("button").filter((b) => b.getAttribute("aria-current")),
@@ -33,9 +36,9 @@ describe("main navigation", () => {
     expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Device Editor" }))
     expect(onNavigate).toHaveBeenCalledWith("designer")
-    for (const name of ["Layouts", "Workflows"]) {
-      expect(screen.getByRole("button", { name })).toBeInTheDocument()
-    }
+    expect(screen.getByRole("button", { name: "Workflows" })).toBeInTheDocument()
+    // The Layout Manager is in Settings › Layouts, not on the rail.
+    expect(screen.queryByRole("button", { name: "Layouts" })).not.toBeInTheDocument()
     // The Action Library page is gone: saved actions are in the Device
     // Editor's library.
     expect(screen.queryByRole("button", { name: "Action Library" })).not.toBeInTheDocument()
@@ -92,7 +95,7 @@ describe("main navigation in a build with plugins", () => {
     const contributed = groups.find((g) => names(g).includes("Workflows"))
     expect(contributed && names(contributed)).toEqual(["Workflows", "Projects"])
     const builtIn = groups.find((g) => names(g).includes("Device Editor"))
-    expect(builtIn && names(builtIn)).toEqual(["Device Editor", "Layouts"])
+    expect(builtIn && names(builtIn)).toEqual(["Device Editor"])
   })
 })
 

@@ -148,7 +148,7 @@ describe("pluginActionUnavailable", () => {
       "home",
       (type) => (type === GREET ? "the plugin is disabled" : null),
     )
-    const actions = groups.find((g) => g.label === "My actions")?.options ?? []
+    const actions = groups.find((g) => g.label === "Saved actions")?.options ?? []
     expect(actions.map((o) => [o.label, o.unavailable])).toEqual([
       ["Open docs", undefined],
       ["Greet Ada", "the plugin is disabled"],

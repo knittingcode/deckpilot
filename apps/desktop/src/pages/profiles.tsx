@@ -61,7 +61,8 @@ type DialogState =
  */
 export function ProfilesSettings() {
   const { t } = useTranslation()
-  const { profiles, refresh, revision, setEditingProfileId, navigate } = useAppContext()
+  const { profiles, refresh, revision, setEditingProfileId, navigate, openSettings } =
+    useAppContext()
   const [dialog, setDialog] = useState<DialogState>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -143,7 +144,7 @@ export function ProfilesSettings() {
   }, [openId, savedScroll])
   const manageLayouts = (profile: ProfileSummary) => {
     setLayoutProfileFilter(profile.id)
-    navigate("layouts")
+    openSettings("layouts")
   }
   const menu = (profile: ProfileSummary, active: boolean) => (
     <ProfileMenu

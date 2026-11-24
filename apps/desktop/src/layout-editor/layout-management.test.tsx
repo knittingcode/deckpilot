@@ -414,7 +414,8 @@ describe("the toolbar's layout selector", { timeout: 20_000 }, () => {
     const { user, context } = await renderDesigner()
     await openMenu(user)
     await user.click(await screen.findByRole("menuitem", { name: /Manage layouts/ }))
-    expect(context.navigate).toHaveBeenCalledWith("layouts")
+    // The Layout Manager is a settings page.
+    expect(context.openSettings).toHaveBeenCalledWith("layouts")
   })
 })
 

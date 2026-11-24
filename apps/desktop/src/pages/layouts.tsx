@@ -15,7 +15,7 @@ import { toast } from "sonner"
 
 import { DestructiveDialog, FieldError, FormDialog } from "@/components/dialogs"
 import { LayoutCompatibilitySummary, LayoutDevice } from "@/components/layout-compatibility"
-import { EmptyState, ErrorNotice, Loading, Page } from "@/components/page"
+import { EmptyState, ErrorNotice, Loading } from "@/components/page"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAsync } from "@/hooks/use-async"
+import { useTitlebar } from "@/hooks/use-titlebar"
 import { useTranslation } from "@/i18n"
 import { useFormat } from "@/i18n/format"
 import { api, errorMessage } from "@/lib/api"
@@ -63,10 +64,12 @@ import { useOpenLayout } from "@/shell/open-layout"
 const NO_PROFILE = "none"
 
 /**
- * The shared layouts: stored once and assigned to any number of profiles,
- * each of which keeps its own order and default layout per device model.
+ * The Layout Manager (Settings › Layouts): the shared layouts, stored once
+ * and assigned to any number of profiles, each of which keeps its own order
+ * and default layout per device model. The settings page shows its title;
+ * its commands are in the toolbar.
  */
-export function LayoutsPage() {
+export function LayoutsSettings() {
   const { t } = useTranslation()
   const { revision, refresh, profiles } = useAppContext()
   const { state, reload } = useAsync(() => api.listSharedLayouts(), `layouts:${revision}`)
@@ -81,30 +84,29 @@ export function LayoutsPage() {
     reload()
     refresh()
   }
+  useTitlebar({
+    actions: [
+      {
+        id: "layouts.new",
+        label: t("layouts:page.new"),
+        icon: Plus,
+        placement: "primary",
+        onSelect: () => {
+          setCreating(true)
+        },
+      },
+      {
+        id: "layouts.search",
+        label: t("layouts:page.search"),
+        icon: Search,
+        onSelect: () => {
+          searchRef.current?.focus()
+        },
+      },
+    ],
+  })
   return (
-    <Page
-      title={t("navigation:pages.layouts")}
-      description={t("layouts:page.description")}
-      actions={[
-        {
-          id: "layouts.new",
-          label: t("layouts:page.new"),
-          icon: Plus,
-          placement: "primary",
-          onSelect: () => {
-            setCreating(true)
-          },
-        },
-        {
-          id: "layouts.search",
-          label: t("layouts:page.search"),
-          icon: Search,
-          onSelect: () => {
-            searchRef.current?.focus()
-          },
-        },
-      ]}
-    >
+    <div className="grid min-w-0 gap-6">
       {filtered && (
         <div className="grid gap-6">
           <div className="flex items-center gap-2 text-sm">
@@ -152,7 +154,7 @@ export function LayoutsPage() {
           changed()
         }}
       />
-    </Page>
+    </div>
   )
 }
 

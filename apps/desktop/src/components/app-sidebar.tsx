@@ -1,4 +1,4 @@
-import { LayoutGrid, LayoutTemplate, type LucideIcon } from "lucide-react"
+import { LayoutGrid, type LucideIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -36,10 +36,7 @@ const RAIL_GROUPS: NavGroup[] = [
   {
     id: "workspace",
     label: "navigation:rail.workspace",
-    items: [
-      { id: "designer", label: "navigation:pages.designer", icon: LayoutGrid },
-      { id: "layouts", label: "navigation:pages.layouts", icon: LayoutTemplate },
-    ],
+    items: [{ id: "designer", label: "navigation:pages.designer", icon: LayoutGrid }],
   },
 ]
 
