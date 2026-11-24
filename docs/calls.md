@@ -342,5 +342,40 @@ owner's list on the mock, the driver and a real core runtime:
   - the folder and page kept;
   - nothing run during the switch.
 
-What the mock does not cover yet: the agent wiring (C3b), and with it
-scripting the mock over the test-hooks IPC and the dev seed option.
+## In the agent (`apps/agent/src/service/calls.rs`)
+
+The agent holds the driver and a provider, and does nothing for Calls
+unless a provider is installed. No build installs one today: the
+detection-only Teams adapter and the plugin come later. Tests install the
+mock through the test hooks (`AgentHandle::install_calls_mock`,
+`calls_mock`, `calls_view`).
+
+- **Clock.** The engine clock is the runtime's folder clock. The loop wakes
+  when the driver's next deadline is due, and polls the provider at most
+  every 250 ms. Nothing is spawned.
+- **Overlay keys** go to the driver. A command it lets through goes to the
+  provider, and a refusal goes back to the engine.
+- **Runs of a suspended device** are followed to their real end, next to
+  the folder holds:
+  - an action run in place, and navigation: at once;
+  - a plugin's action: at its `DetachedFinished`;
+  - a workflow: at its `Execution::Finished` (succeeded, failed,
+    cancelled; interrupted counts for nothing).
+- **Connecting.** A device that connects during a call gets the overlay.
+  One that was away past its return deadline comes back to the call.
+
+Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
+
+- the overlay drawn on the device (T-E2E);
+- a workflow's real end (T-R3);
+- the 60 s maximum over a slow run (T-R4);
+- navigation not counting, an action run in place counting (T-R9, T-R2);
+- the meeting ending mid-return (T-R5);
+- unplugged and plugged in again (T-R6);
+- an incoming call preempting (T-R7);
+- the release of "Wróć do pracy" running nothing underneath (T-R10).
+
+Still to come: a provider in a build (C5), the plugin (C7), the managed
+layouts seeded into storage when the plugin is enabled (the agent uses the
+generated layouts in memory until then), and the IPC event for the editor
+(C6).

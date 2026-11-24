@@ -309,11 +309,22 @@ impl Agent {
                 .engine
                 .cancel(device, GestureCancel::PageChanged);
         }
+        // A key of the Calls overlay (`calls.rs`).
+        if let Ok(outcome) = &outcome
+            && self.calls_outcome(device, outcome)
+        {
+            self.gestures
+                .engine
+                .cancel(device, GestureCancel::PageChanged);
+            self.after_change();
+            return;
+        }
         match outcome {
             Ok(RuntimeOutcome::Action { action, mut result }) => {
                 // It ran in place: a folder that exits after its actions
                 // complete is left once the key is handled.
                 self.folder_action_ran();
+                self.calls_ran_in_place(deckpilot_calls::ret::RunKind::Action, result.is_success());
                 let name = self.action_name(action);
                 // A Random Action's pick runs as the key's own binding
                 // would, for this device; picks do not nest.
@@ -360,6 +371,7 @@ impl Agent {
                 self.gestures
                     .engine
                     .cancel(device, GestureCancel::PageChanged);
+                self.calls_ran_in_place(deckpilot_calls::ret::RunKind::Navigation, true);
             }
             Ok(RuntimeOutcome::Ignored { reason }) => {
                 debug!(%device, %control, %reason, "input ignored");

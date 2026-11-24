@@ -48,6 +48,11 @@ released either. 0.6.0 is the first version intended for publication.
   cancel, end, microphone, camera), used only by tests. It runs the
   "Back to work" scenarios on a virtual clock. No real call app is
   driven.
+- Calls (groundwork, off in every build): the agent runs the Calls overlay
+  when a provider is installed. "Back to work" waits for the real end of
+  what a key started: a workflow, a plugin's action, or an action run in
+  place. Agent tests cover this with the mock provider and a simulated
+  Stream Deck.
 
 ## [0.15.0] - 2026-11-24
 

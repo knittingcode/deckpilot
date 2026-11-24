@@ -33,6 +33,7 @@ use crate::devices::{CLOSE_TIMEOUT, DeviceIo, DeviceSignal};
 use crate::instance::{InstanceLock, LockError};
 use crate::render;
 
+pub mod calls;
 mod deck;
 mod display;
 mod display_redraws;
@@ -202,6 +203,9 @@ pub(crate) enum Command {
         reply: Option<oneshot::Sender<Result<Response, IpcError>>>,
         /// The folder the key that started it is in (`folders.rs`).
         hold: Option<deckpilot_core::FolderHold>,
+        /// The return session of a suspended device it counts for
+        /// (`calls.rs`).
+        calls: Option<calls::CallsRun>,
     },
     /// A plugin's project operation or profile read (plugin API 1.9, X6
     /// and X9), which the broker allowed, from its lane thread.
@@ -223,6 +227,23 @@ pub(crate) enum Command {
     /// A tagged run "ended" with `canFinish` (`None`: it failed), e.g. a
     /// late result of an older verification.
     /// When the elapsed time on work session keys is redrawn next.
+    /// Installs Calls with the mock provider (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsInstallMock {
+        mock: Box<deckpilot_calls::testing::MockProvider>,
+        reply: oneshot::Sender<()>,
+    },
+    /// Edits the installed mock provider (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsMock {
+        edit: calls::CallsMockEdit,
+        reply: oneshot::Sender<()>,
+    },
+    /// What Calls shows (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsView {
+        reply: oneshot::Sender<calls::CallsView>,
+    },
     #[cfg(feature = "test-hooks")]
     WorkSessionFaceDue {
         reply: oneshot::Sender<Option<i64>>,
@@ -475,6 +496,53 @@ impl AgentHandle {
         outcome.await.ok()
     }
 
+    /// Installs Calls with the mock provider (tests): the only way Calls
+    /// runs in this build.
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_mock(&self, mock: deckpilot_calls::testing::MockProvider) {
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::CallsInstallMock {
+                mock: Box::new(mock),
+                reply,
+            })
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    /// Edits the installed mock provider (tests), with the engine clock's
+    /// now.
+    #[cfg(feature = "test-hooks")]
+    pub async fn calls_mock(
+        &self,
+        edit: impl FnOnce(&mut deckpilot_calls::testing::MockProvider, deckpilot_calls::clock::Instant)
+        + Send
+        + 'static,
+    ) {
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::CallsMock {
+                edit: calls::CallsMockEdit(Box::new(edit)),
+                reply,
+            })
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    /// What Calls shows (tests).
+    #[cfg(feature = "test-hooks")]
+    pub async fn calls_view(&self) -> Option<calls::CallsView> {
+        let (reply, view) = oneshot::channel();
+        self.commands.send(Command::CallsView { reply }).ok()?;
+        view.await.ok()
+    }
+
     /// When the elapsed time on work session keys is redrawn next
     /// (wall-clock ms of the agent's clock); `None`: never, as no such key
     /// is shown or its timer stands. Tests only.
@@ -633,6 +701,8 @@ pub struct Agent {
     detached: Arc<AtomicUsize>,
     /// The runs keys of folders started and their folders (`folders.rs`).
     folder_runs: folders::FolderRuns,
+    /// Calls (`calls.rs`): off unless a provider is installed.
+    calls: calls::AgentCalls,
     /// The editor's live preview sessions (protocol 16).
     live_previews: live_preview::LivePreviews,
     handle: AgentHandle,
@@ -768,6 +838,7 @@ impl Agent {
             locale: None,
             detached: Arc::default(),
             folder_runs: folders::FolderRuns::default(),
+            calls: calls::AgentCalls::default(),
             live_previews: live_preview::LivePreviews::default(),
             handle,
             commands,
@@ -869,6 +940,10 @@ impl Agent {
             // seconds its Back key shows change, if a countdown runs.
             let folder_due = tokio::time::Instant::now()
                 + self.next_folder_wake().unwrap_or(Duration::from_secs(3600));
+            // Calls, while a provider is installed: what is due is handled
+            // here, and the loop wakes for the next.
+            let calls_due = tokio::time::Instant::now()
+                + self.calls_wake().unwrap_or(Duration::from_secs(3600));
             // Sleeps until a coalesced variable redraw is due, if any.
             let display_due = self.display_redraws.next_due().map_or_else(
                 || tokio::time::Instant::now() + Duration::from_secs(3600),
@@ -924,6 +999,7 @@ impl Agent {
                     self.on_folder_wake();
                     Flow::Continue
                 }
+                () = tokio::time::sleep_until(calls_due) => Flow::Continue,
                 () = tokio::time::sleep_until(face_due) => {
                     self.on_work_session_face_due();
                     Flow::Continue
@@ -1045,7 +1121,13 @@ impl Agent {
                 result,
                 reply,
                 hold,
+                calls,
             } => {
+                let calls_end = match &result {
+                    Ok(result) if result.is_success() => deckpilot_calls::ret::RunEnd::Succeeded,
+                    _ => deckpilot_calls::ret::RunEnd::Failed,
+                };
+                self.calls_run_ended(calls, calls_end);
                 // Over: a result (success or a handled failure) ran; an
                 // engine error means it could not run at all.
                 let end = if result.is_ok() {
@@ -1099,6 +1181,23 @@ impl Agent {
                     press,
                 });
                 let _ = reply.send(outcome);
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsInstallMock { mock, reply } => {
+                self.install_calls(mock);
+                let _ = reply.send(());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsMock { edit, reply } => {
+                self.calls_edit_mock(edit);
+                let _ = reply.send(());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsView { reply } => {
+                let _ = reply.send(self.calls_view());
                 Flow::Continue
             }
             #[cfg(feature = "test-hooks")]
@@ -1829,12 +1928,14 @@ impl Agent {
         let commands = self.handle.commands.clone();
         // A key of a folder started it: the folder waits for its end.
         let hold = self.hold_folder_for_run();
+        let calls = self.calls_hold_for_run(deckpilot_calls::ret::RunKind::DetachedAction);
         let spawned = std::thread::Builder::new()
             .name("detached action".into())
             .spawn({
                 let running = running.clone();
                 let name = name.clone();
                 let hold = hold.clone();
+                let calls = calls.clone();
                 move || {
                     let result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run()))
@@ -1851,6 +1952,7 @@ impl Agent {
                         result,
                         reply,
                         hold,
+                        calls,
                     });
                 }
             });
@@ -1858,6 +1960,7 @@ impl Agent {
             running.fetch_sub(1, Ordering::SeqCst);
             warn!(%error, "no thread for the action");
             self.release_folder_run(hold, deckpilot_core::HoldEnd::NotRun);
+            self.calls_run_ended(calls, deckpilot_calls::ret::RunEnd::Failed);
         }
     }
 
@@ -2079,6 +2182,7 @@ impl Agent {
             device: device.clone(),
         });
         info!(%device, "device connected");
+        self.calls_device_connected();
         self.render(&device, true);
         self.refresh_states();
         self.publish();

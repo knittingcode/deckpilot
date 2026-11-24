@@ -1033,6 +1033,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "deckpilot-agent",
+ "deckpilot-calls",
  "deckpilot-core",
  "deckpilot-device",
  "deckpilot-distribution",
