@@ -52,6 +52,7 @@ import {
   controlLabel,
   page as findPage,
   sameControl,
+  sameTrigger,
   setBinding,
   hasWayBack,
   pagePosition,
@@ -726,6 +727,8 @@ export function LayoutEditor({
         const action =
           target.type === "action" ? actions.find((a) => a.id === target.action) : undefined
         const offers = bindingMigrations(reason, workflowsActive)
+        // The binding's own settings go with the action into the step or node.
+        const overrides = target.type === "action" ? target.overrides : undefined
         const repoint = async (
           workflow: Workflow,
           done: "editor:migrate.wrapped" | "editor:migrate.moved",
@@ -736,12 +739,23 @@ export function LayoutEditor({
             const created: Workflow = { ...workflow, id: saved.id }
             setCreatedWorkflows((current) => [...current, created])
             refresh()
-            commands.change(
-              setBinding(draft, pageId, {
-                ...binding,
+            // Applied to the latest draft: edits made while the workflow
+            // was being saved stay. The binding is repointed only if it
+            // still runs that action.
+            commands.update((latest) => {
+              const current = findPage(latest, pageId)?.bindings.find(
+                (b) =>
+                  sameControl(b.control, binding.control) &&
+                  sameTrigger(b.trigger, binding.trigger),
+              )
+              if (current?.target.type !== "action" || current.target.action !== action.id) {
+                return latest
+              }
+              return setBinding(latest, pageId, {
+                ...current,
                 target: { type: "workflow", workflow: created.id },
-              }),
-            )
+              })
+            })
             toast.success(t(done, { name: action.name }))
           } catch (e) {
             toast.error(t("editor:migrate.failed", { name: action.name }), {
@@ -758,10 +772,17 @@ export function LayoutEditor({
                   name: action.name,
                   wrap: offers.wrap
                     ? () =>
-                        repoint(wrappedInMultiAction(workflows, action), "editor:migrate.wrapped")
+                        repoint(
+                          wrappedInMultiAction(workflows, action, overrides),
+                          "editor:migrate.wrapped",
+                        )
                     : undefined,
                   move: offers.move
-                    ? () => repoint(movedToWorkflow(workflows, action), "editor:migrate.moved")
+                    ? () =>
+                        repoint(
+                          movedToWorkflow(workflows, action, overrides),
+                          "editor:migrate.moved",
+                        )
                     : undefined,
                 }
               : undefined,

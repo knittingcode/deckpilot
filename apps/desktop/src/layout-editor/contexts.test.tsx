@@ -233,6 +233,93 @@ describe("saved bindings whose action does not work there", { timeout: 20_000 },
     expect(screen.queryByText(/This action does not work here/)).not.toBeInTheDocument()
   })
 
+  const withOverrides = () =>
+    layoutFor(mk2, [
+      {
+        control: { kind: "key", index: 0 },
+        trigger: { type: "press" },
+        target: { type: "action", action: "log", overrides: { message: "from the key" } },
+      },
+    ])
+
+  it("wraps with the binding's own settings as the step's", async () => {
+    const user = renderEditor(mk2, withOverrides())
+    await user.click(control("Key 1"))
+    const offer = within(await screen.findByRole("group", { name: "Not available here" }))
+    await user.click(offer.getByRole("button", { name: "Wrap in a Multi Action" }))
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Wrap Write log in a Multi Action?",
+    })
+    await user.click(within(confirm).getByRole("button", { name: "Wrap in a Multi Action" }))
+    await waitFor(() => {
+      expect(api.saveWorkflow).toHaveBeenCalledTimes(1)
+    })
+    const workflow = api.saveWorkflow.mock.calls[0]?.[1] as {
+      steps: { action: string; overrides?: Record<string, unknown> }[]
+    }
+    expect(workflow.steps).toHaveLength(1)
+    expect(workflow.steps[0]?.overrides).toEqual({ message: "from the key" })
+  })
+
+  it("moves with the binding's own settings as the node's", async () => {
+    const user = renderEditor(mk2, withOverrides())
+    await user.click(control("Key 1"))
+    const offer = within(await screen.findByRole("group", { name: "Not available here" }))
+    await user.click(offer.getByRole("button", { name: "Move to a workflow" }))
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Move Write log to a workflow?",
+    })
+    await user.click(within(confirm).getByRole("button", { name: "Move to a workflow" }))
+    await waitFor(() => {
+      expect(api.saveWorkflow).toHaveBeenCalledTimes(1)
+    })
+    const workflow = api.saveWorkflow.mock.calls[0]?.[1] as {
+      graph?: { nodes: { type: string; overrides?: Record<string, unknown> }[] }
+    }
+    const node = workflow.graph?.nodes.find((n) => n.type === "action")
+    expect(node?.overrides).toEqual({ message: "from the key" })
+  })
+
+  it("keeps edits made while the new workflow is being saved", async () => {
+    let finish: (value: { id: string }) => void = () => undefined
+    api.saveWorkflow.mockImplementation(
+      (_profile: string, workflow: { id: string }) =>
+        new Promise((resolve) => {
+          finish = () => {
+            resolve({ id: workflow.id })
+          }
+        }),
+    )
+    const user = renderEditor(mk2, stored())
+    await user.click(control("Key 1"))
+    const offer = within(await screen.findByRole("group", { name: "Not available here" }))
+    await user.click(offer.getByRole("button", { name: "Wrap in a Multi Action" }))
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Wrap Write log in a Multi Action?",
+    })
+    await user.click(within(confirm).getByRole("button", { name: "Wrap in a Multi Action" }))
+    await waitFor(() => {
+      expect(api.saveWorkflow).toHaveBeenCalledTimes(1)
+    })
+    // While the workflow is saved, the key gets a title.
+    const title = screen.getByRole("textbox", { name: "Key title" })
+    await user.clear(title)
+    await user.type(title, "Logged")
+    finish({ id: "" })
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Write log now runs in a Multi Action")
+    })
+    await user.click(screen.getByRole("button", { name: /Save/ }))
+    await waitFor(() => {
+      expect(api.saveLayout).toHaveBeenCalledTimes(1)
+    })
+    const saved = api.saveLayout.mock.calls[0]?.[1] as DeviceLayout
+    const binding = saved.pages[0]?.bindings.find((b) => b.trigger.type === "press")
+    // Both: the title typed meanwhile and the new target.
+    expect(binding?.label).toBe("Logged")
+    expect(binding?.target.type).toBe("workflow")
+  })
+
   it("on a gesture card: a double click bound to a display-only action is kept and marked", async () => {
     const user = renderEditor(
       mk2,
