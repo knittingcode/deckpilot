@@ -2098,6 +2098,7 @@ fn not_running_face(label: String, icon: Option<String>, another_gesture_runs: b
 /// ([`KeyFace::unavailable_action`]) with its title, unless
 /// `another_gesture_runs`: then the key keeps its plain look and only the
 /// affected gesture says what is missing (in the app's Inspector).
+#[allow(clippy::too_many_arguments)] // What a face depends on, each by name.
 fn face_for(
     registry: &ActionRegistry,
     binding: &ControlBinding,

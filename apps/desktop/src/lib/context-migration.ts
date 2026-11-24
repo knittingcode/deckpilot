@@ -7,7 +7,7 @@ import { addNode, connect, emptyGraph } from "@/workflow-builder/graph"
 
 import { type ContextIncompatibility } from "./action-context"
 import { freeWorkflowName } from "./multi-action"
-import type { ActionInstance, Workflow } from "./types"
+import type { ActionInstance, ActionParameters, Workflow } from "./types"
 import { newStep } from "./workflow-model"
 
 /** The migrations a key or gesture binding of an action can be offered. */
@@ -29,24 +29,32 @@ export function bindingMigrations(
   }
 }
 
-/** A new Multi Action running `action` as its only step. */
+/**
+ * A new Multi Action running `action` as its only step, with the
+ * binding's `overrides` as the step's own (so it runs as the key did).
+ */
 export function wrappedInMultiAction(
   workflows: Pick<Workflow, "name">[],
   action: Pick<ActionInstance, "id" | "name">,
+  overrides: ActionParameters = {},
 ): Workflow {
   return {
     id: crypto.randomUUID(),
     name: freeWorkflowName(workflows, action.name),
     description: "",
-    steps: [newStep(action.id)],
+    steps: [{ ...newStep(action.id), overrides: { ...overrides } }],
     projectScope: "execution",
   }
 }
 
-/** A new workflow: its trigger, then `action`. */
+/**
+ * A new workflow: its trigger, then `action`, with the binding's
+ * `overrides` as the node's own (so it runs as the key did).
+ */
 export function movedToWorkflow(
   workflows: Pick<Workflow, "name">[],
   action: Pick<ActionInstance, "id" | "name">,
+  overrides: ActionParameters = {},
 ): Workflow {
   const start = emptyGraph()
   const added = addNode(
@@ -54,6 +62,7 @@ export function movedToWorkflow(
     {
       type: "action",
       action: action.id,
+      ...(Object.keys(overrides).length > 0 ? { overrides: { ...overrides } } : {}),
       policy: { onError: "stop", retry: { attempts: 0, backoffMs: 1000 } },
     },
     { x: 280, y: 0 },

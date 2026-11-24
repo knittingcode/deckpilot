@@ -53,10 +53,45 @@ fn labelled(label: &str) -> String {
     format!("//button[@aria-label={}]", lit(label))
 }
 
-fn tab(name: &str) -> String {
+/// The Marketplace's own sidebar: Discover, Installed, Updates, …
+const SIDEBAR: &str = "//*[@data-slot='marketplace-sidebar']";
+
+/// A destination of the Marketplace's sidebar by its label: its text, or
+/// (a narrow window, icons only) its accessible name, which adds a count
+/// in parentheses ("Installed (3)").
+fn nav(label: &str) -> String {
     format!(
-        "//button[@role='tab' and starts-with(normalize-space(.),{})]",
-        lit(name)
+        "{SIDEBAR}//button[normalize-space(.)={l} or @aria-label={l} or starts-with(@aria-label,{c})]",
+        l = lit(label),
+        c = lit(&format!("{label} (")),
+    )
+}
+
+/// Discover's heading ("Discover plugins").
+const DISCOVER: &str = "//h2[@id='marketplace-discover-title']";
+
+/// The sample's tile in the catalog lists on screen (Discover's sections,
+/// the search results): its name is the button that opens its page.
+fn tile() -> String {
+    format!(
+        "//ul/li[.//button[starts-with(@id,'plugin-tile-') and normalize-space(.)={}]]",
+        lit(NAME)
+    )
+}
+
+/// The sample's page: its name as the page's heading.
+fn plugin_heading() -> String {
+    format!(
+        "//h3[@id='plugin-detail-name' and normalize-space(.)={}]",
+        lit(NAME)
+    )
+}
+
+/// The sample's row in Installed.
+fn installed_row() -> String {
+    format!(
+        "//ul[@aria-label='Installed plugins']/li[@aria-labelledby={}]",
+        lit(&format!("installed-{HELLO}-name"))
     )
 }
 
@@ -286,14 +321,14 @@ impl Gui {
 
     /// The Marketplace (toolbar › Marketplace), unless it is open already.
     fn marketplace(&mut self) {
-        if self.visible(&tab("Discover")) || self.visible(&button("Back to plugins")) {
+        if self.visible(SIDEBAR) || self.visible(&button("Back to plugins")) {
             if self.visible(&button("Back to plugins")) {
                 self.click(&button("Back to plugins"));
             }
             return;
         }
         self.click(MARKETPLACE);
-        self.wait(&tab("Discover"));
+        self.wait(SIDEBAR);
     }
 
     /// The main window's default view: the device editor with the Action
@@ -328,26 +363,29 @@ impl Gui {
         );
     }
 
+    /// The Marketplace's sidebar › Installed, with Hello Weather's row.
     fn installed_tab(&mut self) {
         self.marketplace();
-        self.click(&tab("Installed"));
+        self.click(&nav("Installed"));
         self.wait("//ul[@aria-label='Installed plugins']");
+        self.wait(&installed_row());
     }
 
-    /// Installed › Hello Weather › Permissions and actions, expanded.
-    fn expanded(&mut self) {
-        self.installed_tab();
-        let toggle = "//button[normalize-space(.)='Permissions and actions']";
-        let element = self.wait(toggle);
-        if self
-            .wd()
-            .attribute(&element, "aria-expanded")
-            .unwrap()
-            .as_deref()
-            != Some("true")
-        {
-            self.click(toggle);
+    /// Hello Weather's page (Installed › its Details), unless it is open:
+    /// its permissions, each with its status (read-only: granting and
+    /// revoking are Settings › Permissions'), and the installed version's
+    /// actions, each with Run.
+    fn plugin_page(&mut self) {
+        if !self.visible(&plugin_heading()) {
+            self.installed_tab();
+            self.click(&format!(
+                "{}{}",
+                installed_row(),
+                labelled(&format!("Details of {NAME}"))
+            ));
+            self.wait(&plugin_heading());
         }
+        self.wait("//section[@aria-labelledby='plugin-detail-permissions']");
         self.wait(&format!(
             "//*[@aria-label={}]",
             lit(&format!("Actions of {NAME}"))
@@ -453,34 +491,58 @@ impl Driver for Gui {
         self.editor();
         self.screenshot("02-shell-editor");
         self.marketplace();
-        self.wait("//*[@role='note' and @aria-label='Experimental']");
+        self.wait(SIDEBAR);
+        self.wait(DISCOVER);
         self.screenshot("02-marketplace");
         vec![Via::Ui]
     }
 
     fn discover(&mut self) -> Vec<Via> {
-        self.click(&tab("Discover"));
-        let card = format!(
-            "//ul[@aria-label='Plugins']//button[.//span[normalize-space(.)={}]]",
-            lit(NAME)
-        );
+        self.click(&nav("Discover"));
+        self.wait(DISCOVER);
+        let card = tile();
         if self.wd().wait(&card, Duration::from_secs(10)).is_err() {
-            // Not verified yet on this computer: fetch the registry.
-            self.click(&button("Refresh"));
+            // Not shown within 10 s: if the page's Registry notice offers
+            // Retry (reading the registry failed), press it, which reads
+            // the registry again, and wait 10 s more.
+            let retry =
+                "//*[@role='alert' and @aria-label='Registry']//button[normalize-space(.)='Retry']";
+            if self.visible(retry) {
+                self.click(retry);
+            }
+            if self.wd().wait(&card, Duration::from_secs(10)).is_err() {
+                // Not among what Discover shows: the sidebar's search.
+                self.wd()
+                    .type_into(
+                        &format!(
+                            "{SIDEBAR}//input[@type='search' and @aria-label='Search plugins']"
+                        ),
+                        NAME,
+                        WAIT,
+                    )
+                    .unwrap();
+            }
         }
+        // The tile names the publisher; a compact tile shows its summary
+        // only on hover, and the plugin's page its description (`inspect`).
         let text = self.text_of(&card);
-        assert!(text.contains("Sample plugin"), "{text}");
         assert!(text.to_lowercase().contains("acme"), "{text}");
         vec![Via::Ui]
     }
 
     fn inspect(&mut self) -> Vec<Via> {
-        let card = format!(
-            "//ul[@aria-label='Plugins']//button[.//span[normalize-space(.)={}]]",
+        self.click(&format!(
+            "{}//button[starts-with(@id,'plugin-tile-') and normalize-space(.)={}]",
+            tile(),
             lit(NAME)
-        );
-        self.click(&card);
+        ));
         assert_eq!(self.text_of("//h3[@id='plugin-detail-name']"), NAME);
+        // The registry's description (the summary is the tile's hover text).
+        let page = self.text_of("//article[@aria-labelledby='plugin-detail-name']");
+        assert!(
+            page.contains("Greets someone and shows the temperature of a city."),
+            "{page}"
+        );
         let permissions = self.text_of("//section[@aria-labelledby='plugin-detail-permissions']");
         assert!(permissions.contains("api.open-meteo.com"), "{permissions}");
         let versions = self.text_of("//ul[@aria-label='Versions']");
@@ -489,16 +551,35 @@ impl Driver for Gui {
     }
 
     fn install(&mut self, consent: &[&str]) -> Vec<Via> {
-        self.click(&button("Install 1.0.0"));
+        // The page's one action: Install (the latest version, 1.0.0).
+        self.click(&format!(
+            "//article[@aria-labelledby='plugin-detail-name']{}",
+            labelled(&format!("Install {NAME}"))
+        ));
         self.wait(DIALOG);
         self.screenshot("05-consent");
         assert_eq!(self.consent_all(), consent.len(), "consent boxes");
         self.click(&format!("{DIALOG}{}", button("Install")));
         self.dialog_closed();
         self.wait_plugin("version", "1.0.0");
+        // The page shows it: 1.0.0 as the version, marked Installed in the
+        // versions.
+        // Found in the page as rendered (they may be scrolled out of view).
         wait_until(WAIT, "Installed 1.0.0 in the details", || {
-            let status = self.text_of("//section[@aria-label='Install status']");
-            status.contains("Installed 1.0.0").then_some(())
+            let version = self
+                .wd()
+                .find("//dl[@aria-label='About']//dd[normalize-space(.)='1.0.0']")
+                .ok()
+                .flatten();
+            let marked = self
+                .wd()
+                .find(
+                    "//ul[@aria-label='Versions']/li[.//span[normalize-space(.)='1.0.0'] \
+                     and .//*[@data-slot='badge' and normalize-space(.)='Installed']]",
+                )
+                .ok()
+                .flatten();
+            (version.is_some() && marked.is_some()).then_some(())
         });
         vec![Via::Ui]
     }
@@ -506,7 +587,8 @@ impl Driver for Gui {
     fn enable(&mut self, _consent: &[&str]) -> Vec<Via> {
         self.installed_tab();
         self.click(&format!(
-            "//button[@role='switch' and @aria-label={}]",
+            "{}//button[@role='switch' and @aria-label={}]",
+            installed_row(),
             lit(&format!("Enable {NAME}"))
         ));
         self.wait(DIALOG);
@@ -524,7 +606,7 @@ impl Driver for Gui {
 
     fn configure(&mut self) -> Vec<Via> {
         self.installed_tab();
-        self.click(&button("Configure"));
+        self.click(&format!("{}{}", installed_row(), button("Configure")));
         self.wait(&format!("{DIALOG}//form[@aria-label='Settings']"));
         // The setting: a choice (a Radix select, its options in a portal).
         self.click(&format!(
@@ -575,7 +657,7 @@ impl Driver for Gui {
     }
 
     fn run_plugin_action(&mut self, action: &str, params: Value) -> (Vec<Via>, String) {
-        self.expanded();
+        self.plugin_page();
         let (name, labels): (&str, &[(&str, &str)]) = match action {
             "greet" => ("Greet", &[("name", "Name")]),
             _ => ("Current temperature", &[("city", "City")]),
@@ -613,7 +695,7 @@ impl Driver for Gui {
 
     fn update(&mut self, consent: &[&str]) -> Vec<Via> {
         self.marketplace();
-        self.click(&tab("Updates"));
+        self.click(&nav("Updates"));
         self.click(&button("Check for updates"));
         let item = format!(
             "//li[@aria-label={}]",
@@ -633,17 +715,27 @@ impl Driver for Gui {
 
     fn rollback(&mut self) -> Vec<Via> {
         self.installed_tab();
-        self.click(&button("Roll back to 1.0.0"));
+        self.click(&format!(
+            "{}{}",
+            installed_row(),
+            button("Roll back to 1.0.0")
+        ));
         self.wait_plugin("version", "1.0.0");
         vec![Via::Ui]
     }
 
     fn revoke(&mut self, permission: &str) -> Vec<Via> {
         assert_eq!(permission, marketplace::NETWORK);
-        self.expanded();
-        self.click(&labelled(
-            "Revoke: Send data to and receive data from https://api.open-meteo.com",
-        ));
+        // Toolbar › Settings › Permissions: every plugin's permissions,
+        // each with Revoke or Grant (the plugin's page only shows them).
+        self.settings();
+        self.click(&format!("{SETTINGS_VIEW}{}", button("Permissions")));
+        let row = format!(
+            "//ul[@aria-label='Permissions of installed plugins']/li[@aria-labelledby={}]",
+            lit(&format!("plugin-permissions-{HELLO}"))
+        );
+        let title = "Send data to and receive data from https://api.open-meteo.com";
+        self.click(&format!("{row}{}", labelled(&format!("Revoke: {title}"))));
         wait_until(LONG, "the revoked permission", || {
             let details = self.ok("get_plugin", json!({"plugin": HELLO}));
             details["permissions"]
@@ -653,11 +745,14 @@ impl Driver for Gui {
                 .any(|p| p["key"] == permission && p["status"] == "revoked")
                 .then_some(())
         });
+        // The list shows it: Grant in place of Revoke.
+        self.wait(&format!("{row}{}", labelled(&format!("Grant: {title}"))));
+        self.screenshot("17-revoked-in-settings");
         vec![Via::Ui]
     }
 
     fn denied_in_ui(&mut self) -> Option<Vec<Via>> {
-        self.expanded();
+        self.plugin_page();
         let run = labelled("Run Current temperature");
         let element = wait_until(WAIT, "the Run button to be disabled", || {
             let element = self.wd().find(&run).ok().flatten()?;
@@ -675,7 +770,8 @@ impl Driver for Gui {
     fn disable(&mut self) -> Vec<Via> {
         self.installed_tab();
         self.click(&format!(
-            "//button[@role='switch' and @aria-label={}]",
+            "{}//button[@role='switch' and @aria-label={}]",
+            installed_row(),
             lit(&format!("Disable {NAME}"))
         ));
         self.wait_plugin("state", "disabled");
@@ -684,10 +780,7 @@ impl Driver for Gui {
 
     fn uninstall(&mut self) -> Vec<Via> {
         self.installed_tab();
-        self.click(&format!(
-            "//ul[@aria-label='Installed plugins']{}",
-            button("Uninstall")
-        ));
+        self.click(&format!("{}{}", installed_row(), button("Uninstall")));
         self.wait(DIALOG);
         self.screenshot("20-uninstall-confirm");
         // The default retention: nothing kept.

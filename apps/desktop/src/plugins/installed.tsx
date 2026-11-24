@@ -512,18 +512,21 @@ function InstalledItem({
 }
 
 /**
- * An installed plugin's permissions as the agent holds them, each with
- * Revoke or Grant: the plugin's page and Settings › Permissions show the
- * same list from the same data.
+ * An installed plugin's permissions as the agent holds them: in Settings ›
+ * Permissions each with Revoke or Grant, on the plugin's page (`readOnly`)
+ * each with its status only, from the same data. Granting and revoking
+ * are Settings' alone.
  */
 export function InstalledPermissions({
   item,
   actions,
   label,
+  readOnly = false,
 }: {
   item: PluginDetails
   actions: Pick<MarketplaceActions, "busy" | "setGrant">
   label?: string
+  readOnly?: boolean
 }) {
   const { t } = useTranslation()
   const { summary } = item
@@ -534,6 +537,17 @@ export function InstalledPermissions({
       grants={item.permissions.map((info) => grantOfInfo(info, actionNamesOf(summary.actions)))}
       renderControl={(grant) => {
         const info = item.permissions.find((p) => p.key === grant.key)
+        if (readOnly) {
+          return (
+            <Badge variant={info?.status === "granted" ? "secondary" : "outline"}>
+              {info?.status === "granted"
+                ? t("marketplace:installed.grantedBadge")
+                : info?.status === "revoked"
+                  ? t("marketplace:installed.revoked")
+                  : t("marketplace:installed.notGrantedBadge")}
+            </Badge>
+          )
+        }
         if (info?.status === "granted") {
           return (
             <Button

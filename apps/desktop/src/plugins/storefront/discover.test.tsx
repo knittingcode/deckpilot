@@ -10,7 +10,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { storefrontCatalog } from "@/dev/storefront-catalog"
 import { i18n } from "@/i18n"
 import { installDomStubs } from "@/test/dom"
-import { discoverReady, marketplaceSidebar } from "@/test/marketplace"
+import { discoverReady, marketplaceSidebar, openSection } from "@/test/marketplace"
 import { createFakePluginClient, readyRuntime } from "@/test/plugins"
 import { renderWithApp } from "@/test/render"
 import { randomStorefront, stubReducedMotion } from "@/test/storefront"
@@ -146,6 +146,30 @@ describe("editorial Discover", () => {
     expect(screen.getByRole("heading", { name: "Collections" })).toBeInTheDocument()
     expect(screen.queryByRole("region", { name: "Highlights" })).not.toBeInTheDocument()
     expect(sidebarButton("Code")).toBeInTheDocument()
+  })
+
+  it("works from the catalog alone while the registry publishes no storefront, with real empty states", async () => {
+    // REGISTRY_STOREFRONT_ENABLED is off: the registry's site has no
+    // storefront, so the agent answers with none. Nothing editorial is
+    // shown or made up; every view still works and says what it is.
+    const { user } = renderStorefront(emptyFixture)
+    await discoverReady()
+    expect(await screen.findByRole("list", { name: "Recently added" })).toBeInTheDocument()
+    expect(screen.queryByRole("region", { name: "Highlights" })).not.toBeInTheDocument()
+    expect(document.querySelector("[data-slot=banner-carousel]")).toBeNull()
+    // The built-in collections, from the catalog's categories.
+    expect(sidebarButton("Code")).toBeInTheDocument()
+    // Updates: nothing installed needs one, and it says so.
+    await openSection("Updates")
+    expect(await screen.findByText("All plugins are up to date")).toBeInTheDocument()
+    // A collection no catalog plugin fills: its empty state, not an invented list.
+    await openSection("Play")
+    expect(await screen.findByText("Nothing here yet")).toBeInTheDocument()
+    expect(screen.queryByRole("list", { name: "Play" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Browse all categories" }))
+    expect(
+      await screen.findByText("Every category the registry uses. Choose one to see its plugins."),
+    ).toBeInTheDocument()
   })
 
   it("is catalog-only without the feature, and never asks", async () => {

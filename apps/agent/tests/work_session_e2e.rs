@@ -9,7 +9,12 @@
 //!
 //! - **Wall clock.** The agent's clock is fake: it stands still unless a
 //!   test moves it, so elapsed times, faces, gaps and variable values are
-//!   exact.
+//!   exact. The agent checks it against the monotonic clock (§6.1), and to
+//!   that check a clock standing still while real time passes is a clock
+//!   set back: harmless while a session works, but in `readyToFinish` a
+//!   runner that delays the check for over `CLOCK_BACK` drops the
+//!   approval. A test that keeps a session ready to finish for seconds
+//!   lets the clock follow real time from there.
 //! - **Gestures.** A click is queued as one batch (press and release share
 //!   their read time), so it is never mistaken for a long press. A long
 //!   press is held until the agent reports it fired, then released. No
@@ -26,8 +31,8 @@
 mod support;
 
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use deckpilot_agent::service::work_session::{ARMING_DELAY, NO_VERIFICATION};
 use deckpilot_agent::{
@@ -70,28 +75,47 @@ const T0_TEXT: &str = "2026-11-13T08:00:00Z";
 /// The repeat guard of stateful keys and the arming delay are both 1 s.
 const GUARD: Duration = ARMING_DELAY;
 
-/// The agent's wall clock: stands at `T0` until a test moves it.
+/// The agent's wall clock: stands at `T0` until a test moves it, or also
+/// moves with real time once a test lets it follow.
 #[derive(Clone)]
-struct FakeClock(Arc<AtomicI64>);
+struct FakeClock {
+    ms: Arc<AtomicI64>,
+    /// Set: the clock follows the monotonic clock from this instant.
+    since: Arc<OnceLock<Instant>>,
+}
 
 impl FakeClock {
     fn new() -> Self {
-        Self(Arc::new(AtomicI64::new(T0)))
+        Self {
+            ms: Arc::new(AtomicI64::new(T0)),
+            since: Arc::default(),
+        }
+    }
+
+    fn now(&self) -> SystemTime {
+        UNIX_EPOCH
+            + Duration::from_millis(self.ms.load(Ordering::SeqCst).unsigned_abs())
+            + self.since.get().map_or(Duration::ZERO, Instant::elapsed)
     }
 
     fn clock(&self) -> Clock {
-        let ms = self.0.clone();
-        Arc::new(move || {
-            UNIX_EPOCH + Duration::from_millis(ms.load(Ordering::SeqCst).unsigned_abs())
-        })
+        let clock = self.clone();
+        Arc::new(move || clock.now())
     }
 
     fn advance(&self, ms: i64) {
-        self.0.fetch_add(ms, Ordering::SeqCst);
+        self.ms.fetch_add(ms, Ordering::SeqCst);
+    }
+
+    /// From now on the clock moves with real time too, as a computer's
+    /// does, so the agent's sleep and clock check never sees it set back.
+    fn follow_real_time(&self) {
+        self.since.set(Instant::now()).expect("follows once");
     }
 
     fn now_ms(&self) -> i64 {
-        self.0.load(Ordering::SeqCst)
+        let since_epoch = self.now().duration_since(UNIX_EPOCH).unwrap();
+        i64::try_from(since_epoch.as_millis()).unwrap()
     }
 }
 
@@ -383,6 +407,31 @@ impl Fixture {
         );
     }
 
+    /// Waits until the agent's periodic clock check ran with its clock at
+    /// `at_ms`: the heartbeat that ends the check, after the sleep and
+    /// clock jumps were handled, moved the session's `last_alive_at` there.
+    async fn wait_checked(&self, agent: &TestAgent, session: &WorkSessionSnapshot, at_ms: i64) {
+        let store = agent.store();
+        let session = session.session.unwrap();
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let alive = store
+                .work_session(session)
+                .unwrap()
+                .unwrap()
+                .last_alive_at_ms;
+            if alive >= at_ms {
+                assert_eq!(alive, at_ms, "the clock stands still");
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no clock check at {at_ms}: alive at {alive}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     fn history(&self, agent: &TestAgent) -> Vec<WorkSessionSummary> {
         agent
             .store()
@@ -486,6 +535,13 @@ async fn the_key_runs_a_session_through_its_verification_workflow() {
     f.wait_face(&working_face("0:00", Indicator::Ok));
     f.clock.advance(5 * MINUTE);
     f.wait_face(&working_face("0:05", Indicator::Ok));
+    // The agent's clock check sees the jump while the session works, where
+    // a gap this short changes nothing; in `readyToFinish` it would drop the
+    // approval. The face alone does not tell: it is redrawn on its own.
+    f.wait_checked(&agent, &working, T0 + 5 * MINUTE).await;
+    // The session is ready to finish for seconds from here (#430's run):
+    // the clock follows real time, so a slow runner is no clock set back.
+    f.clock.follow_real_time();
 
     // Working with a verification workflow: a click runs it.
     f.past_guards().await;
@@ -517,16 +573,25 @@ async fn the_key_runs_a_session_through_its_verification_workflow() {
             .await,
         Some(WorkSessionOutcome::Ignored(Ignored::NotAClick))
     );
+    let clicked = f.clock.now_ms();
     f.click().await;
     let idle = wait_state(&agent, S::Idle).await;
+    let stopped_by = f.clock.now_ms();
     assert_eq!(idle.session, None);
     f.wait_face(&idle_face());
 
+    // Stopped at the finish click; the whole session counts, from the
+    // start click (`T0`) through the 5 minutes to the stop.
     let history = f.history(&agent);
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].session.status, SessionStatus::Stopped);
-    assert_eq!(history[0].session.stopped_at_ms, Some(T0 + 5 * MINUTE));
-    assert_eq!(history[0].elapsed_ms, 5 * 60_000);
+    let stopped = history[0].session.stopped_at_ms.unwrap();
+    assert!(
+        (clicked..=stopped_by).contains(&stopped),
+        "stopped at {stopped}, the click was within {clicked}..={stopped_by}"
+    );
+    assert!(clicked >= T0 + 5 * MINUTE);
+    assert_eq!(i64::try_from(history[0].elapsed_ms).unwrap(), stopped - T0);
     let intervals = agent
         .store()
         .work_session_intervals(working.session.unwrap())

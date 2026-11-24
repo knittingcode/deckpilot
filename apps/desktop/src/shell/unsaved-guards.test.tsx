@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DialogsContext } from "@/components/dialogs/use-dialogs"
 import type { Dialogs } from "@/components/dialogs/dialog-service"
+import { focusPlugin, takeFocusedPlugin } from "@/plugins/focus"
 import { emitBackend, resetBackend } from "@/test/tauri"
 
 import {
@@ -81,6 +82,30 @@ describe("unsaved edits are never discarded without asking", () => {
       expect(leave.navigate).toHaveBeenCalledWith("workflows")
     })
     expect(leave.setDirty).toHaveBeenCalledWith(false)
+  })
+
+  it("forgets the plugin the Marketplace was to open at when leaving is cancelled", async () => {
+    // The Inspector's "Install plugin": the Marketplace, at that plugin.
+    const stay = setup(true, false)
+    focusPlugin("acme.hello-weather")
+    stay.hook.result.current("marketplace")
+    await waitFor(() => {
+      expect(stay.destructive).toHaveBeenCalled()
+    })
+    // The user stayed: the answer is in.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    // Never later, when the Marketplace is opened for something else.
+    expect(takeFocusedPlugin()).toBeNull()
+    cleanup()
+    const leave = setup(true, true)
+    focusPlugin("acme.hello-weather")
+    leave.hook.result.current("marketplace")
+    await waitFor(() => {
+      expect(leave.navigate).toHaveBeenCalledWith("marketplace")
+    })
+    expect(takeFocusedPlugin()).toBe("acme.hello-weather")
   })
 
   it("asks before quitting, and quits only when the edits are discarded", async () => {

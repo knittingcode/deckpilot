@@ -119,6 +119,36 @@ describe("entry state", () => {
     expect(entryState(plugin("acme.a"), context({ failure })).kind).toBe("failed")
   })
 
+  it("drops a failed install once installed, a failed update once its version is reached", () => {
+    const error = { title: "No", message: "no", reason: "x" }
+    const install = { operation: "install" as const, error }
+    expect(entryState(plugin("acme.a"), context({ failure: install })).kind).toBe("failed")
+    // Installed since (another window, the agent retried): nothing failed.
+    expect(
+      entryState(plugin("acme.a"), context({ failure: install, installed: installed("acme.a") }))
+        .kind,
+    ).toBe("installed")
+    const update = { operation: "update" as const, error, version: "1.1.0" }
+    const at = (version: string) =>
+      entryState(
+        plugin("acme.a"),
+        context({ failure: update, installed: installed("acme.a", { version }) }),
+      ).kind
+    expect(at("1.0.0")).toBe("failed")
+    expect(at("1.1.0")).toBe("installed")
+    expect(at("1.2.0")).toBe("installed")
+    // An update failure without the version it tried stays.
+    expect(
+      entryState(
+        plugin("acme.a"),
+        context({
+          failure: { operation: "update", error },
+          installed: installed("acme.a", { version: "9.0.0" }),
+        }),
+      ).kind,
+    ).toBe("failed")
+  })
+
   it("is Installed only for what the agent lists as installed", () => {
     const item = installed("acme.a")
     expect(entryState(plugin("acme.a"), context()).kind).toBe("install")

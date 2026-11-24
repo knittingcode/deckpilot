@@ -1092,6 +1092,7 @@
     "remove": "Usuń",
     "stage": "Etykiety na {{control}}: kliknij, aby zaznaczyć, przeciągnij lub użyj strzałek, aby przesunąć",
     "text": "Tekst",
+    "needsText": "Etykieta musi mieć tekst: do czasu wpisania nowego zostaje poprzedni.",
     "position": "Położenie",
     "mode": {
       "preset": "Gotowe",
@@ -1153,9 +1154,14 @@
       "description_few": "Wygląd usuniętego przypisania ma {{count}} etykiety, a {{trigger}}, które klawisz teraz pokazuje, ma własny wygląd.",
       "description_many": "Wygląd usuniętego przypisania ma {{count}} etykiet, a {{trigger}}, które klawisz teraz pokazuje, ma własny wygląd.",
       "description_other": "Wygląd usuniętego przypisania ma {{count}} etykiety, a {{trigger}}, które klawisz teraz pokazuje, ma własny wygląd.",
-      "keep": "Zachowaj jego wygląd",
+      "keep_one": "Zachowaj jego wygląd i usuń 1 etykietę",
+      "keep_few": "Zachowaj jego wygląd i usuń {{count}} etykiety",
+      "keep_many": "Zachowaj jego wygląd i usuń {{count}} etykiet",
+      "keep_other": "Zachowaj jego wygląd i usuń {{count}} etykiety",
       "replace": "Zastąp go",
-      "merge": "Połącz etykiety"
+      "merge": "Połącz etykiety",
+      "mergeTooMany": "Po połączeniu klawisz miałby {{total}} etykiet, a może mieć najwyżej {{max}}.",
+      "stale": "Nic nie zostało zmienione: klawisz zmienił się w trakcie wyboru. Spróbuj ponownie."
     },
     "preset": {
       "top": "Górna",

@@ -15,22 +15,57 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
-### Fixed
-
-- Settings › Resources called an application chosen with the application
-  or browser picker "missing", because it is stored by its bundle id,
-  desktop-file id or App Paths name rather than a path, and never checked a
-  file chosen with the file picker. Applications are now checked the way
-  Open Application finds them, and a chosen file that was moved or deleted
-  shows as missing.
-- Close Application also compares a process's start time before it signals
-  or waits for it, so a new process that was given the same process id is
-  never taken for the one it matched.
-
-## [0.14.0] - 2026-11-24
-
 ### Added
 
+- Marketplace: a sidebar with search, Discover, Installed, Updates,
+  Categories and collections; plugin pages with screenshots, highlights,
+  what's new, version history, publisher and trust; install, update and
+  failure states. An empty collection names the categories that would
+  fill it and offers "Browse all categories"; nothing is made up to fill
+  it.
+- Marketplace: Discover and plugin pages can show the registry's signed
+  storefront (banners, editorial sections, listings and verified media).
+  The registry does not publish one yet, so Discover is built from the
+  catalog alone; text, links and images of a storefront are shown inertly
+  (no HTML, https links only, images checked by their hash).
+- Device Editor: the key labels editor. The Inspector lists a key's labels
+  (up to 8) with their text (and variables, through the same picker as
+  the title), position, size, colour, background, opacity and layer, and
+  can add, duplicate, reorder, hide and remove them. On the Canvas a
+  selected key outlines its labels; a label can be dragged to another
+  place and edited in place with a double click. Labels on a double
+  click or long press are kept and marked as not drawn (a key shows the
+  labels of its press).
+- Device Editor: a key's or gesture's saved action is managed from its
+  card in the Inspector: Edit opens the Action Library's editor, which says
+  when the action is shared and changes every place, and Usages lists where
+  it is used. An edit that would leave a shared action without a required
+  setting asks first and says how many places stop running. The separate
+  Action Library page and its rail entry are gone.
+- Device Editor: dropping an action type whose required settings have no
+  defaults (the app of Open Application, say) places a draft: its own
+  action per key or gesture, marked on the Canvas and its gesture card as
+  needing configuration, with the missing settings marked next to them.
+  It does not run until it is configured. Draft steps and workflow nodes
+  are marked the same way and do not keep a workflow from being saved.
+- Device Editor: an assigned action whose plugin is missing, disabled,
+  incompatible, failed verification, was revoked, is busy or waits for a
+  permission says why on its gesture card, in words, with the recovery the
+  reason calls for (install, enable or update the plugin, review
+  permissions, turn on the module), Replace action and Remove assignment.
+  Nothing is installed, enabled or granted from the Inspector itself.
+- Plugin actions that only wait for an optional permission show Grant in
+  the Action Library: it opens the permission dialog with exactly the
+  missing permissions, and grants only what is checked.
+- The library follows the action types' declared contexts: step-only
+  actions (Wait, Delay) are not offered for keys, display-only ones are
+  listed apart, and a saved key or gesture whose action does not work
+  there is kept, marked with the reason and offered a change (wrap it in a
+  Multi Action, or move it into a workflow) that is applied only after
+  confirmation.
+- Escape clears the Device Editor's selection (after closing a menu,
+  cancelling a drag or leaving a text field first); the deselect button is
+  gone.
 - Folders: **Exit after action completes**, a switch of its own in the
   folder key's Inspector next to Automatic exit. The folder is left once
   what its key started is over (an action, a plugin's action, a workflow or
@@ -45,6 +80,98 @@ released either. 0.6.0 is the first version intended for publication.
   device, the simulated MK.2 and the editor's Canvas in a live preview draw
   the same face (the live preview's navigation gains the optional
   `folderCountdown`; protocol 16 unchanged).
+- Device Editor: the key's title field has a picker of the variables a key
+  can show, which inserts `{{ reference }}` at the cursor, and shows under
+  the field what the key shows as the agent resolves it (cut to 32
+  characters as on the key, with each `-` that stands for a variable
+  marked and why it has no value). The title itself is not changed. The
+  Canvas summaries show the agent's answers instead of replacing
+  `{profile}`, `{project.key}` and `{project.name}` themselves.
+
+### Changed
+
+- Plugin permissions are granted and revoked in Settings › Permissions;
+  a plugin's page in the Marketplace shows them read-only, with a link
+  there. Plugin diagnostics and module migrations are in Settings › Logs &
+  Diagnostics; the experimental Settings › Plugins page is gone.
+- The Inspector shows the selected key's preview in a fixed column beside
+  the settings, which scroll on their own; the actions of a key are
+  gesture cards.
+- The Action Library always lists every action type; entries that do not
+  fit the selected control are disabled with the reason (the "Compatible
+  only" switch is gone).
+- A dial's or strip's choices list only the saved actions that control
+  already runs.
+- The main window starts in the Device Editor; the Dashboard is gone (a
+  session that was on it opens the Device Editor). Pages that plugins and
+  modules add stay in the rail as before.
+- The toolbar shows Device › Profile › Layout as one trail. The device menu
+  lists the connected devices first, then the known devices that are not
+  connected (by serial) and the models without a device; the layout menu
+  lists only the layouts of the profile being edited that fit the device,
+  a new layout and the way to the Layout Manager.
+- The Layout Manager moved from the rail to Settings › Layouts. It
+  duplicates, renames, sets defaults, deletes and assigns layouts to
+  profiles, and can be filtered to one profile; "Manage layouts…" in the
+  Device Editor's layout menu and in Settings › Profiles opens it there. An
+  old link to the Layouts page opens the settings page.
+- Settings › Profiles lists every profile in one table and shows a
+  profile's details in a view of its own; opening a profile neither
+  activates it nor changes what a device shows.
+- The settings pages share one layout (title, sections, rows). Language
+  names each language in that language and applies at once. Modules lists
+  only DeckPilot's built-in modules, with a link to the Marketplace for
+  plugins.
+- Notifications show their time beside the title.
+- Folders: Automatic exit pauses while a run started from the folder is
+  going on and resumes with the time that was left; the time a run takes
+  is not counted. Only the folder shown counts down: a folder around it
+  keeps its remaining time until the device returns to it.
+- Folder Inspector: Automatic exit is one compact row, "Automatic exit
+  after [10] seconds", with the time edited inline (stored with Enter or
+  when the field is left; Escape restores it).
+- A key whose plugin is missing, disabled, incompatible, waiting for a
+  permission or briefly away keeps its assignment, title, icon and look,
+  and shows a compact face: a plug icon with the key's title and colours,
+  no warning text. A key whose other gesture still works keeps its normal
+  look. The device, the simulated device and the editor's previews draw
+  the same face, and the key comes back as it was once the plugin can run
+  the action again.
+
+### Fixed
+
+- Marketplace: an install or update that failed and was done later
+  (another window, a retry elsewhere) no longer shows its old error and
+  Retry again after the plugin is uninstalled.
+- Key labels: putting a label against the edges right after moving it no
+  longer undoes the move, and a choice of how a key's look moves that no
+  longer applies says so instead of doing nothing.
+- The workflow node catalog cut descriptions and unavailable reasons to
+  one line; they now wrap to two lines and show in full in the tooltip.
+  Marketplace tiles show their whole summary on hover.
+- Saved actions that read alike in the workflow node catalog say which one
+  is still a draft ("not set up yet"); Random action and Multi Action
+  Switch are under "Multi Actions".
+- The file and folder pickers of Open and Open folder say when the bound
+  file or folder was moved or deleted, as the application picker does for
+  an application that is no longer installed.
+- The editor's previews of keys stored with the old action ids of
+  built-ins that moved to a plugin (`projects.next`, `git.status`, …)
+  showed them as unavailable even while the plugin served them. They now
+  follow the plugin, as the agent does.
+- Settings › Resources called an application chosen with the application
+  or browser picker "missing", because it is stored by its bundle id,
+  desktop-file id or App Paths name rather than a path, and never checked a
+  file chosen with the file picker. Applications are now checked the way
+  Open Application finds them, and a chosen file that was moved or deleted
+  shows as missing.
+- Close Application also compares a process's start time before it signals
+  or waits for it, so a new process that was given the same process id is
+  never taken for the one it matched.
+
+## [0.14.0] - 2026-11-24
+
+### Added
 
 - Key titles can show variables: `{{ projects.current.key }}`,
   `{{ shared.team.name }}` or `{{ system.profile.current.name }}`, alone,
@@ -99,14 +226,6 @@ released either. 0.6.0 is the first version intended for publication.
   follows.)
 
 ### Changed
-
-- Folders: Automatic exit pauses while a run started from the folder is
-  going on and resumes with the time that was left; the time a run takes
-  is not counted. Only the folder shown counts down: a folder around it
-  keeps its remaining time until the device returns to it.
-- Folder Inspector: Automatic exit is one compact row, "Automatic exit
-  after [10] seconds", with the time edited inline (stored with Enter or
-  when the field is left; Escape restores it).
 
 - Linux: an application bound by its desktop entry starts from the entry's
   own command line, so `gtk-launch` is no longer needed, and it can open a

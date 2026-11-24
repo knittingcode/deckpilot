@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { type TranslationKey, i18n } from "@/i18n"
 import type { KeyLabel, LabelBox } from "@/lib/key-labels"
 import type { ControlBinding, DeviceLayout, KeyAppearance } from "@/lib/types"
 
@@ -13,6 +14,21 @@ import type { KeyLook } from "./key-look-context"
 import { LabelsOfSelection, LabelsSection } from "./labels-section"
 import { placedAt, updateLabel, withLabels } from "./labels"
 import { LookMoveDialog } from "./look-move-dialog"
+
+// The variable picker inserts the reference it is given (its own list is
+// tested in title-variables.test.tsx).
+vi.mock("./title-variables", () => ({
+  TitleVariablePicker: ({ onPick }: { onPick: (reference: string) => void }) => (
+    <button
+      type="button"
+      onClick={() => {
+        onPick("projects.current.key")
+      }}
+    >
+      Insert a variable
+    </button>
+  ),
+}))
 
 Element.prototype.hasPointerCapture = () => false
 Element.prototype.releasePointerCapture = () => undefined
@@ -223,8 +239,186 @@ describe("moving a look with labels", () => {
     expect(screen.getByRole("alertdialog")).toHaveTextContent("has 2 labels, and Long press")
     await user.click(screen.getByRole("button", { name: "Merge the labels" }))
     expect(onChoose).toHaveBeenLastCalledWith("merge")
-    await user.click(screen.getByRole("button", { name: "Keep its look" }))
+    await user.click(screen.getByRole("button", { name: "Keep its look and delete 2 labels" }))
     expect(onChoose).toHaveBeenLastCalledWith("keep")
+  })
+})
+
+describe("merging labels beyond the limit", () => {
+  it("is not offered when 5 and 5 labels would make 10, and says why", async () => {
+    const user = userEvent.setup()
+    const onChoose = vi.fn()
+    render(<LookMoveDialog open labels={5} merged={10} trigger="Long press" onChoose={onChoose} />)
+    const merge = screen.getByRole("button", { name: "Merge the labels" })
+    expect(merge).toBeDisabled()
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Merging would give the key 10 labels; a key has at most 8.",
+    )
+    await user.click(merge)
+    expect(onChoose).not.toHaveBeenCalled()
+    // Keeping says what it deletes.
+    await user.click(screen.getByRole("button", { name: "Keep its look and delete 5 labels" }))
+    expect(onChoose).toHaveBeenLastCalledWith("keep")
+  })
+})
+
+describe("label counts in Polish", () => {
+  it("use the one, few and many forms", () => {
+    const pl = i18n.getFixedT("pl")
+    const forms = (key: TranslationKey, extra: Record<string, unknown> = {}) =>
+      [1, 2, 5, 12, 22, 25].map((count) => pl(key, { count, ...extra }))
+    expect(forms("editor:labels.count")).toEqual([
+      "1 etykieta",
+      "2 etykiety",
+      "5 etykiet",
+      "12 etykiet",
+      "22 etykiety",
+      "25 etykiet",
+    ])
+    expect(forms("editor:labels.moved", { trigger: "Długie naciśnięcie" })).toEqual([
+      "Wygląd klawisza (1 etykieta) przeniesiono na Długie naciśnięcie.",
+      "Wygląd klawisza (2 etykiety) przeniesiono na Długie naciśnięcie.",
+      "Wygląd klawisza (5 etykiet) przeniesiono na Długie naciśnięcie.",
+      "Wygląd klawisza (12 etykiet) przeniesiono na Długie naciśnięcie.",
+      "Wygląd klawisza (22 etykiety) przeniesiono na Długie naciśnięcie.",
+      "Wygląd klawisza (25 etykiet) przeniesiono na Długie naciśnięcie.",
+    ])
+    expect(
+      forms("editor:labels.move.description", { trigger: "X" }).map(
+        (text) => /ma (.+?), a X/.exec(text)?.[1],
+      ),
+    ).toEqual(["1 etykietę", "2 etykiety", "5 etykiet", "12 etykiet", "22 etykiety", "25 etykiet"])
+    expect(forms("editor:labels.move.keep")).toEqual([
+      "Zachowaj jego wygląd i usuń 1 etykietę",
+      "Zachowaj jego wygląd i usuń 2 etykiety",
+      "Zachowaj jego wygląd i usuń 5 etykiet",
+      "Zachowaj jego wygląd i usuń 12 etykiet",
+      "Zachowaj jego wygląd i usuń 22 etykiety",
+      "Zachowaj jego wygląd i usuń 25 etykiet",
+    ])
+  })
+})
+
+describe("a label's text", () => {
+  it("cannot be emptied: the label keeps its last text and the field says why", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    const text = screen.getByRole("textbox", { name: "Text" })
+    await user.clear(text)
+    await user.type(text, "   ")
+    // Nothing without text was committed.
+    expect(restyle).not.toHaveBeenCalled()
+    expect(text).toHaveAttribute("aria-invalid", "true")
+    expect(screen.getByRole("alert")).toHaveTextContent("A label needs text")
+    // Leaving the field shows the text the label kept.
+    await user.tab()
+    expect(text).toHaveValue("{{ projects.current.key }}")
+    expect(screen.queryByRole("alert")).toBeNull()
+    // Text again is committed.
+    await user.clear(text)
+    await user.type(text, "X")
+    expect(applied({ labels })?.labels?.[0]).toMatchObject({ id: "a", text: "X" })
+  })
+
+  it("takes a variable at the cursor, within 160 characters", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    // 134 characters: with the reference's 26, exactly 160.
+    const long = `A${"b".repeat(133)}`
+    const look = lookOf(layoutWith([{ labels: [{ id: "a", text: long }] }]), { profileId: "p" })
+    const view = render(<LabelsSection look={look} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    const text = screen.getByRole<HTMLInputElement>("textbox", { name: "Text" })
+    text.setSelectionRange(1, 1)
+    await user.click(screen.getByRole("button", { name: "Insert a variable" }))
+    const inserted = applied({ labels: [{ id: "a", text: long }] })?.labels?.[0]?.text
+    expect(inserted).toBe(`A{{ projects.current.key }}${"b".repeat(133)}`)
+    expect(inserted ? Array.from(inserted).length : 0).toBe(160)
+    // One character more would pass 160: nothing is inserted.
+    view.unmount()
+    restyle.mockClear()
+    const longer = `${long}c`
+    render(
+      <LabelsSection
+        look={lookOf(layoutWith([{ labels: [{ id: "a", text: longer }] }]), { profileId: "p" })}
+        control={key0}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    screen.getByRole<HTMLInputElement>("textbox", { name: "Text" }).setSelectionRange(1, 1)
+    await user.click(screen.getByRole("button", { name: "Insert a variable" }))
+    expect(restyle).not.toHaveBeenCalled()
+  })
+})
+
+describe("a label's sizes", () => {
+  it("lowers the smallest size when the size goes below it", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    const shrinking: KeyLabel[] = [
+      { id: "a", text: "Long name", size: 14, overflow: "shrink", minSize: 12 },
+    ]
+    render(<LabelsSection look={lookOf(layoutWith([{ labels: shrinking }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    const size = screen.getByLabelText("Size (pt)")
+    await user.clear(size)
+    await user.type(size, "9")
+    expect(applied({ labels: shrinking })?.labels?.[0]).toMatchObject({ size: 9, minSize: 9 })
+  })
+})
+
+describe("moving labels before the renderer answers", () => {
+  it("adds up two nudges made before the boxes refresh", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    const stage = screen.getByRole("group", { name: /Labels on Key 1/ })
+    fireEvent.keyDown(stage, { key: "ArrowRight" })
+    expect(applied({ labels })?.labels?.[0]?.position).toEqual({ mode: "absolute", x: 514, y: 778 })
+    // The same boxes still: the second step starts where the first put it.
+    fireEvent.keyDown(stage, { key: "ArrowRight" })
+    expect(applied({ labels })?.labels?.[0]?.position).toEqual({ mode: "absolute", x: 528, y: 778 })
+  })
+
+  it("puts a label against the edges from where a nudge left it, before the boxes refresh", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    // Without a move: the mode change places it from the renderer's box.
+    const still = render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    await user.click(screen.getByRole("radio", { name: "Edge" }))
+    const fromBox = applied({ labels })?.labels?.[0]
+    still.unmount()
+    render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    const stage = screen.getByRole("group", { name: /Labels on Key 1/ })
+    fireEvent.keyDown(stage, { key: "ArrowUp", shiftKey: true })
+    // The same boxes still: Edge starts where the nudge put the label, so
+    // the nudge is not undone.
+    await user.click(screen.getByRole("radio", { name: "Edge" }))
+    const fromNudge = applied({ labels })?.labels?.[0]
+    expect(fromNudge?.position).toMatchObject({ mode: "anchored" })
+    expect(fromNudge).not.toEqual(fromBox)
+  })
+
+  it("keeps a corner label where it is when it is put against the edges", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    const look = lookOf(layoutWith([{ labels }]), {
+      labelBoxes: new Map([["key:0", [{ ...box("a"), x: 4 }, box("b")]]]),
+    })
+    render(<LabelsSection look={look} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    await user.click(screen.getByRole("radio", { name: "Edge" }))
+    expect(applied({ labels })?.labels?.[0]).toEqual({
+      id: "a",
+      text: "{{ projects.current.key }}",
+      position: { mode: "anchored", to: "bottomLeft", inset: 4 },
+      offsetY: -6,
+    })
   })
 })
 
