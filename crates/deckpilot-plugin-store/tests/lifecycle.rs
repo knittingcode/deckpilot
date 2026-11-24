@@ -1056,6 +1056,73 @@ fn privileged_kinds_are_installed_only_from_the_bundle() {
         .unwrap();
 }
 
+/// Plugin API 1.16's `calls` (`docs/calls.md`): only for the bundled
+/// `deckpilot.calls`, observing is medium and controlling high, and
+/// neither is ever seeded with the bundle.
+#[test]
+fn calls_is_installed_only_from_the_bundle_and_never_seeded() {
+    let env = Env::new();
+    let mut manager = env.open();
+    let mut permissions: Vec<Value> = base_permissions()
+        .into_iter()
+        .filter(|p| p["kind"] != "network" && p["kind"] != "credentials")
+        .collect();
+    permissions.push(json!({"kind": "calls", "control": true,
+        "justification": "Shows whether you are in a call."}));
+    let package = common::bundled_package_with("deckpilot.calls", "0.1.0", &permissions, |v| {
+        v["engines"]["pluginApi"] = json!("^1.16");
+        v["contributes"]
+            .as_object_mut()
+            .unwrap()
+            .remove("credentials");
+    });
+    let declared = grants_of(&package);
+    let gated: Vec<(String, Tier)> = declared
+        .keys()
+        .filter(|k| k.is_first_party_only())
+        .map(|k| (k.to_string(), declared.get(k).unwrap().tier()))
+        .collect();
+    assert_eq!(
+        gated,
+        [
+            ("calls".to_owned(), Tier::Medium),
+            ("calls:control".to_owned(), Tier::High)
+        ]
+    );
+    for source in [
+        InstallSource::Registry {
+            registry: "official".into(),
+        },
+        InstallSource::Sideload,
+        InstallSource::Dev,
+    ] {
+        let result = manager.install(&package, &source, &Consent::none("user"));
+        assert!(
+            matches!(result, Err(StoreError::SourceNotAllowed { .. })),
+            "{source:?}: {result:?}"
+        );
+    }
+    for key in ["calls", "calls:control"] {
+        let key: GrantKey = key.parse().unwrap();
+        let result = manager.install(
+            &package,
+            &InstallSource::Bundled,
+            &Consent::of([key.clone()], "bundled:0.16.0"),
+        );
+        assert!(
+            matches!(result, Err(StoreError::BundledGrant { .. })),
+            "{key}: {result:?}"
+        );
+    }
+    manager
+        .install(
+            &package,
+            &InstallSource::Bundled,
+            &Consent::none("bundled:0.16.0"),
+        )
+        .unwrap();
+}
+
 #[test]
 fn a_bundled_plugin_is_seeded_with_derived_low_tier_grants_only() {
     let env = Env::new();

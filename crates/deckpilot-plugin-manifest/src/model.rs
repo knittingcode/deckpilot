@@ -337,6 +337,19 @@ pub enum Permission {
     /// `contributes.statusItems` and `contributes.dashboardCards` the app
     /// draws from core data. Placement only, no data. Low tier.
     HostViews { justification: String },
+    /// Plugin API 1.16, the bundled Calls plugin (`deckpilot.calls`) only
+    /// (`docs/calls.md`): the state of the user's calls and meetings as the
+    /// host's providers observe it (`call.state`, `calls:observe`, medium),
+    /// and with `control` asking the host to answer, reject, end, mute or
+    /// switch the camera of the focused call (`call.control`,
+    /// `calls:control`, high, asked for on its own). The plugin never sees
+    /// provider traffic, process names or tokens; a meeting title only with
+    /// the user's opt-in.
+    Calls {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control: Option<bool>,
+        justification: String,
+    },
 }
 
 /// One executable of the `tools` permission, with the subcommands and
@@ -541,6 +554,7 @@ pub enum PermissionKind {
     Resources,
     ProjectContext,
     HostViews,
+    Calls,
 }
 
 impl PermissionKind {
@@ -561,15 +575,16 @@ impl PermissionKind {
             Self::Resources => "resources",
             Self::ProjectContext => "projectContext",
             Self::HostViews => "hostViews",
+            Self::Calls => "calls",
         }
     }
 
-    /// Whether the kind is one of plugin API 1.9's privileged kinds, which
-    /// only first-party bundled plugins may declare (X12).
+    /// Whether the kind is privileged (plugin API 1.9's kinds and 1.16's
+    /// `calls`), which only first-party bundled plugins may declare (X12).
     pub fn is_first_party_only(self) -> bool {
         matches!(
             self,
-            Self::Tools | Self::Resources | Self::ProjectContext | Self::HostViews
+            Self::Tools | Self::Resources | Self::ProjectContext | Self::HostViews | Self::Calls
         )
     }
 }
@@ -591,6 +606,7 @@ impl Permission {
             Self::Resources { .. } => PermissionKind::Resources,
             Self::ProjectContext { .. } => PermissionKind::ProjectContext,
             Self::HostViews { .. } => PermissionKind::HostViews,
+            Self::Calls { .. } => PermissionKind::Calls,
         }
     }
 
@@ -616,6 +632,7 @@ impl Permission {
             | Self::Tools { justification, .. }
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
+            | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -636,6 +653,7 @@ impl Permission {
             | Self::Tools { justification, .. }
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
+            | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -702,6 +720,16 @@ pub struct Contributes {
     /// first-party bundled plugins with `hostViews` only, X8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard_cards: Option<Vec<DashboardCard>>,
+    /// The Calls presentation overlay (plugin API 1.16, the bundled Calls
+    /// plugin with the `calls` permission only): the pages the host shows
+    /// on a device during a call. Placement only: the host decides when.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_overlay: Option<crate::calls::CallOverlay>,
+    /// The managed Calls layouts, per device capability class (plugin API
+    /// 1.16, with `callOverlay`). Data only: the host generates one layout
+    /// per connected model from them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_templates: Option<Vec<crate::calls::LayoutTemplate>>,
 }
 
 /// A status-bar item the host draws (X8). A closed list: the plugin names

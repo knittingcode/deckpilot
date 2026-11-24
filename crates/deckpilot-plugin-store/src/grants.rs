@@ -29,6 +29,9 @@ pub const PRIVATE_NETWORK_KEY: &str = "private-network";
 /// API 1.9, X5; no host has a name without a dot).
 pub const OPEN_URL_FROM_PARAMS_KEY: &str = "from-params";
 
+/// The key of the `calls:control` sub-grant (plugin API 1.16).
+pub const CALLS_CONTROL_KEY: &str = "control";
+
 pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Get,
     HttpMethod::Head,
@@ -38,7 +41,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 14] = [
+const KINDS: [PermissionKind; 15] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -53,6 +56,7 @@ const KINDS: [PermissionKind; 14] = [
     PermissionKind::Resources,
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
+    PermissionKind::Calls,
 ];
 
 pub(crate) fn parse_kind(text: &str) -> Option<PermissionKind> {
@@ -203,6 +207,12 @@ pub enum GrantScope {
     ProjectSelect,
     /// `hostViews`: the app's own views, status items and cards (X8).
     HostViews,
+    /// `calls` (plugin API 1.16): the focused call's sanitised state
+    /// (`call.state`), keyed `calls` and shown as `calls:observe`.
+    CallsObserve,
+    /// `calls:control` (plugin API 1.16): asking the host to control the
+    /// focused call (`call.control`), consented to on its own.
+    CallsControl,
 }
 
 /// The consent tier of a grant (architecture section 5.2).
@@ -230,7 +240,10 @@ impl GrantScope {
             | Self::ToolNetwork
             | Self::ToolModify
             | Self::ResourceOpen
-            | Self::ProjectSelect => Tier::High,
+            | Self::ProjectSelect
+            // Plugin API 1.16: controlling the user's calls is always
+            // asked for, never derived.
+            | Self::CallsControl => Tier::High,
             Self::Notifications
             | Self::Storage { .. }
             | Self::DeviceState
@@ -246,7 +259,8 @@ impl GrantScope {
             | Self::Resources
             | Self::ResourcePaths
             | Self::OpenUrlFromParams
-            | Self::ProjectRead => Tier::Medium,
+            | Self::ProjectRead
+            | Self::CallsObserve => Tier::Medium,
         }
     }
 
@@ -530,7 +544,8 @@ impl GrantSet {
                 Permission::Tools { .. }
                 | Permission::Resources { .. }
                 | Permission::ProjectContext { .. }
-                | Permission::HostViews { .. } => set.insert_privileged(permission),
+                | Permission::HostViews { .. }
+                | Permission::Calls { .. } => set.insert_privileged(permission),
                 Permission::Device { state, icons, .. } => set.insert_device(*state, *icons),
             }
         }
@@ -598,6 +613,18 @@ impl GrantSet {
                 GrantKey::new(PermissionKind::HostViews, ""),
                 GrantScope::HostViews,
             ),
+            Permission::Calls { control, .. } => {
+                self.insert(
+                    GrantKey::new(PermissionKind::Calls, ""),
+                    GrantScope::CallsObserve,
+                );
+                if *control == Some(true) {
+                    self.insert(
+                        GrantKey::new(PermissionKind::Calls, CALLS_CONTROL_KEY),
+                        GrantScope::CallsControl,
+                    );
+                }
+            }
             Permission::OpenUrl {
                 from_params: Some(true),
                 ..
