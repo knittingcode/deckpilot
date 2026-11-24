@@ -9,7 +9,7 @@ use deckpilot_core::{
 use deckpilot_device::{ControlId, DeviceModelId, models};
 
 use super::Seeded;
-use crate::{SqliteStore, StorageError};
+use crate::{ConfigStore, SqliteStore, StorageError};
 
 const OWNER: &str = "deckpilot.calls";
 
@@ -220,4 +220,84 @@ fn a_layout_must_bring_the_actions_it_binds() {
         store.seed_managed_layout(OWNER, &layout, &[], "1.0.0"),
         Err(StorageError::Invalid(_))
     ));
+}
+
+#[test]
+fn a_managed_layout_is_not_listed_and_never_assigned_to_a_profile() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    // Not in the Layouts list, so never exported with the unused layouts.
+    assert!(
+        store
+            .shared_layouts()
+            .unwrap()
+            .iter()
+            .all(|s| s.layout.id != layout_id)
+    );
+    let mut profile = deckpilot_core::Profile::new("Work");
+    store.save_profile(&profile).unwrap();
+    assert!(matches!(
+        store.assign_layout(profile.id, layout_id),
+        Err(StorageError::Invalid(_))
+    ));
+    // Nor through a profile document that names it.
+    profile.layouts.push(layout.clone());
+    profile.actions.extend(actions.clone());
+    assert!(store.save_profile(&profile).is_err());
+    assert!(!store.managed_layout(OWNER, &mk2()).unwrap().unwrap().edited);
+}
+
+#[test]
+fn restore_defaults_copies_the_whole_closure_with_its_references() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, mut actions) = generated(layout_id, action_id, "toggle");
+    // A Multi Action style step: the bound action names another action.
+    let step = ActionInstance {
+        id: ActionInstanceId::new(),
+        name: "Step".into(),
+        action_type: ActionTypeId::new("deckpilot.calls.end").unwrap(),
+        parameters: ActionParameters::new(),
+        description: String::new(),
+        icon: None,
+        label: None,
+    };
+    actions[0].parameters = actions[0]
+        .parameters
+        .clone()
+        .with("steps", ParameterValue::Text(step.id.to_string()));
+    actions.push(step.clone());
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    assert_eq!(
+        store
+            .managed_layout(OWNER, &mk2())
+            .unwrap()
+            .unwrap()
+            .actions
+            .len(),
+        2
+    );
+    store.rename_shared_layout(layout_id, "Edited").unwrap();
+    let copy = store
+        .restore_managed_layout(OWNER, &layout, &actions, "1.0.0", "Mine")
+        .unwrap()
+        .unwrap();
+    let kept = store.shared_layout(copy).unwrap().unwrap();
+    let (kept_actions, _) = store.layout_library(&kept.layout).unwrap();
+    assert_eq!(kept_actions.len(), 2, "the step was copied too");
+    let ids: Vec<ActionInstanceId> = kept_actions.iter().map(|a| a.id).collect();
+    assert!(!ids.contains(&action_id) && !ids.contains(&step.id));
+    let bound = kept_actions
+        .iter()
+        .find(|a| a.parameters.text("steps").is_some())
+        .unwrap();
+    let named = bound.parameters.text("steps").unwrap();
+    assert_ne!(named, step.id.to_string(), "not the regenerated step");
+    assert!(ids.iter().any(|id| id.to_string() == named), "its own copy");
 }

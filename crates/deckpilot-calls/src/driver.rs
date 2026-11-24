@@ -31,7 +31,7 @@ use deckpilot_core::{
 use deckpilot_device::{Capability as Family, ControlId, DeviceId, DeviceModelId};
 
 use crate::clock::Instant;
-use crate::engine::{CallSession, Engine, OverlayIntent, OverlayPage, Request};
+use crate::engine::{CallSession, Engine, OverlayIntent, OverlayPage, Request, TrackId};
 use crate::layouts::{Generated, OWNER, Page};
 use crate::ops::{GateError, action_of};
 use crate::provider::{CallAction, Capability, ProviderEvent, ProviderId, Support, Tri};
@@ -82,7 +82,10 @@ pub struct CallsDriver {
     /// Per-device overlay setting; absent: on for devices with key
     /// displays.
     enabled: BTreeMap<DeviceId, bool>,
-    dismissed: BTreeMap<DeviceId, CallSession>,
+    /// Devices whose overlay the user dismissed, with the call session
+    /// and the focused call they dismissed it for: hidden while that call
+    /// has the focus.
+    dismissed: BTreeMap<DeviceId, (CallSession, Option<TrackId>)>,
     locale: Locale,
     /// The frames the watchdog popped (for the log, once each).
     watchdog_pops: usize,
@@ -239,7 +242,8 @@ impl CallsDriver {
             .is_some_and(|f| f.session == session)
             && let Some(frame) = self.frames.remove(device)
         {
-            self.dismissed.insert(device.clone(), frame.call);
+            self.dismissed
+                .insert(device.clone(), (frame.call, self.engine.focus()));
         }
         self.returns.drop_device(device);
     }
@@ -346,12 +350,11 @@ impl CallsDriver {
             OverlayPage::Active => Page::Active,
         };
         if page == Page::Incoming {
-            // A new incoming call takes every suspended device, and shows
-            // on dismissed ones again.
+            // A new incoming call takes every suspended device. (A dismissed
+            // device sees it because it is another call: below.)
             for ended in self.returns.preempt() {
                 self.apply(runtime, &ended);
             }
-            self.dismissed.clear();
         }
         // Frames of an earlier call session (should not happen: the engine
         // keeps one session per run of calls).
@@ -365,11 +368,18 @@ impl CallsDriver {
             self.pop(runtime, &device);
         }
         let snapshot = self.engine.snapshot();
+        let focus = self.engine.focus();
         let devices: Vec<DeviceId> = runtime.devices().connected().cloned().collect();
         for device in devices {
-            if !self.device_enabled(runtime, &device)
-                || self.dismissed.get(&device) == Some(&session)
-            {
+            if !self.device_enabled(runtime, &device) {
+                continue;
+            }
+            // Dismissed for the call that has the focus: stays away (also
+            // when the focus comes back to it).
+            if self.dismissed.get(&device) == Some(&(session, focus)) {
+                if self.frames.contains_key(&device) {
+                    self.pop(runtime, &device);
+                }
                 continue;
             }
             let Some(generated) = self.layouts.get(&device.model) else {

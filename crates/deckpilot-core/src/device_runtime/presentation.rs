@@ -165,6 +165,9 @@ pub(crate) struct Presentation {
     next_session: u64,
     /// Bumped on every change of what a device shows through frames.
     generation: u64,
+    /// The same, per device: a gesture recognized on a device before its
+    /// presentation changed is stale ([`Runtime::presentation_generation_of`]).
+    device_generations: BTreeMap<DeviceId, u64>,
 }
 
 impl Runtime {
@@ -230,6 +233,19 @@ impl Runtime {
     /// gesture recognized before is stale.
     pub fn presentation_generation(&self) -> u64 {
         self.presentation.generation
+    }
+
+    /// Bumped whenever what `device` shows changes through frames (a push,
+    /// pop, suspend or resume). The caller that recognizes gestures records
+    /// it when a sequence starts and drops the gesture when it changed by the
+    /// time it fires: the input fence for keys whose edges never reach the
+    /// runtime.
+    pub fn presentation_generation_of(&self, device: &DeviceId) -> u64 {
+        self.presentation
+            .device_generations
+            .get(device)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// The layout and page `device` shows through its frame, if it shows
@@ -425,6 +441,11 @@ impl Runtime {
             return;
         }
         self.presentation.generation += 1;
+        *self
+            .presentation
+            .device_generations
+            .entry(device.clone())
+            .or_default() += 1;
         self.refused.clear();
         // Controls held down now finish on nothing.
         let held = self

@@ -583,3 +583,35 @@ fn a_key_held_when_the_overlay_comes_finishes_on_nothing() {
         RuntimeOutcome::Ignored { .. }
     ));
 }
+
+/// T-R10 for gesture keys: their edges go to the caller's gesture engine,
+/// not the runtime, so the caller compares the device's presentation
+/// generation taken at the press with the one at fire time.
+#[test]
+fn a_gesture_pressed_before_a_switch_is_stale_when_it_fires() {
+    let f = fixture();
+    let (mut runtime, _, deck) = started(&f);
+    let other = device("B");
+    connect(&mut runtime, &other);
+    let at_press = runtime.presentation_generation_of(&deck);
+    let other_at_press = runtime.presentation_generation_of(&other);
+    let session = runtime.push_overlay(&deck, overlay().spec).unwrap();
+    assert_ne!(
+        runtime.presentation_generation_of(&deck),
+        at_press,
+        "pushed"
+    );
+    let pushed = runtime.presentation_generation_of(&deck);
+    runtime.suspend_overlay(&deck, session);
+    assert_ne!(
+        runtime.presentation_generation_of(&deck),
+        pushed,
+        "suspended"
+    );
+    // Another device's gestures are not touched.
+    assert_eq!(runtime.presentation_generation_of(&other), other_at_press);
+    // Changes that do not change what it shows do not count.
+    let suspended = runtime.presentation_generation_of(&deck);
+    runtime.set_overlay_faces(&deck, session, []);
+    assert_eq!(runtime.presentation_generation_of(&deck), suspended);
+}

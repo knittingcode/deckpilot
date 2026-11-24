@@ -422,6 +422,14 @@ pub(crate) fn decompose(tx: &Connection, profile: &Profile) -> Result<()> {
     )?;
     let mut new_defaults = BTreeMap::new();
     for (position, layout) in profile.layouts.iter().enumerate() {
+        // A managed layout (`managed_layouts.rs`) is never a profile's: a
+        // regeneration would drop it from the profile silently.
+        if crate::managed_layouts::is_managed(tx, &layout.id.to_string())? {
+            return Err(StorageError::Invalid(format!(
+                "the layout “{}” is managed by a plugin and cannot be assigned to a profile",
+                layout.name
+            )));
+        }
         let is_default = profile.active_layouts.get(&layout.model) == Some(&layout.id);
         if is_default {
             new_defaults.insert(layout.model.to_string(), layout.id.to_string());
@@ -918,7 +926,10 @@ impl SqliteStore {
         let connection = self.connection();
         let rows: Vec<(String, u32, String, i64, i64)> = connection
             .prepare(
+                // Managed layouts are their owner's (`managed_layouts.rs`):
+                // not in the Layouts list and not exported.
                 "SELECT id, document_version, document, created_at, updated_at FROM layouts
+                 WHERE id NOT IN (SELECT layout_id FROM managed_layouts)
                  ORDER BY name COLLATE NOCASE, id",
             )?
             .query_map([], |row| {
@@ -1375,6 +1386,12 @@ pub enum ItemKind {
 /// transaction. The profile is stored again so that it sees what the layout
 /// uses and keeps what it has.
 fn assign(tx: &Connection, profile: ProfileId, layout: &DeviceLayout) -> Result<()> {
+    if crate::managed_layouts::is_managed(tx, &layout.id.to_string())? {
+        return Err(StorageError::Invalid(format!(
+            "the layout “{}” is managed by a plugin and cannot be assigned to a profile",
+            layout.name
+        )));
+    }
     let mut document =
         crate::sqlite::load_profile_in(tx, profile)?.ok_or(StorageError::UnknownProfile)?;
     if document.layouts.iter().any(|l| l.id == layout.id) {
