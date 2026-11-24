@@ -416,6 +416,12 @@ pub enum RepositoryError {
     SeveralPrimaryRemotes,
     #[error("the repository does not exist in this project")]
     NotFound,
+    /// The last repository of a project with the `repository` role: the
+    /// role would bring it back as the derived one (R3).
+    #[error(
+        "the last repository cannot be removed while the project has the repository role; remove the role first"
+    )]
+    LastWithRole,
 }
 
 impl RepositoryError {
@@ -434,6 +440,7 @@ impl RepositoryError {
             Self::DuplicateRemote(_) => "duplicateRemote",
             Self::SeveralPrimaryRemotes => "severalPrimaryRemotes",
             Self::NotFound => "notFound",
+            Self::LastWithRole => "lastWithRole",
         }
     }
 }
@@ -516,6 +523,14 @@ impl Project {
             .cloned()
     }
 
+    /// Whether the stored repositories are exactly the derived one as it
+    /// stands now (as the migration stored it, never edited).
+    pub fn has_only_derived_repository(&self) -> bool {
+        self.derived_repository().is_some_and(|derived| {
+            self.default_repository == Some(derived.id) && self.repositories == [derived]
+        })
+    }
+
     /// Stores the derived repository (R3) when none are stored; `true` when
     /// it did.
     pub fn materialize_repositories(&mut self) -> bool {
@@ -594,8 +609,18 @@ impl Project {
     /// never touched (nothing is deleted automatically); when it was the
     /// default, the project has no default afterwards and the
     /// `repository` role keeps its old resource.
+    ///
+    /// The last repository is not removed while the project has the
+    /// `repository` role ([`RepositoryError::LastWithRole`]): the role would
+    /// stand for it again (R3).
     pub fn remove_repository(&mut self, id: RepositoryId) -> Result<Repository, RepositoryError> {
         self.materialize_repositories();
+        if self.repositories.len() == 1
+            && self.repositories[0].id == id
+            && self.resources.contains_key(REPOSITORY_ROLE)
+        {
+            return Err(RepositoryError::LastWithRole);
+        }
         let index = self
             .repositories
             .iter()
@@ -1172,6 +1197,16 @@ mod tests {
         );
         // One repository left: it is the default again by OD-3.
         assert_eq!(shop.default_repository().unwrap().id, main);
+        // It cannot be removed while the role would bring it back (R3).
+        assert_eq!(
+            shop.remove_repository(main),
+            Err(RepositoryError::LastWithRole)
+        );
+        assert!(shop.has_only_derived_repository() || shop.repositories.len() == 1);
+        let mut without_role = shop.clone();
+        without_role.resources.remove("repository");
+        without_role.remove_repository(main).unwrap();
+        assert_eq!(without_role.repositories, []);
 
         // A project without the role gets it when a default is marked.
         let mut bare = project(&[]);

@@ -48,8 +48,21 @@ pub struct ProjectInput {
     #[serde(default)]
     repositories: Option<Vec<RepositoryInput>>,
     /// The default repository; read only together with `repositories`.
-    #[serde(default)]
-    default_repository: Option<RepositoryId>,
+    /// Left out: the stored default is kept (when it is still listed);
+    /// `null`: no default.
+    #[serde(default, deserialize_with = "some")]
+    #[allow(clippy::option_option)] // Left out, `null` and an id differ.
+    default_repository: Option<Option<RepositoryId>>,
+}
+
+/// `Some` for a field that is present, also when it is `null`, so that a
+/// left-out field (`None`) can be told apart from `null` (`Some(None)`).
+fn some<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// A repository as the editor sends it. Its remotes are not part of it:
@@ -100,20 +113,42 @@ fn build_project(id: ProjectId, input: ProjectInput) -> CommandResult<Project> {
 /// kept by repository id. A repository without a resource gets a new key
 /// that `taken` does not hold. When the default changes to a repository,
 /// the `repository` role follows (R2).
+#[allow(clippy::option_option)] // `default`: left out, `null` or an id.
 fn apply_repositories(
     project: &mut Project,
     stored: Option<&Project>,
     repositories: Option<Vec<RepositoryInput>>,
-    default: Option<RepositoryId>,
+    default: Option<Option<RepositoryId>>,
     taken: &BTreeSet<ResourceKey>,
 ) -> CommandResult<()> {
     let Some(inputs) = repositories else {
         if let Some(stored) = stored {
+            // The repository the migration stored for the role, never
+            // edited, is derived again from the project as saved now (its
+            // name, its role), so it never goes stale and exports as before.
+            if stored.has_only_derived_repository() {
+                return Ok(());
+            }
             project.repositories.clone_from(&stored.repositories);
             project.default_repository = stored.default_repository;
         }
         return Ok(());
     };
+    // No repository while the role exists: the role would bring one back
+    // (R3); the role has to go first.
+    if inputs.is_empty()
+        && project
+            .resources
+            .contains_key(deckpilot_core::project::REPOSITORY_ROLE)
+    {
+        let shown = stored.map(Project::with_derived_repositories);
+        if shown.is_some_and(|p| !p.repositories.is_empty()) {
+            return Err(deckpilot_core::CatalogError::from(
+                deckpilot_core::RepositoryError::LastWithRole,
+            )
+            .into());
+        }
+    }
     // What the editor showed: the stored repositories, or the derived one.
     let shown = stored.map(Project::with_derived_repositories);
     let mut used = taken.clone();
@@ -162,13 +197,16 @@ fn apply_repositories(
     project
         .validate_repositories()
         .map_err(deckpilot_core::CatalogError::from)?;
+    let before = shown.as_ref().and_then(|p| p.default_repository);
+    // Left out: the stored default, while it is still listed.
+    let default = default
+        .unwrap_or_else(|| before.filter(|id| project.repositories.iter().any(|r| r.id == *id)));
     if default.is_some_and(|id| !project.repositories.iter().any(|r| r.id == id)) {
         return Err(deckpilot_core::CatalogError::from(
             deckpilot_core::RepositoryError::UnknownDefault,
         )
         .into());
     }
-    let before = shown.and_then(|p| p.default_repository);
     if default.is_some() && default != before {
         project
             .set_default_repository(default)
