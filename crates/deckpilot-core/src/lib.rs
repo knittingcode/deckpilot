@@ -139,7 +139,8 @@ pub use platform::Os;
 pub use profile::{Profile, ProfileIssue, Usage};
 pub use project::{
     ActiveProjectContext, CycleDirection, Project, ProjectContextError, ProjectKey,
-    ProjectStepError, ProjectSwitcher,
+    ProjectStepError, ProjectSwitcher, Repository, RepositoryError, RepositoryId, RepositoryKey,
+    RepositoryRemote,
 };
 pub use project_catalog::{CatalogError, ProjectCatalog};
 pub use registry::{ActionHandler, ActionRegistry, AliasHandler, LayoutNavigation, RegistryError};

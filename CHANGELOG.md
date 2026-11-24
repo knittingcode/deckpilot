@@ -26,6 +26,16 @@ released either. 0.6.0 is the first version intended for publication.
   automatic icon is never saved. The target is looked at by its file
   metadata only, never opened or run, and again when an action, a
   resource binding, the profile or the layout changes, never on a timer.
+- Projects: a project can list several repositories, each with a key
+  (`cms`, unique in the project), a name, a description, the folder's
+  resource (bound on each computer, never exported) and a default. An
+  existing project with a `repository` role gets that one as its
+  repository `main` when the configuration is upgraded (schema 14); its
+  roles, resources and folder bindings are not changed. Marking a default
+  repository also points the `repository` role at it. Removing a
+  repository never removes its folder binding, and a missing folder is
+  shown, never removed. An export carries the repositories (format 5)
+  only when a project has more than that one. The editor for them follows.
 
 ### Changed
 

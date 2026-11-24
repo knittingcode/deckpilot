@@ -1203,6 +1203,17 @@ pub fn plan(
         };
         // Icons are stored as DeckPilot encoded them, never as they came.
         let mut imported = imported;
+        // A connection id only means something on the computer that made
+        // it; exports leave it out, a crafted one is dropped.
+        for repository in imported
+            .projects
+            .iter_mut()
+            .flat_map(|p| &mut p.repositories)
+        {
+            for remote in &mut repository.remotes {
+                remote.connection_id = None;
+            }
+        }
         for icon in &mut imported.icons {
             *icon = deckpilot_render::icons::sanitize(icon)
                 .map_err(|e| PortabilityError::Invalid(format!("icon “{}”: {e}", icon.name)))?;

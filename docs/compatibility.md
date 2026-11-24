@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 17 | 13 |
+| Current main | see `Cargo.toml` | 17 | 14 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -58,6 +58,21 @@ the app sends only to an agent that announces the feature (against an
 older agent the app's storefront commands answer `null`). The agent caches
 a verified storefront under `<state>/storefront/` and its media under
 `<state>/media/`; an older agent does not read them.
+
+Current main (after 0.15.0) moves the configuration database to schema
+14: projects get their repositories (`docs/data-model.md`,
+"Repositories"). The migration is additive. It adds two columns to
+`projects` and stores, for every project with the `repository` role, the
+repository that role stands for. Roles, resources and folder bindings are
+not rewritten. As every upgrade, it runs after an encrypted backup next to
+the database (`backups/deckpilot-schema13-*.db`). **0.15.x and older
+refuse a schema 14 database** with `UnsupportedSchema` (found 14,
+supported 13) and change nothing. The way back to 0.15.x is that
+pre-migration backup: restore it in place of `deckpilot.db`, without its
+`-wal` and `-shm` files. Changes made after the upgrade are not in the
+backup. Exports with repositories other than the one the role stands for
+are payload version 5, which 0.14.x refuses; other exports keep their
+version.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins
