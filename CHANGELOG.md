@@ -15,6 +15,8 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-24
+
 ### Added
 
 - Key titles can show variables: `{{ projects.current.key }}`,
