@@ -15,6 +15,26 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Added
+
+- System actions: an Open key shows what it opens, the document icon for
+  a file and the open folder for a folder, on the Canvas, in the key
+  preview, in layout previews and on the Stream Deck alike. Nothing chosen,
+  a missing file or folder, or a target that cannot be told (a variable,
+  an application, a network path) shows the document icon. A key's own
+  icon or image, and an icon chosen for the action, always win; the
+  automatic icon is never saved. The target is looked at by its file
+  metadata only, never opened or run, and again when an action, a
+  resource binding, the profile or the layout changes, never on a timer.
+
+### Changed
+
+- System actions: the Action Library offers one Open for files and
+  folders (Choose file… or Choose folder…); Open folder is no longer
+  offered for new keys, actions or workflow nodes. Saved Open folder
+  actions, keys, gestures and workflow steps keep running unchanged with
+  their folder icon; nothing is rewritten.
+
 ## [0.15.0] - 2026-11-24
 
 ### Added
@@ -89,23 +109,9 @@ released either. 0.6.0 is the first version intended for publication.
   marked and why it has no value). The title itself is not changed. The
   Canvas summaries show the agent's answers instead of replacing
   `{profile}`, `{project.key}` and `{project.name}` themselves.
-- System actions: an Open key shows what it opens, the document icon for
-  a file and the open folder for a folder, on the Canvas, in the key
-  preview, in layout previews and on the Stream Deck alike. Nothing chosen,
-  a missing file or folder, or a target that cannot be told (a variable,
-  an application, a network path) shows the document icon. A key's own
-  icon or image, and an icon chosen for the action, always win; the
-  automatic icon is never saved. The target is looked at by its file
-  metadata only, never opened or run, and again when an action, a
-  resource binding, the profile or the layout changes, never on a timer.
 
 ### Changed
 
-- System actions: the Action Library offers one Open for files and
-  folders (Choose file… or Choose folder…); Open folder is no longer
-  offered for new keys, actions or workflow nodes. Saved Open folder
-  actions, keys, gestures and workflow steps keep running unchanged with
-  their folder icon; nothing is rewritten.
 - Plugin permissions are granted and revoked in Settings › Permissions;
   a plugin's page in the Marketplace shows them read-only, with a link
   there. Plugin diagnostics and module migrations are in Settings › Logs &
