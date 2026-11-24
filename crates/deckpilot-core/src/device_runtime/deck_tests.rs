@@ -313,6 +313,18 @@ fn devices_turn_their_own_pages() {
     assert_eq!(runtime.current_page(&b), Some(pages.home));
 }
 
+/// What the agent does around a key (`folder_activity.rs`): notes the
+/// folder entry the key belongs to, handles the key, and reports an action
+/// that ran in place.
+fn use_key(runtime: &mut Runtime, deck: &DeviceId, index: u16) -> RuntimeOutcome {
+    let entry = runtime.folder_entry(deck);
+    let outcome = press(runtime, deck, index);
+    if let (Some(entry), RuntimeOutcome::Action { .. }) = (&entry, &outcome) {
+        runtime.folder_action_ran(entry);
+    }
+    outcome
+}
+
 #[test]
 fn a_folder_that_closes_returns_after_its_keys_ran_something() {
     let (mut profile, pages) = book("Work");
@@ -332,24 +344,32 @@ fn a_folder_that_closes_returns_after_its_keys_ran_something() {
 
     // An action: it ran, then the folder closed.
     enter(&mut runtime);
-    let outcome = press(&mut runtime, &deck, 4);
+    let outcome = use_key(&mut runtime, &deck, 4);
     assert_eq!(message(&outcome), "echo");
     assert_eq!(runtime.current_page(&deck), Some(pages.two));
 
-    // A workflow: the folder closes when the run is asked for.
+    // A workflow: the folder closes when the run is over, not when it is
+    // asked for.
     enter(&mut runtime);
+    let entry = runtime.folder_entry(&deck).unwrap();
     assert!(matches!(
         press(&mut runtime, &deck, 6),
         RuntimeOutcome::WorkflowRequested { .. }
+    ));
+    let run = runtime.hold_folder_entry(&entry).unwrap();
+    assert_eq!(runtime.current_page(&deck), Some(pages.folder));
+    assert!(matches!(
+        runtime.release_folder_hold(&run, crate::HoldEnd::Ran),
+        Some(RuntimeOutcome::Navigated { page, .. }) if page == pages.two
     ));
     assert_eq!(runtime.current_page(&deck), Some(pages.two));
 
     // Navigation keys do not close it: the inner folder opens.
     enter(&mut runtime);
-    press(&mut runtime, &deck, 5);
+    use_key(&mut runtime, &deck, 5);
     assert_eq!(runtime.current_page(&deck), Some(pages.inner));
     // The inner folder does not close by itself.
-    press(&mut runtime, &deck, 4);
+    use_key(&mut runtime, &deck, 4);
     assert_eq!(runtime.current_page(&deck), Some(pages.inner));
     // A key that is not bound does nothing.
     runtime
@@ -362,14 +382,14 @@ fn a_folder_that_closes_returns_after_its_keys_ran_something() {
         .unwrap();
     assert_eq!(runtime.current_page(&deck), Some(pages.folder));
     assert!(matches!(
-        press(&mut runtime, &deck, 9),
+        use_key(&mut runtime, &deck, 9),
         RuntimeOutcome::Ignored { .. }
     ));
     assert_eq!(runtime.current_page(&deck), Some(pages.folder));
 
     // An action that turned the page already left the folder: no second
     // step back from the new page.
-    press(&mut runtime, &deck, 0);
+    use_key(&mut runtime, &deck, 0);
     assert_eq!(runtime.current_page(&deck), Some(pages.three));
 }
 
@@ -388,7 +408,8 @@ fn a_page_outside_folders_never_closes_by_itself() {
     connect(&mut runtime, &deck);
     press(&mut runtime, &deck, 1);
     assert_eq!(runtime.current_page(&deck), Some(pages.three));
-    press(&mut runtime, &deck, 4);
+    assert_eq!(runtime.hold_folder(&deck), None);
+    use_key(&mut runtime, &deck, 4);
     assert_eq!(runtime.current_page(&deck), Some(pages.three));
 }
 

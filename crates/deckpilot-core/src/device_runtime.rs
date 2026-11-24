@@ -986,16 +986,6 @@ impl Runtime {
         stack.last().copied()
     }
 
-    /// Whether the page `device` shows is a folder that closes after one of
-    /// its keys ran something ([`crate::LayoutPage::auto_return`]).
-    fn closes_after_use(&self, device: &DeviceId) -> bool {
-        self.layout_of(device)
-            .zip(self.current_page(device))
-            .is_some_and(|(layout, page)| {
-                layout.page(page).is_some_and(|p| p.auto_return) && layout.parent_of(page).is_some()
-            })
-    }
-
     /// Applies the page request of an action's `result` to `device` and
     /// takes it out; a request for the agent (a profile switch) stays in
     /// the result for the caller.
@@ -1260,6 +1250,7 @@ impl Runtime {
                 }
             }
         }
+        self.show_folder_countdown(device, &mut faces);
         (faces, texts)
     }
 
@@ -1513,22 +1504,11 @@ impl Runtime {
         origin: crate::RunOrigin,
         context: ActionContext,
     ) -> Result<RuntimeOutcome, EngineError> {
-        // A folder that closes by itself returns once one of its keys ran
-        // an action or started a workflow, whatever came of it.
-        let closes = self.closes_after_use(device);
-        let shown = self.current_page(device);
+        // A folder that exits after its actions complete is left when what
+        // the key started is over, not here: the caller holds the folder
+        // for the key's runs and releases it when they end
+        // (`folder_activity.rs`).
         let outcome = self.dispatch_target(device, target, origin, context)?;
-        if closes
-            && self.current_page(device) == shown
-            && matches!(
-                outcome,
-                RuntimeOutcome::Action { .. }
-                    | RuntimeOutcome::ActionRequested { .. }
-                    | RuntimeOutcome::WorkflowRequested { .. }
-            )
-        {
-            self.go_back(device);
-        }
         self.follow_folders(device, false);
         Ok(outcome)
     }
@@ -2268,6 +2248,9 @@ pub mod symbols {
     /// or unavailable, [`crate::KeyFace::unavailable`]): Lucide's `plug`.
     pub const PLUGIN_MISSING: &str = "plug";
 }
+
+mod folder_activity;
+pub use folder_activity::folder_back_face;
 
 mod working;
 pub use working::{EditorTarget, NavigationError, NavigationState};

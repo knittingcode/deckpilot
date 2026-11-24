@@ -110,7 +110,7 @@ pub use face::{
 };
 pub use folder::{
     AutoExit, AutoExitError, BackPosition, FolderBack, FolderBackError, FolderBackReport,
-    FolderExit, FolderTimers, reserved_back_control,
+    FolderCountdown, FolderExit, FolderHold, FolderTimers, HoldEnd, reserved_back_control,
 };
 pub use folder_control::{
     FOLDER_CONTROL_TRIGGER, NormalizedFolderControl, NormalizedFolderLabel, RecoveredBindings,

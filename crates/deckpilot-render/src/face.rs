@@ -791,11 +791,60 @@ pub fn marquee(face: &KeyFace, width: u32, height: u32, icons: &Icons) -> Option
 }
 
 /// Whether `face` is the folder's protected Back key: its own vector icon
-/// (`assets/icons/folder-back.svg`), centred, without text, on the
-/// model's default background like every other key.
+/// (`assets/icons/folder-back.svg`), on the model's default background
+/// like every other key. Alone it is centred; with its Auto Exit countdown
+/// (`deckpilot_core::device_runtime::folder_back_face`) the seconds are its
+/// title under the icon, placed as any key's icon and title, and the pause
+/// glyph, while a run holds the countdown, is a small mark in the top
+/// right corner.
 fn is_folder_back(face: &KeyFace) -> bool {
     face.symbol.as_deref() == Some(deckpilot_core::device_runtime::symbols::FOLDER_BACK)
-        && face.glyph.is_none()
+        && face.glyph.is_none_or(|glyph| glyph == Glyph::Pause)
+}
+
+/// Share of the key's shorter side the folder Back's pause mark takes.
+const PAUSE_MARK: f32 = 0.2;
+
+/// The folder's Back without a countdown: its icon alone, centred, drawn
+/// from the vector at this size (sharp on every key).
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a key is a few hundred pixels wide at most"
+)]
+fn draw_back_alone(frame: &mut Frame, ink: [u8; 3]) {
+    if let Some(back) = crate::vector::folder_back() {
+        let (width, height) = (frame.width(), frame.height());
+        let side = width.min(height) as f32 * MARK_ALONE;
+        let (left, top) = ((width as f32 - side) / 2.0, (height as f32 - side) / 2.0);
+        back.draw(frame, left, top, side, ink);
+    }
+}
+
+/// The folder Back's Auto Exit countdown, over a face laid out with its
+/// seconds as the title: the Back icon where the title's mark goes
+/// (`mark`, when the face has seconds), and the pause mark in the top right
+/// corner while a run holds the countdown.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a key is a few hundred pixels wide at most"
+)]
+fn draw_back_countdown(
+    frame: &mut Frame,
+    face: &KeyFace,
+    mark: Option<(f32, f32, f32)>,
+    ink: [u8; 3],
+) {
+    if let (Some(back), Some((left, top, side))) = (crate::vector::folder_back(), mark) {
+        back.draw(frame, left, top, side, ink);
+    }
+    if face.glyph == Some(Glyph::Pause) {
+        let (width, height) = (frame.width(), frame.height());
+        let short = width.min(height) as f32;
+        let side = short * PAUSE_MARK;
+        let margin = short * 0.06;
+        let left = width as f32 - side - margin;
+        marks::draw_glyph_in(frame, Glyph::Pause, (left, margin, side), ink);
+    }
 }
 
 fn draw_face(
@@ -853,11 +902,10 @@ fn draw_face(
     if let Some(series) = &face.series {
         marks::draw_series(&mut frame, series, marks::lighten(fill, 35));
     }
-    if folder_back && let Some(back) = crate::vector::folder_back() {
-        // Drawn from the vector at this size: sharp on every key.
-        let side = width.min(height) as f32 * MARK_ALONE;
-        let (left, top) = ((width as f32 - side) / 2.0, (height as f32 - side) / 2.0);
-        back.draw(&mut frame, left, top, side, ink);
+    // The folder's Back with its countdown: the icon above the seconds.
+    let back_titled = folder_back && !face.title.is_empty();
+    if folder_back && !back_titled {
+        draw_back_alone(&mut frame, ink);
     }
     let mark = mark_of(face, own).filter(|_| !folder_back);
     let placed = layout_scrolled(
@@ -865,13 +913,16 @@ fn draw_face(
             face,
             look,
             colors,
-            has_mark: mark.is_some(),
+            has_mark: mark.is_some() || back_titled,
             over_icon: image.is_some(),
         },
         width,
         height,
         scroll,
     );
+    if folder_back {
+        draw_back_countdown(&mut frame, face, placed.mark.filter(|_| back_titled), ink);
+    }
     if let (Some(mark), Some((left, top, side))) = (mark, placed.mark) {
         match mark {
             Mark::Glyph(glyph) => marks::draw_glyph_in(&mut frame, glyph, (left, top, side), ink),

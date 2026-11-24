@@ -15,6 +15,23 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Added
+
+- Folders: **Exit after action completes**, a switch of its own in the
+  folder key's Inspector next to Automatic exit. The folder is left once
+  what its key started is over (an action, a plugin's action, a workflow or
+  Multi Action as a whole, all of several runs), whether it succeeded,
+  failed or was cancelled; a run that cannot start keeps the device in the
+  folder. It is the folder's existing `autoReturn`, which used to close the
+  folder when the key was pressed: folders that had it keep it, with the
+  new timing; it stays off for every other folder. No schema change.
+- Folders: the protected Back key shows the Automatic exit countdown in
+  whole seconds under its icon, redrawn once a second (only that key), with
+  a pause mark while a run started from the folder is going on. The
+  device, the simulated MK.2 and the editor's Canvas in a live preview draw
+  the same face (the live preview's navigation gains the optional
+  `folderCountdown`; protocol 16 unchanged).
+
 ### Changed
 
 ### Fixed

@@ -364,7 +364,7 @@
   "pageSettings": {
     "name": "Page name",
     "delete": "Delete page",
-    "autoReturn": "Close after a key runs",
+    "autoReturn": "Exit after action completes",
     "sheetTitle": "Pages"
   },
   "deletePage": {
@@ -805,10 +805,11 @@
   },
   "folderSettings": {
     "title": "Folder settings",
-    "autoExit": "Auto Exit",
-    "exitAfter": "Exit after",
-    "seconds_one": "second",
-    "seconds_other": "seconds",
+    "autoExit": "Automatic exit",
+    "autoExitAfter_one": "Automatic exit after <field/> second",
+    "autoExitAfter_other": "Automatic exit after <field/> seconds",
+    "timeout": "Automatic exit time in seconds",
+    "exitAfterCompletion": "Exit after action completes",
     "invalid": {
       "whole": "Enter a whole number of seconds.",
       "range": "Enter between {{min}} and {{max}} seconds."

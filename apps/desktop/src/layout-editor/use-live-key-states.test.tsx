@@ -226,6 +226,7 @@ describe("usePreviewFaces", () => {
         true,
         null,
         null,
+        null,
       )
     })
     hook.rerender({ current: live })
@@ -237,6 +238,7 @@ describe("usePreviewFaces", () => {
         null,
         true,
         live,
+        null,
         null,
       )
     })
