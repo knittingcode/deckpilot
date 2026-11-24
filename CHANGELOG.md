@@ -15,8 +15,6 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-11-24
-
 ### Added
 
 - Calls (groundwork, nothing user-visible yet): the provider contract
@@ -29,6 +27,11 @@ released either. 0.6.0 is the first version intended for publication.
   DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
   detected, not controlled: Microsoft retired its device API on
   2026-06-30 (`docs/calls.md`).
+
+## [0.15.0] - 2026-11-24
+
+### Added
+
 - Marketplace: a sidebar with search, Discover, Installed, Updates,
   Categories and collections; plugin pages with screenshots, highlights,
   what's new, version history, publisher and trust; install, update and
