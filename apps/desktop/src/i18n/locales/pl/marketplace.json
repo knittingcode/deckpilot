@@ -109,6 +109,7 @@
     "restored": "Przywrócono: {{name}}",
     "reinstalled": "Zainstalowano ponownie: {{name}}"
   },
+  "refresh": "Odśwież",
   "classes": {
     "label": "Co zawiera DeckPilot",
     "core": {
