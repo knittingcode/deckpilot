@@ -363,6 +363,12 @@ export const api = {
    * when that cannot be checked (an AppUserModelID, a bare name).
    */
   applicationPresent: (id: string) => invoke<boolean | null>("application_present", { id }),
+  /**
+   * Whether what resource `key` is bound to on this computer is still there
+   * (a picked file, folder or application): `missing` when it was moved or
+   * deleted, `unchecked` when it cannot be checked.
+   */
+  resourceStatus: (key: string) => invoke<ResourceStatus>("resource_status", { key }),
   /** A picked application file as a binding stores it (bundle id, App Paths name, desktop id, path). */
   describeApplication: (path: string) => invoke<InstalledApp>("describe_application", { path }),
   /** This computer's default gesture timings (`gestures.defaults`). */
@@ -583,3 +589,6 @@ export const UPDATE_STATE_EVENT = "update-state"
  * by code where a translation exists (`src/lib/backend-error.ts`).
  */
 export { errorCode, errorMessage, rawErrorMessage } from "./backend-error"
+
+/** What `resourceStatus` says about a bound resource on this computer. */
+export type ResourceStatus = "ok" | "missing" | "unbound" | "unchecked"
