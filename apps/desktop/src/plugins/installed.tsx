@@ -1,6 +1,6 @@
 import {
   ArchiveRestore,
-  ChevronDown,
+  Info,
   Play,
   RefreshCw,
   RotateCcw,
@@ -20,7 +20,6 @@ import { Switch } from "@/components/ui/switch"
 import { i18n, useTranslation } from "@/i18n"
 import { useFormat } from "@/i18n/format"
 import { translateErrorCode } from "@/lib/backend-error"
-import { cn } from "@/lib/utils"
 
 import { pluginErrorText, type PluginErrorText } from "./api"
 import { errorSentence } from "./dialog-error"
@@ -49,6 +48,14 @@ import type {
   PluginRetention,
 } from "./types"
 
+type LibraryView = "all" | "disabled" | "incompatible"
+
+/** An installed plugin that cannot run here as it is. */
+function cannotRun(item: PluginDetails, canRun: boolean): boolean {
+  const state = item.summary.state
+  return state === "broken" || state === "quarantined" || (!canRun && state !== "enabled")
+}
+
 export function InstalledView({
   snapshot,
   updates,
@@ -58,10 +65,12 @@ export function InstalledView({
   snapshot: MarketplaceSnapshot
   updates: UpdateCandidate[]
   actions: MarketplaceActions
-  onBrowse: () => void
+  /** Where to find plugins when none is installed; no button without it. */
+  onBrowse?: () => void
 }) {
   const { t } = useTranslation()
   const format = useFormat()
+  const [view, setView] = useState<LibraryView>("all")
   // DeckPilot's own plugins the user removed, which the agent can restore.
   const removed = actions.canRestore
     ? (snapshot.known ?? [])
@@ -72,35 +81,69 @@ export function InstalledView({
     return (
       <>
         <EmptyState variant="plain" title={t("marketplace:installed.empty")}>
-          <Button variant="outline" size="sm" className="mt-2" onClick={onBrowse}>
-            {t("marketplace:installed.browse")}
-          </Button>
+          {onBrowse && (
+            <Button variant="outline" size="sm" className="mt-2" onClick={onBrowse}>
+              {t("marketplace:installed.browse")}
+            </Button>
+          )}
         </EmptyState>
         <RemovedBundledList removed={removed} actions={actions} />
       </>
     )
   }
   const byId = new Map(updates.map((u) => [u.plugin.summary.id, u]))
+  const sorted = [...snapshot.installed].sort((a, b) =>
+    format.compare(a.summary.name, b.summary.name),
+  )
+  const disabled = sorted.filter(
+    (p) => p.summary.state === "disabled" && !cannotRun(p, actions.canRun),
+  )
+  const broken = sorted.filter((p) => cannotRun(p, actions.canRun))
+  const shown = view === "disabled" ? disabled : view === "incompatible" ? broken : sorted
+  const views: { id: LibraryView; label: string; count: number }[] = [
+    { id: "all", label: t("marketplace:library.all"), count: sorted.length },
+    { id: "disabled", label: t("marketplace:library.disabled"), count: disabled.length },
+    {
+      id: "incompatible",
+      label: t("marketplace:library.incompatible"),
+      count: broken.length,
+    },
+  ]
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="grid gap-0.5">
-          <h3 className="text-sm font-medium">{t("marketplace:classes.installed.title")}</h3>
-          <p className="text-sm text-muted-foreground">{t("marketplace:installed.intro")}</p>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={actions.busy !== null}
-          onClick={actions.refresh}
+        <div
+          role="group"
+          aria-label={t("marketplace:library.views")}
+          className="flex flex-wrap gap-1.5"
         >
-          <RefreshCw /> {t("marketplace:refresh")}
-        </Button>
+          {views.map((v) => (
+            <Button
+              key={v.id}
+              variant={view === v.id ? "secondary" : "outline"}
+              size="sm"
+              className="h-7 rounded-full px-3 text-xs"
+              aria-pressed={view === v.id}
+              onClick={() => {
+                setView(v.id)
+              }}
+            >
+              {v.label}
+              <span className="text-muted-foreground tabular-nums">{v.count}</span>
+            </Button>
+          ))}
+        </div>
       </div>
-      <ul className="grid divide-y border-y" aria-label={t("marketplace:installed.list")}>
-        {[...snapshot.installed]
-          .sort((a, b) => format.compare(a.summary.name, b.summary.name))
-          .map((item) => (
+      <p className="text-sm text-muted-foreground">
+        {view === "disabled"
+          ? t("marketplace:library.disabledIntro")
+          : view === "incompatible"
+            ? t("marketplace:library.incompatibleIntro")
+            : t("marketplace:installed.intro")}
+      </p>
+      {shown.length > 0 ? (
+        <ul className="grid divide-y border-y" aria-label={t("marketplace:installed.list")}>
+          {shown.map((item) => (
             <InstalledItem
               key={item.summary.id}
               item={item}
@@ -112,8 +155,20 @@ export function InstalledView({
               actions={actions}
             />
           ))}
-      </ul>
-      <RemovedBundledList removed={removed} actions={actions} />
+        </ul>
+      ) : (
+        <EmptyState
+          variant="plain"
+          title={
+            view === "disabled"
+              ? t("marketplace:library.noneDisabled")
+              : view === "incompatible"
+                ? t("marketplace:library.noneIncompatible")
+                : t("marketplace:installed.empty")
+          }
+        />
+      )}
+      {view === "all" && <RemovedBundledList removed={removed} actions={actions} />}
     </>
   )
 }
@@ -170,7 +225,7 @@ function RemovedBundledList({
 }
 
 /** Failures of the plugin's host since the agent started. */
-function HealthNotice({ item }: { item: PluginDetails }) {
+export function HealthNotice({ item }: { item: PluginDetails }) {
   const { t } = useTranslation()
   const health = item.summary.health
   if (!health || (health.crashes === 0 && !health.lastError)) return null
@@ -220,7 +275,6 @@ function InstalledItem({
   actions: MarketplaceActions
 }) {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
   const [configuring, setConfiguring] = useState(false)
   const declared = declaredConfiguration(item.manifest)
   const configurable = declared.settings.length > 0 || declared.credentials.length > 0
@@ -411,17 +465,16 @@ function InstalledItem({
             {t("marketplace:installed.rollBack", { version: summary.previousVersion })}
           </Button>
         )}
-        {listed && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              actions.openDetails(summary.id)
-            }}
-          >
-            {t("marketplace:installed.details")}
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={t("marketplace:installed.detailsNamed", { name: summary.name })}
+          onClick={() => {
+            actions.openDetails(summary.id)
+          }}
+        >
+          <Info /> {t("marketplace:installed.details")}
+        </Button>
         {configurable && (
           <Button
             variant="outline"
@@ -433,18 +486,6 @@ function InstalledItem({
             <Settings2 /> {t("marketplace:installed.configure")}
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-expanded={expanded}
-          aria-controls={`${id}-more`}
-          onClick={() => {
-            setExpanded(!expanded)
-          }}
-        >
-          <ChevronDown className={cn("transition-transform", expanded && "rotate-180")} />
-          {t("marketplace:installed.more")}
-        </Button>
         <UninstallButton
           item={item}
           disabled={busy}
@@ -456,55 +497,6 @@ function InstalledItem({
         />
       </div>
 
-      {expanded && (
-        <div id={`${id}-more`} className="mt-3 grid gap-4 border-t pt-3">
-          <PermissionList
-            label={t("marketplace:installed.permissionsOf", { name: summary.name })}
-            grants={item.permissions.map((info) =>
-              grantOfInfo(info, actionNamesOf(summary.actions)),
-            )}
-            renderControl={(grant) => {
-              const info = item.permissions.find((p) => p.key === grant.key)
-              if (info?.status === "granted") {
-                return (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    aria-label={t("marketplace:installed.revokeNamed", { title: grant.title })}
-                    onClick={() => {
-                      actions.setGrant(item, grant.key, false)
-                    }}
-                  >
-                    {t("marketplace:installed.revoke")}
-                  </Button>
-                )
-              }
-              return (
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant="outline">
-                    {info?.status === "revoked"
-                      ? t("marketplace:installed.revoked")
-                      : t("marketplace:installed.notGrantedBadge")}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    aria-label={t("marketplace:installed.grantNamed", { title: grant.title })}
-                    onClick={() => {
-                      actions.setGrant(item, grant.key, true)
-                    }}
-                  >
-                    {t("marketplace:installed.grant")}
-                  </Button>
-                </div>
-              )
-            }}
-          />
-          <ActionList item={item} actions={actions} />
-        </div>
-      )}
       {configuring && (
         <ConfigureDialog
           item={item}
@@ -516,6 +508,83 @@ function InstalledItem({
         />
       )}
     </li>
+  )
+}
+
+/**
+ * An installed plugin's permissions as the agent holds them: in Settings ›
+ * Permissions each with Revoke or Grant, on the plugin's page (`readOnly`)
+ * each with its status only, from the same data. Granting and revoking
+ * are Settings' alone.
+ */
+export function InstalledPermissions({
+  item,
+  actions,
+  label,
+  readOnly = false,
+}: {
+  item: PluginDetails
+  actions: Pick<MarketplaceActions, "busy" | "setGrant">
+  label?: string
+  readOnly?: boolean
+}) {
+  const { t } = useTranslation()
+  const { summary } = item
+  const busy = actions.busy !== null
+  return (
+    <PermissionList
+      label={label ?? t("marketplace:installed.permissionsOf", { name: summary.name })}
+      grants={item.permissions.map((info) => grantOfInfo(info, actionNamesOf(summary.actions)))}
+      renderControl={(grant) => {
+        const info = item.permissions.find((p) => p.key === grant.key)
+        if (readOnly) {
+          return (
+            <Badge variant={info?.status === "granted" ? "secondary" : "outline"}>
+              {info?.status === "granted"
+                ? t("marketplace:installed.grantedBadge")
+                : info?.status === "revoked"
+                  ? t("marketplace:installed.revoked")
+                  : t("marketplace:installed.notGrantedBadge")}
+            </Badge>
+          )
+        }
+        if (info?.status === "granted") {
+          return (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              aria-label={t("marketplace:installed.revokeNamed", { title: grant.title })}
+              onClick={() => {
+                actions.setGrant(item, grant.key, false)
+              }}
+            >
+              {t("marketplace:installed.revoke")}
+            </Button>
+          )
+        }
+        return (
+          <div className="flex shrink-0 items-center gap-2">
+            <Badge variant="outline">
+              {info?.status === "revoked"
+                ? t("marketplace:installed.revoked")
+                : t("marketplace:installed.notGrantedBadge")}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              aria-label={t("marketplace:installed.grantNamed", { title: grant.title })}
+              onClick={() => {
+                actions.setGrant(item, grant.key, true)
+              }}
+            >
+              {t("marketplace:installed.grant")}
+            </Button>
+          </div>
+        )
+      }}
+    />
   )
 }
 
@@ -556,7 +625,14 @@ function actionParameters(manifest: unknown, action: string): ParameterSpec[] {
   })
 }
 
-function ActionList({ item, actions }: { item: PluginDetails; actions: MarketplaceActions }) {
+/** The installed version's actions, each with Run (and its parameters). */
+export function ActionList({
+  item,
+  actions,
+}: {
+  item: PluginDetails
+  actions: MarketplaceActions
+}) {
   const { t } = useTranslation()
   if (item.summary.actions.length === 0) return null
   return (
@@ -587,6 +663,12 @@ function ActionRow({
 }) {
   const { t } = useTranslation()
   const parameters = actionParameters(item.manifest, action.action)
+  // Read from the structured grants, never from the agent's message.
+  const missing = item.permissions
+    .filter(
+      (p) => p.optional && (p.actions ?? []).includes(action.action) && p.status !== "granted",
+    )
+    .map((p) => grantOfInfo(p, actionNamesOf(item.summary.actions)).title)
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       parameters.map((p) => [p.key, p.defaultValue === undefined ? "" : String(p.defaultValue)]),
@@ -642,8 +724,15 @@ function ActionRow({
         </Button>
       </div>
       {action.description && <p className="text-xs text-muted-foreground">{action.description}</p>}
-      {!action.available && action.unavailableReason && (
-        <p className="text-xs text-muted-foreground">{action.unavailableReason}</p>
+      {!action.available && (missing.length > 0 || action.unavailableReason) && (
+        <p className="text-xs text-muted-foreground">
+          {missing.length > 0
+            ? // Its ungranted permissions, in words: granted under Permissions.
+              t("marketplace:installed.run.needsPermission", {
+                permissions: missing.join(", "),
+              })
+            : action.unavailableReason}
+        </p>
       )}
       {action.available && parameters.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">

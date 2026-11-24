@@ -10,6 +10,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { installDomStubs } from "@/test/dom"
 import { builtInModules } from "@/test/fixtures"
 import { HELLO, LIGHTS, createFakePluginClient, type FakeOptions } from "@/test/plugins"
+import { installedItem, openInstalled } from "@/test/marketplace"
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
@@ -35,11 +36,14 @@ afterEach(() => {
 
 const SECRET = "sk-live-0123456789abcdef"
 
-function renderMarketplace(options: FakeOptions = {}) {
+function renderMarketplace(
+  options: FakeOptions = {},
+  variant: "marketplace" | "diagnostics" = "marketplace",
+) {
   const client = createFakePluginClient({ helloInstalled: true, ...options })
   const result = renderWithApp(
     <PluginClientContext value={client}>
-      <PluginsSettings />
+      <PluginsSettings variant={variant} />
     </PluginClientContext>,
     { modules: builtInModules() },
   )
@@ -48,20 +52,8 @@ function renderMarketplace(options: FakeOptions = {}) {
 
 type User = ReturnType<typeof renderMarketplace>["user"]
 
-const installedItem = (name: string) =>
-  within(
-    within(screen.getByRole("list", { name: "Installed plugins" }))
-      .getByText(name, { selector: "span" })
-      .closest("li") as HTMLElement,
-  )
-
-async function openInstalled(user: User) {
-  await screen.findByRole("list", { name: "Plugins" })
-  await user.click(screen.getByRole("tab", { name: /Installed/ }))
-}
-
 async function openConfigure(user: User) {
-  await openInstalled(user)
+  await openInstalled()
   await user.click(installedItem("Hello Weather").getByRole("button", { name: "Configure" }))
   const dialog = screen.getByRole("dialog", { name: "Configure Hello Weather" })
   await within(dialog).findByRole("form", { name: "Settings" })
@@ -168,7 +160,7 @@ describe("the settings form", () => {
 
   it("shows missing required settings until they are set", async () => {
     const { user, client } = renderMarketplace({ helloRequiresCity: true })
-    await openInstalled(user)
+    await openInstalled()
     const item = installedItem("Hello Weather")
     expect(item.getByText("Settings missing")).toBeInTheDocument()
     expect(item.getByText(/City has no value and no default/)).toBeInTheDocument()
@@ -330,7 +322,7 @@ describe("credentials", () => {
 
 describe("uninstall retention", () => {
   async function openUninstall(user: User) {
-    await openInstalled(user)
+    await openInstalled()
     await user.click(installedItem("Hello Weather").getByRole("button", { name: "Uninstall" }))
     return within(screen.getByRole("alertdialog", { name: "Uninstall Hello Weather?" }))
   }
@@ -385,18 +377,24 @@ describe("plugin details", () => {
     const { user } = renderMarketplace({
       helloStorage: { usedBytes: 1536, keys: 3, quotaBytes: 262_144, maxKeys: 1000 },
     })
-    await openInstalled(user)
+    await openInstalled()
     expect(
       installedItem("Hello Weather").getByText("Storage: 1.5 KiB of 256 KiB used (3 of 1000 keys)"),
     ).toBeInTheDocument()
-    await user.click(installedItem("Hello Weather").getByRole("button", { name: "Details" }))
-    const storage = await screen.findByRole("region", { name: "Storage" })
-    expect(storage).toHaveTextContent("1.5 KiB of 256 KiB used (3 of 1000 keys)")
+    await user.click(
+      installedItem("Hello Weather").getByRole("button", { name: "Details of Hello Weather" }),
+    )
+    await screen.findByRole("heading", { name: "Hello Weather", level: 3 })
+    // On the plugin's page, with the technical record.
+    await user.click(screen.getByRole("button", { name: "Details" }))
+    expect(screen.getByLabelText("Details", { selector: "dl" })).toHaveTextContent(
+      "Storage1.5 KiB of 256 KiB used (3 of 1000 keys)",
+    )
   })
 
   it("shows nothing about storage for an agent without the field", async () => {
-    const { user } = renderMarketplace()
-    await openInstalled(user)
+    renderMarketplace()
+    await openInstalled()
     expect(installedItem("Hello Weather").queryByText(/Storage:/)).not.toBeInTheDocument()
   })
 
@@ -415,7 +413,8 @@ describe("plugin details", () => {
         },
       ],
     })
-    await user.click(await screen.findByRole("button", { name: /Home Lights/ }))
+    const catalog = await screen.findByRole("list", { name: "Recently added" })
+    await user.click(within(catalog).getByRole("button", { name: "Home Lights" }))
     expect(
       await screen.findByText(/Installed here before as Home Lights, last version 0\.2\.0/),
     ).toBeInTheDocument()
@@ -424,7 +423,15 @@ describe("plugin details", () => {
 
 describe("classification", () => {
   it("tells core functionality, installed optional and available plugins apart", async () => {
+    // Technical: under Diagnostics in Settings, not in the Marketplace.
     renderMarketplace()
+    await screen.findByRole("list", { name: "Recently added" })
+    expect(
+      screen.queryByRole("region", { name: "What DeckPilot includes" }),
+    ).not.toBeInTheDocument()
+    cleanup()
+
+    renderMarketplace({}, "diagnostics")
     const overview = await screen.findByRole("region", { name: "What DeckPilot includes" })
     expect(overview).toHaveTextContent(
       "Core functionalityBuilt into DeckPilot, not plugins: Docker, General, Git, HTTP, Notifications, System.",
@@ -433,11 +440,6 @@ describe("classification", () => {
     expect(overview).not.toHaveTextContent("Bundled system plugins")
     expect(overview).toHaveTextContent("Installed optional plugins1 installed by you")
     expect(overview).toHaveTextContent("Available plugins3 in the registry, not installed.")
-    const cards = within(screen.getByRole("list", { name: "Plugins" })).getAllByRole("listitem")
-    const hello = cards.find((c) => c.textContent.includes("Hello Weather"))
-    const lights = cards.find((c) => c.textContent.includes("Home Lights"))
-    expect(hello).toHaveTextContent("Optional plugin")
-    expect(lights).toHaveTextContent("Available plugin")
   })
 })
 

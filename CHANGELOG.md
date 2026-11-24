@@ -17,6 +17,17 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Marketplace: a sidebar with search, Discover, Installed, Updates,
+  Categories and collections; plugin pages with screenshots, highlights,
+  what's new, version history, publisher and trust; install, update and
+  failure states. An empty collection names the categories that would
+  fill it and offers "Browse all categories"; nothing is made up to fill
+  it.
+- Marketplace: Discover and plugin pages can show the registry's signed
+  storefront (banners, editorial sections, listings and verified media).
+  The registry does not publish one yet, so Discover is built from the
+  catalog alone; text, links and images of a storefront are shown inertly
+  (no HTML, https links only, images checked by their hash).
 - Device Editor: the key labels editor. The Inspector lists a key's labels
   (up to 8) with their text (and variables, through the same picker as
   the title), position, size, colour, background, opacity and layer, and
@@ -79,6 +90,10 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
+- Plugin permissions are granted and revoked in Settings › Permissions;
+  a plugin's page in the Marketplace shows them read-only, with a link
+  there. Plugin diagnostics and module migrations are in Settings › Logs &
+  Diagnostics; the experimental Settings › Plugins page is gone.
 - The Inspector shows the selected key's preview in a fixed column beside
   the settings, which scroll on their own; the actions of a key are
   gesture cards.

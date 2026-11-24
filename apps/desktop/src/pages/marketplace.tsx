@@ -1,19 +1,19 @@
-import { Page } from "@/components/page"
+import { useTitlebar } from "@/hooks/use-titlebar"
 import { useTranslation } from "@/i18n"
 import { PluginsSettings } from "@/plugins/marketplace"
 
 /**
  * The plugin marketplace as a workspace of the main window, opened from
- * the toolbar: the catalog first. Installed plugins are also managed in
- * Settings › Extensions › Plugins. Only in builds with plugins.
+ * the toolbar: the only place plugins are discovered, installed and
+ * managed, with its own sidebar beside its content. Only in builds with
+ * plugins.
  */
 export function MarketplacePage() {
   const { t } = useTranslation()
+  useTitlebar({ title: t("marketplace:page.title"), subtitle: t("marketplace:page.description") })
   return (
-    <Page title={t("marketplace:page.title")} description={t("marketplace:page.description")}>
-      <div className="mx-auto grid w-full max-w-5xl gap-6">
-        <PluginsSettings />
-      </div>
-    </Page>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PluginsSettings />
+    </div>
   )
 }

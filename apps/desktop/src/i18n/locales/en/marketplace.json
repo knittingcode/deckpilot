@@ -4,10 +4,6 @@
     "verified": "Verified publisher",
     "notVerified": "· not verified by the registry"
   },
-  "experimental": {
-    "title": "Experimental",
-    "text": "Plugins run out of process in a sandboxed host. The plugin runtime is experimental and not ready for production use; only install plugins you trust."
-  },
   "runtime": {
     "label": "Plugin runtime",
     "cannotRunOn": "Plugins cannot run on {{platform}}",
@@ -46,7 +42,8 @@
     "stale": {
       "title": "Registry stale",
       "text": "Installed plugins keep running. Installing and updating are paused."
-    }
+    },
+    "retry": "Retry"
   },
   "progress": {
     "label": "Plugin operations",
@@ -82,12 +79,6 @@
     "only": "{{platform}} only"
   },
   "loadFailed": "Plugins could not be loaded",
-  "tabs": {
-    "label": "Plugin marketplace",
-    "discover": "Discover",
-    "installed": "Installed {{number}}",
-    "updates": "Updates {{number}}"
-  },
   "package": {
     "title": "Install the plugin package?",
     "description": "DeckPilot installs it only if its bytes are a version the verified registry pins. Nothing is granted now: its permissions are shown for your consent before it can be enabled.",
@@ -143,7 +134,6 @@
     }
   },
   "discover": {
-    "installFile": "Install from package file…",
     "installFileHint": "Only a .dpplugin whose bytes the verified registry pins is accepted.",
     "search": "Search plugins",
     "categories": "Categories",
@@ -158,19 +148,14 @@
     },
     "noMatch": {
       "title": "No plugins found",
-      "text": "No plugin matches your search.",
-      "inCategory": "No plugin in {{category}} matches your search."
+      "text": "No plugin matches your search."
     }
   },
   "badge": {
-    "latestVersion": "Latest {{version}}",
-    "installedVersion": "Installed {{version}}",
-    "optional": "Optional plugin",
-    "available": "Available plugin",
-    "update": "Update available",
     "withdrawn": "Withdrawn",
     "incompatible": "Not compatible",
-    "deprecated": "Deprecated"
+    "deprecated": "Deprecated",
+    "official": "Official"
   },
   "updates": {
     "intro": "Updates that ask for new permissions are never applied without your consent.",
@@ -181,7 +166,8 @@
     "waiting_one": "Waiting for consent: {{count}} permission",
     "waiting_other": "Waiting for consent: {{count}} permissions",
     "review": "Review and update",
-    "update": "Update"
+    "update": "Update",
+    "noneText": "New versions show here when the registry publishes them. Updates that ask for new permissions are never applied without your consent."
   },
   "details": {
     "back": "Back to plugins",
@@ -192,23 +178,13 @@
     "categories": "Categories",
     "about": "About",
     "deprecated": "Deprecated by the registry",
-    "installStatus": "Install status",
-    "installed": "Installed {{version}} ({{state}})",
     "updateTo": "Update to {{version}}",
-    "noUpdate": "No update available",
-    "install": "Install",
-    "installVersion": "Install {{version}}",
     "installedFor": "Installed for {{plugin}}; it is offered for removal once nothing needs it.",
     "knownBefore": "Installed here before as {{name}}, last version {{version}} ({{date}}). Actions that still use it say it is not installed.",
     "storage": "Storage",
-    "storageHint": "What the plugin keeps for itself in DeckPilot. It is deleted when the plugin is uninstalled.",
-    "compatibility": "Compatibility of version {{version}}",
     "notStated": "Not stated by the registry",
     "platforms": "Platforms",
     "thisComputer": "This computer",
-    "compatibleOn": "{{platform}}: compatible",
-    "incompatible": "Not compatible with this DeckPilot",
-    "incompatibleReasons": "Incompatibility reasons",
     "withdrawn": "Version {{version}} was withdrawn",
     "permissions": "Permissions of version {{version}}",
     "permissionsHint": "Each with the publisher's reason. DeckPilot asks for your consent before it installs anything.",
@@ -216,12 +192,53 @@
     "versions": "Versions",
     "published": "published {{date}}",
     "latest": "Latest",
-    "withdrawnBecause": "Withdrawn: {{reason}}",
     "installedBadge": "Installed",
     "actions": "Actions",
     "actionsNotListed": "The registry does not list a plugin's actions; they are shown here once it is installed.",
     "noActions": "This plugin adds no actions.",
-    "unavailable": "Unavailable"
+    "needsDeckPilot": "Needs DeckPilot {{range}}.",
+    "bundledOnly": "Comes with DeckPilot and is installed with it; it is not installed from the Marketplace.",
+    "withdrawnShort": "Every version was withdrawn by the registry.",
+    "manage": "Manage",
+    "version": "Version",
+    "latestIs": "Latest: {{version}}",
+    "requires": "Requires",
+    "deckpilotRange": "DeckPilot {{range}}",
+    "compatible": "Compatible",
+    "notCompatible": "Not compatible",
+    "description": "About this plugin",
+    "whatsNew": "What’s new",
+    "versionLine": "Version {{version}}",
+    "noChangelog": "The registry publishes no release notes for this plugin.",
+    "screenshots": "Screenshots",
+    "screenshotOf": "{{name}}, screenshot {{number}}",
+    "links": "Links",
+    "documentation": "Documentation",
+    "support": "Support",
+    "copyLink": "Copy the {{label}} link",
+    "linkCopied": "Link copied",
+    "technical": "Details",
+    "pluginId": "Plugin ID",
+    "registry": "Registry",
+    "registrySeq": "{{source}} (snapshot {{seq}})",
+    "origin": "Installed from",
+    "originOf": {
+      "registry": "The registry",
+      "sideload": "A local package",
+      "dev": "A development folder",
+      "bundled": "DeckPilot’s own copy"
+    },
+    "incompatibleReason": "Reported by the agent",
+    "grantedPermissions": "Permissions",
+    "grantedPermissionsHint": "What the installed version may do, as you allowed it. You grant and revoke permissions in Settings › Permissions; a revoke takes effect at once, and calls that need a revoked permission fail.",
+    "managePermissions": "Manage in Settings › Permissions",
+    "usage": "Status and resources",
+    "health": "Plugin host",
+    "healthy": "No failures since the agent started",
+    "healthCrashes_one": "Stopped {{count}} time since the agent started",
+    "healthCrashes_other": "Stopped {{count}} times since the agent started",
+    "notReported": "Not reported by the agent",
+    "openDiagnostics": "Diagnostics in Settings"
   },
   "installed": {
     "empty": "No plugins installed",
@@ -277,12 +294,12 @@
     "rollBack": "Roll back to {{version}}",
     "details": "Details",
     "configure": "Configure",
-    "more": "Permissions and actions",
     "permissionsOf": "Permissions of {{name}}",
     "revoke": "Revoke",
     "revokeNamed": "Revoke: {{title}}",
     "revoked": "Revoked",
     "notGrantedBadge": "Not granted",
+    "grantedBadge": "Granted",
     "grant": "Grant",
     "grantNamed": "Grant: {{title}}",
     "actionsOf": "Actions of {{name}}",
@@ -295,8 +312,10 @@
       "skipped": "Skipped",
       "skippedWith": "Skipped: {{message}}",
       "failed": "Failed ({{code}})",
-      "failedWith": "Failed ({{code}}): {{message}}"
-    }
+      "failedWith": "Failed ({{code}}): {{message}}",
+      "needsPermission": "Needs a permission that is not granted: {{permissions}}. Grant it under Permissions."
+    },
+    "detailsNamed": "Details of {{name}}"
   },
   "uninstall": {
     "button": "Uninstall",
@@ -310,6 +329,209 @@
   "page": {
     "title": "Marketplace",
     "description": "Signed community plugins from the verified registry"
+  },
+  "home": {
+    "title": "Discover plugins",
+    "subtitle": "Add integrations, timers, games and more to your keys. Every plugin comes from the signed DeckPilot registry and asks before it does anything.",
+    "results_one": "{{count}} plugin",
+    "results_other": "{{count}} plugins",
+    "resultsIn_one": "{{count}} plugin in {{scope}}",
+    "resultsIn_other": "{{count}} plugins in {{scope}}",
+    "clear": "Clear",
+    "migrationWaiting_one": "{{modules}} is moving to a plugin and waits for your consent.",
+    "migrationWaiting_other": "{{modules}} are moving to plugins and wait for your consent.",
+    "migrationReview": "Review",
+    "recent": {
+      "title": "Recently added",
+      "text": "The newest plugins you don’t have yet, by the date the registry first published them.",
+      "added": "Added {{date}}",
+      "allInstalled": "Every plugin in the registry is installed."
+    },
+    "migrationReviewInSettings": "Review in Settings",
+    "manageAll_one": "Manage {{count}} plugin",
+    "manageAll_other": "Manage all {{count}}"
+  },
+  "category": {
+    "developerTools": "Developer tools",
+    "productivity": "Productivity",
+    "communication": "Communication",
+    "monitoring": "Monitoring",
+    "media": "Media",
+    "smartHome": "Smart home",
+    "other": "Other"
+  },
+  "state": {
+    "install": "Install",
+    "installNamed": "Install {{name}}",
+    "installing": "Installing…",
+    "update": "Update",
+    "updateNamed": "Update {{name}}",
+    "updating": "Updating…",
+    "open": "Open",
+    "openNamed": "Open {{name}}",
+    "configure": "Configure",
+    "configureNamed": "Configure {{name}}",
+    "enable": "Enable",
+    "enableNamed": "Enable {{name}}",
+    "installed": "Installed",
+    "attention": "Needs attention",
+    "incompatible": "Incompatible",
+    "withdrawn": "Unavailable",
+    "bundled": "Included with DeckPilot",
+    "retry": "Retry",
+    "retryNamed": "Try installing {{name}} again",
+    "retryUpdateNamed": "Try updating {{name}} again",
+    "installFailed": "Couldn’t install.",
+    "updateFailed": "Couldn’t update."
+  },
+  "library": {
+    "views": "Installed plugins to show",
+    "all": "All",
+    "disabled": "Disabled",
+    "incompatible": "Incompatible",
+    "disabledIntro": "Turned off: they do not run and their actions are unavailable until you enable them.",
+    "incompatibleIntro": "Installed plugins that cannot run here as they are, and plugins that need a different DeckPilot.",
+    "noneDisabled": "No disabled plugins",
+    "noneIncompatible": "Everything is compatible"
+  },
+  "trust": {
+    "title": "Verification",
+    "registry": {
+      "title": "Signed registry",
+      "fresh": "Listed in the DeckPilot registry, whose signatures this computer verified. Every package is checked against the size and hash the registry signed before it is installed.",
+      "stale": "Listed in the DeckPilot registry, but its signed timestamp has expired. Nothing is installed until it is verified again.",
+      "unverified": "The registry has not been verified on this computer; nothing can be installed from it yet."
+    },
+    "publisher": {
+      "title": "Publisher",
+      "verified": "{{name}} is a publisher the registry verified (GitHub: {{login}}).",
+      "notVerified": "The registry has not verified who {{name}} is."
+    },
+    "official": {
+      "title": "Official plugin",
+      "signed_one": "An official release: signed by {{threshold}} of DeckPilot’s {{count}} publisher key.",
+      "signed_other": "An official release: signed by {{threshold}} of DeckPilot’s {{count}} publisher keys.",
+      "firstParty": "Made by DeckPilot. Official releases need DeckPilot’s publisher signatures on top of the registry’s.",
+      "bundled": "Made by DeckPilot and shipped only with DeckPilot itself."
+    },
+    "bundled": {
+      "title": "Included with DeckPilot",
+      "text": "Installed from DeckPilot’s own copy and checked against the fingerprints built into DeckPilot."
+    },
+    "sideload": {
+      "title": "Local package",
+      "text": "Installed from a package file whose bytes the verified registry pins."
+    },
+    "dev": {
+      "title": "Development folder",
+      "text": "Installed from a development folder: not verified by the registry."
+    }
+  },
+  "diagnostics": {
+    "intro": "Technical information about plugins on this computer: how DeckPilot’s built-in modules move to plugins, what DeckPilot is made of and the registry it reads.",
+    "noMigrations": "No built-in module is moving to a plugin on this computer.",
+    "registry": "Registry",
+    "source": "Source",
+    "state": "State",
+    "seq": "Snapshot",
+    "expires": "Verified until",
+    "offline": "Offline",
+    "error": "Last error",
+    "platform": "Agent",
+    "freshness": {
+      "fresh": "Verified",
+      "stale": "Expired: verify again",
+      "neverVerified": "Never verified"
+    }
+  },
+  "sections": {
+    "yours": {
+      "title": "Your plugins",
+      "text": "Installed plugins with what they may do; enable, configure, update or uninstall them here."
+    }
+  },
+  "nav": {
+    "label": "Marketplace",
+    "discover": "Discover",
+    "installed": "Installed",
+    "updates": "Updates",
+    "categories": "Categories",
+    "collections": "Collections",
+    "code": "Code",
+    "play": "Play",
+    "work": "Work",
+    "automate": "Automate",
+    "monitor": "Monitor"
+  },
+  "collection": {
+    "count_one": "{{count}} plugin",
+    "count_other": "{{count}} plugins",
+    "empty": {
+      "title": "Nothing here yet",
+      "text": "No plugin in the registry belongs to this collection yet.",
+      "categories": "Plugins in {{categories}} appear here as soon as the registry has some.",
+      "browse": "Browse all categories"
+    },
+    "code": {
+      "title": "Code",
+      "text": "Pull requests, issues, pipelines and repositories on your keys."
+    },
+    "play": {
+      "title": "Play",
+      "text": "Music, media and other ways to have fun with your deck."
+    },
+    "work": {
+      "title": "Work",
+      "text": "Timers, breaks, notifications and messages that keep your day on track."
+    },
+    "automate": {
+      "title": "Automate",
+      "text": "Lights and devices at home, switched from your keys."
+    },
+    "monitor": {
+      "title": "Monitor",
+      "text": "Air quality, exchange rates and other values at a glance."
+    }
+  },
+  "categories": {
+    "text": "Every category the registry uses. Choose one to see its plugins.",
+    "empty": "The registry names no categories."
+  },
+  "permissionsReview": {
+    "list": "Permissions of installed plugins",
+    "open": "Open in Marketplace",
+    "openNamed": "Open {{name}} in the Marketplace"
+  },
+  "search": {
+    "resultsFor": "Results for “{{query}}”",
+    "clear": "Clear search"
+  },
+  "sidebar": {
+    "installFile": "Install from file"
+  },
+  "storefront": {
+    "carousel": "carousel",
+    "slide": "slide",
+    "banners": "Highlights",
+    "slideOf": "{{number}} of {{count}}",
+    "slideNamed": "Slide {{number}}: {{title}}",
+    "slides": "Choose a slide",
+    "previous": "Previous",
+    "next": "Next",
+    "open": "Learn more",
+    "scrollBack": "Scroll {{title}} back",
+    "scrollForward": "Scroll {{title}} forward",
+    "spotlight": "Spotlight",
+    "whatsNewIn": "What’s new in {{version}}",
+    "categories": "Browse by category",
+    "catalog": "All plugins",
+    "loading": "Loading Discover",
+    "highlights": "Highlights",
+    "openScreenshot": "Open screenshot {{number}} of {{count}}: {{alt}}",
+    "screenshotOf": "{{name}}: screenshot {{number}} of {{count}}",
+    "lightboxHint": "Left and Right show the other screenshots; Escape closes.",
+    "changelog": "Changelog",
+    "fullLink": "This plugin is not DeckPilot’s: its links are shown in full. Check where one leads before you open it."
   },
   "installRefused": {
     "title": "{{name}} {{version}} cannot be installed"
