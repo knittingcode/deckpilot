@@ -1063,7 +1063,7 @@ fn privileged_kinds_are_installed_only_from_the_bundle() {
 fn calls_is_installed_only_from_the_bundle_and_never_seeded() {
     let env = Env::new();
     let mut manager = env.open();
-    let mut permissions: Vec<Value> = base_permissions()
+    let mut permissions: Vec<serde_json::Value> = base_permissions()
         .into_iter()
         .filter(|p| p["kind"] != "network" && p["kind"] != "credentials")
         .collect();
