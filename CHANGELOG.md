@@ -119,7 +119,6 @@ released either. 0.6.0 is the first version intended for publication.
   deleted workflow, a workflow that needs input values, or a graph
   workflow while the Workflows plugin is off. Keys saved like that before
   are kept and reported, and moving or duplicating them is not new.
-
 - Built-in actions now declare where they make sense; nothing changes yet
   for existing setups. Each built-in says whether it belongs on a key, on
   a double click or long press, on a key's live display, in a Multi Action
@@ -127,6 +126,21 @@ released either. 0.6.0 is the first version intended for publication.
   without refusing it, and such a use still runs, with a warning in the
   agent's log. Wait is deprecated in favour of Delay and is no longer
   offered for new actions; saved Waits keep working unchanged.
+- Mixing versions: the 0.14 app and background agent speak IPC protocol 17
+  (variables in key titles and key labels). Until the previous agent has
+  restarted after the update, the editor shows key titles as typed and
+  lists no variables for them, and the device draws no labels; everything
+  else works as before. A 0.13 or older app connected to a 0.14 agent
+  works as before, and the device still shows resolved titles.
+- Going back to 0.13 or earlier keeps the configuration readable (no
+  database or plugin store change). There, keys show no labels and saving
+  a layout drops them, an export with labels cannot be imported, a title
+  with variables longer than 32 characters cannot be saved until it is
+  shortened, an action saved as "Needs configuration" (and a Multi Action
+  step or graph workflow using one) cannot be edited until it is
+  completed, and Close Application actions, which those versions do not
+  know, are kept as unavailable and never run. Workflow references, the guarded delete and
+  the new key messages change no saved data.
 
 ### Fixed
 
@@ -140,6 +154,12 @@ released either. 0.6.0 is the first version intended for publication.
   run: a press, a step or a workflow that reaches it is refused before
   anything happens, and says which settings are missing. A wrong value is
   still refused when saving. Nothing changes for configured actions.
+- The plugin store could fail to open ("PRAGMA key requires a key") when
+  the agent or the app opened it at the same moment as another encrypted
+  database, right after starting; such a connection also could not make
+  the backup taken before a plugin store upgrade. It now waits for the
+  encryption to be ready and otherwise refuses before reading or writing
+  anything.
 
 ## [0.13.0] - 2026-11-22
 
