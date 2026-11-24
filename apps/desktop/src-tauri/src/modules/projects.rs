@@ -246,20 +246,37 @@ pub struct ResourceCheck {
     used_by: Vec<String>,
 }
 
-fn status_of(binding: &MachineResourceBinding) -> ResourceStatus {
-    let path = std::path::Path::new(&binding.value);
+/// Whether a binding's value is still there. An application or terminal is
+/// checked the way Open Application resolves it (`deckpilot_apps::presence`):
+/// a macOS bundle id, a Linux desktop-file id or a Windows App Paths name
+/// the pickers store is not a path. A file chosen with the picker (kind
+/// `other`) is checked when its value is an absolute path; other values of
+/// that kind, and network paths, are not checked.
+pub(crate) fn status_of(binding: &MachineResourceBinding) -> ResourceStatus {
+    let value = binding.value.trim();
+    let path = std::path::Path::new(value);
+    let network = value.starts_with("\\\\") || value.starts_with("//");
     match binding.kind {
         ResourceKind::Directory if path.is_dir() => ResourceStatus::Ok,
-        ResourceKind::Application | ResourceKind::Terminal if path.exists() => ResourceStatus::Ok,
-        ResourceKind::Directory | ResourceKind::Application | ResourceKind::Terminal => {
-            ResourceStatus::Missing
+        ResourceKind::Application | ResourceKind::Terminal if network => ResourceStatus::Unchecked,
+        ResourceKind::Application | ResourceKind::Terminal => {
+            match deckpilot_apps::presence(value) {
+                Some(true) => ResourceStatus::Ok,
+                Some(false) => ResourceStatus::Missing,
+                None => ResourceStatus::Unchecked,
+            }
         }
-        ResourceKind::Url
-            if binding.value.starts_with("https://") || binding.value.starts_with("http://") =>
-        {
+        ResourceKind::Url if value.starts_with("https://") || value.starts_with("http://") => {
             ResourceStatus::Ok
         }
-        ResourceKind::Url => ResourceStatus::Missing,
+        ResourceKind::Directory | ResourceKind::Url => ResourceStatus::Missing,
+        ResourceKind::Other if path.is_absolute() && !network => {
+            if path.exists() {
+                ResourceStatus::Ok
+            } else {
+                ResourceStatus::Missing
+            }
+        }
         ResourceKind::DockerEnvironment | ResourceKind::Service | ResourceKind::Other => {
             ResourceStatus::Unchecked
         }
@@ -305,4 +322,73 @@ pub fn check_resources(
             }
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding(kind: ResourceKind, value: &str) -> MachineResourceBinding {
+        MachineResourceBinding {
+            key: ResourceKey::new("picker.test").unwrap(),
+            kind,
+            value: value.to_owned(),
+        }
+    }
+
+    #[test]
+    fn picked_files_and_folders_are_checked_where_they_were_chosen() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("report.pdf");
+        std::fs::write(&file, b"%PDF").unwrap();
+        let gone = dir.path().join("moved.pdf");
+        let file = file.to_string_lossy();
+        let gone = gone.to_string_lossy();
+        let folder = dir.path().to_string_lossy();
+        let status = |kind, value: &str| status_of(&binding(kind, value));
+        assert_eq!(status(ResourceKind::Other, &file), ResourceStatus::Ok);
+        assert_eq!(status(ResourceKind::Other, &gone), ResourceStatus::Missing);
+        assert_eq!(status(ResourceKind::Directory, &folder), ResourceStatus::Ok);
+        assert_eq!(
+            status(ResourceKind::Directory, &gone),
+            ResourceStatus::Missing
+        );
+        // Not a path, or a network path: not checked.
+        assert_eq!(
+            status(ResourceKind::Other, "token-42"),
+            ResourceStatus::Unchecked
+        );
+        assert_eq!(
+            status(ResourceKind::Other, "//server/share/a.txt"),
+            ResourceStatus::Unchecked
+        );
+        assert_eq!(
+            status(ResourceKind::Other, r"\\server\share\a.txt"),
+            ResourceStatus::Unchecked
+        );
+    }
+
+    #[test]
+    fn applications_are_checked_as_open_application_resolves_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = std::env::current_exe().unwrap();
+        let gone = dir.path().join("Gone").join("app");
+        let status = |value: &str| status_of(&binding(ResourceKind::Application, value));
+        assert_eq!(status(&program.to_string_lossy()), ResourceStatus::Ok);
+        assert_eq!(status(&gone.to_string_lossy()), ResourceStatus::Missing);
+        assert_eq!(
+            status_of(&binding(ResourceKind::Terminal, &gone.to_string_lossy())),
+            ResourceStatus::Missing
+        );
+        assert_eq!(status(r"\\server\share\app.exe"), ResourceStatus::Unchecked);
+        #[cfg(target_os = "macos")]
+        {
+            // What the picker stores: a bundle id, never a path.
+            assert_eq!(status("com.apple.finder"), ResourceStatus::Ok);
+            assert_eq!(
+                status("io.github.knittingcode.deckpilot.test-no-such-app"),
+                ResourceStatus::Missing
+            );
+        }
+    }
 }

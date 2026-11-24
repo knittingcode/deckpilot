@@ -133,6 +133,7 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         machine::list_browsers,
         machine::application_icon,
         machine::application_present,
+        machine::resource_status,
         machine::describe_application,
         machine::get_gesture_defaults,
         machine::set_gesture_defaults,
