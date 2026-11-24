@@ -38,6 +38,29 @@ released either. 0.6.0 is the first version intended for publication.
   only DeckPilot's built-in modules, with a link to the Marketplace for
   plugins.
 - Notifications show their time beside the title.
+- A key whose plugin is missing, disabled, incompatible, waiting for a
+  permission or briefly away keeps its assignment, title, icon and look,
+  and shows a compact face: a plug icon with the key's title and colours,
+  no warning text. A key whose other gesture still works keeps its normal
+  look. The device, the simulated device and the editor's previews draw
+  the same face, and the key comes back as it was once the plugin can run
+  the action again.
+
+### Fixed
+
+- The editor's previews of keys stored with the old action ids of
+  built-ins that moved to a plugin (`projects.next`, `git.status`, …)
+  showed them as unavailable even while the plugin served them. They now
+  follow the plugin, as the agent does.
+- Settings › Resources called an application chosen with the application
+  or browser picker "missing", because it is stored by its bundle id,
+  desktop-file id or App Paths name rather than a path, and never checked a
+  file chosen with the file picker. Applications are now checked the way
+  Open Application finds them, and a chosen file that was moved or deleted
+  shows as missing.
+- Close Application also compares a process's start time before it signals
+  or waits for it, so a new process that was given the same process id is
+  never taken for the one it matched.
 
 ## [0.14.0] - 2026-11-24
 

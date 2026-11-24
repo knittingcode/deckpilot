@@ -898,6 +898,41 @@ fn open_opens_a_bound_file_folder_or_application_itself() {
 }
 
 #[test]
+fn a_picked_folder_that_was_deleted_is_not_found() {
+    // A folder chosen with the folder picker, then deleted or moved.
+    let mut fixture = fixture();
+    let launcher = Arc::new(RecordingLauncher::new());
+    let gone = fixture.dir.join("Downloads-moved");
+    bind(
+        &mut fixture,
+        "folder.downloads-k3x9q2",
+        ResourceKind::Directory,
+        &gone.to_string_lossy(),
+    );
+    let parameters = ActionParameters::new().with("location", fixed("folder.downloads-k3x9q2"));
+    let folder = OpenDirectory::new(launcher.clone());
+    let open = OpenFile::new(launcher.clone());
+    for result in [
+        run(&folder, parameters.clone(), &fixture.context()),
+        run(&open, parameters, &fixture.context()),
+    ] {
+        assert_eq!(
+            code(&result),
+            Some(crate::codes::NOT_FOUND),
+            "{}",
+            result.message
+        );
+        assert!(
+            result.message.contains("moved or deleted")
+                && result.message.contains("Settings › Resources"),
+            "{}",
+            result.message
+        );
+    }
+    assert!(launcher.plans().is_empty(), "nothing is opened");
+}
+
+#[test]
 fn saved_open_actions_keep_their_parameters() {
     // As saved before Website, Open and Open Application were extended.
     let saved = [
