@@ -1112,7 +1112,8 @@
       "keep_other": "Keep its look and delete {{count}} labels",
       "replace": "Replace it",
       "merge": "Merge the labels",
-      "mergeTooMany": "Merging would give the key {{total}} labels; a key has at most {{max}}."
+      "mergeTooMany": "Merging would give the key {{total}} labels; a key has at most {{max}}.",
+      "stale": "Nothing was changed: the key changed while you chose. Try again."
     },
     "preset": {
       "top": "Top",

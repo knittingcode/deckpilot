@@ -309,7 +309,8 @@
     "empty": "No matching nodes",
     "unavailableEntry": "{{title}} — unavailable: {{reason}}",
     "unavailable": "Unavailable: {{reason}}",
-    "addHint": "{{title}} — drag onto the canvas or click to add"
+    "addHint": "{{title}} — drag onto the canvas or click to add",
+    "needsSetup": "not set up yet"
   },
   "node": {
     "title": {

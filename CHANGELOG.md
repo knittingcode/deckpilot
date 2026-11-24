@@ -17,6 +17,29 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Action Library: **gesture presets**, one entry that puts several actions
+  on the gestures of a key at once. *Brightness Control* (Device) dims by
+  10% on a single press, sets 100% on a double click and 50% on a long
+  press. Dropped on a key it creates ordinary actions and gesture bindings
+  in one undo step (keeping an occupied key's look and its other
+  gestures), or nothing when the key cannot take it. A key that acts on
+  its press at once is never switched to gestures by a preset: switch it
+  in the Inspector first, which asks; dropped on one
+  gesture card only that gesture changes. Every gesture stays editable on
+  its own; nothing of the preset is stored.
+- Plugin API 1.11: `contributes.actions[].contexts` lets a plugin declare
+  where each action makes sense (key, gesture, display, sequence,
+  workflow), with `Action::contexts` in the SDK. Advisory like the
+  built-ins' contexts: a use elsewhere is reported and still runs. Without
+  the field an action keeps all five.
+- Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
+  presets over its own actions, with localized texts and `allowPartial`.
+  Presets grant nothing; each action keeps its permissions and checks.
+
+## [0.15.0] - 2026-11-24
+
+### Added
+
 - Marketplace: a sidebar with search, Discover, Installed, Updates,
   Categories and collections; plugin pages with screenshots, highlights,
   what's new, version history, publisher and trust; install, update and
@@ -66,24 +89,6 @@ released either. 0.6.0 is the first version intended for publication.
 - Escape clears the Device Editor's selection (after closing a menu,
   cancelling a drag or leaving a text field first); the deselect button is
   gone.
-- Action Library: **gesture presets**, one entry that puts several actions
-  on the gestures of a key at once. *Brightness Control* (Device) dims by
-  10% on a single press, sets 100% on a double click and 50% on a long
-  press. Dropped on a key it creates ordinary actions and gesture bindings
-  in one undo step (keeping an occupied key's look and its other
-  gestures), or nothing when the key cannot take it. A key that acts on
-  its press at once is never switched to gestures by a preset: switch it
-  in the Inspector first, which asks; dropped on one
-  gesture card only that gesture changes. Every gesture stays editable on
-  its own; nothing of the preset is stored.
-- Plugin API 1.11: `contributes.actions[].contexts` lets a plugin declare
-  where each action makes sense (key, gesture, display, sequence,
-  workflow), with `Action::contexts` in the SDK. Advisory like the
-  built-ins' contexts: a use elsewhere is reported and still runs. Without
-  the field an action keeps all five.
-- Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
-  presets over its own actions, with localized texts and `allowPartial`.
-  Presets grant nothing; each action keeps its permissions and checks.
 - Folders: **Exit after action completes**, a switch of its own in the
   folder key's Inspector next to Automatic exit. The folder is left once
   what its key started is over (an action, a plugin's action, a workflow or
@@ -97,7 +102,7 @@ released either. 0.6.0 is the first version intended for publication.
   a pause mark while a run started from the folder is going on. The
   device, the simulated MK.2 and the editor's Canvas in a live preview draw
   the same face (the live preview's navigation gains the optional
-  `folderCountdown`; protocol 16 unchanged).
+  `folderCountdown`; protocol 17 unchanged).
 - Device Editor: the key's title field has a picker of the variables a key
   can show, which inserts `{{ reference }}` at the cursor, and shows under
   the field what the key shows as the agent resolves it (cut to 32
@@ -155,9 +160,32 @@ released either. 0.6.0 is the first version intended for publication.
   look. The device, the simulated device and the editor's previews draw
   the same face, and the key comes back as it was once the plugin can run
   the action again.
+- Mixing versions: 0.15 keeps IPC protocol 17, the database, the plugin
+  store and the export format of 0.14, so a 0.14 app and a 0.15 agent (or
+  the other way round) work together. Until the previous agent has
+  restarted after the update, folders with Exit after action completes
+  still close when their key is pressed, Automatic exit does not pause
+  during a run, the Back key shows no countdown and keys whose plugin is
+  missing keep their earlier warning face.
+- Going back to 0.14 or earlier keeps the configuration readable (no
+  database, plugin store or export format change, and an export made by
+  0.15 imports there as before). There, folders with Exit after action
+  completes close again as soon as their key is pressed, Automatic exit
+  counts down during a run, and the Back key shows no countdown; the
+  Dashboard, the Action Library page and Settings › Plugins are back
+  where they were.
 
 ### Fixed
 
+- Marketplace: an install or update that failed and was done later
+  (another window, a retry elsewhere) no longer shows its old error and
+  Retry again after the plugin is uninstalled.
+- The workflow node catalog cut descriptions and unavailable reasons to
+  one line; they now wrap to two lines and show in full in the tooltip.
+  Marketplace tiles show their whole summary on hover.
+- Saved actions that read alike in the workflow node catalog say which one
+  is still a draft ("not set up yet"); Random action and Multi Action
+  Switch are under "Multi Actions".
 - The file and folder pickers of Open and Open folder say when the bound
   file or folder was moved or deleted, as the application picker does for
   an application that is no longer installed.

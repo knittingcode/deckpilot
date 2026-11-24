@@ -18,6 +18,7 @@ page says what happens then and how it is tested.
 | Release 0.12.0 | 0.12.0 | 16 | 13 |
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
+| Release 0.15.0 | 0.15.0 | 17 | 13 |
 | Current main | see `Cargo.toml` | 17 | 13 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
@@ -75,6 +76,18 @@ actions saved before they are configured (an older app refuses edits to
 them), and the new action type `system.close-app` (kept as unavailable by
 older versions). Workflow references, the guarded delete and the new
 faces change no stored data.
+
+0.15.0 changes neither the protocol nor a schema: IPC protocol 17,
+database schema 13, plugin API 1.9, plugin store schema 6, export payload
+versions unchanged (4 with labels), and the same nine bundled plugins
+(same versions and bytes) as 0.14.0. The live preview's navigation gains
+the optional `folderCountdown` (the Automatic exit countdown the Back key
+shows), which a 0.14.0 app ignores and a 0.14.0 agent never sends (the
+editor's Canvas then draws the Back key without it). A folder's existing
+`autoReturn` keeps its stored form; what changes is when the agent
+follows it: a 0.15.0 agent leaves the folder once the run its key started
+is over, an older agent when the key is handled. The missing-plugin face,
+the Marketplace and the moved settings pages change no stored data.
 
 Before it, protocol 16: the Device Editor's live preview
 ([editor-navigation-and-simulation.md](editor-navigation-and-simulation.md#3-live-preview-and-navigation-sync)).
@@ -186,7 +199,7 @@ Plugin API 1.10 (unreleased,
 [gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
 additive. `contributes.gesturePresets` validates only with `^1.10`; a
 `^1.9` manifest without it validates exactly as before, and an agent of
-1.9 (0.14.0 and older) reports a `^1.10` version `incompatible`. Presets
+1.9 (0.15.0 and older) reports a `^1.10` version `incompatible`. Presets
 are data only: no capability operation, ABI or permission is added, and
 nothing of a preset is stored, so no document, schema or migration
 changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
