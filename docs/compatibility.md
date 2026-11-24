@@ -17,7 +17,8 @@ page says what happens then and how it is tested.
 | Release 0.11.0 | 0.11.0 | 16 | 13 |
 | Release 0.12.0 | 0.12.0 | 16 | 13 |
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
-| Current main | see `Cargo.toml` | 16 | 13 |
+| Release 0.14.0 | 0.14.0 | 17 | 13 |
+| Current main | see `Cargo.toml` | 17 | 13 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -57,7 +58,25 @@ older agent the app's storefront commands answer `null`). The agent caches
 a verified storefront under `<state>/storefront/` and its media under
 `<state>/media/`; an older agent does not read them.
 
-Current main speaks protocol 16: the Device Editor's live preview
+0.14.0 speaks protocol 17 and changes no schema: database schema 13,
+plugin API 1.9, plugin store schema 6, and the same nine bundled plugins
+(same versions and bytes) as 0.13.0. Protocol 17 adds two capabilities:
+`displayTemplates` (variables in key titles: `listDisplayVariables` and
+`resolveDisplayTemplates`) and `keyLabels` (key labels in layouts and
+faces, optional fields older peers ignore). With a protocol 16 agent the
+app shows titles resolved by the core alone (the older placeholders) and
+the device draws no labels; a protocol 16 app with a 0.14.0 agent works as
+before, and its keys show resolved titles. The stored data an older
+version may meet: titles with references of up to 160 characters (0.12
+and 0.13 refuse to save them until they are shortened), labels (an older
+agent ignores them, an older app drops them when it saves the layout),
+exports with labels as payload version 4 (older versions refuse them),
+actions saved before they are configured (an older app refuses edits to
+them), and the new action type `system.close-app` (kept as unavailable by
+older versions). Workflow references, the guarded delete and the new
+faces change no stored data.
+
+Before it, protocol 16: the Device Editor's live preview
 ([editor-navigation-and-simulation.md](editor-navigation-and-simulation.md#3-live-preview-and-navigation-sync)).
 Protocol 16 adds the `livePreview` capability: `beginLivePreview`,
 `applyLivePreview`, `navigateLivePreview` and `endLivePreview`, with which
@@ -109,7 +128,7 @@ change): a manifest with it needs `^1.7` (the validator refuses it below),
 so an agent of plugin API 1.6 reports such a version `incompatible`;
 manifests without it are unchanged.
 
-Key labels (unreleased): a key's appearance may carry `labels`, an optional
+Key labels (0.14.0): a key's appearance may carry `labels`, an optional
 list that older agents ignore (the key draws without them) and an older app
 drops when it saves the layout; no document version or migration. Exports
 that contain labels are written as payload version 4, which older versions
@@ -334,7 +353,8 @@ this page means that build.
   `backgroundExecutions` (5), `notifications` (6), `variables` (7),
   `workSession` (8), `variableRegistry` (9), `plugins` (10), `keyStates`
   (11), `pluginDialogs` (12), `locale` (13), `simulateInput` (14),
-  `restoreBundled` (15), `livePreview` (16). Agents
+  `restoreBundled` (15), `livePreview` (16), `displayTemplates` and
+  `keyLabels` (17). Agents
   from protocol 6
   also list them in `welcome`; the client never credits an agent with more
   than its protocol has.
@@ -400,6 +420,7 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | protocol 12 app or agent with a protocol 13 peer (the app's language) | IPC test `a_protocol_12_agent_is_never_told_the_locale`; agent test `a_protocol_12_app_never_sets_the_language` (`tests/locale.rs`); IPC test `the_locale_is_protocol_13_and_only_a_tag` | the client does not send `setLocale` below protocol 13 and refuses it locally; the agent refuses it from an older connection; the status of an older agent has no `locale`; keys and plugin texts stay English; everything else works as before |
 | protocol 13 app or agent with a protocol 14 peer (simulated presses) | IPC test `a_protocol_13_agent_is_never_asked_to_simulate_a_press`; agent test `a_protocol_13_app_cannot_simulate` (`tests/simulate_press.rs`); IPC test `simulated_presses_are_protocol_14`; desktop test `simulated_presses_answer_ran_confirmation_or_refused` | the client does not send `simulatePress` below protocol 14 and refuses it locally (the app answers `refused` with code `unsupported`); the agent refuses it from an older connection; nothing is pressed; everything else works as before |
 | protocol 15 app or agent with a protocol 16 peer (live preview) | IPC test `a_protocol_15_agent_is_never_asked_for_a_live_preview`; agent test `a_protocol_15_connection_cannot_preview` (`tests/live_preview.rs`); IPC test `live_preview_is_protocol_16`; frontend `use-live-preview.test.tsx` | the client does not send the live preview requests below protocol 16 and refuses them locally; the agent refuses them from an older connection; the editor says changes reach the device when saved; everything else works as before |
+| protocol 16 app or agent with a protocol 17 peer (variables in key titles, key labels) | IPC test `a_protocol_16_agent_is_never_asked_to_resolve_display_templates` (`tests/peers.rs`) | the client does not send `listDisplayVariables` or `resolveDisplayTemplates` below protocol 17 and refuses them locally; the app shows titles resolved by the core alone; labels travel only as optional fields that an older peer ignores; everything else works as before |
 | agent temporarily unavailable | desktop tests (`stopped` state), connect timeouts (`deckpilot-ipc`) | stopped state; no request hangs |
 | agent restarted during a running workflow | agent test `runs_of_a_stopped_agent_are_recorded_as_interrupted` | run recorded as interrupted; history kept |
 | agent version changed while the app stays open | bridge reconnect (negotiates again); simulated peers per version | covered by the same negotiation; not tested end to end with a running app window |

@@ -356,6 +356,16 @@ fn automatic_plates_also_cover_the_title_and_marks() {
     let bottom = marked(preset(Spot::Bottom));
     let report = &label_layout(&bottom, 72, 72, &Icons::default())[0];
     assert!(report.overlaps_title && report.plate, "{report:?}");
+    // The plate over the title is the stronger one (85 %), unless set.
+    let colors = key_colors(&bottom, &deckpilot_core::DefaultAppearance::BUILTIN);
+    let placed = place_all(&bottom, 72, 72, &Icons::default(), colors);
+    assert_eq!(placed[0].plate, Some(([0, 0, 0], 0.85)));
+    let set = marked(KeyLabelLook {
+        background_opacity: Some(40),
+        ..preset(Spot::Bottom)
+    });
+    let placed = place_all(&set, 72, 72, &Icons::default(), colors);
+    assert_eq!(placed[0].plate, Some(([0, 0, 0], 0.4)));
     // With no layer of its own it is painted over the title, on its plate;
     // a layer the label sets is kept.
     assert_eq!(report.layer, LabelLayer::OverTitle);
