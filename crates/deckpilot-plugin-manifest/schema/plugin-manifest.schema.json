@@ -256,6 +256,13 @@
           "maxItems": 16,
           "items": { "$ref": "#/$defs/recordSchema" },
           "description": "Plugin API 1.14, first-party bundled plugins only. The shapes of the plugin's records outputs. Ids are unique."
+        },
+        "gesturePresets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/gesturePreset" },
+          "description": "Plugin API 1.10 (engines.pluginApi ^1.10). Action Library entries that assign several gestures of one control at once, each to one of this plugin's own actions with predefined parameters. Data only: a preset grants nothing and each action keeps its own permissions and checks. Ids are unique; registered as <plugin id>.<preset id>."
         }
       }
     }
@@ -1345,6 +1352,63 @@
           "then": { "required": ["queryName"] }
         }
       ]
+    },
+    "gesturePreset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "category", "gestures"],
+      "properties": {
+        "id": { "$ref": "#/$defs/localId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "description": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "allowPartial": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether a control that cannot produce every gesture still takes the others; otherwise such a control refuses the whole preset."
+        },
+        "gestures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/presetAssignment" },
+          "description": "Each gesture at most once; release never next to doubleClick or longPress."
+        }
+      }
+    },
+    "presetAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gesture", "action", "label"],
+      "properties": {
+        "gesture": {
+          "enum": [
+            "click",
+            "doubleClick",
+            "longPress",
+            "release",
+            "rotateClockwise",
+            "rotateCounterClockwise"
+          ]
+        },
+        "action": {
+          "$ref": "#/$defs/localId",
+          "description": "The id of one of this plugin's own actions (contributes.actions[].id)."
+        },
+        "parameters": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": { "$ref": "#/$defs/camelKey" },
+          "additionalProperties": { "$ref": "#/$defs/parameterValue" },
+          "description": "Over the action's defaults; checked against its parameters."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "What the gesture does, in words: the name of the action the preset creates."
+        }
+      }
     }
   }
 }

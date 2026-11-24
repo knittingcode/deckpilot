@@ -542,6 +542,7 @@ mod tests {
             visual_assets: Vec::new(),
             status_items: Vec::new(),
             dashboard_cards: Vec::new(),
+            gesture_presets: Vec::new(),
         }
     }
 

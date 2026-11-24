@@ -28,6 +28,8 @@ use crate::{MANIFEST_VERSION, path_rules};
 
 #[path = "connections_check.rs"]
 mod connections;
+#[path = "gesture_presets.rs"]
+mod gesture_presets;
 #[path = "privileged.rs"]
 mod privileged;
 pub use privileged::OPTIONAL_PERMISSIONS;
@@ -380,6 +382,7 @@ pub(crate) fn check(manifest: &Manifest) -> Checker {
     dialogs_api_level(&mut c, manifest);
     editor_navigation(&mut c, manifest);
     action_titles(&mut c, manifest);
+    gesture_presets::check(&mut c, manifest);
     visual_assets(&mut c, manifest);
     localization(&mut c, manifest);
     variables(&mut c, manifest);

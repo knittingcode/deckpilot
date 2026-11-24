@@ -695,3 +695,39 @@ fn cloud_urls_and_api_paths_have_one_spelling() {
         []
     );
 }
+
+#[test]
+fn gesture_presets_never_name_internal_actions_or_set_connections() {
+    let preset = |action: &str, parameters: Value| {
+        json!([{
+            "id": "quick", "name": "Quick", "category": "Git Providers",
+            "gestures": [{"gesture": "click", "action": action,
+                          "parameters": parameters, "label": "Run"}]
+        }])
+    };
+    // An internal action on a key, through a preset.
+    let mut value = fixture();
+    value["contributes"]["gesturePresets"] = preset(
+        "list-repositories",
+        json!({"connection": {"type": "text", "value": "cn_01JD7Q0000000000000000000A"}}),
+    );
+    refused(
+        &value,
+        "contributes.gesturePresets[0].gestures[0].action",
+        IssueCode::Conflict,
+    );
+    // A literal value for a connection parameter is never allowed.
+    let mut value = fixture();
+    value["contributes"]["gesturePresets"] = preset(
+        "pipeline-status",
+        json!({
+            "connection": {"type": "text", "value": "cn_01JD7Q0000000000000000000A"},
+            "repository": {"type": "text", "value": "gl:4711"}
+        }),
+    );
+    refused(
+        &value,
+        "contributes.gesturePresets[0].gestures[0].parameters.connection",
+        IssueCode::InvalidDefault,
+    );
+}

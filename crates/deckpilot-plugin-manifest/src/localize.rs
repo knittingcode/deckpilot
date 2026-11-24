@@ -46,6 +46,28 @@ fn connection_type_texts(
     }
 }
 
+/// The texts of `contributes.gesturePresets` (plugin API 1.10).
+fn preset_texts(
+    presets: &mut Option<Vec<crate::model::GesturePreset>>,
+    f: &mut dyn FnMut(&str, usize, &mut String),
+) {
+    for (i, preset) in presets.iter_mut().flatten().enumerate() {
+        let path = format!("contributes.gesturePresets[{i}]");
+        f(&format!("{path}.name"), 48, &mut preset.name);
+        if let Some(text) = &mut preset.description {
+            f(&format!("{path}.description"), 200, text);
+        }
+        f(&format!("{path}.category"), 32, &mut preset.category);
+        for (j, gesture) in preset.gestures.iter_mut().enumerate() {
+            f(
+                &format!("{path}.gestures[{j}].label"),
+                64,
+                &mut gesture.label,
+            );
+        }
+    }
+}
+
 impl Manifest {
     /// Whether the manifest's texts may name translation keys (`t:…`): it
     /// requires plugin API 1.6. For an older manifest `t:…` is plain text.
@@ -117,6 +139,7 @@ impl Manifest {
                 }
             }
         }
+        preset_texts(&mut contributes.gesture_presets, f);
         for (i, variable) in contributes.variables.iter_mut().flatten().enumerate() {
             let path = format!("contributes.variables[{i}]");
             f(&format!("{path}.name"), 48, &mut variable.name);

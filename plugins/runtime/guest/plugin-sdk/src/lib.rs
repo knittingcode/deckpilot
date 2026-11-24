@@ -171,14 +171,23 @@ pub const API_LEVEL: ApiLevel = ApiLevel { major: 1, minor: 0 };
 /// [`Context::t`]; `locales` in the manifest), 1.7 and 1.8 nothing for the
 /// guest (manifest-only), 1.9 the operations of DeckPilot's own bundled
 /// plugins ([`Context::run_tool`], [`Context::resource_param`],
-/// [`Context::current_project`]…) and [`Context::profile`], 1.10 to 1.13
-/// nothing for the guest in this SDK (manifest-only, or operations that
-/// arrive with their own SDK release), and 1.14 connections
-/// ([`Context::connection`], [`Request::connection`],
+/// [`Context::current_project`]…) and [`Context::profile`], 1.10 nothing
+/// for the guest (the manifest's `contributes.gesturePresets`), 1.11 to
+/// 1.13 nothing in this SDK yet (each arrives with its own release), and
+/// 1.14 connections ([`Context::connection`], [`Request::connection`],
 /// [`Context::report_connection_status`], [`Context::sleep`]).
 pub const LATEST_API_LEVEL: ApiLevel = ApiLevel {
     major: 1,
     minor: 14,
+};
+
+/// The plugin API level that introduced the manifest's
+/// `contributes.gesturePresets`. It needs nothing of the guest: a plugin
+/// that declares presets says so with [`Plugin::requires_api`], so that
+/// its manifest's `"^1.10"` matches.
+pub const GESTURE_PRESETS_API_LEVEL: ApiLevel = ApiLevel {
+    major: 1,
+    minor: 10,
 };
 
 /// The plugin API level that introduced connections

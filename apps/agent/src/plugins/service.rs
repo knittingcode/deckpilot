@@ -89,9 +89,10 @@ const INVALID_PARAMETERS: &str = "invalid-parameters";
 /// items and dashboard cards; `docs/marketplace/module-migration.md` §7)
 /// and their capability operations: `resource` parameters and
 /// `resource.resolve` are carried out, the others refused as not
-/// implemented until their host side lands (WP-A4 to WP-A6).
+/// implemented until their host side lands (WP-A4 to WP-A6), and 1.10
+/// `contributes.gesturePresets` (data only; `convert::gesture_presets`).
 /// A plugin whose manifest asks for a higher minor is `incompatible`.
-const PLUGIN_API: ApiLevel = ApiLevel::new(1, 9);
+const PLUGIN_API: ApiLevel = ApiLevel::new(1, 10);
 /// Longest any invocation may take, whatever the manifest says.
 const MAX_INVOCATION: Duration = Duration::from_secs(600);
 /// Where the registry's verified state is kept (outside `plugins/`,
@@ -694,6 +695,9 @@ impl PluginService {
                 project_context: false,
                 resources: false,
                 wrap_around: None,
+                // Not installed: nothing to offer in the library. Keys
+                // that used its presets keep their bindings.
+                gesture_presets: Vec::new(),
             });
         let graph = self.graph();
         self.locales
@@ -755,6 +759,7 @@ impl PluginService {
                     visual_assets: self.drawable_assets(record, &dir),
                     project_context,
                     wrap_around,
+                    gesture_presets: convert::gesture_presets(manifest),
                     resources: grants.iter().any(|g| {
                         g.key.kind == deckpilot_plugin_manifest::PermissionKind::Resources
                             && g.key.key.is_empty()

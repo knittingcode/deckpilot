@@ -192,6 +192,7 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
             );
         }
     }
+    internal_in_presets(c, m);
     let schemas = record_schemas(c, m);
     for (index, action) in m.contributes.actions().iter().enumerate() {
         let path = format!("contributes.actions[{index}]");
@@ -787,6 +788,31 @@ fn depends_on(
                     options.from
                 ),
             );
+        }
+    }
+}
+
+/// A gesture preset (plugin API 1.10) puts actions on a key, so it never
+/// names an internal one. (A preset value for a `connection` parameter is
+/// refused by the preset's own value check: a connection has no literal
+/// value.)
+fn internal_in_presets(c: &mut Checker, m: &Manifest) {
+    let actions = m.contributes.actions();
+    for (i, preset) in m.contributes.gesture_presets().iter().enumerate() {
+        for (j, assignment) in preset.gestures.iter().enumerate() {
+            if actions
+                .iter()
+                .any(|a| a.id == assignment.action && a.is_internal())
+            {
+                c.error(
+                    format!("contributes.gesturePresets[{i}].gestures[{j}].action"),
+                    IssueCode::Conflict,
+                    format!(
+                        "`{}` is internal: it is never on a key, so no preset assigns it",
+                        assignment.action
+                    ),
+                );
+            }
         }
     }
 }

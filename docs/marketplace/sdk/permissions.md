@@ -194,8 +194,8 @@ policy that names them. The other additions of the level (parameter
 are first-party only too in 1.14, without being privileged.
 
 **Status:** the manifest model and its validation, the JSON Schema, the
-ABI operations and the SDK are in place. The agent still provides plugin
-API 1.9 (`PLUGIN_API`), so it reports a `^1.14` plugin as
+ABI operations and the SDK are in place. The agent provides plugin
+API 1.10 (`PLUGIN_API`), so it reports a `^1.14` plugin as
 `incompatible`; its broker answers every connection operation and every
 `http.fetch` naming a connection `unsupported-op`, whatever the grants,
 and the plugin store records no grant for the permission. The host side

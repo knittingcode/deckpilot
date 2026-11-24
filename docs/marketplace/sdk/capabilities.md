@@ -573,7 +573,7 @@ parameter names, or the one the app names for its own screens.
 operations out yet.** The broker answers all four `unsupported-op`
 (`CapabilityErrorKind::Unsupported`) whatever the grants, including a
 fetch that names a connection, which is never checked as an ordinary
-fetch. The agent provides plugin API 1.9 until the host side lands.
+fetch. The agent provides plugin API 1.10 until the host side lands.
 
 ## What there is not (ABI 1)
 
