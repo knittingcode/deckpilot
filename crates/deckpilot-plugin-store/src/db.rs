@@ -610,7 +610,14 @@ fn connect(path: &Path) -> Result<Connection> {
                 .map_err(|error| error.to_string())
         })
         .clone()
-        .map_err(StoreError::SqlCipherIncomplete)?;
+        .map_err(|message| {
+            if cfg!(feature = "sqlcipher") {
+                StoreError::SqlCipherIncomplete(message)
+            } else {
+                // A plain build cannot open the store whatever happened.
+                StoreError::EncryptionUnavailable
+            }
+        })?;
     #[cfg(feature = "sqlcipher")]
     {
         let mut attempt = 1;
@@ -861,9 +868,9 @@ mod tests {
                 && backups[0].extension().is_some_and(|e| e == "db"),
             "{name}"
         );
-        let backup = Connection::open(&backups[0]).unwrap();
+        let backup = connect(&backups[0]).unwrap();
         assert!(apply_key(&backup, &StoreKey::from_bytes([12; 32])).is_err());
-        let backup = Connection::open(&backups[0]).unwrap();
+        let backup = connect(&backups[0]).unwrap();
         apply_key(&backup, &key).unwrap();
         assert_eq!(user_version(&backup).unwrap(), 4);
         let rows: i64 = backup
@@ -936,7 +943,7 @@ mod tests {
         let key = StoreKey::from_bytes([9; 32]);
         {
             // What a build with only the first migration wrote.
-            let connection = Connection::open(&path).unwrap();
+            let connection = connect(&path).unwrap();
             apply_key(&connection, &key).unwrap();
             connection.execute_batch(MIGRATIONS[0]).unwrap();
             connection.pragma_update(None, "user_version", 1).unwrap();

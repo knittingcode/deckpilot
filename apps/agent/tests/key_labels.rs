@@ -368,9 +368,12 @@ async fn press_latency(s: &Setup, next: &Frame) -> Duration {
 /// read and announced as a plugin's publish would be), a key press opens
 /// its page about as fast as without the storm (no press waits for a
 /// redraw), while the storm redraws the key at most 20 times a second and
-/// the key does change. The latency bound has a generous margin, as for
-/// titles (`title_variables.rs`), so a loaded runner does not flake: a press
-/// that waited behind a redraw per change would take seconds.
+/// the key does change, and afterwards shows the final value. The latency
+/// bound has a generous margin, as for titles (`title_variables.rs`), so a
+/// loaded runner does not flake: a press that waited behind a redraw per
+/// change would take seconds. How many redraws the storm must cause follows
+/// how many changes it made while they were counted: a loaded runner writes
+/// far fewer than one every 2 ms (40 in all was seen).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_press_during_a_storm_of_changes_is_handled_at_once() {
     let s = setup().await;
@@ -382,6 +385,9 @@ async fn a_press_during_a_storm_of_changes_is_handled_at_once() {
 
     let storm = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let raging = storm.clone();
+    // The changes made so far, for the redraws they must cause.
+    let changes = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let made = changes.clone();
     let handle = s.agent.handle.clone();
     let database = s.agent.store();
     let storming = tokio::spawn(async move {
@@ -397,27 +403,42 @@ async fn a_press_during_a_storm_of_changes_is_handled_at_once() {
                 )
                 .unwrap();
             handle.reload_variables();
+            made.store(round, std::sync::atomic::Ordering::Relaxed);
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         round
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
-    // The key really changes during the storm.
+    // The key really changes during the storm. Waited for, not compared
+    // once after a fixed pause: a loaded runner may not have drawn the
+    // next value yet (seen on Windows CI).
     let early = s.frame(key(0)).unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_ne!(s.frame(key(0)).unwrap(), early, "the storm is drawn");
+    let (mock, device) = (s.mock.clone(), s.device.clone());
+    let drawn = tokio::task::spawn_blocking(move || {
+        mock.wait_for(&device, TIMEOUT, |frames, _| {
+            frames.get(&key(0)).is_some_and(|frame| *frame != early)
+        })
+    })
+    .await
+    .unwrap();
+    assert!(
+        drawn,
+        "the storm is drawn: key 0 still shows its frame from before after {TIMEOUT:?}"
+    );
     let stormy = press_latency(&s, &next).await;
     // The redraw rate on the home page, during the storm.
     let before = s.agent.handle.variable_redraws();
+    let changed_before = changes.load(std::sync::atomic::Ordering::Relaxed);
     let counted = Instant::now();
     tokio::time::sleep(Duration::from_millis(1000)).await;
     let redraws = s.agent.handle.variable_redraws() - before;
+    let in_window = changes.load(std::sync::atomic::Ordering::Relaxed) - changed_before;
     let elapsed = counted.elapsed().as_secs_f64();
     storm.store(false, std::sync::atomic::Ordering::Relaxed);
     let rounds = storming.await.unwrap();
     println!(
         "press latency (median of 5): {quiet:?} quiet, {stormy:?} during a storm of {rounds} changes; \
-         {redraws} variable redraws in {elapsed:.2} s"
+         {redraws} variable redraws for {in_window} changes in {elapsed:.2} s"
     );
     assert!(
         stormy < quiet * 4 + Duration::from_millis(500),
@@ -426,5 +447,15 @@ async fn a_press_during_a_storm_of_changes_is_handled_at_once() {
     #[expect(clippy::cast_precision_loss, reason = "a few dozen redraws")]
     let rate = redraws as f64 / elapsed;
     assert!(rate <= 21.0, "{redraws} redraws in {elapsed:.2} s");
-    assert!(redraws >= 5, "the storm was redrawn {redraws} times");
+    assert!(redraws >= 1, "the storm was never drawn");
+    // A full storm (hundreds of changes) must be redrawn at least 5 times;
+    // a loaded runner makes far fewer changes and redraws later, so one
+    // redraw for every 10 changes it did make, at least one.
+    let expected = usize::try_from(in_window / 10).unwrap_or(5).clamp(1, 5);
+    assert!(
+        redraws >= expected,
+        "the storm was redrawn {redraws} times for {in_window} changes (expected {expected})"
+    );
+    // After the storm the device shows the final value.
+    s.device_shows_the_preview().await;
 }
