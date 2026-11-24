@@ -139,6 +139,9 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- Key labels: putting a label against the edges right after moving it no
+  longer undoes the move, and a choice of how a key's look moves that no
+  longer applies says so instead of doing nothing.
 - The workflow node catalog cut descriptions and unavailable reasons to
   one line; they now wrap to two lines and show in full in the tooltip.
   Marketplace tiles show their whole summary on hover.
