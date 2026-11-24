@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 17 | 15 |
+| Current main | see `Cargo.toml` | 19 | 15 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -73,6 +73,14 @@ pre-migration backup: restore it in place of `deckpilot.db`, without its
 backup. Exports with repositories other than the one the role stands for
 are payload version 5, which 0.14.x refuses; other exports keep their
 version.
+
+Current main speaks IPC protocol 19, which adds Calls (capability `calls`,
+`docs/calls.md`): `getCallsStatus`, `setCallsOverlay`,
+`restoreCallsLayout` and the `callsChanged` event. Older clients never send
+these requests: they are refused locally and by the agent. Older clients
+receive no `callsChanged` events, and an older agent leaves the app's Calls
+settings hidden. (Protocol 18 is the Projects' change; if it lands later
+than this one, the two are numbered in merge order.)
 
 Current main then moves it to schema 15: the managed layouts of the Calls
 plugin (`docs/calls.md`, "Managed layouts"). The migration is additive: one

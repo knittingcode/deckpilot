@@ -566,3 +566,110 @@ async fn the_stored_managed_layout_is_seeded_and_survives_a_restart() {
     assert_eq!(view.layouts, ["Moje Rozmowy"], "the user's edit is shown");
     deck.agent.shutdown().await;
 }
+
+/// Protocol 19: the app reads Calls, gets `callsChanged` when the call
+/// changes, turns a device's overlay off and restores a managed layout,
+/// keeping the user's version. No title or process ever travels.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_app_reads_and_changes_calls_over_ipc() {
+    use deckpilot_ipc::{AgentEvent, Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let Response::CallsStatus { status } =
+        deck.agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(status.installed);
+    assert_eq!(status.state, "idle");
+    assert!(status.controls, "the mock controls calls");
+    assert!(
+        status
+            .devices
+            .iter()
+            .any(|d| d.device == deck.device && d.overlay && !d.shown)
+    );
+    let layout = status
+        .layouts
+        .first()
+        .expect("the MK.2's managed layout")
+        .clone();
+    assert!(!layout.edited);
+    let json = serde_json::to_string(&status).unwrap();
+    assert!(
+        !json.contains("title") && !json.contains("process"),
+        "{json}"
+    );
+
+    deck.join().await;
+    let changed = loop {
+        match tokio::time::timeout(TIMEOUT, events.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            AgentEvent::CallsChanged { status } if status.state == "active" => break status,
+            _ => {}
+        }
+    };
+    assert!(
+        changed
+            .devices
+            .iter()
+            .any(|d| d.device == deck.device && d.shown)
+    );
+
+    // The device's overlay off: it goes at once, the call goes on.
+    let Response::CallsStatus { status } = deck
+        .agent
+        .request(Request::SetCallsOverlay {
+            device: deck.device.clone(),
+            on: false,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(
+        status
+            .devices
+            .iter()
+            .any(|d| d.device == deck.device && !d.overlay && !d.shown)
+    );
+    assert_eq!(status.state, "active");
+    assert!(!deck.shows_overlay().await);
+
+    // Restore defaults keeps an edited layout as the user's own.
+    deck.agent
+        .store()
+        .rename_shared_layout(layout.layout.parse().unwrap(), "Edited")
+        .unwrap();
+    let Response::CallsLayoutRestored { copy } = deck
+        .agent
+        .request(Request::RestoreCallsLayout {
+            model: layout.model.clone(),
+            copy_name: "Rozmowy (moja wersja)".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("restored")
+    };
+    let copy = copy.expect("the user's version is kept");
+    let kept = deck
+        .agent
+        .store()
+        .shared_layout(copy.parse().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.layout.name, "Rozmowy (moja wersja)");
+    let Response::CallsStatus { status } =
+        deck.agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(status.layouts.iter().all(|l| !l.edited), "regenerated");
+    deck.agent.shutdown().await;
+}

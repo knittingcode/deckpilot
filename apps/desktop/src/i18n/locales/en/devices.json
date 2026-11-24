@@ -189,5 +189,40 @@
     "saved": "Gesture timings saved",
     "restore": "Restore defaults",
     "save": "Save"
+  },
+  "calls": {
+    "title": "Calls",
+    "description": "Shows the state of your calls on your devices and, where the call app allows it, controls them.",
+    "state": "Call",
+    "controlsTitle": "Controls",
+    "controlsNone": "Not supported",
+    "detectionOnly": "Microsoft Teams can only be detected: answering, ending, muting and the camera are not supported, because Microsoft retired its device API on 30 June 2026.",
+    "overlay": "Show calls on this device",
+    "overlayDescription": "During a call the device shows the Calls layout; your own layout stays as it was.",
+    "shown": "Shows the call now.",
+    "suspended": "Back to work: shows your own layout until the call comes back.",
+    "overlayFailed": "The setting could not be changed",
+    "layoutDescription": "Managed by the Calls plugin, for {{model}}.",
+    "edited": "Edited",
+    "restore": "Restore defaults",
+    "restoreTitle": "Restore the default Calls layout?",
+    "restoreKeeps": "Your version is kept first as the layout “{{copy}}”, which no profile uses. Then the default layout is generated again.",
+    "restoreUnedited": "The layout is unchanged; it is generated again.",
+    "restoreConfirm": "Restore defaults",
+    "restored": "The Calls layout was restored.",
+    "restoredKept": "The Calls layout was restored; your version is “{{copy}}”.",
+    "restoreFailed": "The Calls layout could not be restored",
+    "copyName": "Calls (my version, {{date}})",
+    "states": {
+      "idle": "No call",
+      "incoming": "Incoming call",
+      "outgoing": "Calling",
+      "connecting": "Connecting",
+      "active": "In a call",
+      "ending": "Ending",
+      "ended": "Ended",
+      "failed": "Failed",
+      "unknown": "State unknown"
+    }
   }
 }

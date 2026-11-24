@@ -142,6 +142,16 @@ impl CallsDriver {
         self.sync(runtime, now);
     }
 
+    /// Whether `device` gets the overlay (its setting, or the default).
+    pub fn overlay_enabled(&self, runtime: &Runtime, device: &DeviceId) -> bool {
+        self.device_enabled(runtime, device)
+    }
+
+    /// The managed layout used for `model`.
+    pub fn layout(&self, model: &DeviceModelId) -> Option<&Generated> {
+        self.layouts.get(model)
+    }
+
     fn device_enabled(&self, runtime: &Runtime, device: &DeviceId) -> bool {
         self.enabled.get(device).copied().unwrap_or_else(|| {
             runtime

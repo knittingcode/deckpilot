@@ -392,6 +392,43 @@ Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 - the stored layout seeded, a user edit shown, and an agent restart
   without a stale suspension (T-R6).
 
+## In the app (IPC protocol 19)
+
+The agent answers `getCallsStatus` with a `CallsStatus` and pushes it again
+as `callsChanged` whenever it changes, to desktop clients of protocol 19.
+`CallsStatus` holds:
+
+- whether Calls is installed;
+- the call's state name and the provider id;
+- whether any control is possible;
+- per connected device: the overlay setting, whether it shows the call, and
+  whether it went back to work;
+- per model: the managed layout's id, name, edited flag and template
+  version.
+
+It never holds a meeting title, a participant or a process name.
+
+- `setCallsOverlay { device, on }` turns the overlay off or on for one
+  device. An overlay shown now goes at once.
+- `restoreCallsLayout { model, copyName }` is *Restore defaults*. It answers
+  the id of the kept copy of the user's version, or `null` for an unedited
+  layout.
+
+Settings › Devices shows a **Calls** section (en and pl) only when the agent
+has the capability and Calls is installed. The section has:
+
+- the state;
+- for detection-only Teams, "Controls: Not supported", with the reason
+  (Microsoft retired its device API);
+- a switch per device;
+- the managed layouts with an "Edited" badge, and *Restore defaults*. Its
+  confirmation names the copy that keeps the user's version
+  ("Calls (my version, <date>)").
+
+The per-device setting is kept by the running agent; saving it across
+restarts comes with the plugin's settings (C7). Opening the managed layouts
+in the Device Editor, and the state preview there, are still to come (C6b).
+
 Still to come: a provider in a build (C5); the plugin (C7), whose
 enabling with consent installs Calls; and the IPC event for the editor
 (C6, a release blocker).

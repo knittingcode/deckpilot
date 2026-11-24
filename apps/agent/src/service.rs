@@ -709,7 +709,7 @@ pub struct Agent {
     /// The runs keys of folders started and their folders (`folders.rs`).
     folder_runs: folders::FolderRuns,
     /// Calls (`calls.rs`): off unless a provider is installed.
-    calls: calls::AgentCalls,
+    calls: Box<calls::AgentCalls>,
     /// The editor's live preview sessions (protocol 16).
     live_previews: live_preview::LivePreviews,
     handle: AgentHandle,
@@ -845,7 +845,7 @@ impl Agent {
             locale: None,
             detached: Arc::default(),
             folder_runs: folders::FolderRuns::default(),
-            calls: calls::AgentCalls::default(),
+            calls: Box::default(),
             live_previews: live_preview::LivePreviews::default(),
             handle,
             commands,
@@ -1331,6 +1331,13 @@ impl Agent {
             Request::ResolveDisplayTemplates { context, templates } => {
                 self.resolve_display_templates(&context, templates)
             }
+            Request::GetCallsStatus => Ok(Response::CallsStatus {
+                status: Box::new(self.calls_status()),
+            }),
+            Request::SetCallsOverlay { device, on } => self.set_calls_overlay(&device, on),
+            Request::RestoreCallsLayout { model, copy_name } => {
+                self.restore_calls_layout(&model, &copy_name)
+            }
             Request::GetAutostart => {
                 let enabled = self.autostart()?.is_enabled().map_err(failed)?;
                 Ok(Response::Autostart { enabled })
@@ -1487,6 +1494,9 @@ impl Agent {
             | Request::PreviewReferences { .. }
             | Request::ListDisplayVariables { .. }
             | Request::ResolveDisplayTemplates { .. }
+            | Request::GetCallsStatus
+            | Request::SetCallsOverlay { .. }
+            | Request::RestoreCallsLayout { .. }
             | Request::GetAutostart
             | Request::Subscribe
             | Request::SubscribePluginEvents { .. }

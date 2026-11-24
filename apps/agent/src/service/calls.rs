@@ -100,6 +100,21 @@ pub(crate) struct AgentCalls {
     /// Workflow runs that count for a return session, by execution.
     executions: BTreeMap<ExecutionId, CallsRun>,
     next_run: u64,
+    /// What `callsChanged` last sent.
+    published: Option<Box<deckpilot_ipc::calls::CallsStatus>>,
+}
+
+fn not_installed() -> deckpilot_ipc::IpcError {
+    deckpilot_ipc::IpcError::new(deckpilot_ipc::ErrorCode::NotFound, "Calls is not installed")
+        .with_reason(deckpilot_ipc::calls::reason::NOT_INSTALLED)
+}
+
+fn no_layout() -> deckpilot_ipc::IpcError {
+    deckpilot_ipc::IpcError::new(
+        deckpilot_ipc::ErrorCode::NotFound,
+        "this device model has no Calls layout",
+    )
+    .with_reason(deckpilot_ipc::calls::reason::NO_LAYOUT)
 }
 
 impl Agent {
@@ -230,6 +245,7 @@ impl Agent {
         }
         if due || changed {
             self.render_all();
+            self.calls_publish();
         }
         let next = self
             .calls
@@ -292,6 +308,7 @@ impl Agent {
         };
         // A new model gets its managed layout first.
         self.calls_seed_connected();
+        self.calls.published = None;
         if let Some(service) = self.calls.service.as_mut() {
             service.driver.device_connected(&mut self.runtime, now);
         }
@@ -333,6 +350,7 @@ impl Agent {
                 .run_finished(&mut self.runtime, &run.device, run.run, end, now);
         }
         self.render_all();
+        self.calls_publish();
     }
 
     /// A key ran something in place, or only navigated: over at once.
@@ -367,6 +385,145 @@ impl Agent {
             _ => RunEnd::Interrupted,
         };
         self.calls_run_ended(run, end);
+    }
+
+    /// Calls as the app shows it (`getCallsStatus`, `callsChanged`).
+    pub(super) fn calls_status(&self) -> deckpilot_ipc::calls::CallsStatus {
+        let Some(service) = self.calls.service.as_ref() else {
+            return deckpilot_ipc::calls::CallsStatus::default();
+        };
+        let snapshot = service.driver.engine().snapshot();
+        let overlays = self.runtime.all_overlays();
+        let devices = self
+            .runtime
+            .devices()
+            .connected()
+            .map(|device| {
+                let views = overlays
+                    .iter()
+                    .find(|(d, _)| d == device)
+                    .map(|(_, v)| v.as_slice())
+                    .unwrap_or_default();
+                deckpilot_ipc::calls::CallsDevice {
+                    device: device.clone(),
+                    overlay: service.driver.overlay_enabled(&self.runtime, device),
+                    shown: views.iter().any(|v| v.visible),
+                    suspended: views.iter().any(|v| v.suspended),
+                }
+            })
+            .collect();
+        let layouts = self
+            .store
+            .as_ref()
+            .and_then(|store| store.managed_layouts(OWNER).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| deckpilot_ipc::calls::CallsLayout {
+                model: m.model,
+                layout: m.layout.id.to_string(),
+                name: m.layout.name,
+                edited: m.edited,
+                template_version: m.template_version,
+            })
+            .collect();
+        deckpilot_ipc::calls::CallsStatus {
+            installed: true,
+            state: snapshot.state.name().to_owned(),
+            provider: snapshot.provider.map(|p| p.to_string()),
+            controls: snapshot.capabilities.controls_anything(),
+            devices,
+            layouts,
+        }
+    }
+
+    /// Sends `callsChanged` when what the app shows changed.
+    pub(super) fn calls_publish(&mut self) {
+        if self.calls.service.is_none() {
+            return;
+        }
+        let status = self.calls_status();
+        if self.calls.published.as_deref() == Some(&status) {
+            return;
+        }
+        self.calls.published = Some(Box::new(status.clone()));
+        let _ = self
+            .handle
+            .events
+            .send(deckpilot_ipc::AgentEvent::CallsChanged {
+                status: Box::new(status),
+            });
+    }
+
+    /// `setCallsOverlay`.
+    pub(super) fn set_calls_overlay(
+        &mut self,
+        device: &DeviceId,
+        on: bool,
+    ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
+        let now = self.calls_now().ok_or_else(not_installed)?;
+        let service = self.calls.service.as_mut().ok_or_else(not_installed)?;
+        service
+            .driver
+            .set_device_enabled(&mut self.runtime, device, on, now);
+        self.render_all();
+        self.calls_publish();
+        Ok(deckpilot_ipc::Response::CallsStatus {
+            status: Box::new(self.calls_status()),
+        })
+    }
+
+    /// `restoreCallsLayout`: the user's version kept as `copy_name`, the
+    /// layout generated again and shown.
+    pub(super) fn restore_calls_layout(
+        &mut self,
+        model: &DeviceModelId,
+        copy_name: &str,
+    ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
+        use deckpilot_ipc::{ErrorCode, IpcError};
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| IpcError::new(ErrorCode::Locked, "the configuration is locked"))?;
+        let service = self.calls.service.as_mut().ok_or_else(not_installed)?;
+        let Some(catalog_model) = self.runtime.catalog().get(model) else {
+            return Err(no_layout());
+        };
+        let shape = Shape::of(&catalog_model.capabilities);
+        let template = service
+            .templates
+            .iter()
+            .find(|t| t.shape == shape)
+            .ok_or_else(no_layout)?;
+        let generated =
+            generate(template, model, &catalog_model.capabilities).map_err(|_| no_layout())?;
+        let version = format!("{}.0.0", template.version);
+        let copy = store
+            .restore_managed_layout(
+                OWNER,
+                &generated.layout,
+                &generated.actions,
+                &version,
+                copy_name,
+            )
+            .map_err(|error| match error {
+                deckpilot_storage::StorageError::UnknownLayout => no_layout(),
+                other => IpcError::new(ErrorCode::Failed, other.to_string()),
+            })?;
+        let used = match store.managed_layout(OWNER, model) {
+            Ok(Some(stored)) => generated.with_stored(stored.layout, stored.actions),
+            _ => generated,
+        };
+        service.driver.set_layout(model.clone(), used);
+        if let Some(now) = self.calls_now()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.sync(&mut self.runtime, now);
+        }
+        self.render_all();
+        self.calls_publish();
+        Ok(deckpilot_ipc::Response::CallsLayoutRestored {
+            copy: copy.map(|id| id.to_string()),
+        })
     }
 
     /// The driver, for the test hooks.

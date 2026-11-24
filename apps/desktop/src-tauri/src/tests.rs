@@ -3515,6 +3515,50 @@ fn saving_reports_uses_outside_their_contexts_and_refuses_none() {
     assert_eq!(of("general.wait")["deprecated"], true);
 }
 
+/// The Calls commands (protocol 19) with the same argument shapes as
+/// `api.ts`: without an agent the page is told to start it; a running agent
+/// has the capability, and while Calls is not installed (no build installs
+/// it yet) it says so and refuses the changes.
+#[test]
+fn calls_commands_reach_the_agent_and_say_when_calls_is_not_installed() {
+    let h = Harness::new();
+    new_profile(&h, "Work");
+    let error = h.error("get_calls_status", json!({}));
+    assert!(
+        error.contains("start the DeckPilot agent to see Calls"),
+        "{error}"
+    );
+
+    let (_runtime, _mock, _agent) = launch_agent(&h.paths, None);
+    h.unlock();
+    wait_for(&h, |s| s["running"] == true);
+    let status = h.ok("agent_status", json!({}));
+    assert!(
+        status["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("calls"))
+    );
+    let calls = h.ok("get_calls_status", json!({}));
+    assert_eq!(calls["installed"], false);
+    let device = json!({ "model": "elgato.streamdeck.mk2", "serial": "A" });
+    let refused = h.error(
+        "set_calls_overlay",
+        json!({ "device": device, "on": false }),
+    );
+    assert!(refused.contains("Calls is not installed"), "{refused}");
+    let refused = h.error(
+        "restore_calls_layout",
+        json!({ "model": "elgato.streamdeck.mk2", "copyName": "Calls (my version)" }),
+    );
+    assert!(
+        refused.contains("Calls is not installed") || refused.contains("locked"),
+        "{refused}"
+    );
+    h.ok("stop_agent", json!({}));
+    wait_for(&h, |s| s["running"] == false);
+}
+
 /// The work session commands (protocol 8) against a real agent: state,
 /// settings, history, notices and the `agent-work-session` event. The
 /// session is operated from the "key" (the agent's test entry point):

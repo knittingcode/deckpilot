@@ -173,7 +173,17 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// Also version 17: key labels (capability `keyLabels`). Labels travel in
 /// layouts (`KeyAppearance.labels`) and faces (`KeyFace.labels`), optional
 /// fields older peers ignore; no request changes.
-pub const PROTOCOL_VERSION: u32 = 17;
+///
+/// Version 19: Calls (capability `calls`, [`crate::calls`]):
+/// `getCallsStatus`, `setCallsOverlay`, `restoreCallsLayout` and the
+/// `callsChanged` event. A client of protocol 18 or older never sends them
+/// (refused locally, and by the agent from such a connection) and receives
+/// no `callsChanged` events. (Version 18 is the Projects' change; if it
+/// lands later, the two are numbered in merge order.)
+pub const PROTOCOL_VERSION: u32 = 19;
+
+/// The protocol of Calls ([`Capability::Calls`]).
+pub const CALLS_PROTOCOL: u32 = 19;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -365,10 +375,14 @@ pub enum Capability {
     /// still saved) and the editor says the agent needs an update.
     /// Protocol 17.
     KeyLabels,
+    /// Calls ([`crate::calls`]): `getCallsStatus`, `setCallsOverlay`,
+    /// `restoreCallsLayout` and `callsChanged` events. Without it the app
+    /// shows no Calls settings. Protocol 19.
+    Calls,
 }
 
 impl Capability {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -387,6 +401,7 @@ impl Capability {
         Self::LivePreview,
         Self::DisplayTemplates,
         Self::KeyLabels,
+        Self::Calls,
     ];
 
     /// The protocol that introduced the capability.
@@ -408,6 +423,7 @@ impl Capability {
             Self::RestoreBundled => 15,
             Self::LivePreview => 16,
             Self::DisplayTemplates | Self::KeyLabels => 17,
+            Self::Calls => CALLS_PROTOCOL,
         }
     }
 
@@ -1010,6 +1026,23 @@ pub enum Request {
         context: Box<ResolutionContext>,
         templates: Vec<String>,
     },
+    /// Calls as it is now ([`crate::calls`]). Answers
+    /// [`Response::CallsStatus`]. Since protocol 19.
+    GetCallsStatus,
+    /// Turns the Calls overlay on or off for `device` (the per-device
+    /// setting). Answers [`Response::CallsStatus`]. Since protocol 19.
+    SetCallsOverlay {
+        device: DeviceId,
+        on: bool,
+    },
+    /// *Restore defaults* of `model`'s managed Calls layout: the user's
+    /// version is kept first as a layout of their own named `copy_name`.
+    /// Answers [`Response::CallsLayoutRestored`]. Since protocol 19.
+    #[serde(rename_all = "camelCase")]
+    RestoreCallsLayout {
+        model: deckpilot_device::DeviceModelId,
+        copy_name: String,
+    },
 }
 
 impl Request {
@@ -1067,6 +1100,18 @@ impl Request {
             ),
             Self::ResolveDisplayTemplates { templates, .. } => {
                 crate::display_templates::check_templates(templates)
+            }
+            Self::RestoreCallsLayout { copy_name, .. }
+                if copy_name.trim().is_empty()
+                    || copy_name.chars().count() > crate::calls::MAX_COPY_NAME =>
+            {
+                Err(format!(
+                    "the copy's name is 1 to {} characters",
+                    crate::calls::MAX_COPY_NAME
+                ))
+            }
+            Self::SetCallsOverlay { device, .. } if device.serial.is_empty() => {
+                Err("device serial must not be empty".into())
             }
             Self::PreviewReferences { items, .. } if items.len() > MAX_PREVIEW_ITEMS => Err(
                 format!("at most {MAX_PREVIEW_ITEMS} references can be previewed at once"),
@@ -1305,6 +1350,17 @@ pub enum Response {
     /// protocol 17.
     DisplayTemplates {
         texts: Vec<crate::display_templates::ResolvedDisplayTemplate>,
+    },
+    /// Answer to `getCallsStatus` and `setCallsOverlay`. Since protocol 19.
+    CallsStatus {
+        status: Box<crate::calls::CallsStatus>,
+    },
+    /// Answer to `restoreCallsLayout`: the id of the kept copy of the
+    /// user's version (`None`: it was unedited, nothing to keep). Since
+    /// protocol 19.
+    CallsLayoutRestored {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        copy: Option<String>,
     },
     /// Answer to `getWorkSession` and `clearWorkSessionNotices`. Since
     /// protocol 8.
@@ -1697,6 +1753,11 @@ pub enum AgentEvent {
     WorkSessionChanged {
         snapshot: Box<WorkSessionSnapshot>,
     },
+    /// Calls changed: the call's state, a device's overlay, a managed
+    /// layout. Since protocol 19.
+    CallsChanged {
+        status: Box<crate::calls::CallsStatus>,
+    },
 }
 
 impl Request {
@@ -1772,6 +1833,9 @@ impl Request {
             | Self::EndLivePreview { .. }
             | Self::InspectMockDevice { .. } => 16,
             Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
+            Self::GetCallsStatus
+            | Self::SetCallsOverlay { .. }
+            | Self::RestoreCallsLayout { .. } => CALLS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices
@@ -1819,6 +1883,7 @@ impl AgentEvent {
             | Self::DeviceContextChanged { .. }
             | Self::ExecutionContextChanged { .. } => 7,
             Self::WorkSessionChanged { .. } => 8,
+            Self::CallsChanged { .. } => CALLS_PROTOCOL,
             Self::OpenWindow { .. } => 4,
             Self::State { .. }
             | Self::ActionCompleted { .. }
@@ -2573,6 +2638,59 @@ mod tests {
     }
 
     #[test]
+    fn calls_need_protocol_19_and_carry_no_private_text() {
+        assert!(!Capability::of_protocol(18).contains(&Capability::Calls));
+        assert!(Capability::of_protocol(19).contains(&Capability::Calls));
+        assert_eq!(serde_json::to_value(Capability::Calls).unwrap(), "calls");
+        for request in [
+            Request::GetCallsStatus,
+            Request::SetCallsOverlay {
+                device: DeviceId {
+                    model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                    serial: "A".into(),
+                },
+                on: false,
+            },
+            Request::RestoreCallsLayout {
+                model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                copy_name: "Rozmowy (moja wersja)".into(),
+            },
+        ] {
+            assert_eq!(request.since_protocol(), 19);
+            request.validate().unwrap();
+        }
+        let json = serde_json::to_value(Request::RestoreCallsLayout {
+            model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+            copy_name: "Mine".into(),
+        })
+        .unwrap();
+        assert_eq!(json["type"], "restoreCallsLayout");
+        assert_eq!(json["copyName"], "Mine");
+        for bad in ["", "   ", &"x".repeat(crate::calls::MAX_COPY_NAME + 1)] {
+            assert!(
+                Request::RestoreCallsLayout {
+                    model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                    copy_name: bad.into(),
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        let event = AgentEvent::CallsChanged {
+            status: Box::default(),
+        };
+        assert!(event.clone().for_protocol(18).is_none());
+        assert!(event.for_protocol(19).is_some());
+        // The status names no title, participant or process.
+        let status = serde_json::to_value(crate::calls::CallsStatus::default()).unwrap();
+        let keys: Vec<&String> = status.as_object().unwrap().keys().collect();
+        assert_eq!(
+            keys,
+            ["controls", "devices", "installed", "layouts", "state"]
+        );
+    }
+
+    #[test]
     fn the_variable_registry_needs_protocol_9() {
         use deckpilot_core::variables::{
             CatalogEntry, Deprecation, ReferenceAvailability, ReferencePreview, ReferenceStatus,
@@ -2584,7 +2702,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 17);
+        assert_eq!(PROTOCOL_VERSION, 19);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),

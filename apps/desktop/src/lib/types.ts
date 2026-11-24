@@ -1484,6 +1484,38 @@ export type AgentCapability =
   | "livePreview"
   | "displayTemplates"
   | "keyLabels"
+  | "calls"
+
+/**
+ * Calls as the agent reports it (protocol 19, `deckpilot_ipc::calls`):
+ * never a meeting title, participant or process name.
+ */
+export interface CallsStatus {
+  /** A provider is installed with the user's consent. */
+  installed: boolean
+  /** `idle`, `incoming`, `outgoing`, `connecting`, `active`, `ending`, `ended`, `failed`, `unknown`. */
+  state: string
+  provider?: string
+  /** Whether any control is possible (false for detection-only Teams). */
+  controls: boolean
+  devices: CallsDevice[]
+  layouts: CallsLayout[]
+}
+
+export interface CallsDevice {
+  device: DeviceId
+  overlay: boolean
+  shown: boolean
+  suspended: boolean
+}
+
+export interface CallsLayout {
+  model: string
+  layout: string
+  name: string
+  edited: boolean
+  templateVersion: string
+}
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */
 export type AgentReload =
