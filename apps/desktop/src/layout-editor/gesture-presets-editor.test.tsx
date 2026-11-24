@@ -300,6 +300,30 @@ describe("dropped on an empty key", () => {
     })
   })
 
+  it("is applied to the latest draft: an edit made while its actions were created stays", async () => {
+    // The agent answers only when told to, so the second drop happens while
+    // the first one's actions are still being created.
+    const pending: (() => void)[] = []
+    api.createAction.mockImplementation(
+      (_profile: string, input: ActionInput) =>
+        new Promise((resolve) => {
+          pending.push(() => {
+            made.push(input)
+            resolve({ ...input, id: `made-${String(made.length)}` })
+          })
+        }),
+    )
+    render(layoutWith([]))
+    drop(BRIGHTNESS_ENTRY, "key:0")
+    drop(BRIGHTNESS_ENTRY, "key:1")
+    // Answer every request as it comes, until both drops are done.
+    await waitFor(() => {
+      while (pending.length > 0) pending.shift()?.()
+      expect(previewed(0)).toEqual(["click", "doubleClick", "longPress"])
+      expect(previewed(1)).toEqual(["click", "doubleClick", "longPress"])
+    })
+  })
+
   it("reuses the actions a second drop needs instead of making new ones", async () => {
     render(layoutWith([]))
     drop(BRIGHTNESS_ENTRY, "key:0")

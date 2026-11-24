@@ -800,7 +800,8 @@ export function LayoutEditor({
 
   const placeType = async (typeId: string, control: ControlId, preset?: ActionPreset) => {
     const target = await actionOfType(typeId, preset)
-    if (target) commands.drop({ type: "target", target }, control)
+    // On the latest draft: edits made while the action was being created stay.
+    if (target) commands.dropLater({ type: "target", target }, control)
   }
 
   /** What planning a gesture preset for `control` reads of the editor. */
@@ -877,7 +878,22 @@ export function LayoutEditor({
       control,
     )
     if (!targets) return
-    commands.change(applyPreset(draft, pageId, control, plan, targets, presetName(preset)))
+    // Applied to the latest draft: edits made while the actions were being
+    // created stay. The preset is planned again there and applied only if
+    // the control still takes the same gestures; otherwise nothing changes.
+    const planned = plan.items.map((item) => `${item.assignment.gesture}:${item.trigger.type}`)
+    commands.update((latest) => {
+      const again = planPreset({ ...presetContext(control), layout: latest, preset })
+      if (!again.ok) return latest
+      const same =
+        again.items.length === planned.length &&
+        again.items.every(
+          (item, index) => `${item.assignment.gesture}:${item.trigger.type}` === planned[index],
+        )
+      return same
+        ? applyPreset(latest, pageId, control, again, targets, presetName(preset))
+        : latest
+    })
     commands.select(control, "only")
     if (plan.skipped.length > 0) {
       toast.warning(
