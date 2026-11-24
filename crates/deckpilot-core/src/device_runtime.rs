@@ -1663,6 +1663,8 @@ pub fn core_display<R>(
         outputs: None,
         registry: &CORE,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: false,
     };
     then(&crate::variables::DisplayEnvironment {
         context: &context,

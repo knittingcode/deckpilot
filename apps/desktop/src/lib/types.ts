@@ -1526,6 +1526,8 @@ export type AgentCapability =
   | "livePreview"
   | "displayTemplates"
   | "keyLabels"
+  /** `object`/`map` value types, member entries, `structured` previews (protocol 18). */
+  | "structuredVariables"
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */
 export type AgentReload =
@@ -1851,6 +1853,19 @@ export type VariableType =
   | { type: "json" }
   /** The name of a stored credential, never the secret. */
   | { type: "secretRef" }
+  /**
+   * One object of a shape (protocol 18). Never text: read its members
+   * (`….repository.name`), or pass it whole to a JSON parameter.
+   */
+  | { type: "object"; shape: Shape }
+  /** Objects of a shape by key, in order (protocol 18). Never text. */
+  | { type: "map"; of: Shape }
+
+/** The shapes of structured values (docs/variables.md §2.8). */
+export type Shape = "repository"
+
+/** Scalar members of a structured value, by name; groups (`remote`) nest. */
+export type Members = { [name: string]: string | number | boolean | null | Members }
 
 export type VariableValue =
   | { type: "string"; value: string }
@@ -1861,6 +1876,8 @@ export type VariableValue =
   | { type: "resource"; value: ResourceRef }
   | { type: "json"; value: unknown }
   | { type: "secretRef"; value: string }
+  | { type: "object"; value: { shape: Shape; members: Members } }
+  | { type: "map"; value: { shape: Shape; entries: { key: string; members: Members }[] } }
 
 /** Most specific first: execution, project, profile, global. */
 export type VariableScope = "global" | "profile" | "project" | "execution"
@@ -1914,11 +1931,19 @@ export type MissingReason =
   | "noExecution"
   | "noOutput"
   | "otherProfile"
+  /** Protocol 18: the structured variable has no such member. */
+  | "unknownMember"
+  /** Protocol 18: the project has no repository with that key. */
+  | "repositoryNotInProject"
+  /** Protocol 18: several repositories and none is the default. */
+  | "noDefaultRepository"
 
 /** What the agent's resolver reports for one reference. */
 export type ReferenceStatus =
   | { status: "resolved"; value: VariableValue; source: ValueSource }
   | { status: "redacted"; valueType: VariableType; source: ValueSource }
+  /** A structured value, summarised: how many objects, never a member (protocol 18). */
+  | { status: "structured"; valueType: VariableType; entries: number; source: ValueSource }
   | { status: "unavailableUntilRuntime" }
   | { status: "missing"; reason: MissingReason }
   | { status: "typeMismatch"; found: VariableType }
@@ -1971,6 +1996,20 @@ export interface CatalogEntry {
   deprecated?: Deprecation
   /** For core and module variables: what the value depends on (protocol 9). */
   declaredScope?: DeclaredScope
+  /** For a structured variable: the scalar members of its shape (protocol 18). */
+  members?: CatalogMember[]
+  /** For one member of a structured variable: that variable's reference (protocol 18). */
+  memberOf?: string
+}
+
+/** One scalar member of a shape (protocol 18). */
+export interface CatalogMember {
+  path: string
+  label: string
+  valueType: VariableType
+  nullable?: boolean
+  /** May be shown on a key; ids and folder paths never are. */
+  displaySafe?: boolean
 }
 
 // The unified variable registry (deckpilot_core::variables::registry).

@@ -696,6 +696,7 @@ impl PluginService {
                 visual_assets: Vec::new(),
                 project_context: false,
                 resources: false,
+                resource_paths: false,
                 wrap_around: None,
                 // Not installed: nothing to offer in the library. Keys
                 // that used its presets keep their bindings.
@@ -765,6 +766,11 @@ impl PluginService {
                     resources: grants.iter().any(|g| {
                         g.key.kind == deckpilot_plugin_manifest::PermissionKind::Resources
                             && g.key.key.is_empty()
+                            && g.status == deckpilot_plugin_store::GrantStatus::Granted
+                    }),
+                    resource_paths: grants.iter().any(|g| {
+                        g.key.kind == deckpilot_plugin_manifest::PermissionKind::Resources
+                            && g.key.key == "paths"
                             && g.status == deckpilot_plugin_store::GrantStatus::Granted
                     }),
                 })

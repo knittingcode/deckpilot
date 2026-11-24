@@ -38,7 +38,7 @@ use super::resolution::{
 };
 use super::{SystemVariable, VariableRef, VariableType, valid_segment};
 use crate::work_session::WorkSessionSnapshot;
-use crate::{ModuleId, Os, Profile, Project};
+use crate::{MachineConfig, ModuleId, Os, Profile, Project};
 
 /// Roots of the reference grammar that no module can use as its namespace:
 /// node outputs, shared variables, the two namespaces of the core and the
@@ -60,8 +60,12 @@ pub const CORE_NAMESPACES: &[&str] = &["system", "workflow"];
 /// module that declares variables adds its namespace here; the built-in
 /// modules are checked against this list by `deckpilot-modules`.
 pub const MODULE_NAMESPACES: &[&str] = &["projects", "workSession"];
-/// Most segments of a [`VariableId`].
+/// Most segments of a declared [`VariableId`].
 pub const MAX_ID_SEGMENTS: usize = 6;
+/// Most segments of a reference to a module variable: a declared id and a
+/// member path of a structured variable ([`super::MAX_MEMBER_SEGMENTS`]),
+/// `plugins.deckpilot.projects.current.repositories.cms.remote.url`.
+pub const MAX_REFERENCE_SEGMENTS: usize = MAX_ID_SEGMENTS + super::shape::MAX_MEMBER_SEGMENTS;
 
 /// The canonical id of a registered variable, as written in a reference
 /// without braces: `projects.current.id`, `system.platform`. The first
@@ -79,14 +83,37 @@ pub struct InvalidVariableId(pub String);
 
 impl VariableId {
     pub fn new(id: impl Into<String>) -> Result<Self, InvalidVariableId> {
-        let id = id.into();
+        Self::with_max(id.into(), MAX_ID_SEGMENTS)
+    }
+
+    /// The id part of a reference as written: a declared id, or a declared
+    /// id of a structured variable followed by a member path, up to
+    /// [`MAX_REFERENCE_SEGMENTS`] segments. Which part is the id is decided
+    /// by the registry ([`VariableRegistry::split_member`]), never by the
+    /// text.
+    pub fn reference(text: impl Into<String>) -> Result<Self, InvalidVariableId> {
+        Self::with_max(text.into(), MAX_REFERENCE_SEGMENTS)
+    }
+
+    fn with_max(id: String, max: usize) -> Result<Self, InvalidVariableId> {
         let segments: Vec<&str> = id.split('.').collect();
-        if !(2..=MAX_ID_SEGMENTS).contains(&segments.len())
+        if !(2..=max).contains(&segments.len())
             || !segments.iter().all(|segment| valid_segment(segment))
         {
             return Err(InvalidVariableId(id));
         }
         Ok(Self(id))
+    }
+
+    /// The first `count` segments, if the id has more than that and they
+    /// make a declared id.
+    fn prefix(&self, count: usize) -> Option<(Self, &str)> {
+        let (end, _) = self.0.match_indices('.').nth(count.checked_sub(1)?)?;
+        Some((Self::new(&self.0[..end]).ok()?, &self.0[end + 1..]))
+    }
+
+    fn segments(&self) -> usize {
+        self.0.split('.').count()
     }
 
     pub fn as_str(&self) -> &str {
@@ -448,12 +475,18 @@ pub struct ModuleVariableAlias {
     pub plugin: &'static str,
     /// The app version that added the alias.
     pub since: &'static str,
+    /// The legacy module declared it, and it moved with the extraction;
+    /// `false` for a short spelling no module ever had
+    /// (`projects.current.repositories`, plugin API 1.12).
+    pub moved: bool,
 }
 
 /// Every module variable alias: the `projects` module's
 /// `projects.current.{id,key,name}`, which `deckpilot.projects` declares
-/// as host-published variables (X7).
-pub const MODULE_VARIABLE_ALIASES: [ModuleVariableAlias; 3] = {
+/// as host-published variables (X7), and the short spellings of its
+/// repositories (plugin API 1.12, `projects.current.repositories` and
+/// `projects.current.repository`), which no module ever had.
+pub const MODULE_VARIABLE_ALIASES: [ModuleVariableAlias; 5] = {
     const fn projects(legacy: &'static str, canonical: &'static str) -> ModuleVariableAlias {
         ModuleVariableAlias {
             legacy,
@@ -461,6 +494,14 @@ pub const MODULE_VARIABLE_ALIASES: [ModuleVariableAlias; 3] = {
             module: "projects",
             plugin: "deckpilot.projects",
             since: "0.10.0",
+            moved: true,
+        }
+    }
+    const fn repositories(legacy: &'static str, canonical: &'static str) -> ModuleVariableAlias {
+        ModuleVariableAlias {
+            since: "0.16.0",
+            moved: false,
+            ..projects(legacy, canonical)
         }
     }
     [
@@ -475,6 +516,14 @@ pub const MODULE_VARIABLE_ALIASES: [ModuleVariableAlias; 3] = {
         projects(
             "projects.current.name",
             "plugins.deckpilot.projects.current.name",
+        ),
+        repositories(
+            "projects.current.repositories",
+            "plugins.deckpilot.projects.current.repositories",
+        ),
+        repositories(
+            "projects.current.repository",
+            "plugins.deckpilot.projects.current.repository",
         ),
     ]
 };
@@ -592,6 +641,14 @@ pub struct VariableEnvironment<'a> {
     pub profile: &'a Profile,
     pub os: Os,
     pub live: &'a dyn LiveState,
+    /// This computer's resource bindings, where the resolver has them
+    /// (repository folders); `None` resolves every folder as unbound.
+    pub machine: Option<&'a MachineConfig>,
+    /// Whether whoever reads the value may see this computer's folder paths
+    /// ([`super::Member::private_path`]): `false` for key titles and for
+    /// the parameters of a plugin without `resources:paths`, which read
+    /// `null` instead.
+    pub private_paths: bool,
 }
 
 impl fmt::Debug for VariableEnvironment<'_> {
@@ -882,22 +939,21 @@ impl VariableRegistry {
         if environment.context.profile != environment.profile.id {
             return Resolution::Missing(MissingReason::OtherProfile);
         }
+        if let Some((base, member)) = self.split_member(id) {
+            return read_member(self.resolve(&base, environment), &member, environment);
+        }
+        if id.segments() > MAX_ID_SEGMENTS {
+            // A member of nothing structured: no such variable (or its
+            // owner is not here, which the namespace tells).
+            return self.unknown(id);
+        }
         if let Some(alias) = module_variable_alias(id)
             && let Some(resolution) = self.resolve_moved(id, alias, environment)
         {
             return resolution;
         }
         let Some(registered) = self.variables.get(id) else {
-            return match self.namespace_owner(id.owner_namespace()) {
-                Some(_) => Resolution::Missing(MissingReason::UnknownVariable),
-                // Nothing owns the namespace: its module is not installed
-                // (a plugin is named by its id).
-                None => Resolution::Unavailable {
-                    owner: id
-                        .plugin_owner()
-                        .map_or_else(|| id.owner_namespace().to_owned(), |m| m.to_string()),
-                },
-            };
+            return self.unknown(id);
         };
         let source = match registered.owner.module() {
             None => &self.core,
@@ -911,6 +967,74 @@ impl VariableRegistry {
             },
         };
         checked(&registered.declaration, source.as_ref(), environment)
+    }
+
+    /// An id nothing declares: missing in a namespace someone owns, else
+    /// unavailable with the namespace's owner (a plugin named by its id).
+    fn unknown(&self, id: &VariableId) -> Resolution {
+        match self.namespace_owner(id.owner_namespace()) {
+            Some(_) => Resolution::Missing(MissingReason::UnknownVariable),
+            // Nothing owns the namespace: its module is not installed (a
+            // plugin is named by its id).
+            None => Resolution::Unavailable {
+                owner: id
+                    .plugin_owner()
+                    .map_or_else(|| id.owner_namespace().to_owned(), |m| m.to_string()),
+            },
+        }
+    }
+
+    /// The declared type of `id`, a declared id or a legacy alias of one
+    /// ([`ModuleVariableAlias`]), whoever provides it now.
+    fn declared_type(&self, id: &VariableId) -> Option<VariableType> {
+        if let Some(registered) = self.variables.get(id) {
+            return Some(registered.declaration.value_type);
+        }
+        let alias = module_variable_alias(id)?;
+        let canonical = VariableId::new(alias.canonical).ok()?;
+        self.variables
+            .get(&canonical)
+            .map(|registered| registered.declaration.value_type)
+    }
+
+    /// Splits a reference's id into the declared id of a structured
+    /// variable and a member path (`projects.current.repositories.cms.path`
+    /// → `projects.current.repositories`, `cms.path`): at the longest
+    /// prefix that names a declared structured variable (or a legacy alias
+    /// of one). `None` when the id names a variable itself, or no prefix
+    /// is structured: the reference then resolves exactly as before.
+    pub fn split_member(&self, id: &VariableId) -> Option<(VariableId, super::MemberPath)> {
+        if self.variables.contains_key(id) {
+            return None;
+        }
+        let segments = id.segments();
+        (2..segments.min(MAX_ID_SEGMENTS + 1))
+            .rev()
+            .filter(|count| segments - count <= super::shape::MAX_MEMBER_SEGMENTS)
+            .find_map(|count| {
+                let (base, rest) = id.prefix(count)?;
+                self.declared_type(&base)
+                    .filter(|value_type| value_type.is_structured())?;
+                Some((base, super::MemberPath::new(rest)?))
+            })
+    }
+
+    /// The declaration `id` names, with the member path when it names a
+    /// member of a structured variable: what [`super::display_safe`] judges
+    /// a reference by before resolving it.
+    pub fn declaration_of(
+        &self,
+        id: &VariableId,
+    ) -> Option<(RegisteredVariable<'_>, Option<super::MemberPath>)> {
+        let (base, member) = match self.split_member(id) {
+            Some((base, member)) => (base, Some(member)),
+            None => (id.clone(), None),
+        };
+        let registered = self.get(&base).or_else(|| {
+            let alias = module_variable_alias(&base)?;
+            self.get(&VariableId::new(alias.canonical).ok()?)
+        })?;
+        Some((registered, member))
     }
 
     /// A module variable that moved to a plugin ([`ModuleVariableAlias`]),
@@ -981,6 +1105,76 @@ impl VariableRegistry {
     }
 }
 
+/// The member `member` of what a structured variable resolved to. A
+/// member that is not of the shape is missing (`unknownMember`), a key not
+/// in the map is missing (`repositoryNotInProject`), `null` has no value.
+/// Private paths stay `null` for a reader that may not see them, whatever
+/// the source gave.
+fn read_member(
+    resolution: Resolution,
+    member: &super::MemberPath,
+    environment: &VariableEnvironment<'_>,
+) -> Resolution {
+    use super::{MemberValue, Scalar, VariableValue};
+    let Resolution::Value {
+        value,
+        source,
+        sensitive,
+    } = resolution
+    else {
+        return resolution;
+    };
+    let read = match &value {
+        VariableValue::Object(object) => object.member(member),
+        VariableValue::Map(map) => map.member(member),
+        _ => MemberValue::UnknownMember,
+    };
+    let private = match &value {
+        VariableValue::Object(object) => object.shape.member(member.as_str()),
+        VariableValue::Map(map) => member
+            .as_str()
+            .split_once('.')
+            .and_then(|(_, rest)| map.shape.member(rest)),
+        _ => None,
+    }
+    .is_some_and(|m| m.private_path);
+    let value = match read {
+        MemberValue::UnknownMember => return Resolution::Missing(MissingReason::UnknownMember),
+        MemberValue::NoEntry => return Resolution::Missing(MissingReason::RepositoryNotInProject),
+        _ if private && !environment.private_paths => {
+            return Resolution::Missing(MissingReason::NoValue);
+        }
+        MemberValue::Scalar(Scalar::String(text)) => VariableValue::String(text),
+        MemberValue::Scalar(Scalar::Integer(number)) => VariableValue::Integer(number),
+        MemberValue::Scalar(Scalar::Boolean(flag)) => VariableValue::Boolean(flag),
+        MemberValue::Object(object) if environment.private_paths => VariableValue::Object(object),
+        MemberValue::Object(object) => VariableValue::Object(object.without_paths()),
+        MemberValue::Scalar(Scalar::Null | Scalar::Object(_)) | MemberValue::Null => {
+            return Resolution::Missing(MissingReason::NoValue);
+        }
+    };
+    Resolution::Value {
+        value,
+        source,
+        sensitive,
+    }
+}
+
+/// `value` as a reader that may not see this computer's folders gets it:
+/// every private path of a structured value `null`.
+fn without_private_paths(
+    value: super::VariableValue,
+    environment: &VariableEnvironment<'_>,
+) -> super::VariableValue {
+    use super::VariableValue;
+    match value {
+        _ if environment.private_paths => value,
+        VariableValue::Object(object) => VariableValue::Object(object.without_paths()),
+        VariableValue::Map(map) => VariableValue::Map(map.without_paths()),
+        other => other,
+    }
+}
+
 /// What `source` gives for `declaration`, with the declared type enforced
 /// and the declared sensitivity applied.
 fn checked(
@@ -996,7 +1190,7 @@ fn checked(
         } => {
             if value.is_of(declaration.value_type) {
                 Resolution::Value {
-                    value,
+                    value: without_private_paths(value, environment),
                     source,
                     sensitive: sensitive || declaration.sensitive,
                 }
@@ -1064,6 +1258,8 @@ impl VariableRegistry {
                     read_only: true,
                     deprecated: variable.deprecation(),
                     declared_scope: registered.map(|r| r.declaration.scope),
+                    members: Vec::new(),
+                    member_of: None,
                 }
             })
             .collect();
@@ -1087,6 +1283,8 @@ impl VariableRegistry {
                 read_only: true,
                 deprecated: None,
                 declared_scope: Some(declaration.scope),
+                members: Vec::new(),
+                member_of: None,
             });
         }
         entries

@@ -112,6 +112,7 @@ impl Fixture {
                 &BTreeMap::new(),
                 RunServices {
                     variables: Some(variables),
+                    variables_without_paths: None,
                     device: None,
                     execution: Some(execution),
                 },
@@ -784,4 +785,81 @@ fn references_filling_required_parameters_are_still_checked() {
             "parameter `message`: {{ shared.creds.token }} is a secretRef value, the parameter expects text"
         ]
     );
+}
+
+/// A mapping into the parameters of a plugin's action reads a
+/// repository's folder (`projects.current.repository.path`) only when the
+/// plugin may see paths (`resources:paths`): otherwise the mapping has no
+/// value and the node does not run with it.
+#[test]
+fn mappings_into_a_plugins_parameters_read_folder_paths_only_when_allowed() {
+    let structured = crate::variables::structured_tests::fixture();
+    let folder = structured.machine.bindings[0].value.clone();
+    for allowed in [false, true] {
+        let mut f = Fixture::new();
+        f.profile = structured.profile.clone();
+        let definition = f
+            .engine
+            .registry()
+            .definition(&probe_type())
+            .unwrap()
+            .clone();
+        let module = crate::ModuleId::new("acme.probe").unwrap();
+        let mut registry = crate::ActionRegistry::default();
+        registry
+            .register_for_module(
+                module.clone(),
+                &[],
+                Box::new(Probe {
+                    definition,
+                    log: f.log.clone(),
+                    calls: f.calls.clone(),
+                    concurrency: f.concurrency.clone(),
+                }),
+            )
+            .unwrap();
+        if allowed {
+            registry.allow_paths(module);
+        }
+        f.engine = Engine::new(registry).with_variable_registry(std::sync::Arc::new(
+            crate::variables::structured_tests::registry(),
+        ));
+        let probe = map(
+            probe_step("p", "x"),
+            "message",
+            template("at {{ projects.current.repository.path }}"),
+        );
+        let workflow = adopt(
+            &mut f,
+            graph(
+                vec![node("start", NodeKind::Trigger), probe],
+                chain(&["start", "p"]),
+            ),
+        );
+        let mut context: ActiveProjectContext = serde_json::from_value(serde_json::json!({
+            "profileId": f.profile.id,
+            "projectId": f.profile.projects[0].id,
+        }))
+        .unwrap();
+        let report = f
+            .engine
+            .execute_workflow(
+                &f.profile,
+                &structured.machine,
+                &mut context,
+                workflow,
+                &CancellationToken::new(),
+                &|_| {},
+            )
+            .unwrap();
+        if allowed {
+            assert_eq!(report.status, RunStatus::Succeeded);
+            assert_eq!(f.ran(), [format!("at {folder}")]);
+        } else {
+            assert_ne!(report.status, RunStatus::Succeeded);
+            assert!(f.ran().is_empty(), "{:?}", f.ran());
+            let text = serde_json::to_string(&report).unwrap();
+            assert!(!text.contains(&folder), "{text}");
+        }
+    }
 }

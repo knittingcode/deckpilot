@@ -396,6 +396,9 @@ pub struct ActionRegistry {
     handlers: BTreeMap<ActionTypeId, Registered>,
     /// Known action types that cannot run, with the reason.
     unavailable: BTreeMap<ActionTypeId, String>,
+    /// The plugins whose actions may receive folder paths
+    /// ([`ActionRegistry::reads_paths`]).
+    path_readers: BTreeSet<ModuleId>,
 }
 
 impl fmt::Debug for ActionRegistry {
@@ -403,6 +406,7 @@ impl fmt::Debug for ActionRegistry {
         f.debug_struct("ActionRegistry")
             .field("types", &self.handlers.keys())
             .field("unavailable", &self.unavailable.keys())
+            .field("path_readers", &self.path_readers)
             .finish()
     }
 }
@@ -577,6 +581,25 @@ impl ActionRegistry {
     pub fn runs_detached(&self, action_type: &ActionTypeId) -> bool {
         self.handler(action_type)
             .is_some_and(ActionHandler::runs_detached)
+    }
+
+    /// Lets the actions of the plugin `module` receive folder paths (it
+    /// holds `resources:paths`).
+    pub fn allow_paths(&mut self, module: ModuleId) {
+        self.path_readers.insert(module);
+    }
+
+    /// Whether the parameters of `id` may carry this computer's folder
+    /// paths (a repository's `path`): DeckPilot's own actions may; a
+    /// plugin's only when it holds `resources:paths`
+    /// ([`ActionRegistry::allow_paths`]); an action nobody provides never.
+    pub fn reads_paths(&self, id: &ActionTypeId) -> bool {
+        self.handlers.get(id).is_some_and(|entry| {
+            entry
+                .module
+                .as_ref()
+                .is_none_or(|module| !module.is_plugin() || self.path_readers.contains(module))
+        })
     }
 
     /// The module that provides `id`, if it was registered by a module.
@@ -914,6 +937,30 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert_eq!(denied.code, "not-permitted");
+    }
+
+    /// Folder paths reach DeckPilot's own actions, and a plugin's only
+    /// when it may see them (`resources:paths`); an unknown type never.
+    #[test]
+    fn only_allowed_plugins_read_folder_paths() {
+        let builtin = |module: &str| {
+            let mut registry = ActionRegistry::default();
+            registry
+                .register_for_module(ModuleId::new(module).unwrap(), &[], Box::new(Echo::new()))
+                .unwrap();
+            registry
+        };
+        assert!(builtin("test").reads_paths(&echo_type()));
+        let mut plugin = builtin("acme.tools");
+        assert!(!plugin.reads_paths(&echo_type()));
+        plugin.allow_paths(ModuleId::new("acme.other").unwrap());
+        assert!(!plugin.reads_paths(&echo_type()));
+        plugin.allow_paths(ModuleId::new("acme.tools").unwrap());
+        assert!(plugin.reads_paths(&echo_type()));
+        assert!(!plugin.reads_paths(&select_type()));
+        let mut trusted = ActionRegistry::default();
+        trusted.register(Box::new(Echo::new())).unwrap();
+        assert!(trusted.reads_paths(&echo_type()));
     }
 
     #[test]

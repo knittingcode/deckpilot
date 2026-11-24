@@ -381,6 +381,8 @@ fn legacy_ids_keep_working_while_their_module_is_disabled() {
             outputs: None,
             registry,
             live: &crate::variables::NoLiveState,
+            machine: None,
+            private_paths: true,
         };
         let resolve = |text: &str| resolver.resolve(&VariableRef::parse(text).unwrap(), &context);
         // As on main: the core resolves the project in the context.
@@ -606,6 +608,8 @@ fn sensitive_module_variables_are_redacted_like_shared_ones() {
         outputs: None,
         registry: &registry,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let context = Invocation::default().context(&f.profile, None);
     let parameters = resolve_parameters(
@@ -670,6 +674,8 @@ fn values_never_cross_profiles() {
         outputs: None,
         registry: &REGISTRY,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let context = Invocation::default().context(&f.profile, None);
     let failure = resolve_parameters(
@@ -752,6 +758,8 @@ fn node_outputs_are_injected_and_converted() {
         outputs: Some(&outputs),
         registry: &REGISTRY,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let context = Invocation::default()
         .with_workflow(crate::WorkflowId::new())
@@ -928,6 +936,8 @@ fn defaults_that_are_references_are_resolved() {
         outputs: None,
         registry: &REGISTRY,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let found = resolve_parameters(
         &definition,
@@ -964,6 +974,8 @@ fn previews_of_a_run_do_not_use_the_active_project() {
         outputs: None,
         registry: &REGISTRY,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     assert!(matches!(
         resolver.resolve(&reference, &explicit),
@@ -1102,6 +1114,8 @@ fn work_session_variables_come_from_the_live_state() {
             outputs: None,
             registry: &registry,
             live: session,
+            machine: None,
+            private_paths: true,
         }
         .resolve(&VariableRef::parse(text).unwrap(), &context)
     };
@@ -1143,6 +1157,8 @@ fn work_session_variables_come_from_the_live_state() {
             outputs: None,
             registry: &registry,
             live: &own,
+            machine: None,
+            private_paths: true,
         },
         &context,
         &f.profile,
@@ -1165,6 +1181,8 @@ fn resolved_values_say_where_they_came_from() {
         outputs: None,
         registry: &REGISTRY,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let context = Invocation::default().context(&f.profile, None);
     let mut definition = Probe::new().definition().clone();
@@ -1215,4 +1233,71 @@ fn handlers_see_where_their_values_came_from() {
     assert_eq!(literal.data["provenance"], "Literal");
     let templated = f.run(message(template("{{ shared.team.name }}")), Some(0));
     assert_eq!(templated.data["provenance"], "Template");
+}
+
+/// A repository's folder (`projects.current.repository.path`) reaches the
+/// parameters of DeckPilot's own actions, and of a plugin's only when it
+/// may see paths (`resources:paths`, `ActionRegistry::allow_paths`).
+#[test]
+fn plugin_actions_read_folder_paths_only_when_allowed() {
+    let structured = crate::variables::structured_tests::fixture();
+    let folder = structured.machine.bindings[0].value.clone();
+    for (module, allowed, sees) in [
+        ("test", false, true),
+        ("acme.probe", false, false),
+        ("acme.probe", true, true),
+    ] {
+        let module = ModuleId::new(module).unwrap();
+        let mut registry = ActionRegistry::default();
+        registry
+            .register_for_module(module.clone(), &[], Box::new(Probe::new()))
+            .unwrap();
+        if allowed {
+            registry.allow_paths(module.clone());
+        }
+        let engine = Engine::new(registry)
+            .with_variable_registry(Arc::new(crate::variables::structured_tests::registry()));
+        let mut profile = structured.profile.clone();
+        let instance = ActionInstance {
+            id: ActionInstanceId::new(),
+            name: "Probe".into(),
+            action_type: probe_type(),
+            parameters: message(template("at {{ projects.current.repository.path }}")),
+            description: String::new(),
+            icon: None,
+            label: None,
+        };
+        let id = instance.id;
+        profile.actions.push(instance);
+        let mut context: ActiveProjectContext = serde_json::from_value(serde_json::json!({
+            "profileId": profile.id,
+            "projectId": profile.projects[0].id,
+        }))
+        .unwrap();
+        let result = engine
+            .run_action(&profile, &structured.machine, &mut context, id)
+            .unwrap();
+        if sees {
+            assert!(result.is_success(), "{module}: {}", result.message);
+            assert_eq!(result.message, format!("at {folder}"), "{module}");
+        } else {
+            assert!(!result.is_success(), "{module}");
+            assert_eq!(
+                result.code.as_deref(),
+                Some("reference-missing"),
+                "{module}"
+            );
+            assert!(
+                !result.message.contains(&folder),
+                "{module}: {}",
+                result.message
+            );
+        }
+        // The rest of the repository is the same for every reader.
+        profile.actions[0].parameters = message(template("{{ projects.current.repository.name }}"));
+        let result = engine
+            .run_action(&profile, &structured.machine, &mut context, id)
+            .unwrap();
+        assert_eq!(result.message, "Storefront CMS", "{module}");
+    }
 }

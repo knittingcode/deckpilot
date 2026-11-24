@@ -189,6 +189,8 @@ impl Fixture {
             outputs: None,
             registry: &self.registry,
             live: &super::super::NoLiveState,
+            machine: None,
+            private_paths: true,
         };
         resolve_display_template(
             &DisplayEnvironment {
@@ -484,6 +486,8 @@ fn values_never_cross_profiles() {
         outputs: None,
         registry: &fixture.registry,
         live: &super::super::NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let text = resolve_display_template(
         &DisplayEnvironment {
@@ -636,6 +640,8 @@ fn the_picker_never_offers_ids_or_secrets() {
         read_only: false,
         deprecated: None,
         declared_scope: None,
+        members: Vec::new(),
+        member_of: None,
     };
     assert!(display_listed(
         &shared(false, VariableType::String),

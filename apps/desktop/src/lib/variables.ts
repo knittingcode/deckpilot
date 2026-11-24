@@ -198,6 +198,10 @@ export function assignableTo(type: VariableType, kind: ParameterKind): boolean {
       )
     case "json":
       return (kind.type === "code" && kind.language === "json") || kind.type === "text"
+    case "object":
+    case "map":
+      // Structured values pass whole only where JSON is expected.
+      return kind.type === "code" && kind.language === "json"
   }
 }
 
@@ -230,6 +234,8 @@ const TYPE_LABEL: Record<VariableType["type"], TranslationKey> = {
   resource: "editor:variableText.type.resource",
   json: "editor:variableText.type.json",
   secretRef: "editor:variableText.type.secretRef",
+  object: "editor:variableText.type.object",
+  map: "editor:variableText.type.map",
 }
 
 /** A value type in words, in the window's language. */
@@ -409,6 +415,9 @@ const MISSING: Record<MissingReason, TranslationKey> = {
   noExecution: "editor:variableText.missing.noExecution",
   noOutput: "editor:variableText.missing.noOutput",
   otherProfile: "editor:variableText.missing.otherProfile",
+  unknownMember: "editor:variableText.missing.unknownMember",
+  repositoryNotInProject: "editor:variableText.missing.repositoryNotInProject",
+  noDefaultRepository: "editor:variableText.missing.noDefaultRepository",
 }
 
 export type StatusTone = "ok" | "info" | "error"
@@ -429,6 +438,13 @@ export function describeStatus(status: ReferenceStatus): StatusDescription {
         tone: "info",
         label: i18n.t("editor:variableText.status.redacted"),
         detail: i18n.t("editor:variableText.status.redactedDetail"),
+      }
+    case "structured":
+      // How many objects, never a member: a preview never shows a path.
+      return {
+        tone: "ok",
+        label: i18n.t("editor:variableText.status.structured", { count: status.entries }),
+        detail: i18n.t("editor:variableText.status.structuredDetail"),
       }
     case "unavailableUntilRuntime":
       return {
@@ -489,6 +505,10 @@ export function formatValue(value: VariableValue): string {
         : i18n.t("editor:variableText.projectRole", { role: value.value.role })
     case "json":
       return JSON.stringify(value.value)
+    case "object":
+      return i18n.t("editor:variableText.status.structured", { count: 1 })
+    case "map":
+      return i18n.t("editor:variableText.status.structured", { count: value.value.entries.length })
   }
 }
 

@@ -26,16 +26,29 @@
 //! while the plugin is enabled and holds `projectContext`
 //! ([`PluginVariableSource::with_host_context`]); otherwise it is
 //! unavailable with its module, or has no value.
+//!
+//! Plugin API 1.12 adds the repositories of that project:
+//! `host:project.repositories` (`map<repository>`, every repository by
+//! key) and `host:project.repository` (`object<repository>`, the default
+//! one by decision OD-3), built by the core
+//! ([`deckpilot_core::variables::repositories_value`]). A repository's
+//! folder comes from this computer's bindings and is `null` for every
+//! reader that may not see paths (`VariableEnvironment::private_paths`:
+//! key titles, and the parameters of a plugin without `resources:paths`).
+//! Structured values are the host's only: `variables.publish` refuses them
+//! ([`typed`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use deckpilot_core::variables::{
-    DeclaredScope, MissingReason, Requirement, Resolution, ValueSource, VariableDeclaration,
+    DeclaredScope, MissingReason, Requirement, Resolution, Shape, ValueSource, VariableDeclaration,
     VariableEnvironment, VariableId, VariableSource, VariableType, VariableValue,
+    default_repository_value, repositories_value,
 };
 use deckpilot_plugin_manifest::{
-    Variable, VariableHostSource, VariableRequirement, VariableScope, VariableValueKind,
+    Variable, VariableHostSource, VariableRequirement, VariableScope, VariableShape,
+    VariableValueKind, VariableValueType,
 };
 
 /// The values one plugin published.
@@ -163,7 +176,7 @@ pub(crate) fn declarations(namespace: &str, variables: &[Variable]) -> Vec<Varia
                 id,
                 name: variable.name.clone(),
                 description: variable.description.clone().unwrap_or_default(),
-                value_type: value_type(variable.value_type.kind),
+                value_type: value_type(&variable.value_type)?,
                 scope: match variable.scope {
                     VariableScope::Machine => DeclaredScope::Machine,
                     VariableScope::Profile => DeclaredScope::Profile,
@@ -189,13 +202,26 @@ pub(crate) fn declarations(namespace: &str, variables: &[Variable]) -> Vec<Varia
         .collect()
 }
 
-fn value_type(kind: VariableValueKind) -> VariableType {
-    match kind {
+/// The core's type of a declared value type; `None` for a structured type
+/// without its shape (the manifest's validation prevents it).
+fn value_type(declared: &VariableValueType) -> Option<VariableType> {
+    let shape = |shape: Option<VariableShape>| {
+        shape.map(|shape| match shape {
+            VariableShape::Repository => Shape::Repository,
+        })
+    };
+    Some(match declared.kind {
         VariableValueKind::String => VariableType::String,
         VariableValueKind::Integer => VariableType::Integer,
         VariableValueKind::Boolean => VariableType::Boolean,
         VariableValueKind::Json => VariableType::Json,
-    }
+        VariableValueKind::Object => VariableType::Object {
+            shape: shape(declared.shape)?,
+        },
+        VariableValueKind::Map => VariableType::Map {
+            of: shape(declared.of)?,
+        },
+    })
 }
 
 /// A published JSON value as a value of `variable`'s declared type, or why
@@ -205,6 +231,12 @@ pub(crate) fn typed(
     value: &serde_json::Value,
 ) -> Result<Option<VariableValue>, String> {
     use serde_json::Value;
+    if variable.value_type.is_structured() || variable.source.is_some() {
+        return Err(format!(
+            "`{}` is DeckPilot's to publish: a plugin cannot publish it",
+            variable.id
+        ));
+    }
     let typed = match (variable.value_type.kind, value) {
         (_, Value::Null) => return Ok(None),
         (VariableValueKind::String, Value::String(text)) => VariableValue::String(text.clone()),
@@ -222,6 +254,7 @@ pub(crate) fn typed(
                     VariableValueKind::Integer => "an integer",
                     VariableValueKind::Boolean => "a boolean",
                     VariableValueKind::Json => "JSON",
+                    VariableValueKind::Object | VariableValueKind::Map => "a structured value",
                 }
             ));
         }
@@ -272,13 +305,23 @@ fn host_value(source: VariableHostSource, environment: &VariableEnvironment<'_>)
         Ok(project) => project,
         Err(resolution) => return resolution,
     };
+    let (machine, paths) = (environment.machine, environment.private_paths);
     let value = match source {
-        VariableHostSource::ProjectId => project.id.to_string(),
-        VariableHostSource::ProjectKey => project.key.to_string(),
-        VariableHostSource::ProjectName => project.name.clone(),
+        VariableHostSource::ProjectId => VariableValue::String(project.id.to_string()),
+        VariableHostSource::ProjectKey => VariableValue::String(project.key.to_string()),
+        VariableHostSource::ProjectName => VariableValue::String(project.name.clone()),
+        VariableHostSource::ProjectRepositories => {
+            VariableValue::Map(repositories_value(project, machine, paths))
+        }
+        VariableHostSource::ProjectRepository => {
+            match default_repository_value(project, machine, paths) {
+                Ok(object) => VariableValue::Object(object),
+                Err(reason) => return Resolution::Missing(reason),
+            }
+        }
     };
     Resolution::Value {
-        value: VariableValue::String(value),
+        value,
         source: ValueSource::System,
         sensitive: false,
     }
@@ -483,6 +526,8 @@ mod tests {
                     profile: &profile,
                     os: Os::MacOs,
                     live: &NoLiveState,
+                    machine: None,
+                    private_paths: true,
                 },
             )
         };
@@ -512,5 +557,140 @@ mod tests {
         }
         // Enabled again: back.
         assert_eq!(resolve(&source(true), &with_project, 1), value("SHOP"));
+    }
+
+    fn repository_variable(id: &str, source: &str, value_type: serde_json::Value) -> Variable {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": id, "valueType": value_type, "scope": "project",
+            "source": source
+        }))
+        .unwrap()
+    }
+
+    /// Plugin API 1.12: the context's project's repositories, by key, and
+    /// its default one, with folders from this computer's bindings only
+    /// for a reader that may see paths; never published by the plugin.
+    #[test]
+    fn host_repositories_hide_folders_from_readers_without_paths() {
+        use deckpilot_core::variables::{NoLiveState, ProjectSource, ResolutionContext};
+        use deckpilot_core::{
+            MachineConfig, MachineResourceBinding, Os, Profile, Project, ProjectKey, Repository,
+            RepositoryId, RepositoryKey, ResourceKey, ResourceKind,
+        };
+
+        let variables = [
+            repository_variable(
+                "current.repositories",
+                "host:project.repositories",
+                serde_json::json!({"type": "map", "of": "repository"}),
+            ),
+            repository_variable(
+                "current.repository",
+                "host:project.repository",
+                serde_json::json!({"type": "object", "shape": "repository"}),
+            ),
+        ];
+        let namespace = "plugins.deckpilot.projects";
+        let declared = declarations(namespace, &variables);
+        assert_eq!(
+            declared[0].value_type,
+            VariableType::Map {
+                of: Shape::Repository
+            }
+        );
+        assert_eq!(
+            declared[1].value_type,
+            VariableType::Object {
+                shape: Shape::Repository
+            }
+        );
+        assert!(
+            declared
+                .iter()
+                .all(|d| d.requires == vec![Requirement::Project])
+        );
+        // Never the plugin's to publish.
+        for variable in &variables {
+            assert!(typed(variable, &serde_json::json!({"cms": {}})).is_err());
+        }
+
+        let mut profile = Profile::new("Work");
+        let mut shop = Project::new(ProjectKey::new("SHOP").unwrap(), "Shop");
+        let make = |key: &str| Repository {
+            id: RepositoryId::new(),
+            key: RepositoryKey::new(key).unwrap(),
+            name: key.to_uppercase(),
+            resource: ResourceKey::new(format!("shop.{key}")).unwrap(),
+            description: None,
+            remotes: Vec::new(),
+        };
+        shop.repositories = vec![make("cms"), make("api")];
+        profile.projects.push(shop);
+        let mut machine = MachineConfig::new(Os::current());
+        let folder = std::env::temp_dir().to_string_lossy().into_owned();
+        machine.set_binding(MachineResourceBinding {
+            key: ResourceKey::new("shop.cms").unwrap(),
+            kind: ResourceKind::Directory,
+            value: folder.clone(),
+        });
+        let context = ResolutionContext::preview(profile.id)
+            .with_project(Some(profile.projects[0].id), ProjectSource::Application);
+        let source = PluginVariableSource::new(
+            "deckpilot.projects".into(),
+            namespace.into(),
+            PublishedVariables::default(),
+        )
+        .with_host_context(&variables, true);
+        let resolve = |index: usize, private_paths: bool| {
+            source.resolve(
+                &declared[index],
+                &VariableEnvironment {
+                    context: &context,
+                    profile: &profile,
+                    os: Os::current(),
+                    live: &NoLiveState,
+                    machine: Some(&machine),
+                    private_paths,
+                },
+            )
+        };
+        let json = |resolution: Resolution| match resolution {
+            Resolution::Value { value, .. } => value.structured_json().unwrap(),
+            other => panic!("{other:?}"),
+        };
+        let shown = json(resolve(0, true));
+        assert_eq!(shown["cms"]["path"], serde_json::json!(folder));
+        assert_eq!(shown["cms"]["exists"], serde_json::json!(true));
+        assert_eq!(shown["api"]["path"], serde_json::Value::Null);
+        let hidden = json(resolve(0, false));
+        assert_eq!(hidden["cms"]["path"], serde_json::Value::Null);
+        assert_eq!(hidden["cms"]["exists"], serde_json::json!(true));
+        assert!(!hidden.to_string().contains(&folder));
+        // Two repositories and no default: no value (OD-3).
+        assert_eq!(
+            resolve(1, true),
+            Resolution::Missing(MissingReason::NoDefaultRepository)
+        );
+        // Without `projectContext`, or disabled: withdrawn.
+        let withdrawn = PluginVariableSource::new(
+            "deckpilot.projects".into(),
+            namespace.into(),
+            PublishedVariables::default(),
+        )
+        .with_host_context(&variables, false);
+        assert_eq!(
+            withdrawn.resolve(
+                &declared[0],
+                &VariableEnvironment {
+                    context: &context,
+                    profile: &profile,
+                    os: Os::current(),
+                    live: &NoLiveState,
+                    machine: Some(&machine),
+                    private_paths: true,
+                },
+            ),
+            Resolution::Missing(MissingReason::NoValue)
+        );
     }
 }

@@ -179,6 +179,8 @@ export function offeredOnKey(entry: CatalogEntry): boolean {
   if (NEVER_DISPLAYED.some((prefix) => reference.startsWith(prefix))) return false
   // Ids (`projects.current.id`, `workSession.projectId`, …) never show.
   if (/(^|\.)(id|[a-z]+Id)$/.test(reference)) return false
+  // Of a structured variable, never a folder path or a remote URL (OD-4).
+  if (entry.memberOf !== undefined && /\.(path|url)$/.test(reference)) return false
   return entry.availability !== "runtimeOnly"
 }
 

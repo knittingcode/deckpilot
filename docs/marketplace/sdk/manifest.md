@@ -179,10 +179,10 @@ The plugin's own variables, published with `Context::publish_variable`
 | --- | --- |
 | `id` | Relative path `[a-z][A-Za-z0-9_]{0,31}` with up to two more `.`-separated segments, ≤ 100 characters, unique. Read in workflows as `{{ plugins.<publisherCamel>.<nameCamel>.<id> }}`, e.g. `plugins.acme.developerTools.openPrs` |
 | `name`, `description` | 1-48; ≤ 300 |
-| `valueType` | `{ "type": "string" \| "integer" \| "boolean" \| "json" }`; a published value of another type is refused |
+| `valueType` | `{ "type": "string" \| "integer" \| "boolean" \| "json" }`; a published value of another type is refused. Plugin API 1.12, with a host `source` only: `{ "type": "object", "shape": "repository" }` and `{ "type": "map", "of": "repository" }` (structured values, which a plugin never publishes; [variables.md §2.8](../../variables.md#28-structured-values-and-member-access)) |
 | `scope` | `machine`, `profile` or `project`. **Only `machine` can be published in this version**; the others are refused with `unavailable` |
 | `requires`, `sensitive`, `deprecated` | Optional; `requires` only `["project"]` |
-| `source` | Plugin API 1.9, first-party plugins shipped inside the app with the `projectContext` permission only: `host:project.id`, `host:project.key` or `host:project.name`. DeckPilot computes the value (the project in the context; scope `project`, type `string`) while the plugin is enabled and holds `projectContext`; publishing it is refused (`not-permitted`) |
+| `source` | Plugin API 1.9, first-party plugins shipped inside the app with the `projectContext` permission only: `host:project.id`, `host:project.key` or `host:project.name`. DeckPilot computes the value (the project in the context; scope `project`, type `string`) while the plugin is enabled and holds `projectContext`; publishing it is refused (`not-permitted`). Plugin API 1.12 (`^1.12`) adds `host:project.repositories` (type `map` of `repository`: the project's repositories by key) and `host:project.repository` (type `object` of `repository`: its default repository, none when several have no default). Each source takes exactly its type. A repository's folder `path` reaches only readers that may see paths: never a key, and a plugin's action parameters only with `resources:paths` |
 
 ## `contributes.settings`
 

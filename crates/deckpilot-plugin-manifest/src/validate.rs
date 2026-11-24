@@ -21,8 +21,8 @@ use crate::model::{
     Action, ActionControls, ControlKind, Credential, CredentialScheme, DIALOGS_API, Effect,
     HttpMethod, MAX_INPUTS_PER_KIND, MAX_NAVIGATION_ENTRIES, MAX_NAVIGATION_ID,
     MAX_NAVIGATION_LABEL, MAX_VIEWS, Manifest, NAVIGATION_API, Node, Parameter, ParameterKind,
-    ParameterValue, Permission, PermissionKind, ProfileScope, Setting, UserOriginSlot,
-    VIEW_CONTEXT_API, VariableScope,
+    ParameterValue, Permission, PermissionKind, ProfileScope, REPOSITORY_VARIABLES_API, Setting,
+    UserOriginSlot, VIEW_CONTEXT_API, VariableScope, VariableValueKind,
 };
 use crate::{MANIFEST_VERSION, path_rules};
 
@@ -1910,8 +1910,54 @@ fn variables(c: &mut Checker, m: &Manifest) {
                 requires.iter().map(|x| format!("{x:?}")),
             );
         }
+        structured_type(c, &path, variable, m);
     }
     c.unique("contributes.variables", variables.iter().map(|v| &v.id));
+}
+
+/// `valueType.shape` and `valueType.of` (plugin API 1.12): an `object`
+/// names its shape, a `map` the shape of its objects, every other type
+/// neither. Structured types are a host source's only: a plugin never
+/// publishes one (`variables.publish` refuses them), so a variable without
+/// a `source` cannot declare one.
+fn structured_type(c: &mut Checker, path: &str, variable: &crate::Variable, m: &Manifest) {
+    let value_type = &variable.value_type;
+    let field = format!("{path}.valueType");
+    let (shape, of) = (value_type.shape.is_some(), value_type.of.is_some());
+    let fits = match value_type.kind {
+        VariableValueKind::Object => shape && !of,
+        VariableValueKind::Map => of && !shape,
+        _ => !shape && !of,
+    };
+    if !fits {
+        c.error(
+            &field,
+            IssueCode::InvalidValue,
+            "an `object` names its `shape`, a `map` names `of`, and no other type has either",
+        );
+    }
+    if !value_type.is_structured() {
+        return;
+    }
+    if m.engines.plugin_api.minimum < REPOSITORY_VARIABLES_API {
+        c.error(
+            &field,
+            IssueCode::Conflict,
+            format!(
+                "a structured type needs plugin API {REPOSITORY_VARIABLES_API}: set \
+                 engines.pluginApi to `^{REPOSITORY_VARIABLES_API}` (it is `{}`)",
+                m.engines.plugin_api
+            ),
+        );
+    }
+    if variable.source.is_none() {
+        c.error(
+            &field,
+            IssueCode::InvalidValue,
+            "only DeckPilot provides structured values: an `object` or `map` variable needs a \
+             host `source`",
+        );
+    }
 }
 
 fn settings(c: &mut Checker, m: &Manifest) {

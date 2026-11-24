@@ -16,6 +16,7 @@ pub mod doubles;
 pub mod expression;
 pub mod registry;
 pub mod resolution;
+pub mod shape;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -28,7 +29,9 @@ use crate::{
     ResourceKind, ResourceRef,
 };
 
-pub use catalog::{CatalogEntry, CatalogFilter, ReferenceAvailability, VariableGroup};
+pub use catalog::{
+    CatalogEntry, CatalogFilter, CatalogMember, ReferenceAvailability, VariableGroup, with_members,
+};
 pub use display::{
     DisplayDependency, DisplayEnvironment, DisplayTemplates, DisplayText, MarkerSpan,
     RecordingTemplates, ResolvedTemplates, TextKey, TextSlot, UNRESOLVED_MARKER, UnresolvedReason,
@@ -50,6 +53,10 @@ pub use resolution::{
     ProjectSource, ReferenceError, ReferencePreview, ReferenceProblem, ReferenceStatus, Resolution,
     ResolutionContext, ResolutionPhase, ResourceResolver, ValueSource, VariableResolver, bind,
     current_descriptor, preview, preview_reference, select_value,
+};
+pub use shape::{
+    MapEntry, MapValue, Member, MemberPath, MemberTarget, MemberValue, Members, ObjectValue,
+    Scalar, Shape, default_repository_value, member_target, repositories_value, repository_members,
 };
 
 /// The type of a shared variable, a system variable or a resolved reference.
@@ -73,6 +80,17 @@ pub enum VariableType {
     /// variable value; only an action with the credentials capability reads
     /// it, through the credential source of its execution.
     SecretRef,
+    /// One object of a [`Shape`] (`object<repository>`, since protocol
+    /// 18). Never text: references read its scalar members
+    /// (`….repository.name`) or pass it whole where JSON is expected.
+    Object {
+        shape: Shape,
+    },
+    /// Objects of a [`Shape`] by key, in order (`map<repository>`, since
+    /// protocol 18). Never text, like [`VariableType::Object`].
+    Map {
+        of: Shape,
+    },
 }
 
 impl VariableType {
@@ -87,7 +105,16 @@ impl VariableType {
             Self::Resource { .. } => "resource",
             Self::Json => "json",
             Self::SecretRef => "secretRef",
+            Self::Object { .. } => "object",
+            Self::Map { .. } => "map",
         }
+    }
+
+    /// Whether the type is structured ([`VariableType::Object`] or
+    /// [`VariableType::Map`]): never text, never on a key, and only the
+    /// host produces it.
+    pub fn is_structured(self) -> bool {
+        matches!(self, Self::Object { .. } | Self::Map { .. })
     }
 
     /// Whether a value of this type can fill a parameter of `kind` as a
@@ -105,7 +132,10 @@ impl VariableType {
             (Self::Resource { kind: have }, ParameterKind::Resource { kind: want }) => {
                 have.is_none() || want.is_none() || have == *want
             }
-            (Self::Json, ParameterKind::Code { language, .. }) => language == "json",
+            (
+                Self::Json | Self::Object { .. } | Self::Map { .. },
+                ParameterKind::Code { language, .. },
+            ) => language == "json",
             (
                 Self::String | Self::Integer | Self::Boolean | Self::ProjectId | Self::ProfileId,
                 kind,
@@ -138,6 +168,10 @@ pub enum VariableValue {
     Resource(ResourceRef),
     Json(serde_json::Value),
     SecretRef(CredentialId),
+    /// A value of [`VariableType::Object`].
+    Object(ObjectValue),
+    /// A value of [`VariableType::Map`].
+    Map(MapValue),
 }
 
 impl VariableValue {
@@ -151,6 +185,10 @@ impl VariableValue {
             Self::Resource(_) => VariableType::Resource { kind: None },
             Self::Json(_) => VariableType::Json,
             Self::SecretRef(_) => VariableType::SecretRef,
+            Self::Object(object) => VariableType::Object {
+                shape: object.shape,
+            },
+            Self::Map(map) => VariableType::Map { of: map.shape },
         }
     }
 
@@ -165,7 +203,8 @@ impl VariableValue {
     }
 
     /// The value inserted into a text template. `None` for values that are
-    /// not text: resources, and secret references, which never become text.
+    /// not text: resources, secret references, which never become text, and
+    /// structured values, which are read member by member.
     pub fn render_text(&self) -> Option<String> {
         match self {
             Self::String(text) => Some(text.clone()),
@@ -174,7 +213,17 @@ impl VariableValue {
             Self::ProjectId(id) => Some(id.to_string()),
             Self::ProfileId(id) => Some(id.to_string()),
             Self::Json(json) => Some(json.to_string()),
-            Self::Resource(_) | Self::SecretRef(_) => None,
+            Self::Resource(_) | Self::SecretRef(_) | Self::Object(_) | Self::Map(_) => None,
+        }
+    }
+
+    /// The JSON a structured value is passed as, whole, to a JSON code
+    /// parameter. `None` for every other value.
+    pub fn structured_json(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Object(object) => Some(object.to_json()),
+            Self::Map(map) => Some(map.to_json()),
+            _ => None,
         }
     }
 
@@ -200,6 +249,9 @@ impl VariableValue {
             }
             (Self::SecretRef(id), ParameterKind::Credential) => {
                 ParameterValue::Text(id.as_str().to_owned())
+            }
+            (Self::Object(_) | Self::Map(_), ParameterKind::Code { .. }) => {
+                ParameterValue::Text(self.structured_json()?.to_string())
             }
             (value, _) => ParameterValue::Text(value.render_text()?),
         })
@@ -411,6 +463,9 @@ pub enum DefinitionIssue {
         key: VariableKey,
         scope: &'static str,
     },
+    /// Structured types are the host's only (`object`, `map`).
+    #[error("`{0}` cannot hold structured values: only DeckPilot provides them")]
+    Structured(VariableKey),
 }
 
 impl VariableDefinition {
@@ -433,6 +488,9 @@ impl VariableDefinition {
         if self.scopes.is_empty() {
             issues.push(DefinitionIssue::NoScopes(self.key.clone()));
         }
+        if self.value_type.is_structured() {
+            issues.push(DefinitionIssue::Structured(self.key.clone()));
+        }
         if let Some(default) = &self.default
             && let Err(issue) = self.check_type(default)
         {
@@ -447,6 +505,9 @@ impl VariableDefinition {
         scope: &ScopeKey,
         value: &VariableValue,
     ) -> Result<(), DefinitionIssue> {
+        if self.value_type.is_structured() || value.value_type().is_structured() {
+            return Err(DefinitionIssue::Structured(self.key.clone()));
+        }
         if !self.scopes.contains(&scope.scope()) {
             return Err(DefinitionIssue::ScopeNotAllowed {
                 key: self.key.clone(),
@@ -469,5 +530,7 @@ impl VariableDefinition {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod structured_tests;
 #[cfg(test)]
 mod tests;

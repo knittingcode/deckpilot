@@ -45,6 +45,19 @@ released either. 0.6.0 is the first version intended for publication.
   repository never removes its folder binding, and a missing folder is
   shown, never removed. An export carries the repositories (format 5)
   only when a project has more than that one. The editor for them follows.
+- Variables: structured values, read member by member.
+  `{{ projects.current.repositories.cms.path }}` is a repository's folder,
+  `{{ projects.current.repository.name }}` the default repository's name
+  (the one marked as default, else the only one; with several and none
+  marked there is no value, never the first). A whole value fills only a
+  JSON parameter and never becomes text. Keys show names and keys only:
+  a folder path, an id or a remote URL shows `-`, and the title picker never
+  offers them. A plugin's action receives a folder path only with
+  `resources:paths`. Plugin API 1.12 (manifest validation only for now):
+  the types `object` and `map` of `repository` and the host sources
+  `host:project.repositories` and `host:project.repository`, for DeckPilot's
+  own bundled plugins. IPC protocol 18; older apps see these variables as
+  JSON. The Projects plugin that declares them follows.
 
 ## [0.15.0] - 2026-11-24
 

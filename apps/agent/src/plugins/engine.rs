@@ -91,6 +91,11 @@ pub(crate) struct CatalogPlugin {
     /// project's roles (`resource.resolve`, X2) even without a `resource`
     /// parameter, so its module reads the profile and the bindings.
     pub resources: bool,
+    /// It holds `resources:paths` (plugin API 1.9) and can run: only then
+    /// do its actions' parameters carry this computer's folder paths (a
+    /// repository's `path`, plugin API 1.12); otherwise they read `null`
+    /// (`ActionRegistry::reads_paths`).
+    pub resource_paths: bool,
     /// Its `wrapAround` setting while it holds `projectContext`: how the
     /// app's and the tray's project cycling (`cycleProject`) steps past
     /// the ends, as the plugin's own `cycle` does. `None` for every other
@@ -247,6 +252,10 @@ impl FeatureModule for PluginModule {
 
     fn gesture_presets(&self) -> Vec<deckpilot_core::GesturePreset> {
         self.plugin.gesture_presets.clone()
+    }
+
+    fn reads_paths(&self) -> bool {
+        self.plugin.unavailable.is_none() && self.plugin.resource_paths
     }
 
     fn unavailable_reason(&self) -> Option<String> {

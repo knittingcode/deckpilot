@@ -294,6 +294,18 @@ the title is measured. A different resolved text is a different face, so it
 is laid out (fitted, wrapped) again; frames are cached by face and size, so
 an unchanged text is not drawn twice.
 
+**Structured values never render** (`docs/variables.md` §2.8). A whole
+object or map (`{{ projects.current.repositories }}`,
+`{{ projects.current.repository }}`) shows `-` on a key, as does a
+repository's `id`, folder `path` or remote URL: a key shows names, never this
+computer's folders (decision OD-4), and titles are resolved with paths
+withheld whatever they reference. Display-safe members show as text:
+`{{ projects.current.repository.name }}`,
+`{{ projects.current.repositories.cms.key }}`. Without a default repository
+among several, `{{ projects.current.repository.name }}` shows `-`, never the
+first repository. The title picker never offers a structured value or one of
+those members.
+
 ## Modes
 
 ### Wrap (default)
