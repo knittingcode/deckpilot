@@ -269,10 +269,17 @@ function ControlInspector({
   // Only what can be chosen here: targets that cannot run now are left
   // out, unless the control already uses them (then they show as chosen).
   const chosen = new Set(bindings.map((b) => encodeTarget(b.target)))
+  // Saved actions are not a generic list here (types come from the Action
+  // Library): only the ones this control already runs are offered, so a
+  // shared saved action stays reachable where it is used.
   const offered = groups
     .map((group) => ({
       ...group,
-      options: group.options.filter((o) => o.unavailable === undefined || chosen.has(o.value)),
+      options: group.options.filter(
+        (o) =>
+          (group.id !== "actions" || chosen.has(o.value)) &&
+          (o.unavailable === undefined || chosen.has(o.value)),
+      ),
     }))
     .filter((group) => group.options.length > 0)
   const page = findPage(draft, pageId)

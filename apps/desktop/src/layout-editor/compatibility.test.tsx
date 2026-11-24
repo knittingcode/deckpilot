@@ -340,17 +340,28 @@ describe("the inspector", { timeout: 20_000 }, () => {
     ).toBeInTheDocument()
   })
 
-  it("offers each trigger only what can run from it", async () => {
-    const user = renderEditor(plus)
+  it("offers each trigger only what can run from it, and only the saved actions the control uses", async () => {
+    // Room volume turns the dial left; the saved actions are no generic
+    // list here (types come from the Action Library).
+    const user = renderEditor(
+      plus,
+      layoutFor(plus, [
+        {
+          control: { kind: "encoder", index: 0 },
+          trigger: { type: "rotateCounterClockwise" },
+          target: { type: "action", action: "vol" },
+        },
+      ]),
+    )
     await user.click(control("Dial 1"))
     await user.click(screen.getByRole("combobox", { name: "Turn right" }))
     const listbox = screen.getByRole("listbox")
-    expect(within(listbox).getByRole("option", { name: "Forward" })).not.toHaveAttribute(
-      "data-disabled",
-    )
+    // The saved action this dial already runs, reachable to share it.
     expect(within(listbox).getByRole("option", { name: "Room volume" })).not.toHaveAttribute(
       "data-disabled",
     )
+    // Saved actions used elsewhere or nowhere are not listed.
+    expect(within(listbox).queryByRole("option", { name: "Forward" })).toBeNull()
     // What cannot run from it is not offered (no disabled entries).
     expect(within(listbox).queryByRole("option", { name: /Mute mic/ })).toBeNull()
     expect(within(listbox).queryByRole("option", { name: /Write log/ })).toBeNull()
