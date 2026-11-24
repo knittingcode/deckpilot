@@ -55,6 +55,15 @@ released either. 0.6.0 is the first version intended for publication.
   built-ins that moved to a plugin (`projects.next`, `git.status`, …)
   showed them as unavailable even while the plugin served them. They now
   follow the plugin, as the agent does.
+- Settings › Resources called an application chosen with the application
+  or browser picker "missing", because it is stored by its bundle id,
+  desktop-file id or App Paths name rather than a path, and never checked a
+  file chosen with the file picker. Applications are now checked the way
+  Open Application finds them, and a chosen file that was moved or deleted
+  shows as missing.
+- Close Application also compares a process's start time before it signals
+  or waits for it, so a new process that was given the same process id is
+  never taken for the one it matched.
 
 ## [0.14.0] - 2026-11-24
 
