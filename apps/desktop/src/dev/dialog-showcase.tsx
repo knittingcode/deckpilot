@@ -28,6 +28,8 @@ import { SettingsGroup, SettingsRow, SettingsSection } from "@/components/settin
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { setMockContexts, useMockContexts } from "./action-context-mock"
 
 /**
  * Development-only: every dialog template in its states, built from the
@@ -122,6 +124,7 @@ export function DialogShowcase() {
 
   return (
     <>
+      <MockContextsSection />
       <SettingsSection
         title="Dialog showcase"
         description="Development builds only. Every template of components/dialogs in its states, using the real components. Actions are simulated. DeckPilot is always dark."
@@ -526,5 +529,34 @@ function ShowcaseProgress({ onClose }: { onClose: () => void }) {
       value={value}
       status={`${value} %`}
     />
+  )
+}
+
+/**
+ * Development only: shows the editors with the contexts the action-context
+ * audit proposes, as if the agent declared them (dev/action-context-mock.ts).
+ */
+function MockContextsSection() {
+  const on = useMockContexts()
+  return (
+    <SettingsSection
+      title="Action contexts (mock)"
+      description="Development builds only. This agent declares no action contexts (all actions work everywhere). Switch on to review the editors with the audit's proposed declarations."
+    >
+      <SettingsGroup>
+        <Row
+          label="Mock action contexts"
+          description="Library, gesture cards, Multi Action steps and workflow nodes filter by the proposed contexts."
+        >
+          <Switch
+            aria-label="Mock action contexts"
+            checked={on}
+            onCheckedChange={(checked) => {
+              setMockContexts(checked)
+            }}
+          />
+        </Row>
+      </SettingsGroup>
+    </SettingsSection>
   )
 }

@@ -17,6 +17,46 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Device Editor: saved actions are managed in the editor's Action Library
+  (edit, duplicate, where they are used, delete when unused, new). The
+  Inspector says when a key's saved action is shared, and an edit says it
+  changes every place. The separate Action Library page and its rail entry
+  are gone.
+- Device Editor: dropping an action type whose required settings have no
+  defaults (the app of Open Application, say) places a draft: its own
+  action per key or gesture, marked on the Canvas and its gesture card as
+  needing configuration, with the missing settings marked next to them.
+  It does not run until it is configured. Draft steps and workflow nodes
+  are marked the same way and do not keep a workflow from being saved.
+- Device Editor: an assigned action whose plugin is missing, disabled,
+  incompatible, failed verification, was revoked, is busy or waits for a
+  permission says why on its gesture card, in words, with the recovery the
+  reason calls for (install, enable or update the plugin, review
+  permissions, turn on the module), Replace action and Remove assignment.
+  Nothing is installed, enabled or granted from the Inspector itself.
+- Plugin actions that only wait for an optional permission show Grant in
+  the Action Library: it opens the permission dialog with exactly the
+  missing permissions, and grants only what is checked.
+- The library follows the action types' declared contexts: step-only
+  actions (Wait, Delay) are not offered for keys, display-only ones are
+  listed apart, and a saved key or gesture whose action does not work
+  there is kept, marked with the reason and offered a change (wrap it in a
+  Multi Action, or move it into a workflow) that is applied only after
+  confirmation.
+- Escape clears the Device Editor's selection (after closing a menu,
+  cancelling a drag or leaving a text field first); the deselect button is
+  gone.
+
+### Changed
+
+- The Inspector shows the selected key's preview in a fixed column beside
+  the settings, which scroll on their own; the actions of a key are
+  gesture cards.
+- The Action Library always lists every action type; entries that do not
+  fit the selected control are disabled with the reason (the "Compatible
+  only" switch is gone).
+- A dial's or strip's choices list only the saved actions that control
+  already runs.
 
 ### Fixed
 

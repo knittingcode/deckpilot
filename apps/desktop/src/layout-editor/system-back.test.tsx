@@ -214,13 +214,13 @@ describe("the folder's system Back in the editor", { timeout: 20_000 }, () => {
     // Nothing at all inside: no heading, text, controls or folder settings.
     expect(region.textContent).toBe("")
     expect(region.children).toHaveLength(0)
-    // The deselect button is still there, outside it.
-    expect(screen.getByRole("button", { name: "Deselect key" })).toBeInTheDocument()
+    // No deselect button: Escape deselects.
+    expect(screen.queryByRole("button", { name: /^Deselect/ })).not.toBeInTheDocument()
     // The inspector keeps its frame (no collapse, no extra padding).
     expect(region.className).toBe(before)
     // An action key shows its settings, and no explanation without controls.
     await user.click(control("Key 3"))
-    expect(within(inspector()).getAllByRole("combobox").length).toBeGreaterThan(0)
+    expect(inspector().querySelectorAll("[data-slot=gesture-card]").length).toBeGreaterThan(0)
     expect(within(inspector()).queryByText(/Only events this model can produce/)).toBeNull()
     expect(inspector().querySelector("[data-slot=folder-settings]")).toBeNull()
   })
@@ -442,8 +442,8 @@ describe("the folder's system Back in the editor", { timeout: 20_000 }, () => {
   it("refuses drops, moves and bulk edits", async () => {
     const user = renderEditor()
     await user.dblClick(control("Key 2"))
-    // A library action dropped on it, and the key dropped elsewhere.
-    drop("library:action:shop", "key:0")
+    // Something from the library dropped on it, and the key dropped elsewhere.
+    drop("library:back", "key:0")
     expect(toast.error).toHaveBeenCalled()
     drop("control:key:2", "key:0")
     expect(toast.error).toHaveBeenCalledTimes(2)

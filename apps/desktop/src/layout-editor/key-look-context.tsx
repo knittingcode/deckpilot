@@ -44,6 +44,12 @@ export interface KeyLook {
   typeOf: (control: ControlId) => ActionType | undefined
   /** Changes the look of the selected keys; `group` merges typing. */
   restyle: (change: KeyLookChange, group?: string) => void
+  /**
+   * An icon of the key menu that could not be imported or pasted: set by the
+   * preview's menu, shown under the key's title in the settings column.
+   */
+  problem?: string | null
+  setProblem?: (message: string | null) => void
 }
 
 export const KeyLookContext = createContext<KeyLook | null>(null)

@@ -9,7 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import { pluginModules } from "@/lib/plugin-actions"
 import type { ModuleInfo } from "@/lib/types"
-import { ActionsPage } from "@/pages/actions"
+import { ActionLibraryView } from "@/pages/actions"
 import { WorkflowsPage } from "@/pages/workflows"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
@@ -70,7 +70,7 @@ const docs = action("a-docs", "Open docs", ACTION_TYPES.openUrl.id)
 
 async function renderLibrary(plugins: ModuleInfo[], actions = [docs, greeting]) {
   api.getProfile.mockResolvedValue(profileView({ actions }))
-  const rendered = renderWithApp(<ActionsPage />, {
+  const rendered = renderWithApp(<ActionLibraryView />, {
     modules: builtInModules(),
     ...(plugins.length > 0 ? { pluginModules: plugins } : {}),
   })
@@ -113,10 +113,14 @@ describe("the action picker with plugins", () => {
     const [actionName, parameter] = screen.getAllByLabelText(/^Name/)
     if (!actionName || !parameter) throw new Error("two name fields")
     expect(actionName).toHaveAttribute("id", "action-name")
-    expect(parameter).toHaveAttribute("id", "parameter-name")
+    expect(parameter).toHaveAttribute("id", "editor-new-name")
     expect(screen.getByText("Style")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Create action" }))
-    expect(screen.getByText("Name is required.")).toBeInTheDocument()
+    // The plugin's required "Name" is marked next to it (a draft could be
+    // saved without it); the action's own name is still needed.
+    expect(parameter).toHaveAccessibleDescription(
+      "Required: fill this in before the action can run.",
+    )
     expect(api.createAction).not.toHaveBeenCalled()
 
     await user.type(actionName, "Hello")

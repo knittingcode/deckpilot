@@ -521,12 +521,13 @@ describe("main window shell", { timeout: 20_000 }, () => {
     expect(rail).toHaveAttribute("data-state", "collapsed")
 
     // Every page has its name as label (and tooltip); the current one is marked.
-    for (const name of ["Device Editor", "Action Library", "Workflows"]) {
+    for (const name of ["Device Editor", "Workflows"]) {
       expect(screen.getAllByRole("button", { name }).length).toBeGreaterThan(0)
     }
     // The Layout Manager is in Settings › Layouts.
     expect(screen.queryByRole("button", { name: "Layouts" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Action Library" })).not.toBeInTheDocument()
     const editor = screen.getByRole("button", { name: "Device Editor" })
     expect(editor).toHaveAttribute("aria-current", "page")
     expect(editor).toHaveAttribute("data-active", "true")

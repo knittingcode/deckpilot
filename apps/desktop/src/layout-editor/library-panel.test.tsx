@@ -94,7 +94,7 @@ describe("the library's rows", () => {
     expect(heading).toHaveTextContent("3")
   })
 
-  it("says why an entry cannot be placed, and filters", async () => {
+  it("says why an entry cannot be placed, lists it anyway, and searches", async () => {
     const user = renderPanel()
     const mute = screen.getByRole("listitem", { name: /^Mute mic: not for the selected control/ })
     expect(mute).toHaveAttribute("aria-disabled", "true")
@@ -104,8 +104,9 @@ describe("the library's rows", () => {
       "Its plugin is disabled.",
     )
 
-    await user.click(screen.getByRole("switch", { name: "Compatible only" }))
-    expect(screen.queryByRole("listitem", { name: /^Mute mic/ })).not.toBeInTheDocument()
+    // Nothing is hidden: no "Compatible only" switch, no instructions above the search.
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+    expect(screen.queryByText(/Drag onto a control|Select a control/)).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Drag Mail onto a control" })).toBeInTheDocument()
 
     await user.type(screen.getByRole("searchbox", { name: "Search the library" }), "docker")

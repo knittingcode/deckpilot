@@ -270,9 +270,9 @@ describe("folders in the layout editor", { timeout: 20_000 }, () => {
         .map((item) => item.textContent),
     ).toEqual(["Home", "Folder"])
 
-    // An action from the library, dropped on a key of the folder.
-    drop("library:action:mail", "key:2")
-    expect(describes("Key 3")).toBe("Key 3: Press: Mail")
+    // Something from the library, dropped on a key of the folder.
+    drop("library:back", "key:2")
+    expect(describes("Key 3")).toBe("Key 3: Press: Back")
     // A folder in the folder.
     drop(NEW_FOLDER_DRAG_ID, "key:3")
     expect(describes("Key 4")).toBe("Key 4: Press: Open “Folder 2”")
@@ -292,7 +292,7 @@ describe("folders in the layout editor", { timeout: 20_000 }, () => {
     const inner = saved.pages.find((p) => p.name === "Folder 2")
     expect(inner?.parent).toBe(folder?.id)
     expect(folder?.bindings.map((b) => b.target)).toEqual([
-      { type: "action", action: "mail" },
+      { type: "back" },
       { type: "openPage", page: inner?.id },
     ])
   })
@@ -324,7 +324,7 @@ describe("folders in the layout editor", { timeout: 20_000 }, () => {
     const user = renderEditor()
     drop(NEW_FOLDER_DRAG_ID, "key:4")
     await user.dblClick(control("Key 5"))
-    drop("library:action:mail", "key:0")
+    drop("library:back", "key:0")
     drop(NEW_FOLDER_DRAG_ID, "key:1")
 
     await pageCommand(user, "Folder", /Delete page/)
@@ -341,7 +341,7 @@ describe("folders in the layout editor", { timeout: 20_000 }, () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
     expect(await tabs(user)).toEqual(["Home", "Folder", "Folder 2"])
     expect(selectedTab()).toBe("Folder")
-    expect(describes("Key 1")).toBe("Key 1: Press: Mail")
+    expect(describes("Key 1")).toBe("Key 1: Press: Back")
 
     // Confirmed: the folder goes, the editor shows the page it was on, the
     // key that opened it is empty and the folder inside it is kept.

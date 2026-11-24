@@ -1,3 +1,5 @@
+import { NeedsConfiguration } from "@/components/needs-configuration"
+import { isIncompleteIssue, missingParameters } from "@/lib/action-completeness"
 import { CircleAlert, Trash2, TriangleAlert } from "lucide-react"
 import type { ReactNode } from "react"
 
@@ -47,6 +49,8 @@ import {
   MAX_RETRIES,
   upstream,
 } from "./graph"
+import { supportsContext } from "@/lib/action-context"
+import { contextReason } from "@/lib/action-context-text"
 
 function Field({
   label,
@@ -79,9 +83,24 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-export function IssueList({ issues }: { issues: GraphIssue[] }) {
+export function IssueList({
+  issues,
+  parameterLabel,
+}: {
+  issues: GraphIssue[]
+  /** The display label of a parameter of the node's action, by key. */
+  parameterLabel?: (key: string) => string | undefined
+}) {
   const { t } = useTranslation()
   if (issues.length === 0) return null
+  // A required parameter without a value: said from the issue's code and
+  // parameter, in the window's language; other issues keep their text.
+  const text = (issue: GraphIssue) =>
+    isIncompleteIssue(issue) && issue.parameter
+      ? t("actions:completeness.missing", {
+          parameters: parameterLabel?.(issue.parameter) ?? issue.parameter,
+        })
+      : issue.message
   return (
     <ul className="grid gap-1.5" aria-label={t("workflows:inspector.problems")}>
       {issues.map((issue, index) => (
@@ -96,7 +115,7 @@ export function IssueList({ issues }: { issues: GraphIssue[] }) {
           )}
           <span>
             {issue.node && <span className="font-mono">{issue.node}: </span>}
-            {issue.message}
+            {text(issue)}
           </span>
         </li>
       ))}
@@ -160,7 +179,12 @@ export function NodeInspector(props: InspectorProps) {
         <Field label={t("workflows:inspector.nodeId")} hint={t("workflows:inspector.nodeIdHint")}>
           <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{node.id}</code>
         </Field>
-        <IssueList issues={issues} />
+        <IssueList
+          issues={issues}
+          parameterLabel={(key) =>
+            actionOf(node, props.lookup).type?.parameters.find((p) => p.key === key)?.label
+          }
+        />
       </div>
       {props.run && <NodeRunReport run={props.run} />}
       <KindEditor {...props} />
@@ -281,8 +305,19 @@ function ActionEditor({ graph, node, lookup, projects, values, onChange }: Inspe
   const { t } = useTranslation()
   if (node.type !== "action") return null
   const { action, type } = actionOf(node, lookup)
+  // A saved node whose action does not work in a workflow: kept as saved,
+  // marked (deleting the node is the builder's own command).
+  const asNode = type ? supportsContext(type, "workflow") : true
+  const notHere = asNode === true ? null : asNode
   const outputs = outputOptions(graph, node.id, lookup)
   const spec = type?.node
+  // What the node still needs: its action's values with the node's fixed
+  // ones; a parameter filled by a mapping is not missing.
+  const missing = type
+    ? missingParameters(type, { ...(action?.parameters ?? {}), ...(node.overrides ?? {}) }).filter(
+        (key) => !node.mappings?.[key],
+      )
+    : []
   const policy: ErrorPolicy = node.policy
   const setPolicy = (change: Partial<ErrorPolicy>) => {
     onChange((n) => (n.type === "action" ? { ...n, policy: { ...n.policy, ...change } } : n))
@@ -303,20 +338,37 @@ function ActionEditor({ graph, node, lookup, projects, values, onChange }: Inspe
               <SelectValue placeholder={t("workflows:node.actionGone")} />
             </SelectTrigger>
             <SelectContent>
-              {lookup.actions.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
+              {/* What works as a node, and the node's own action whatever it is. */}
+              {lookup.actions
+                .filter((a) => {
+                  if (a.id === node.action) return true
+                  const candidate = lookup.types.find((t) => t.id === a.actionType)
+                  return !candidate || supportsContext(candidate, "workflow") === true
+                })
+                .map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         </Field>
         {type?.description && <p className="text-xs text-muted-foreground">{type.description}</p>}
+        {notHere && (
+          <p className="text-xs text-destructive" role="note" data-slot="node-not-here">
+            <span className="font-medium">{t("editor:context.notHere")}.</span>{" "}
+            {contextReason(notHere)} {t("editor:context.kept")}
+          </p>
+        )}
       </Section>
       {type && type.parameters.length > 0 && (
         <Section title={t("workflows:inspector.parameters")}>
+          {missing.length > 0 && (
+            <NeedsConfiguration name={action?.name ?? type.name} className="w-fit" />
+          )}
           {type.parameters.map((parameter) => {
             const mode = parameterMode(node, parameter.key)
+            const lacking = missing.includes(parameter.key)
             // A resource comes only from a variable that holds one.
             const resource = parameter.kind.type === "resource"
             const first = outputs[0]?.reference
@@ -332,7 +384,10 @@ function ActionEditor({ graph, node, lookup, projects, values, onChange }: Inspe
                 className="grid grid-cols-[minmax(0,1fr)] gap-2 rounded-md border p-2.5"
               >
                 <div className="flex items-center gap-2">
-                  <span className="flex-1 text-xs font-medium">{parameter.label}</span>
+                  <span className="flex-1 text-xs font-medium">
+                    {parameter.label}
+                    {parameter.required && <span className="text-destructive">*</span>}
+                  </span>
                   <Select
                     value={mode}
                     onValueChange={(value) => {
@@ -369,6 +424,11 @@ function ActionEditor({ graph, node, lookup, projects, values, onChange }: Inspe
                       )
                     }}
                   />
+                )}
+                {lacking && (
+                  <p className="text-xs text-destructive" data-slot="field-error">
+                    {t("actions:completeness.fieldRequired")}
+                  </p>
                 )}
                 {mode === "mapped" && mapping && (
                   <MappingEditor

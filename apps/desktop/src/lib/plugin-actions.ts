@@ -18,7 +18,7 @@
 // built-in nothing changes; when the user withdrew the plugin it is
 // unavailable with the agent's reason.
 
-import type { KnownPlugin, ModuleMigration, PluginSummary } from "@/plugins/types"
+import type { KnownPlugin, ModuleMigration, PluginDetails, PluginSummary } from "@/plugins/types"
 
 import type { ActionType, LegacyAlias, ModuleInfo } from "./types"
 
@@ -114,8 +114,14 @@ export function pluginModules(
   plugins: PluginSummary[],
   known: KnownPlugin[] = [],
   migrations: ModuleMigration[] = [],
+  details: PluginDetails[] = [],
 ): ModuleInfo[] {
   const modules = installedPluginModules(plugins, known)
+  // What each blocked action waits for, from the plugin's grants.
+  for (const plugin of details) {
+    const module = modules.find((m) => m.id === plugin.summary.id)
+    if (module?.plugin) module.plugin.grantable = grantableOf(plugin)
+  }
   for (const [plugin, aliases] of aliasesOf(migrations)) {
     if (aliases.length === 0) continue
     let module = modules.find((m) => m.id === plugin)
@@ -191,6 +197,27 @@ function installedPluginModules(plugins: PluginSummary[], known: KnownPlugin[]):
 }
 
 /**
+ * The unavailable actions of an enabled plugin that only wait for
+ * permissions the user can grant, with those permissions' keys: its
+ * declared optional permissions that name the action and are not granted.
+ * Nothing for a plugin that is not enabled (its own way back comes first).
+ */
+export function grantableOf(plugin: PluginDetails): Record<string, string[]> {
+  const grantable: Record<string, string[]> = {}
+  if (plugin.summary.state !== "enabled") return grantable
+  for (const action of plugin.summary.actions) {
+    if (action.available) continue
+    const keys = plugin.permissions
+      .filter(
+        (p) => p.optional && (p.actions ?? []).includes(action.action) && p.status !== "granted",
+      )
+      .map((p) => p.key)
+    if (keys.length > 0) grantable[action.actionType] = keys
+  }
+  return grantable
+}
+
+/**
  * The built-in modules followed by the plugin modules; `modules` itself
  * without plugins. A built-in module whose legacy action types a plugin
  * replaces (see the top of this file) gets them with the plugin's
@@ -236,6 +263,67 @@ function withLegacyTypes(
     return { ...(target ?? type), id: type.id, deprecated: true }
   })
   return { ...module, actionTypes, legacy }
+}
+
+/**
+ * `modules` with the legacy action types that a plugin replaces under
+ * their own ids, also when the built-in module is not listed any more (the
+ * agent dropped it once the plugin took over): one module per replaced
+ * built-in, holding the plugin's definition under the legacy id, exactly
+ * the agent's alias routing (`aliases` of the module migrations; never a
+ * name). Saved actions of those ids can then be shown and edited with the
+ * plugin's fields and are saved under the legacy id, which the agent keeps
+ * routing. Legacy ids whose plugin definition is not known stay unknown.
+ */
+export function withLegacyAliasModules(modules: ModuleInfo[]): ModuleInfo[] {
+  const listed = new Set(modules.flatMap((m) => m.actionTypes.map((t) => t.id)))
+  const added = new Map<string, ModuleInfo>()
+  for (const plugin of modules.filter((m) => m.plugin)) {
+    for (const alias of plugin.plugin?.aliases ?? []) {
+      if (listed.has(alias.legacy)) continue
+      const target = plugin.actionTypes.find((t) => t.id === alias.target)
+      if (!target) continue
+      // The plugin's name as the app shows it (a migration may carry the
+      // manifest's untranslated key).
+      const pluginName = plugin.name
+      // The built-in's own module when it is still listed (one module per
+      // id: editors find a type's module by it), else one in its place.
+      const listedModule = modules.find((m) => m.id === alias.module && !m.plugin)
+      const module =
+        added.get(alias.module) ??
+        (listedModule
+          ? { ...listedModule, legacy: { ...listedModule.legacy } }
+          : ({
+              ...placeholder(alias.module, pluginName, "", ""),
+              enabled: true,
+              plugin: undefined,
+              legacy: {},
+            } satisfies ModuleInfo))
+      module.actionTypes = [
+        ...module.actionTypes,
+        { ...target, id: alias.legacy, deprecated: true },
+      ]
+      const unavailable =
+        alias.route === "pluginWithdrawn"
+          ? `${pluginName} (${alias.plugin}): ${alias.routeReason ?? "the plugin is disabled"}`
+          : pluginTypeUnavailable(plugin, alias.target)
+      module.legacy = {
+        ...module.legacy,
+        [alias.legacy]: {
+          target: alias.target,
+          plugin: alias.plugin,
+          pluginName,
+          unavailable,
+        },
+      }
+      added.set(alias.module, module)
+      listed.add(alias.legacy)
+    }
+  }
+  if (added.size === 0) return modules
+  const replaced = modules.map((m) => (!m.plugin && added.get(m.id)) || m)
+  const fresh = [...added.values()].filter((m) => !modules.some((n) => n.id === m.id && !n.plugin))
+  return [...replaced, ...fresh]
 }
 
 /** The legacy alias state of `typeId`, when a plugin replaces it. */

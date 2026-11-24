@@ -3,6 +3,7 @@
 // Only data the app already receives is used: node reports of the run and
 // the live events this window saw.
 
+import { CONFIGURATION_INCOMPLETE } from "@/lib/action-completeness"
 import { type TranslationKey, i18n } from "@/i18n"
 import { type LiveExecution, type RetryWait, executionDuration } from "@/lib/executions"
 import type { NodeReport, NodeStatus, StepError } from "@/lib/types"
@@ -195,8 +196,13 @@ export interface Failure {
 }
 
 export function describeFailure(error: StepError): { explanation: string; hint: string } {
+  // Required settings not filled in: refused before it ran.
+  const incomplete =
+    error.code === CONFIGURATION_INCOMPLETE || error.actionCode === CONFIGURATION_INCOMPLETE
   return {
-    explanation: i18n.t(ERROR_TEXT[error.code] ?? "workflows:run.error.other"),
+    explanation: incomplete
+      ? i18n.t("errors:pluginAction.configuration-incomplete")
+      : i18n.t(ERROR_TEXT[error.code] ?? "workflows:run.error.other"),
     hint: error.retryable
       ? i18n.t("workflows:run.error.transient")
       : i18n.t("workflows:run.error.permanent"),

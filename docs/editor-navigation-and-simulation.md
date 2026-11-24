@@ -333,6 +333,26 @@ a hash of its frame and how often it was written. `scripts/live-check.mjs`
 uses it with the layout probe (`live`, `dblclick`, `edit` commands) against
 a running development session.
 
+## Escape
+
+The Inspector has no deselect button: **Escape** clears the selection from
+anywhere in the Device Editor (a Canvas key, the Inspector, the Action
+Library, or with the focus nowhere), never from another view of the window
+(the settings hide the editor). One press has one effect, in this order
+(`apps/desktop/src/layout-editor/escape.ts`):
+
+1. An open menu, popover, picker or dialog closes; nothing else happens.
+2. A drag in progress (pointer or keyboard) is cancelled; the selection stays.
+3. In a text field (the key's title, a parameter, a search) the focus leaves
+   the field and what was typed stays: it is already in the draft, as its
+   own undo step. A field that handles Escape itself keeps doing so
+   (renaming a page or folder cancels the rename). The next press deselects.
+4. Otherwise the selection (a multi-selection too) is cleared and the
+   Inspector shows its empty state.
+
+Deselecting is not an edit: the draft, Undo/Redo, Save/Revert, the page,
+the Canvas's zoom and pan and the live preview session stay as they are.
+
 ## Compatibility
 
 Protocol 16 adds the capability `livePreview` (section 3); the client

@@ -7,7 +7,6 @@ import "@testing-library/jest-dom/vitest"
 import type { DragEndEvent } from "@dnd-kit/core"
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { ReactNode } from "react"
 import { toast } from "sonner"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -23,7 +22,7 @@ import type {
 
 import { catalogDragId } from "./catalog"
 import { LayoutEditor } from "./editor"
-import { LIBRARY_COMPATIBLE_ONLY_KEY } from "./library-sidebar"
+import { dnd, drop as dropOnSlot, resetDnd } from "@/test/dnd"
 
 Element.prototype.hasPointerCapture = () => false
 Element.prototype.releasePointerCapture = () => undefined
@@ -60,25 +59,9 @@ const modules: ModuleInfo[] = [
   moduleInfo({ id: "deck", actionTypes: [nextPage, log] }),
 ]
 
-const dnd = vi.hoisted(() => ({
-  onDragEnd: undefined as ((event: DragEndEvent) => void) | undefined,
-  data: new Map<string, unknown>(),
-}))
-
-vi.mock("@dnd-kit/core", async (original) => {
-  const actual = await original<typeof import("@dnd-kit/core")>()
-  return {
-    ...actual,
-    DndContext: (props: { onDragEnd?: (event: DragEndEvent) => void; children?: ReactNode }) => {
-      dnd.onDragEnd = props.onDragEnd
-      return <actual.DndContext {...props} />
-    },
-    useDraggable: (args: Parameters<typeof actual.useDraggable>[0]) => {
-      dnd.data.set(String(args.id), args.data)
-      return actual.useDraggable(args)
-    },
-  }
-})
+vi.mock("@dnd-kit/core", async (original) =>
+  (await import("@/test/dnd")).dndModule(await original()),
+)
 
 const api = vi.hoisted(() => ({
   previewLayout: vi.fn(),
@@ -173,7 +156,6 @@ function renderEditor(model: DeviceModel, saved: DeviceLayout = layoutFor(model)
 
 const control = (name: string) => screen.getByRole("button", { name })
 const describes = (name: string) => control(name).getAttribute("title")
-const library = () => screen.getByRole("region", { name: "Actions" }).parentElement as HTMLElement
 
 function drop(id: string, over: string) {
   expect(dnd.data.has(id), `a draggable ${id}`).toBe(true)
@@ -189,7 +171,7 @@ function drop(id: string, over: string) {
 
 beforeEach(() => {
   localStorage.clear()
-  dnd.data.clear()
+  resetDnd()
   vi.mocked(toast.error).mockClear()
   vi.mocked(toast.warning).mockClear()
   api.previewLayout.mockReset()
@@ -205,26 +187,20 @@ afterEach(cleanup)
 describe("the library for the selected control", { timeout: 20_000 }, () => {
   it("disables what cannot go on a Stream Deck MK.2 key, with the reason", async () => {
     const user = renderEditor(mk2)
-    // Nothing is selected: everything can be dragged.
-    expect(screen.getByText("Select a control to see what fits it.")).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Drag Room volume onto a control" }),
-    ).toBeInTheDocument()
+    // Nothing is selected: everything can be dragged (no helper text above the list).
+    expect(screen.queryByText("Select a control to see what fits it.")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Drag Volume onto a control" })).toBeInTheDocument()
 
     await user.click(control("Key 1"))
-    expect(screen.getByText("Showing what fits Key 1.")).toBeInTheDocument()
     const reason = "Requires a dial. The selected Stream Deck MK.2 key supports press actions only."
-    // A profile action of an encoder-only type, and the type in the catalog.
-    const action = screen.getByLabelText(`Room volume: not for the selected control. ${reason}`)
-    expect(action).toHaveAttribute("aria-disabled", "true")
-    expect(within(action).getByText(reason)).toBeInTheDocument()
-    expect(
-      screen.getByLabelText(`Volume: not for the selected control. ${reason}`),
-    ).toHaveAttribute("aria-disabled", "true")
-    // Key actions stay draggable, declared or not.
-    expect(screen.getByRole("button", { name: "Drag Mute mic onto a control" })).toBeEnabled()
-    expect(screen.getByRole("button", { name: "Drag Write log onto a control" })).toBeEnabled()
-    expect(screen.getByRole("button", { name: "Drag Forward onto a control" })).toBeEnabled()
+    // An encoder-only type: listed, not draggable, with the reason.
+    const type = screen.getByLabelText(`Volume: not for the selected control. ${reason}`)
+    expect(type).toHaveAttribute("aria-disabled", "true")
+    expect(within(type).getByText(reason)).toBeInTheDocument()
+    // Key types stay draggable, declared or not.
+    expect(screen.getByRole("button", { name: "Drag Mute onto a control" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Drag Log onto a control" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Drag Next page onto a control" })).toBeEnabled()
   })
 
   it("disables key actions for a dial and explains a legacy action", async () => {
@@ -232,61 +208,56 @@ describe("the library for the selected control", { timeout: 20_000 }, () => {
     await user.click(control("Dial 1"))
     const reason =
       "Requires a key. The selected Stream Deck + dial supports turn and press actions."
+    expect(screen.getByLabelText(`Mute: not for the selected control. ${reason}`)).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    )
+    // A type without a declaration is keys only.
     expect(
-      screen.getByLabelText(`Mute mic: not for the selected control. ${reason}`),
-    ).toHaveAttribute("aria-disabled", "true")
-    // An action without a declaration is keys only.
-    expect(
-      screen.getByLabelText(`Write log: not for the selected control. ${reason}`),
+      screen.getByLabelText(`Log: not for the selected control. ${reason}`),
     ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Drag Room volume onto a control" })).toBeEnabled()
-    expect(screen.getByRole("button", { name: "Drag Forward onto a control" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Drag Volume onto a control" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Drag Next page onto a control" })).toBeEnabled()
 
     await user.click(control("Touch zone 1"))
     expect(
       screen.getByLabelText(
-        "Write log: not for the selected control. Requires a key. The selected Stream Deck + touch zone supports tap actions only.",
+        "Log: not for the selected control. Requires a key. The selected Stream Deck + touch zone supports tap actions only.",
       ),
     ).toBeInTheDocument()
   })
 
-  it("hides what does not fit with “Compatible only”, remembered", async () => {
+  it("lists what does not fit the selected control too, disabled, with no switch to hide it", async () => {
+    // An earlier version's "Compatible only" preference changes nothing.
+    localStorage.setItem("deckpilot.editor.compatibleOnly", "true")
     const user = renderEditor(mk2)
+    expect(screen.queryByRole("switch", { name: "Compatible only" })).not.toBeInTheDocument()
+    expect(screen.getByText("Volume")).toBeInTheDocument()
     await user.click(control("Key 1"))
-    const toggle = screen.getByRole("switch", { name: "Compatible only" })
-    expect(toggle).toHaveAttribute("aria-checked", "false")
-    await user.click(toggle)
-    expect(screen.queryByText("Room volume")).not.toBeInTheDocument()
-    expect(within(library()).queryByText("Volume")).not.toBeInTheDocument()
-    expect(screen.getByText("Mute mic")).toBeInTheDocument()
-    expect(localStorage.getItem(LIBRARY_COMPATIBLE_ONLY_KEY)).toBe("true")
-    cleanup()
-
-    // Kept for the next editor; without a selected control nothing is hidden.
-    const again = renderEditor(mk2)
-    expect(screen.getByRole("switch", { name: "Compatible only" })).toHaveAttribute(
-      "aria-checked",
+    // Still listed after selecting a key, and still refused there.
+    expect(screen.getByText("Volume")).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Volume: not for the selected control/)).toHaveAttribute(
+      "aria-disabled",
       "true",
     )
-    expect(screen.getByText("Room volume")).toBeInTheDocument()
-    await again.click(control("Key 2"))
-    expect(screen.queryByText("Room volume")).not.toBeInTheDocument()
+    expect(screen.getByText("Mute")).toBeInTheDocument()
   })
 })
 
 describe("dropping", { timeout: 20_000 }, () => {
   it("refuses an incompatible action: nothing is bound, the drop is shown and announced", async () => {
     renderEditor(plus)
-    drop("library:action:mute", "encoder:0")
+    drop(catalogDragId(mute.id), "encoder:0")
     expect(describes("Dial 1")).toBe("Dial 1")
+    expect(api.createAction).not.toHaveBeenCalled()
     const reason =
       "Requires a key. The selected Stream Deck + dial supports turn and press actions."
-    expect(toast.error).toHaveBeenCalledWith("Mute mic was not put on Dial 1", {
+    expect(toast.error).toHaveBeenCalledWith("Mute was not put on Dial 1", {
       description: reason,
     })
     expect(control("Dial 1")).toHaveAttribute("data-drop", "rejected")
     const announcement = document.querySelector("[data-slot='drop-announcement']")
-    expect(announcement).toHaveTextContent(`Mute mic cannot go on Dial 1. ${reason}`)
+    expect(announcement).toHaveTextContent(`Mute cannot go on Dial 1. ${reason}`)
     expect(announcement).toHaveAttribute("aria-live", "assertive")
     // The state goes away after a moment.
     await waitFor(
@@ -324,10 +295,14 @@ describe("dropping", { timeout: 20_000 }, () => {
     expect(toast.error).toHaveBeenCalledWith("Key 1 was not put on Dial 2", expect.anything())
   })
 
-  it("binds a compatible action to a trigger it can run from", () => {
+  it("binds a compatible type to a trigger it can run from, reusing the action that is exactly it", async () => {
     renderEditor(plus)
-    drop("library:action:next", "encoder:0")
-    expect(describes("Dial 1")).toBe("Dial 1: Turn right: Forward")
+    drop(catalogDragId(nextPage.id), "encoder:0")
+    // "Forward" is exactly a new Next page action: it is used, none is made.
+    await waitFor(() => {
+      expect(describes("Dial 1")).toBe("Dial 1: Turn right: Forward")
+    })
+    expect(api.createAction).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
   })
 })
@@ -365,17 +340,28 @@ describe("the inspector", { timeout: 20_000 }, () => {
     ).toBeInTheDocument()
   })
 
-  it("offers each trigger only what can run from it", async () => {
-    const user = renderEditor(plus)
+  it("offers each trigger only what can run from it, and only the saved actions the control uses", async () => {
+    // Room volume turns the dial left; the saved actions are no generic
+    // list here (types come from the Action Library).
+    const user = renderEditor(
+      plus,
+      layoutFor(plus, [
+        {
+          control: { kind: "encoder", index: 0 },
+          trigger: { type: "rotateCounterClockwise" },
+          target: { type: "action", action: "vol" },
+        },
+      ]),
+    )
     await user.click(control("Dial 1"))
     await user.click(screen.getByRole("combobox", { name: "Turn right" }))
     const listbox = screen.getByRole("listbox")
-    expect(within(listbox).getByRole("option", { name: "Forward" })).not.toHaveAttribute(
-      "data-disabled",
-    )
+    // The saved action this dial already runs, reachable to share it.
     expect(within(listbox).getByRole("option", { name: "Room volume" })).not.toHaveAttribute(
       "data-disabled",
     )
+    // Saved actions used elsewhere or nowhere are not listed.
+    expect(within(listbox).queryByRole("option", { name: "Forward" })).toBeNull()
     // What cannot run from it is not offered (no disabled entries).
     expect(within(listbox).queryByRole("option", { name: /Mute mic/ })).toBeNull()
     expect(within(listbox).queryByRole("option", { name: /Write log/ })).toBeNull()
@@ -384,15 +370,19 @@ describe("the inspector", { timeout: 20_000 }, () => {
   it("offers a dial's press gestures only to actions that react to them", async () => {
     const user = renderEditor(plus)
     await user.click(control("Dial 1"))
-    // Next page reacts to a press of a dial but not to a double click.
-    await user.click(screen.getByRole("combobox", { name: "Assign an action to: Double click" }))
-    const listbox = screen.getByRole("listbox")
-    expect(
-      within(listbox).getByRole("option", { name: "Forward (not on this control)" }),
-    ).toHaveAttribute("data-disabled")
-    expect(
-      within(listbox).getByRole("option", { name: "Room volume (not on this control)" }),
-    ).toHaveAttribute("data-disabled")
+    // Next page reacts to a press of a dial but not to a double click: a
+    // drop of it on the double click is refused with the reason.
+    const before = describes("Dial 1")
+    const slot = [...dnd.droppables].find((id) => id.endsWith(":doubleClick"))
+    dropOnSlot(catalogDragId(nextPage.id), slot ?? "no double click slot")
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Not put on the double click of Dial 1",
+        expect.anything(),
+      )
+    })
+    expect(describes("Dial 1")).toBe(before)
+    expect(screen.queryByRole("combobox", { name: /Double click/ })).toBeNull()
   })
 })
 

@@ -1120,6 +1120,14 @@ export interface PluginModuleState {
    * Types without an entry are available.
    */
   unavailable: Record<string, string>
+  /**
+   * Of the unavailable types, those that only wait for permissions the
+   * user can grant: the plugin's declared optional permissions naming the
+   * action and not granted, by action type id. Read from the agent's
+   * structured grants (`getPlugin`), never from `unavailable`'s words;
+   * absent when they were not read.
+   */
+  grantable?: Record<string, string[]>
   /** The legacy action types of the built-in module this plugin replaces. */
   aliases?: LegacyAlias[]
   /**
@@ -1268,7 +1276,8 @@ export interface KeyFace {
   /**
    * The key's action cannot run now (its plugin is missing, disabled or
    * unavailable): the compact missing-plugin face, with the `plug` icon in
-   * place of any icon and the key's title. Never stored.
+   * place of any icon and the key's title. Never stored; the Inspector
+   * says why (lib/action-availability.ts).
    */
   unavailable?: boolean
   /** The labels the key shows, resolved (lib/key-labels.ts); omitted when none. */

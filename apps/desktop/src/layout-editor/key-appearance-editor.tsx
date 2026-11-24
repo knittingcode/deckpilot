@@ -1,12 +1,13 @@
 // The Inspector's key header (docs/key-text.md, "Title appearance"): for every
 // key with a display that does something — actions, Multi Actions, plugin
-// actions, layout navigation, folder keys — the live key preview on the left
-// (the Canvas's image of the key; it opens the key menu and never runs the
-// key), and on the right the key's visible title with the title appearance
-// button, and below it "Show title". Icon and background are the key menu's
-// (icon-menu.tsx). For a folder key the title is the folder's name, its one
-// title (`folderKeyTitle`). The folder's protected Back key and dials have
-// none. Gestures, folder settings and the rest follow below it.
+// actions, layout navigation, folder keys — the live key preview in the
+// Inspector's fixed left column (the Canvas's image of the key; it opens the
+// key menu and never runs the key), and at the top of the scrolling settings
+// column the key's visible title with the title appearance button, and below
+// it "Show title". Icon and background are the key menu's (icon-menu.tsx).
+// For a folder key the title is the folder's name, its one title
+// (`folderKeyTitle`). The folder's protected Back key and dials have none.
+// Gestures, folder settings and the rest follow below the title.
 
 import { ImageIcon } from "lucide-react"
 import { useId, useRef, useState } from "react"
@@ -69,6 +70,8 @@ function ShowTitle({
   )
 }
 
+const ignoreProblem = () => undefined
+
 /** A message under the header: an icon that was not imported or pasted. */
 function Problem({ message }: { message: string | null }) {
   if (!message) return null
@@ -80,9 +83,59 @@ function Problem({ message }: { message: string | null }) {
 }
 
 /**
- * The header of one key: preview with its key menu, visible title with its
- * appearance popover, "Show title". Nothing when the key has no display or
- * nothing assigned (or outside the editor).
+ * The key's preview in the Inspector's fixed left column (editor.tsx): the
+ * Canvas's image of the key, drawn by the shared renderer, which opens the
+ * key menu (icon and background; its menus are portalled, so the settings
+ * column's scrolling never clips them) and never runs the key. Nothing when
+ * the key has no display or nothing assigned (or outside the editor); the
+ * column then takes no space.
+ */
+export function InspectorKeyPreview({ control }: { control: ControlId | null }) {
+  const { t } = useTranslation()
+  const look = useKeyLook()
+  if (!look || !control || !stylable(control)) return null
+  if (!shownBinding(look.draft, look.pageId, control)) return null
+  const key = controlKey(control)
+  const shared = sharedAppearance(look.draft, look.pageId, [control])
+  const name = controlLabel(control)
+  return (
+    <div
+      data-slot="inspector-preview-column"
+      // Top-aligned with the settings' first row, never scrolled, never
+      // resized by what the settings show.
+      className="flex w-16 shrink-0 flex-col items-center self-start"
+    >
+      <KeyMenu
+        look={look}
+        shared={shared}
+        onProblem={look.setProblem ?? ignoreProblem}
+        trigger={
+          <button
+            type="button"
+            data-slot="key-preview"
+            aria-label={t("editor:keyHeader.preview", { control: name })}
+            title={t("editor:keyHeader.previewTitle")}
+            className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-device-key-border bg-black focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            <KeyPreview
+              face={look.faces.get(key)}
+              image={look.images.get(key)}
+              animation={look.animations?.get(key)}
+              icon={look.symbols?.get(key)}
+            />
+          </button>
+        }
+      />
+    </div>
+  )
+}
+
+/**
+ * The settings of one key's look in the Inspector's settings column: its
+ * visible title with its appearance popover, then "Show title". The key's
+ * preview is in the fixed column next to it (`InspectorKeyPreview`).
+ * Nothing when the key has no display or nothing assigned (or outside the
+ * editor).
  */
 export function KeyAppearanceEditor({
   control,
@@ -98,7 +151,6 @@ export function KeyAppearanceEditor({
   const { t } = useTranslation()
   const look = useKeyLook()
   const titleInput = useRef<HTMLInputElement>(null)
-  const [pasteProblem, setPasteProblem] = useState<string | null>(null)
   if (!look || !stylable(control)) return null
   const binding = shownBinding(look.draft, look.pageId, control)
   if (!binding) return null
@@ -115,7 +167,6 @@ export function KeyAppearanceEditor({
     folder !== undefined || binding.label
       ? undefined
       : defaultTitle || face?.title || t("editor:keyHeader.noTitle")
-  const name = controlLabel(control)
   const title = binding.label ?? ""
   // The visible title, exactly as typed (only the label of what the key
   // shows changes).
@@ -123,77 +174,50 @@ export function KeyAppearanceEditor({
     onChange(setShownLabel(look.draft, look.pageId, control, value), `key-title:${key}`)
   }
   return (
-    <div data-slot="key-appearance" className="@container grid gap-1.5">
-      <div className="flex min-w-0 items-start gap-3">
-        <KeyMenu
-          look={look}
-          shared={shared}
-          onProblem={setPasteProblem}
-          trigger={
-            <button
-              type="button"
-              data-slot="key-preview"
-              aria-label={t("editor:keyHeader.preview", { control: name })}
-              title={t("editor:keyHeader.previewTitle")}
-              className="relative size-14 shrink-0 overflow-hidden rounded-lg border border-device-key-border bg-black focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none @2xs:size-16"
-            >
-              <KeyPreview
-                face={face}
-                image={look.images.get(key)}
-                animation={look.animations?.get(key)}
-                icon={look.symbols?.get(key)}
-              />
-            </button>
+    <div data-slot="key-appearance" className="grid min-w-0 gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Input
+          data-slot="key-title"
+          aria-label={
+            folder !== undefined ? t("editor:keyHeader.folderName") : t("editor:keyHeader.title")
           }
+          placeholder={placeholder}
+          // A title with references may be longer than the key shows.
+          maxLength={folder !== undefined ? 64 : maxTitleLength(title)}
+          className="h-8 min-w-0 flex-1"
+          ref={titleInput}
+          value={folderName ?? title}
+          onChange={(event) => {
+            const value = event.target.value
+            if (folder !== undefined) {
+              // The folder's one name: its key, the navigator and the
+              // breadcrumbs follow it (one undo step per burst).
+              onChange(renamePage(look.draft, folder, value), `page-name:${folder}`)
+              return
+            }
+            setTitle(value)
+          }}
         />
-        <div className="grid min-w-0 flex-1 gap-1.5">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Input
-              data-slot="key-title"
-              aria-label={
-                folder !== undefined
-                  ? t("editor:keyHeader.folderName")
-                  : t("editor:keyHeader.title")
-              }
-              placeholder={placeholder}
-              // A title with references may be longer than the key shows.
-              maxLength={folder !== undefined ? 64 : maxTitleLength(title)}
-              className="h-8 min-w-0 flex-1"
-              ref={titleInput}
-              value={folderName ?? title}
-              onChange={(event) => {
-                const value = event.target.value
-                if (folder !== undefined) {
-                  // The folder's one name: its key, the navigator and the
-                  // breadcrumbs follow it (one undo step per burst).
-                  onChange(renamePage(look.draft, folder, value), `page-name:${folder}`)
-                  return
-                }
-                setTitle(value)
-              }}
-            />
-            {folder === undefined && look.profileId && (
-              <TitleVariablePicker
-                profileId={look.profileId}
-                onPick={(reference) => {
-                  // At the cursor, else at the end; never past the limit.
-                  const input = titleInput.current
-                  const start = input?.selectionStart ?? title.length
-                  const end = input?.selectionEnd ?? title.length
-                  const next = title.slice(0, start) + referenceText(reference) + title.slice(end)
-                  if (Array.from(next).length <= MAX_TITLE_TEMPLATE_CHARS) setTitle(next)
-                }}
-              />
-            )}
-            <TitleFormatButton controls={[control]} />
-          </div>
-          {folder === undefined && look.profileId && title !== "" && (
-            <TitlePreview profileId={look.profileId} template={title} />
-          )}
-          <ShowTitle look={look} shared={shared} controls={[control]} />
-        </div>
+        {folder === undefined && look.profileId && (
+          <TitleVariablePicker
+            profileId={look.profileId}
+            onPick={(reference) => {
+              // At the cursor, else at the end; never past the limit.
+              const input = titleInput.current
+              const start = input?.selectionStart ?? title.length
+              const end = input?.selectionEnd ?? title.length
+              const next = title.slice(0, start) + referenceText(reference) + title.slice(end)
+              if (Array.from(next).length <= MAX_TITLE_TEMPLATE_CHARS) setTitle(next)
+            }}
+          />
+        )}
+        <TitleFormatButton controls={[control]} />
       </div>
-      <Problem message={pasteProblem ?? look.icons.problem} />
+      {folder === undefined && look.profileId && title !== "" && (
+        <TitlePreview profileId={look.profileId} template={title} />
+      )}
+      <ShowTitle look={look} shared={shared} controls={[control]} />
+      <Problem message={look.problem ?? look.icons.problem} />
     </div>
   )
 }

@@ -37,14 +37,14 @@ describe("initialValue", () => {
 })
 
 describe("buildParameters", () => {
-  it("omits empty optional values but keeps required ones", () => {
+  it("leaves empty values out, required ones too: absent is missing, never blank", () => {
     const values = {
       message: { type: "text", value: "" },
       note: { type: "text", value: "  " },
       count: { type: "integer", value: 3 },
+      direction: { type: "choice", value: "" },
     } as const
-    expect(buildParameters([text, optionalText, integer], values)).toEqual({
-      message: { type: "text", value: "" },
+    expect(buildParameters([text, optionalText, integer, choice], values)).toEqual({
       count: { type: "integer", value: 3 },
     })
   })

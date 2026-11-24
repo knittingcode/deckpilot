@@ -138,13 +138,24 @@ describe("ActionEditor", () => {
   })
   afterEach(cleanup)
 
-  it("shows validation errors instead of saving incomplete actions", async () => {
+  it("needs a name, and saves a draft without its required settings", async () => {
     const user = userEvent.setup()
     renderEditor(null)
+    // A required setting not filled in: marked, said next to it.
+    expect(screen.getByText("Needs configuration")).toBeInTheDocument()
+    const message = screen.getByRole("textbox", { name: /Message/ })
+    expect(message).toHaveAttribute("aria-invalid", "true")
+    expect(message).toHaveAccessibleDescription("Required: fill this in before the action can run.")
     await user.click(screen.getByRole("button", { name: /create action/i }))
     expect(screen.getByText("Enter a name.")).toBeInTheDocument()
-    expect(screen.getByText("Message is required.")).toBeInTheDocument()
     expect(createAction).not.toHaveBeenCalled()
+    // With a name: saved as a draft, the setting left out (never blank).
+    await user.type(screen.getByLabelText("Name"), "Say hello")
+    await user.click(screen.getByRole("button", { name: /create action/i }))
+    expect(createAction).toHaveBeenCalledExactlyOnceWith(
+      "profile",
+      expect.objectContaining({ name: "Say hello", actionType: logType.id, parameters: {} }),
+    )
   })
 
   it("creates an action from the schema-generated form", async () => {
@@ -342,8 +353,13 @@ describe("ActionEditor in Polish", () => {
     expect(screen.getByLabelText("Etykieta klawisza")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Utwórz akcję" }))
     expect(screen.getByText("Wprowadź nazwę.")).toBeInTheDocument()
-    // "Message" comes from the module and is not translated.
-    expect(screen.getByText("Pole „Message” jest wymagane.")).toBeInTheDocument()
+    // "Message" comes from the module and is not translated; what it needs
+    // is said in Polish.
+    expect(screen.getByText("Message")).toBeInTheDocument()
+    expect(screen.getByText("Wymaga konfiguracji")).toBeInTheDocument()
+    expect(
+      screen.getByText("Wymagane: uzupełnij, zanim akcja będzie mogła działać."),
+    ).toBeInTheDocument()
     expect(createAction).not.toHaveBeenCalled()
   })
 
@@ -364,5 +380,46 @@ describe("ActionEditor in Polish", () => {
     expect(within(dialog).getByText(new RegExp(`^${used}`))).toBeInTheDocument()
     expect(within(dialog).getByText(new RegExp(undecided))).toBeInTheDocument()
     expect(within(dialog).getByRole("button", { name: "Zastosuj i usuń" })).toBeDisabled()
+  })
+})
+
+describe("a draft that is run", () => {
+  it("says in words that a draft cannot run yet, with what it lacks", async () => {
+    const user = userEvent.setup()
+    // The agent refuses before any handler runs (`configuration-incomplete`).
+    api.runAction.mockResolvedValue({
+      status: "failed",
+      message: "missing required parameter `message`",
+      code: "configuration-incomplete",
+      data: { missing: "message" },
+    })
+    render(
+      <ActionEditor
+        profileId="profile"
+        modules={[module("general", "General", [logType])]}
+        projects={projects}
+        action={{
+          id: "draft",
+          name: "Say hello",
+          actionType: logType.id,
+          parameters: {},
+          description: "",
+          icon: null,
+          label: null,
+        }}
+        references={[]}
+        canRun
+        onSaved={vi.fn()}
+        onDeleted={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: "Run" }))
+    const status = await screen.findByRole("status")
+    expect(status).toHaveTextContent(
+      "Say hello needs configuration before it can run. Missing: Message",
+    )
+    // Neither the agent's words nor the keys as output.
+    expect(status).not.toHaveTextContent("missing required parameter")
+    expect(status).not.toHaveTextContent(/^missing/)
   })
 })

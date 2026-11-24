@@ -10,6 +10,7 @@ import { pluginTypeUnavailable } from "@/lib/plugin-actions"
 import type { ActionInstance, ActionType, GraphNodeKind, ModuleInfo } from "@/lib/types"
 
 import { DEFAULT_POLICY, type NodeType } from "./graph"
+import { supportsContext } from "@/lib/action-context"
 
 export interface CatalogEntry {
   key: string
@@ -136,8 +137,13 @@ export function moduleGroups(modules: ModuleInfo[], actions: ActionInstance[]): 
       const group: CatalogGroup = {
         id: module.id,
         title: module.name,
+        // Only what works as a workflow node (its type's contexts; without
+        // a declaration, everything).
         entries: actions
-          .filter((a) => types.has(a.actionType))
+          .filter((a) => {
+            const type = types.get(a.actionType)
+            return type !== undefined && supportsContext(type, "workflow") === true
+          })
           .map((a) => {
             const entry = actionEntry(a, types.get(a.actionType))
             const unavailable = pluginTypeUnavailable(module, a.actionType)
@@ -146,7 +152,7 @@ export function moduleGroups(modules: ModuleInfo[], actions: ActionInstance[]): 
         // Saved actions of deprecated types stay listed above; new nodes
         // are made from the types that replace them.
         types: creatableTypes(module.actionTypes).filter(
-          (t) => !pluginTypeUnavailable(module, t.id),
+          (t) => !pluginTypeUnavailable(module, t.id) && supportsContext(t, "workflow") === true,
         ),
       }
       if (!module.plugin) return group
