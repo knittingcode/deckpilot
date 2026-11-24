@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::provider::{CallKind, CapabilitySet, Direction, ProviderId, Tri};
+use crate::provider::{CallAction, CallKind, CapabilitySet, Direction, ProviderId, Tri};
 
 /// How a call ended, as the engine records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -113,9 +113,21 @@ pub struct CallSnapshot {
     pub camera_on: Tri,
     pub capabilities: CapabilitySet,
     pub provider: Option<ProviderId>,
-    /// When the call entered its state, in Unix milliseconds (the agent
-    /// maps the engine clock to wall time for this field only).
+    /// When the call entered its state. The engine fills it in with its
+    /// own clock; the agent maps it to Unix milliseconds before it leaves
+    /// the agent.
     pub since: u64,
+    /// Whether the call's provider is connected ("no connection to the
+    /// provider" on the faces when not).
+    #[serde(default)]
+    pub connected: bool,
+    /// A command sent and not confirmed yet: the key shows it as pending,
+    /// never as done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<CallAction>,
+    /// The last command was not confirmed in time: shown for a moment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unconfirmed: bool,
     /// Only with the user's opt-in for the provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -136,6 +148,9 @@ impl CallSnapshot {
             capabilities,
             provider: None,
             since: 0,
+            connected: false,
+            pending: None,
+            unconfirmed: false,
             title: None,
             generation,
         }
