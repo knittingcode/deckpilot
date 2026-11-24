@@ -680,7 +680,7 @@ impl Runtime {
         let index = self.visible_frame(device)?;
         let frame = &self.presentation.frames[device][index];
         let layout = frame.layout();
-        let (mut faces, _) =
+        let (mut faces, ()) =
             self.engine
                 .display_templates(&frame.profile, &self.machine, None, |environment| {
                     let recorder = crate::variables::RecordingTemplates::new(environment);

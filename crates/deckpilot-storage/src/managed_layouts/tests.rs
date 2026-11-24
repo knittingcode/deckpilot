@@ -83,7 +83,7 @@ fn seeding_is_idempotent_and_touches_no_other_layout() {
     assert_eq!(store.managed_layouts(OWNER).unwrap().len(), 1);
     // The user's layout named like it is the user's, untouched.
     assert_eq!(store.shared_layout(mine.id).unwrap().unwrap(), before);
-    assert!(store.managed_layouts("deckpilot.other").unwrap().is_empty());
+    assert_eq!(store.managed_layouts("deckpilot.other").unwrap().len(), 0);
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn restore_defaults_keeps_the_users_version_first() {
     // its actions: regenerating never changes it.
     let kept = store.shared_layout(copy).unwrap().unwrap();
     assert_eq!(kept.layout.name, "Rozmowy (moja wersja)");
-    assert!(kept.profiles.is_empty());
+    assert_eq!(kept.profiles.len(), 0);
     let (kept_actions, _) = store.layout_library(&kept.layout).unwrap();
     assert_eq!(kept_actions.len(), 1);
     assert_ne!(kept_actions[0].id, action_id);
@@ -195,12 +195,7 @@ fn removing_takes_the_unedited_unless_asked_and_imports_never_do() {
         Err(StorageError::Invalid(_))
     ));
     store.rename_shared_layout(layout_id, "Edited").unwrap();
-    assert!(
-        store
-            .remove_managed_layouts(OWNER, false)
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(store.remove_managed_layouts(OWNER, false).unwrap().len(), 0);
     assert_eq!(
         store.remove_managed_layouts(OWNER, true).unwrap(),
         [layout_id]

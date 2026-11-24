@@ -6,21 +6,21 @@
 use super::*;
 use crate::provider::{Capability, Support};
 
-pub(super) const MOCK: &str = ProviderId::MOCK;
+pub(crate) const MOCK: &str = ProviderId::MOCK;
 
-pub(super) fn pid(id: &str) -> ProviderId {
+pub(crate) fn pid(id: &str) -> ProviderId {
     ProviderId::new(id).unwrap()
 }
 
-pub(super) fn key(text: &str) -> CallKey {
+pub(crate) fn key(text: &str) -> CallKey {
     CallKey::new(text).unwrap()
 }
 
-pub(super) fn all_supported() -> CapabilitySet {
+pub(crate) fn all_supported() -> CapabilitySet {
     CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| (c, Support::Supported))).0
 }
 
-pub(super) fn consent() -> ConsentState {
+pub(crate) fn consent() -> ConsentState {
     ConsentState {
         observe: true,
         control: true,
@@ -29,7 +29,7 @@ pub(super) fn consent() -> ConsentState {
 }
 
 /// An engine with one connected provider and a virtual clock.
-pub(super) struct Harness {
+pub(crate) struct Harness {
     pub engine: Engine,
     pub now: Instant,
     pub provider: ProviderId,

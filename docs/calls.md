@@ -1,10 +1,9 @@
 # Calls
 
-**Status:** contracts, the state engine and the return sessions. The
-provider contract, the call snapshot, the `call.*` operations, the manifest
-kinds of plugin API 1.16, the call state engine and the "Back to work"
-return sessions exist; the presentation overlay, the managed layouts, the
-providers and the plugin come in later changes. No DeckPilot provides plugin API 1.16
+**Status:** contracts, the state engine, the return sessions, the
+presentation overlay, the managed layouts and the driver that keeps them in
+step. The agent wiring, the mock provider, the providers and the plugin
+come in later changes. No DeckPilot provides plugin API 1.16
 yet, so nothing of this can be installed or reached by a plugin today.
 
 Calls ("Rozmowy" in Polish) shows the state of the user's calls and
@@ -217,3 +216,80 @@ decides when it comes back:
 - The call ending, failing or being lost ends every session without
   resuming (the overlay is popped). An incoming call preempts them.
   *Show calls* resumes at once. Memory only.
+
+## Overlay (core `device_runtime/presentation.rs`)
+
+A per-device presentation stack in the core `Runtime`. An overlay frame
+makes a device show and run another layout **without changing anything of
+what it showed**: profile, navigation, remembered pages, switched-to
+layouts, layout history and working layout stay as they are, so taking the
+frame away shows the exact earlier presentation. Nothing of a frame is
+saved.
+
+- A frame has its own layout (a managed layout for the device's model),
+  page stack and owner-drawn faces. Its bound actions are handed to the
+  owner (`RuntimeOutcome::OverlayAction`); the runtime runs nothing itself.
+  Workflows, stateful keys and gestures do not run on an overlay. Pages of
+  its layout open and close in its own stack.
+- Its protected dismiss key, and *Back* on its first page, take it away
+  (`RuntimeOutcome::OverlayDismissed`): a device can never be trapped.
+- Priorities are a closed list (`Notification` < `Calls` < `System`), and
+  owners are a closed list (`Calls`). A suspended frame stays on the stack
+  and shows what is under it. At most 4 frames per device.
+- **Input fence:** controls held down when what a device shows changes have
+  their remaining input dropped until released, so a press on one
+  presentation never releases, or finishes a gesture, on the other.
+- **Auto Exit** of the covered folder is paused (a hold of its entry) and
+  goes on with the time it had.
+- The editor's live preview wins over an overlay. Frames stay with a
+  disconnected device. If what was covered is gone when the frame goes,
+  the device falls back as after a reload.
+
+## Managed layouts (`deckpilot-calls::layouts`, storage schema 14)
+
+One managed layout per device model, generated from the template of the
+model's capability class (`grid-small` ≤ 6 keys, `grid` 7–15, `grid-large`,
+`keys-dials`, `no-display`). Nothing assumes an MK.2: a template control
+the model lacks is left out. Ids are UUID v5: the layout of the model and
+the template's major version, pages and action instances of the layout and
+their key. The model's last key is the protected dismiss key unless the
+template uses it.
+
+Storage (`managed_layouts` table, additive migration 14), following D2:
+
+- A layout is created only when the owner has none for the model, in one
+  transaction, and never touches another layout. A layout without a row is
+  the user's, whatever its name, and is never adopted.
+- A layout is **edited** when the canonical JSON of the layout with its
+  actions differs from the snapshot taken when it was generated.
+- A new template version regenerates an unedited layout in place. An
+  edited one is never rewritten (`UpdateAvailable`).
+- **Restore defaults** first keeps the user's version as an ordinary layout
+  of their own, with copies of its actions and assigned to no profile, and
+  then regenerates.
+- Removing takes the unedited layouts, and the edited ones only when asked.
+  Imports never delete a managed layout, and deleting one as an ordinary
+  layout is refused.
+
+## Driver (`deckpilot-calls::driver`)
+
+Keeps the engine's overlay intent, the return sessions and the runtime's
+frames in step. All of it runs on the engine clock.
+
+- While the focused call is live, every connected device with a managed
+  layout and the overlay on shows its frame on the page for the call's
+  state. The per-device setting defaults to on for devices with key
+  displays. When no call is live, every frame goes and every return
+  session ends without resuming.
+- Faces show the confirmed state. A command waiting for confirmation shows
+  "Waiting…", one that was not confirmed shows "Not confirmed", and an
+  unsupported control is disabled with its reason. Teams is detection-only,
+  so its controls show "The call app offers no control".
+- A dismissed device stays on its own presentation for the rest of the
+  call. *Show calls* or a new incoming call brings the overlay back.
+- *Back to work* suspends the frame with a return session whose settings
+  are the action's parameters (`mode`, `seconds`, `maxSeconds`,
+  `onFailure`, `onCancel`, `countNavigation`, `returnAllDevices`). Runs
+  started from the restored presentation are reported with `run_started`
+  and `run_finished`.
+- The watchdog pops any Calls frame the driver does not hold.

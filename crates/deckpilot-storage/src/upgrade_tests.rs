@@ -311,7 +311,7 @@ fn every_row_is_kept(fixture: Fixture) {
     assert_eq!(upgraded.version, CURRENT);
     // T-L3: schema 14 adds the managed layouts, empty: no layout is
     // adopted.
-    assert!(upgraded.tables["managed_layouts"].1.is_empty());
+    assert_eq!(upgraded.tables["managed_layouts"].1.len(), 0);
     for (table, (sql, rows)) in &original.tables {
         let (new_sql, new_rows) = &upgraded.tables[table];
         assert_eq!(new_sql, sql, "the definition of {table} changed");

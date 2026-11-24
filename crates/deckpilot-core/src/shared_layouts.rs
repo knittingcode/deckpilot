@@ -106,6 +106,7 @@ impl DeviceLayout {
     /// [`DeviceLayout::duplicated`], with the bindings to the actions of
     /// `actions` moved to their copies (a copy that keeps the user's own
     /// version of a managed layout's actions).
+    #[must_use]
     pub fn duplicated_with_actions(
         &self,
         name: &str,

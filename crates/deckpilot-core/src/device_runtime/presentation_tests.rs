@@ -336,7 +336,7 @@ fn faces_are_the_overlays_with_the_owners_over_them() {
     assert_eq!(face(0).title, "Muted");
     // The protected dismiss key shows Back.
     assert_eq!(face(14), system_back_face());
-    assert!(runtime.shown_targets(&deck).is_empty());
+    assert_eq!(runtime.shown_targets(&deck).len(), 0);
     runtime.pop_overlay(&deck, session);
     assert_ne!(runtime.faces(&deck), faces);
 }
@@ -353,7 +353,7 @@ fn the_folder_and_page_stay_and_auto_exit_pauses_under_an_overlay() {
     let session = runtime.push_overlay(&deck, overlay().spec).unwrap();
     // A long call: the folder under it never exits.
     clock.advance(60);
-    assert!(runtime.due_folder_exits(clock.now()).is_empty());
+    assert_eq!(runtime.due_folder_exits(clock.now()).len(), 0);
     runtime.pop_overlay(&deck, session);
     assert_eq!(runtime.current_page(&deck), Some(f.tools));
     // The countdown goes on with what it had: 6 s.
@@ -380,7 +380,7 @@ fn a_suspended_overlay_shows_the_device_and_its_countdown_runs() {
     assert!(!runtime.shows_overlay(&deck));
     // The device's own keys work while suspended.
     assert!(is_run(&tap(&mut runtime, &deck, 2)));
-    assert_eq!(runtime.overlays(&deck)[0].suspended, true);
+    assert!(runtime.overlays(&deck)[0].suspended);
     assert!(runtime.resume_overlay(&deck, session));
     assert!(runtime.shows_overlay(&deck));
 }
@@ -429,7 +429,7 @@ fn the_newest_frame_of_a_priority_is_on_top_and_frames_are_bounded() {
     // A suspended top frame shows what is under it, never the lower frame
     // as if it were the call.
     runtime.suspend_overlay(&deck, second);
-    assert_eq!(runtime.overlays(&deck)[0].visible, true);
+    assert!(runtime.overlays(&deck)[0].visible);
     runtime.pop_overlay(&deck, first);
     runtime.pop_overlay(&deck, second);
     for _ in 0..MAX_FRAMES {
@@ -443,7 +443,7 @@ fn the_newest_frame_of_a_priority_is_on_top_and_frames_are_bounded() {
         runtime.pop_overlays_of(OverlayOwner::Calls).len(),
         MAX_FRAMES
     );
-    assert!(runtime.all_overlays().is_empty());
+    assert_eq!(runtime.all_overlays().len(), 0);
 }
 
 // ------------------------------------------------------------------ T-O4
@@ -494,7 +494,7 @@ fn the_dismiss_key_and_back_on_the_first_page_take_the_overlay_away() {
         tap(&mut runtime, &deck, 4),
         RuntimeOutcome::OverlayDismissed { session: s, .. } if s == session
     ));
-    assert!(runtime.all_overlays().is_empty());
+    assert_eq!(runtime.all_overlays().len(), 0);
 }
 
 // ------------------------------------------------------------------ T-O6
