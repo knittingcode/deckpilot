@@ -162,6 +162,12 @@ fn apply_repositories(
     project
         .validate_repositories()
         .map_err(deckpilot_core::CatalogError::from)?;
+    if default.is_some_and(|id| !project.repositories.iter().any(|r| r.id == id)) {
+        return Err(deckpilot_core::CatalogError::from(
+            deckpilot_core::RepositoryError::UnknownDefault,
+        )
+        .into());
+    }
     let before = shown.and_then(|p| p.default_repository);
     if default.is_some() && default != before {
         project
@@ -180,6 +186,7 @@ fn taken_resource_keys(
     profile: &deckpilot_core::Profile,
 ) -> CommandResult<BTreeSet<ResourceKey>> {
     let config = machine_config(&*state.store()?)?;
+    // (The guard above is released at the end of that statement.)
     let mut taken: BTreeSet<ResourceKey> = config.bindings.iter().map(|b| b.key.clone()).collect();
     for project in &profile.projects {
         taken.extend(project.resources.values().cloned());
@@ -225,7 +232,9 @@ pub fn update_project(
     let repositories = input.repositories.take();
     let default = input.default_repository;
     let project = build_project(project_id, input)?;
-    let taken = taken_resource_keys(&state, &load_profile(&*state.store()?, profile_id)?)?;
+    // The store's guard is released before `taken_resource_keys` takes it.
+    let profile = load_profile(&*state.store()?, profile_id)?;
+    let taken = taken_resource_keys(&state, &profile)?;
     modify_projects(&state, profile_id, |profile| {
         let mut project = project;
         let stored = profile.project(project_id).cloned();
