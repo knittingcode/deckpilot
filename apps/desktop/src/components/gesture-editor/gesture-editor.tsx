@@ -1,9 +1,9 @@
-import { keepShownLook } from "@/layout-editor/appearance"
 import { useDndMonitor } from "@dnd-kit/core"
 import { type ReactNode, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/dialogs"
+import { useLookKeepingRemoval } from "@/layout-editor/use-look-keeping-removal"
 import {
   bindingsFor,
   controlKey,
@@ -73,6 +73,11 @@ export interface GestureEditorProps {
   issues: string[]
   /** Commits a change; `group` merges consecutive edits into one undo step. */
   onChange: (layout: DeviceLayout, group?: string) => void
+  /**
+   * Applies an edit to the latest draft (a change decided later, in a
+   * dialog); without it, to the draft as last rendered.
+   */
+  onUpdate?: (edit: (layout: DeviceLayout) => DeviceLayout) => void
   /**
    * Makes each gesture a slot that takes what is dragged onto it (inside
    * the layout editor's drag and drop). It turns what was dropped into the
@@ -170,6 +175,17 @@ export function GestureEditor(props: GestureEditorProps) {
   const { t } = useTranslation()
   const { draft, pageId, control, defaults, onChange } = props
   const [pending, setPending] = useState<PendingConversion | null>(null)
+  // A removal keeps the key's title and look on the binding now shown, in
+  // the same step; when that binding has a look of its own, the user
+  // chooses how (keep, replace or merge the labels), and the choice is
+  // applied to the draft as it is then.
+  const removal = useLookKeepingRemoval({
+    draft,
+    pageId,
+    control,
+    onChange,
+    onUpdate: props.onUpdate,
+  })
   const mode = keyMode(draft, pageId, control)
   const timing = clickTiming(draft, pageId, control)
   const own = keyTimings(draft, pageId, control)
@@ -197,9 +213,9 @@ export function GestureEditor(props: GestureEditorProps) {
       setPending({ gesture, target })
       return
     }
-    const next = setGesture(draft, pageId, control, gesture, target)
     // Removing an action keeps the key's title and look (on the binding now shown).
-    onChange(target ? next : keepShownLook(draft, next, pageId, control))
+    if (target) onChange(setGesture(draft, pageId, control, gesture, target))
+    else removal.remove((layout) => setGesture(layout, pageId, control, gesture, null))
   }
 
   /**
@@ -253,17 +269,19 @@ export function GestureEditor(props: GestureEditorProps) {
       )
       return
     }
-    onChange(
-      target
-        ? setBinding(draft, pageId, {
-            control,
-            trigger,
-            target,
-            label: release?.label ?? null,
-            ...(release?.appearance ? { appearance: release.appearance } : {}),
-          })
-        : keepShownLook(draft, removeBinding(draft, pageId, control, trigger), pageId, control),
-    )
+    if (target) {
+      onChange(
+        setBinding(draft, pageId, {
+          control,
+          trigger,
+          target,
+          label: release?.label ?? null,
+          ...(release?.appearance ? { appearance: release.appearance } : {}),
+        }),
+      )
+    } else {
+      removal.remove((layout) => removeBinding(layout, pageId, control, trigger))
+    }
   }
 
   const bound = (gesture: Gesture) =>
@@ -400,6 +418,7 @@ export function GestureEditor(props: GestureEditorProps) {
           setPending(null)
         }}
       />
+      {removal.dialog}
     </section>
   )
 }

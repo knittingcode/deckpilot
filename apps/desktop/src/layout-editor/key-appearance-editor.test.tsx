@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest"
 
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -45,8 +45,10 @@ vi.mock("@/lib/app-context", () => ({
   useAppContext: () => ({
     profiles: { activeProfileId: null, profiles: [] },
     refresh: vi.fn(),
+    agent: agentState.agent,
   }),
 }))
+const agentState = vi.hoisted(() => ({ agent: null as null | { capabilities: string[] } }))
 const display = vi.hoisted(() => ({ list: vi.fn(), resolve: vi.fn() }))
 vi.mock("@/lib/display-templates", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/display-templates")>()),
@@ -1001,5 +1003,140 @@ describe("variables in the key title", { timeout: 20_000 }, () => {
     await user.type(title, "{{{{ x }}")
     expect(title).toHaveValue("Team {{ x }}")
     expect(title).toHaveAttribute("maxLength", "160")
+  })
+})
+
+describe("labels on the device canvas", { timeout: 20_000 }, () => {
+  const labelled: DeviceLayout = {
+    ...layout,
+    pages: [
+      {
+        id: "home",
+        name: "Home",
+        bindings: [
+          press(0, "shop", {
+            background: "#000000",
+            labels: [
+              { id: "a", text: "SHOP", position: { mode: "preset", at: "bottom" } },
+              { id: "b", text: "{{ shared.team.name }}", position: { mode: "preset", at: "top" } },
+            ],
+          }),
+          press(1, "mail"),
+        ],
+      },
+    ],
+  }
+  const boxes = [
+    {
+      id: "a",
+      x: 20,
+      y: 54,
+      width: 32,
+      height: 12,
+      canvas: { width: 72, height: 72 },
+      layer: "overIcon",
+      truncated: false,
+      overlapsTitle: false,
+      plate: false,
+      fontPoints: 10,
+      lines: 1,
+    },
+    {
+      id: "b",
+      x: 20,
+      y: 6,
+      width: 32,
+      height: 12,
+      canvas: { width: 72, height: 72 },
+      layer: "overIcon",
+      truncated: false,
+      overlapsTitle: false,
+      plate: false,
+      fontPoints: 10,
+      lines: 1,
+    },
+  ]
+  beforeEach(() => {
+    Element.prototype.setPointerCapture = () => undefined
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    agentState.agent = { capabilities: ["keyLabels"] }
+    api.previewLayout.mockImplementation(async (...args: Parameters<typeof rendered>) =>
+      (await rendered(...args)).map((r) =>
+        r.control.index === 0 ? { ...r, labelBoxes: boxes } : r,
+      ),
+    )
+  })
+  afterEach(() => {
+    agentState.agent = null
+    sessionStorage.clear()
+  })
+
+  const outlineOnCanvas = (id: string) => {
+    const element = control("Key 1")
+      .closest("[data-slot=control-with-overlay]")
+      ?.querySelector<HTMLElement>(`[data-slot=control-overlay] [data-label="${id}"]`)
+    if (!element) throw new Error(`no outline ${id} on the canvas`)
+    return element
+  }
+
+  it("outlines the selected key's labels, and only that key's", async () => {
+    const user = renderEditor(plus, labelled)
+    expect(document.querySelector("[data-slot=control-overlay]")).toBeNull()
+    await user.click(control("Key 1"))
+    await waitFor(() => {
+      expect(outlineOnCanvas("a")).toBeInTheDocument()
+    })
+    expect(outlineOnCanvas("b")).toBeInTheDocument()
+    await user.click(control("Key 2"))
+    expect(document.querySelector("[data-slot=control-overlay]")).toBeNull()
+  })
+
+  it("moves a label dragged on the canvas and keeps the other label and the look", async () => {
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    const outline = await waitFor(() => outlineOnCanvas("a"))
+    const layer = outline.parentElement as HTMLElement
+    layer.getBoundingClientRect = () =>
+      ({ width: 72, height: 72, left: 0, top: 0, right: 72, bottom: 72 }) as DOMRect
+    fireEvent.pointerDown(outline, { button: 0, pointerId: 1, clientX: 30, clientY: 60 })
+    fireEvent.pointerMove(outline, { pointerId: 1, clientX: 40, clientY: 50 })
+    fireEvent.pointerUp(outline, { pointerId: 1, clientX: 40, clientY: 50 })
+    // The key itself is neither dragged nor deselected.
+    expect(control("Key 1")).toHaveAttribute("aria-pressed", "true")
+    const bindings = await saved(user)
+    const moved = bindings[0]?.appearance?.labels
+    expect(moved?.[0]).toEqual({
+      id: "a",
+      text: "SHOP",
+      // The centre (36, 60) moved by 10 units each way: 46/72 and 50/72.
+      position: { mode: "absolute", x: 639, y: 694 },
+    })
+    expect(moved?.[1]).toEqual(labelled.pages[0]?.bindings[0]?.appearance?.labels?.[1])
+    expect(bindings[0]?.appearance?.background).toBe("#000000")
+  })
+
+  it("edits a label double-clicked on the canvas without entering the key", async () => {
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    const outline = await waitFor(() => outlineOnCanvas("b"))
+    fireEvent.doubleClick(outline)
+    const text = await screen.findByRole("textbox", { name: "Text" })
+    expect(text).toHaveValue("{{ shared.team.name }}")
+    await waitFor(() => {
+      expect(text).toHaveFocus()
+    })
+    // The key stays selected; its title and icon editing are untouched.
+    expect(control("Key 1")).toHaveAttribute("aria-pressed", "true")
+    expect(header().getByRole("textbox", { name: "Key title" })).toBeInTheDocument()
+  })
+
+  it("draws no outlines while the agent does not draw labels", async () => {
+    agentState.agent = { capabilities: [] }
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    await waitFor(() => {
+      expect(api.previewLayout).toHaveBeenCalled()
+    })
+    expect(document.querySelector("[data-slot=control-overlay]")).toBeNull()
   })
 })

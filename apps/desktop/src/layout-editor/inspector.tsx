@@ -55,6 +55,8 @@ import { shownBinding, stylable } from "./appearance"
 import { FolderControlPanel, FolderSettings } from "./folder-settings"
 import { KeyAppearanceEditor, KeysAppearanceEditor } from "./key-appearance-editor"
 import { useKeyLook } from "./key-look-context"
+import { labelsOf } from "./labels"
+import { useLookKeepingRemoval } from "./use-look-keeping-removal"
 import { LayoutNavigationPanels, type LayoutNavigationContext } from "./layout-switch-inspector"
 import { SystemActionPanels } from "./system-action-inspector"
 import {
@@ -85,6 +87,11 @@ interface InspectorProps {
   issues?: string[]
   /** Commits a change; `group` merges consecutive edits into one undo step. */
   onChange: (layout: DeviceLayout, group?: string) => void
+  /**
+   * Applies an edit to the latest draft (a change decided later, in a
+   * dialog); without it, to the draft as last rendered.
+   */
+  onUpdate?: (edit: (layout: DeviceLayout) => DeviceLayout) => void
   onClear: () => void
   /**
    * Turns what was dragged onto a gesture's slot into the target to
@@ -231,6 +238,7 @@ function ControlInspector({
   groups,
   folder,
   onChange: commit,
+  onUpdate: update,
   profile,
   types = [],
   gestureDefaults = DEFAULT_TIMINGS,
@@ -253,6 +261,18 @@ function ControlInspector({
     }
     commit(pressFolderControl(next, pageId, control), group)
   }
+  const onUpdate = update
+    ? (edit: (layout: DeviceLayout) => DeviceLayout) => {
+        update((latest) => {
+          const next = edit(latest)
+          if (next === latest || brokenFolderControl(next, pageId, control)) return latest
+          return pressFolderControl(next, pageId, control)
+        })
+      }
+    : undefined
+  // Removing a binding keeps the key's title and look (labels included) on
+  // the binding shown after, as the gestures' removal does.
+  const removal = useLookKeepingRemoval({ draft, pageId, control, onChange, onUpdate })
   const bindings = bindingsFor(draft, pageId, control)
   const gestures = acceptsGestures(model, control)
   // The Work Session controller belongs to the Work Session module: offered
@@ -338,6 +358,7 @@ function ControlInspector({
             defaults={gestureDefaults}
             issues={controlMessages}
             onChange={onChange}
+            onUpdate={onUpdate}
             resolveDrop={resolveDrop}
             onEditWorkflow={onEditWorkflow}
             incompatible={why}
@@ -365,17 +386,19 @@ function ControlInspector({
                 value={encodeTarget(binding?.target)}
                 onValueChange={(value) => {
                   const target = decodeTarget(value)
-                  onChange(
-                    target
-                      ? setBinding(draft, pageId, {
-                          control,
-                          trigger,
-                          target,
-                          label: binding?.label ?? null,
-                          ...(binding?.appearance ? { appearance: binding.appearance } : {}),
-                        })
-                      : removeBinding(draft, pageId, control, trigger),
-                  )
+                  if (target) {
+                    onChange(
+                      setBinding(draft, pageId, {
+                        control,
+                        trigger,
+                        target,
+                        label: binding?.label ?? null,
+                        ...(binding?.appearance ? { appearance: binding.appearance } : {}),
+                      }),
+                    )
+                  } else {
+                    removal.remove((layout) => removeBinding(layout, pageId, control, trigger))
+                  }
                 }}
               >
                 <SelectTrigger id={id} className="w-full">
@@ -426,7 +449,7 @@ function ControlInspector({
                     document.getElementById(id)?.focus()
                   }}
                   onRemove={() => {
-                    onChange(removeBinding(draft, pageId, control, trigger))
+                    removal.remove((layout) => removeBinding(layout, pageId, control, trigger))
                   }}
                 />
               ) : (
@@ -450,6 +473,17 @@ function ControlInspector({
                 />
               )}
               {binding?.target.type === "action" && actionSettings?.(binding.target.action)}
+              {binding &&
+                (binding.trigger.type === "doubleClick" || binding.trigger.type === "longPress") &&
+                labelsOf(binding.appearance).length > 0 && (
+                  <p
+                    className="text-xs text-muted-foreground"
+                    role="note"
+                    data-slot="dormant-labels"
+                  >
+                    {t("editor:labels.dormant", { trigger: triggerLabel(binding.trigger) })}
+                  </p>
+                )}
               {binding && displayOnly(binding) && (
                 <p className="text-xs text-muted-foreground" role="note">
                   {t("editor:context.displayOnly")}
@@ -507,6 +541,7 @@ function ControlInspector({
             onChange={onChange}
           />
         )}
+        {removal.dialog}
       </div>
     </InspectorSection>
   )

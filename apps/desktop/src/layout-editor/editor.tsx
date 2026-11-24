@@ -12,6 +12,7 @@ import {
 } from "@dnd-kit/core"
 import { ListOrdered, Redo2, RotateCcw, Save, Undo2 } from "lucide-react"
 import {
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -87,7 +88,14 @@ import type {
 
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
-import { type KeyLook, KeyLookContext } from "./key-look-context"
+import {
+  type KeyLook,
+  KeyLookContext,
+  type LabelSelection,
+  nextSelection,
+} from "./key-look-context"
+import { LabelOutlines } from "./label-outlines"
+import { labelsOf, placedAt, updateLabel, withLabels } from "./labels"
 import { incompleteAction, missingParameters } from "@/lib/action-completeness"
 import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
 import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
@@ -418,7 +426,7 @@ export function LayoutEditor({
   // a change of what they show (profile, project, shared values), as the
   // device is: the Canvas, the Inspector and the device agree.
   const displayTick = useDisplayRefresh(profileId)
-  const { faces, images, incompatible, reports, navigation } = usePreviewFaces(
+  const { faces, images, incompatible, reports, labelBoxes, navigation } = usePreviewFaces(
     profileId,
     draft,
     pageId,
@@ -451,9 +459,18 @@ export function LayoutEditor({
   }, [focusKey])
   // An icon the key menu could not import or paste, for the selected key.
   const [lookProblem, setLookProblem] = useState<string | null>(null)
+  const keyLabelsDrawn = agent?.capabilities?.includes("keyLabels") === true
+  // The selected label of a key: shared by the Inspector's Labels section
+  // and the outlines drawn over the selected key on the Canvas.
+  const [labelSelection, setLabelSelection] = useState<LabelSelection | null>(null)
+  const selectLabel = useCallback((key: string, id: string | null, edit = false) => {
+    setLabelSelection((current) => nextSelection(current, key, id, edit))
+  }, [])
   // What the Inspector's key header and its popovers read: the Canvas's
   // images of the keys, the icons and the one way to restyle the selection.
   const keyLook: KeyLook = {
+    labelSelection,
+    selectLabel,
     profileId,
     problem: lookProblem,
     setProblem: setLookProblem,
@@ -464,6 +481,8 @@ export function LayoutEditor({
     animations,
     faces,
     reports,
+    labelBoxes,
+    keyLabels: keyLabelsDrawn,
     icons: iconState,
     library: visualLibrary,
     typeOf: (control) => {
@@ -472,6 +491,41 @@ export function LayoutEditor({
     },
     restyle: commands.restyle,
   }
+  // The selected key's labels on the Canvas: their outlines over the key's
+  // image (the renderer's boxes), selected, dragged and double-clicked to
+  // edit as in the Inspector's stage. One key only; none while the agent
+  // does not draw labels.
+  const outlined = selection.controls.length === 1 ? selection.controls[0] : undefined
+  const outlinedKey = outlined ? controlKey(outlined) : null
+  const outlinedBoxes = outlinedKey ? labelBoxes.get(outlinedKey) : undefined
+  const outlinedLabels = outlined ? labelsOf(shownBinding(draft, pageId, outlined)?.appearance) : []
+  const labelOverlays = useMemo(() => {
+    const overlays = new Map<string, ReactNode>()
+    if (!outlinedKey || !outlinedBoxes?.length || !keyLabelsDrawn) return overlays
+    overlays.set(
+      outlinedKey,
+      <LabelOutlines
+        compact
+        boxes={outlinedBoxes}
+        selected={labelSelection?.key === outlinedKey ? labelSelection.id : null}
+        onSelect={(id) => {
+          selectLabel(outlinedKey, id)
+        }}
+        onEdit={(id) => {
+          selectLabel(outlinedKey, id, true)
+        }}
+        onMove={(id, position) => {
+          commands.restyle(
+            withLabels(updateLabel(outlinedLabels, id, placedAt(position))),
+            `label-move:${outlinedKey}:${id}`,
+          )
+        }}
+      />,
+    )
+    return overlays
+    // `outlinedLabels` changes with the draft; `commands` with the editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outlinedKey, outlinedBoxes, keyLabelsDrawn, labelSelection, draft, pageId])
   // Without the Workflows plugin, graph workflows on keys are kept and not
   // run, and read-only here.
   const workflowsActive = useIsPluginActive(WORKFLOWS_PLUGIN)
@@ -1353,6 +1407,7 @@ export function LayoutEditor({
                   draggable
                   dropRejection={dropRejection}
                   rejected={rejected?.control ?? null}
+                  overlays={labelOverlays}
                   wrapControl={(control, element) => {
                     const protectedBack = isSystemBack(model, draft, pageId, control)
                     return (
@@ -1517,6 +1572,7 @@ export function LayoutEditor({
                       gestureDefaults={gestureContext.defaults}
                       issues={errors}
                       onChange={commands.change}
+                      onUpdate={commands.update}
                       onClear={commands.clear}
                       resolveDrop={resolveSlotDrop}
                       onEditWorkflow={setStepsOf}
