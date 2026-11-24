@@ -5,6 +5,7 @@
  * the profile's actions of those types; the editor knows no module.
  */
 import { type TranslationKey, i18n } from "@/i18n"
+import { missingParameters } from "@/lib/action-completeness"
 import { creatableTypes } from "@/lib/modules"
 import { pluginTypeUnavailable } from "@/lib/plugin-actions"
 import type { ActionInstance, ActionType, GraphNodeKind, ModuleInfo } from "@/lib/types"
@@ -114,10 +115,16 @@ export function flowEntries(otherWorkflow: string | undefined): CatalogEntry[] {
 }
 
 export function actionEntry(action: ActionInstance, type: ActionType | undefined): CatalogEntry {
+  // Saved actions of one type made one after another ("Open application",
+  // "Open application 2") read alike: the type, and whether it is still a
+  // draft without its required settings, tell them apart. Nothing is
+  // changed or removed.
+  const kind = type?.name ?? action.actionType
+  const draft = type !== undefined && missingParameters(type, action.parameters).length > 0
   return {
     key: `action:${action.id}`,
     title: action.name,
-    description: type?.name ?? action.actionType,
+    description: draft ? `${kind} · ${i18n.t("workflows:catalog.needsSetup")}` : kind,
     icon: action.icon ?? type?.node?.icon ?? null,
     name: action.name,
     kind: { type: "action", action: action.id, policy: DEFAULT_POLICY },
