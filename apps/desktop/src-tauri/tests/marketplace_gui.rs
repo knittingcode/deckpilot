@@ -502,8 +502,9 @@ impl Driver for Gui {
         self.wait(DISCOVER);
         let card = tile();
         if self.wd().wait(&card, Duration::from_secs(10)).is_err() {
-            // The page refreshes the registry itself; when reading it
-            // failed, its notice offers Retry.
+            // Not shown within 10 s: if the page's Registry notice offers
+            // Retry (reading the registry failed), press it, which reads
+            // the registry again, and wait 10 s more.
             let retry =
                 "//*[@role='alert' and @aria-label='Registry']//button[normalize-space(.)='Retry']";
             if self.visible(retry) {
