@@ -17,6 +17,10 @@ pub struct ProcessInfo {
     pub owner: Option<String>,
     /// The login session (Windows), when known.
     pub session: Option<u32>,
+    /// When it started, in seconds since the Unix epoch, when known. With
+    /// the id, the executable and the owner it tells a process from a later
+    /// one the system gave the same id.
+    pub started: Option<u64>,
 }
 
 /// Every process, and which of them is this one.
@@ -249,6 +253,7 @@ pub fn snapshot() -> Snapshot {
         exe: process.exe().map(Path::to_path_buf),
         owner: process.user_id().map(|uid| (**uid).to_string()),
         session: session_of(pid.as_u32()),
+        started: Some(process.start_time()).filter(|t| *t > 0),
     };
     let mut processes: Vec<ProcessInfo> = system
         .processes()
@@ -283,6 +288,7 @@ pub(crate) mod tests {
             exe: exe.map(PathBuf::from),
             owner: Some(owner.into()),
             session: None,
+            started: None,
         }
     }
 
@@ -409,5 +415,6 @@ pub(crate) mod tests {
         assert!(me.owner.is_some());
         assert!(snapshot.owned_by_me(&me));
         assert!(protected(&me, &snapshot));
+        assert!(me.started.is_some(), "the start time is read");
     }
 }

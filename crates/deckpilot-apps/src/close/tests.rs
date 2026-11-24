@@ -280,6 +280,36 @@ fn protected_processes_are_never_touched_even_when_they_match() {
     assert_eq!(fake.log(), Vec::<String>::new());
 }
 
+#[test]
+fn a_reused_process_id_is_not_the_matched_process() {
+    // This process, as the real snapshot reads it, is still itself.
+    let me = crate::process::snapshot()
+        .me
+        .expect("this process is listed");
+    assert!(still_same(&me));
+    // The same id, executable and owner, but started at another time: a
+    // later process the system gave the same id.
+    if let Some(started) = me.started {
+        let later = ProcessInfo {
+            started: Some(started + 1),
+            ..me.clone()
+        };
+        assert!(!still_same(&later));
+    } else {
+        eprintln!(
+            "this system reports no start time; only the id, executable and owner are compared"
+        );
+    }
+    let other_owner = ProcessInfo {
+        owner: Some("no-such-user".into()),
+        ..me
+    };
+    assert!(!still_same(&other_owner));
+    // Unknown on either side: decided by the id, executable and owner.
+    assert!(same_start(None, Some(5)) && same_start(Some(5), None));
+    assert!(same_start(Some(5), Some(5)) && !same_start(Some(5), Some(6)));
+}
+
 mod targets {
     use super::*;
 
