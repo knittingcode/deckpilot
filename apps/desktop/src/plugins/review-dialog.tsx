@@ -20,7 +20,8 @@ import type { PublisherInfo } from "./types"
 export type ReviewState = "new" | "broadened" | "granted"
 
 export interface ReviewRequest {
-  mode: "install" | "update" | "enable"
+  /** `grant`: the missing permissions of one action (the editor's "Grant"). */
+  mode: "install" | "update" | "enable" | "grant"
   pluginId: string
   name: string
   publisher: string
@@ -43,6 +44,7 @@ const CONFIRM = {
   install: "permissions:review.confirm.install",
   update: "permissions:review.confirm.update",
   enable: "permissions:review.confirm.enable",
+  grant: "permissions:review.confirm.grant",
 } as const
 
 /**
@@ -101,30 +103,40 @@ export function PermissionReviewDialog({
       ? t("permissions:review.title.install", names)
       : request.mode === "update"
         ? t("permissions:review.title.update", names)
-        : t("permissions:review.title.enable", names)
+        : request.mode === "grant"
+          ? t("permissions:review.title.grant", names)
+          : t("permissions:review.title.enable", names)
   const intro =
     request.mode === "install"
       ? t("permissions:review.intro.install")
       : request.mode === "update"
         ? t("permissions:review.intro.update")
-        : t("permissions:review.intro.enable")
+        : request.mode === "grant"
+          ? t("permissions:review.intro.grant")
+          : t("permissions:review.intro.enable")
 
   const status = (
     <span aria-live="polite">
-      {required.length === 0
-        ? request.mode === "enable"
-          ? t("permissions:review.status.allGranted")
-          : t("permissions:list.none")
-        : missing === 0
-          ? t("permissions:review.status.consented")
-          : t("permissions:review.status.missing", { missing, total: required.length })}
+      {request.mode === "grant"
+        ? t("permissions:review.status.grantChecked", {
+            count: checked.size,
+            total: optional.length,
+          })
+        : required.length === 0
+          ? request.mode === "enable"
+            ? t("permissions:review.status.allGranted")
+            : t("permissions:list.none")
+          : missing === 0
+            ? t("permissions:review.status.consented")
+            : t("permissions:review.status.missing", { missing, total: required.length })}
     </span>
   )
   const primary = {
     label: t(CONFIRM[request.mode]),
     loadingLabel: t("common:status.working"),
     loading: busy,
-    disabled: missing > 0,
+    // Granting: at least one permission checked; nothing is sent otherwise.
+    disabled: missing > 0 || (request.mode === "grant" && checked.size === 0),
   }
 
   return (
@@ -167,9 +179,14 @@ export function PermissionReviewDialog({
         ) : undefined
       }
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs">{request.pluginId}</span>
-        <PublisherLine publisher={request.publisher} info={request.publisherInfo} />
+      <div className="grid gap-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">{request.name}</span>
+          <PublisherLine publisher={request.publisher} info={request.publisherInfo} />
+        </div>
+        {request.name !== request.pluginId && (
+          <span className="font-mono text-xs text-muted-foreground">{request.pluginId}</span>
+        )}
       </div>
       <p className="flex items-start gap-2 text-xs text-muted-foreground">
         <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />

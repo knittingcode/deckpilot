@@ -283,3 +283,34 @@
     }
   }
 }
+
+/* The expanded page navigator (layout-editor/page-nav.tsx): frosted glass, the
+   inspector curtain's middle band (6px). A blurred layer clipped to the dock's
+   silhouette, under its outline, whose fill is a translucent card tint and
+   whose border is softened; the navigator's own content stays sharp.
+   Measured in the running app (WebKit, November 2026): what lies under the
+   panel is mostly 1px borders and small dim text on a near-black surface, so
+   12px of blur under a 72% tint erased it completely (the panel read as
+   opaque). 6px keeps text and controls recognisable as soft shapes, the
+   saturation keeps coloured content (a selected key's ring) visible, and a
+   45% tint keeps the surface dark and the rows readable.
+   Without backdrop blur the surface stays opaque. */
+@layer components {
+  .page-dock-glass {
+    -webkit-backdrop-filter: blur(6px) saturate(1.5);
+    backdrop-filter: blur(6px) saturate(1.5);
+  }
+  .page-dock-surface {
+    fill: color-mix(in oklab, var(--card) 45%, transparent);
+    stroke: color-mix(in oklab, var(--border) 60%, transparent);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .page-dock-glass {
+      display: none;
+    }
+    .page-dock-surface {
+      fill: var(--card);
+      stroke: var(--border);
+    }
+  }
+}

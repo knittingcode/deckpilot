@@ -261,8 +261,8 @@ function Breadcrumbs({
   )
 }
 
-/** Kept free at either side of the central area (the inspector's deselect button). */
-const DOCK_RESERVE = 48
+/** Kept free at either side of the central area. */
+const DOCK_RESERVE = 12
 /** Kept free under the expanded panel, to the bottom of the editor. */
 const DOCK_MARGIN = 12
 
@@ -309,6 +309,16 @@ function measureDock(bar: HTMLElement): DockMeasure {
     width: Math.floor(width),
     height: Math.floor(bottom - r.bottom - DOCK_MARGIN),
   }
+}
+
+function sameMeasure(a: DockMeasure, b: DockMeasure): boolean {
+  return (
+    a.width === b.width &&
+    a.height === b.height &&
+    a.bar.width === b.bar.width &&
+    a.bar.height === b.bar.height &&
+    a.bar.radius === b.bar.radius
+  )
 }
 
 /** A pointer down here is not outside the dock: a row's menu, a dialog it opened. */
@@ -381,22 +391,44 @@ export function PageNavigationDock({
   }, [close])
 
   // The toolbar and the room, while expanded: measured again when the
-  // window, the toolbar (a longer name, more pages) or the tree changes.
+  // window, the toolbar (a longer name, more pages), the tree, the canvas
+  // footer (the central area's width) or the editor (its height) changes.
+  // The room also depends on where the zoom toolbar is, which the canvas
+  // places from its own observers (lifted in a narrow window) after these
+  // run: each change is measured at once and again in the next frame, once
+  // that layout has settled, so the panel never keeps a stale shape.
   useLayoutEffect(() => {
     const bar = barRef.current
     if (!expanded || !bar) return
+    let frame = 0
     const measure = () => {
-      setRoom(measureDock(bar))
+      const next = measureDock(bar)
+      setRoom((current) => (current && sameMeasure(current, next) ? current : next))
       setPanelHeight(panelRef.current?.offsetHeight ?? 0)
     }
-    measure()
-    window.addEventListener("resize", measure)
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure)
-    observer?.observe(bar)
-    if (panelRef.current) observer?.observe(panelRef.current)
+    const update = () => {
+      measure()
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        measure()
+      })
+    }
+    update()
+    window.addEventListener("resize", update)
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update)
+    for (const element of [
+      bar,
+      panelRef.current,
+      bar.closest("[data-slot=canvas-footer]"),
+      bar.closest("[data-slot=device-editor-main]"),
+    ]) {
+      if (element) observer?.observe(element)
+    }
     return () => {
-      window.removeEventListener("resize", measure)
+      window.removeEventListener("resize", update)
       observer?.disconnect()
+      cancelAnimationFrame(frame)
     }
   }, [expanded])
 
@@ -449,6 +481,22 @@ export function PageNavigationDock({
       }}
     >
       {expanded && geometry && outline && (
+        // Frosted glass under the outline (index.css, `.page-dock-glass`):
+        // the interface beneath shows through blurred, clipped to the same
+        // silhouette so the toolbar and the panel read as one surface.
+        <div
+          aria-hidden
+          data-slot="page-dock-glass"
+          className="page-dock-glass pointer-events-none absolute top-0"
+          style={{
+            left: geometry.offset,
+            width: geometry.width,
+            height: (room?.bar.height ?? 0) + panelHeight,
+            clipPath: `path("${outline}")`,
+          }}
+        />
+      )}
+      {expanded && geometry && outline && (
         // One outline for the toolbar and the wider panel under it (the
         // shoulders between them), drawn behind both from their sizes.
         <svg
@@ -459,7 +507,7 @@ export function PageNavigationDock({
           width={geometry.width}
           height={(room?.bar.height ?? 0) + panelHeight}
         >
-          <path d={outline} className="fill-card stroke-border" strokeWidth={1} />
+          <path d={outline} className="page-dock-surface" strokeWidth={1} />
         </svg>
       )}
       {/* One compact bar (it straddles the canvas/inspector divider). */}

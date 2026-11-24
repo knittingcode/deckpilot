@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { type ComponentType, useId, useState } from "react"
 
+import { cancelsInlineEdit } from "@/components/inline-number"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -131,6 +132,10 @@ export function TitleFormatButton({ controls }: { controls: ControlId[] }) {
         className="grid w-[min(20rem,calc(100vw-1rem))] gap-2.5 p-3"
         // The popover never grows past the room the window has.
         style={{ maxHeight: "var(--radix-popover-content-available-height)" }}
+        // Escape in a field with an unfinished edit cancels the edit only.
+        onEscapeKeyDown={(event) => {
+          if (cancelsInlineEdit(event)) event.preventDefault()
+        }}
       >
         <TitleAppearanceEditor look={look} controls={styled} />
       </PopoverContent>

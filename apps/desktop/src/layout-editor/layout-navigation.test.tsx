@@ -258,7 +258,7 @@ afterEach(cleanup)
 describe("Switch layout in the library", { timeout: 20_000 }, () => {
   it("offers the profile's other layouts of the model and Back to previous layout", () => {
     renderEditor()
-    const section = screen.getByRole("region", { name: "New: Navigation" })
+    const section = screen.getByRole("region", { name: "Navigation" })
     expect(within(section).getByText("Back to previous layout")).toBeInTheDocument()
     expect(within(section).getByText("Switch to Teams")).toBeInTheDocument()
     expect(within(section).getByText("Switch to Media")).toBeInTheDocument()

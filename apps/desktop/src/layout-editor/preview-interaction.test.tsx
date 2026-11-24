@@ -982,7 +982,15 @@ describe("live preview: the device shows the draft", { timeout: 20_000 }, () => 
   it("sends the draft and the editor's navigation, and follows the device", async () => {
     const { user } = renderEditor()
     await started()
-    expect(screen.getByText("Live on the device")).toBeInTheDocument()
+    // Live is the normal state: the bar says nothing about it, only the save state.
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="editing-bar"]')).toHaveAttribute(
+        "data-live-status",
+        "live",
+      )
+    })
+    expect(document.querySelector('[data-slot="live-preview-status"]')).toBeNull()
+    expect(screen.getByText("All changes saved")).toBeInTheDocument()
     // The whole draft once.
     expect(mocks.livePreviewUpdate).toHaveBeenCalledWith(1, { revision: 1, layout: main })
     // A double-click opens the folder in the editor and on the device.
@@ -1117,5 +1125,101 @@ describe("live preview: the device shows the draft", { timeout: 20_000 }, () => 
     await started()
     cleanup()
     expect(mocks.livePreviewEnd).toHaveBeenCalledWith(1)
+  })
+})
+
+describe("Escape in the Device Editor (escape.ts)", { timeout: 20_000 }, () => {
+  const viewport = () => document.querySelector<HTMLElement>("[data-slot=device-viewport]")
+  const grid = () => viewport()?.firstElementChild as HTMLElement | null
+
+  it("deselects from the Canvas, keeping the page, zoom, pan, draft and live session", async () => {
+    const { user } = renderEditor()
+    await user.dblClick(control("Key 1"))
+    const page = currentPage()
+    await user.click(screen.getByRole("button", { name: /Zoom in/ }))
+    const zoom = viewport()?.getAttribute("data-zoom")
+    const transform = grid()?.style.transform
+    await user.click(control("Key 2"))
+    await user.keyboard("{Delete}")
+    expect(screen.getByText("Unsaved")).toBeInTheDocument()
+    await user.click(control("Key 3"))
+    expect(control("Key 3")).toHaveAttribute("aria-pressed", "true")
+    const begun = mocks.livePreviewBegin.mock.calls.length
+    await user.keyboard("{Escape}")
+    expect(control("Key 3")).toHaveAttribute("aria-pressed", "false")
+    expect(currentPage()).toBe(page)
+    expect(viewport()?.getAttribute("data-zoom")).toBe(zoom)
+    expect(grid()?.style.transform).toBe(transform)
+    expect(screen.getByText("Unsaved")).toBeInTheDocument()
+    // Not an edit: Undo still undoes the Delete, nothing more.
+    expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled()
+    // The live preview session goes on.
+    expect(mocks.livePreviewBegin).toHaveBeenCalledTimes(begun)
+    expect(mocks.livePreviewEnd).not.toHaveBeenCalled()
+  })
+
+  it("clears a multi-selection with one press", async () => {
+    const { user } = renderEditor()
+    await user.click(control("Key 2"))
+    await user.keyboard("{Control>}")
+    await user.click(control("Key 3"))
+    await user.click(control("Key 5"))
+    await user.keyboard("{/Control}")
+    await user.keyboard("{Escape}")
+    for (const name of ["Key 2", "Key 3", "Key 5"]) {
+      expect(control(name)).toHaveAttribute("aria-pressed", "false")
+    }
+  })
+
+  it("closes an open menu first, then deselects on the next press", async () => {
+    const { user } = renderEditor()
+    await user.click(control("Key 2"))
+    await openMenu("Key 2")
+    await user.keyboard("{Escape}")
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).toBeNull()
+    })
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "true")
+    await user.keyboard("{Escape}")
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "false")
+  })
+
+  it("leaves a text field first, keeping what was typed, then deselects", async () => {
+    const { user } = renderEditor()
+    await user.click(control("Key 2"))
+    const title = screen.getByRole("textbox", { name: "Key title" })
+    await user.clear(title)
+    await user.keyboard("Hi")
+    await user.keyboard("{Escape}")
+    const after = screen.getByRole("textbox", { name: "Key title" })
+    expect(after).not.toHaveFocus()
+    expect(after).toHaveValue("Hi")
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "true")
+    await user.keyboard("{Escape}")
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "false")
+  })
+})
+
+describe("Escape during a drag", { timeout: 20_000 }, () => {
+  it("cancels the drag and keeps the selection", async () => {
+    const { user } = renderEditor()
+    await user.click(control("Key 2"))
+    const entry = screen.getAllByRole("button", { name: /onto a control$/ })[0]
+    if (!entry) throw new Error("no library entry")
+    entry.focus()
+    // A keyboard drag (dnd-kit's KeyboardSensor): Space picks it up.
+    await user.keyboard(" ")
+    expect(document.querySelector("[data-slot=drag-preview]")).not.toBeNull()
+    await user.keyboard("{Escape}")
+    // The drag is cancelled, nothing dropped, the key still selected.
+    await waitFor(() => {
+      expect(document.querySelector("[data-slot=drag-preview]")).toBeNull()
+    })
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "true")
+    // The next press deselects.
+    control("Key 2").focus()
+    await user.keyboard("{Escape}")
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "false")
+    expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled()
   })
 })

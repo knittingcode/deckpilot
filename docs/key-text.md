@@ -255,15 +255,35 @@ only the affected gesture's card in the Inspector says what is missing. A
 binding that cannot run from its control (`docs/device-controls.md`) is a
 different state and keeps its own face.
 
-The app's Inspector says why the action cannot run and how to get it
-back; the key itself never shows the reason.
+**Why, and the way back**, in the Inspector (`lib/action-availability.ts`,
+`components/missing-action-note.tsx`), from what the agent reports:
+
+| State (`MissingReason`) | Where it comes from | Recovery |
+| --- | --- | --- |
+| `notInstalled` | the plugin is not (any more) installed | Install plugin (Marketplace, at the plugin) |
+| `disabled` | the user turned the plugin off or withdrew a migrated module | Enable plugin (Settings › Plugins) |
+| `incompatible` | the installed version does not provide the action | Update plugin |
+| `integrity` | the plugin's files do not match their record (`broken`) | Update plugin |
+| `revoked` | the registry revoked the installed version (`quarantined`) | Update plugin |
+| `busy` | installing, updating, rolling back, or the host is away | none: it comes back by itself |
+| `permission` | an action's permission is not granted | Review permissions (Settings › Plugins) |
+| `moduleDisabled` | a built-in module is turned off | Turn on module (Settings › Modules) |
+
+Every card also offers **Replace action** and **Remove assignment** (that
+gesture only, one undo step). Nothing is installed, enabled or granted
+from the Inspector: the existing Marketplace and plugin settings ask as
+they always do. The note names the action and the plugin by name, lists
+the kept title and settings (values of secret-bearing kinds are only
+counted) and never shows a plugin id or the agent's raw reason.
 
 **Coming back**: when the plugin can run the action again, the registry
 knows its type again and the key is drawn from the stored binding as it
 was, with nothing to reassign. Legacy action types of built-ins that moved
 to a plugin (`projects.next`, `git.status`, …) follow the plugin that
 serves them, in the agent and in the app (`plugin_actions.rs`,
-`extend_legacy`).
+`extend_legacy`). The editor asks for its key faces again whenever what
+the plugins can run changes (`catalogSignature`), so it never keeps a stale
+missing-plugin face.
 
 ## Dynamic text
 

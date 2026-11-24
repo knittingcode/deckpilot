@@ -42,6 +42,13 @@ export function usePreviewFaces(
   iconsVersion: string,
   live: LivePreview | null = null,
   keyPixels: number | null = null,
+  /**
+   * Changes when what the action types can do changes (a plugin was
+   * installed, enabled, disabled, removed, or got a permission): keys whose
+   * plugin was missing are drawn again as their action, and the other way
+   * round, without waiting for an edit.
+   */
+  catalogVersion = "",
   folderCountdown: FolderCountdown | null = null,
 ) {
   const countdownSeconds = folderCountdown?.seconds ?? null
@@ -94,6 +101,16 @@ export function usePreviewFaces(
       cancelled = true
       clearTimeout(timer)
     }
-  }, [profileId, draft, pageId, iconsVersion, live, keyPixels, countdownSeconds, countdownPaused])
+  }, [
+    profileId,
+    draft,
+    pageId,
+    iconsVersion,
+    live,
+    keyPixels,
+    catalogVersion,
+    countdownSeconds,
+    countdownPaused,
+  ])
   return preview
 }

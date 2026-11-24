@@ -38,7 +38,19 @@ const nextPage: ActionType = {
   requiresProject: false,
   parameters: [],
 }
-const modules: ModuleInfo[] = [moduleInfo({ id: "deck", name: "Deck", actionTypes: [nextPage] })]
+const previousPage: ActionType = {
+  ...nextPage,
+  id: "deck.previous-page",
+  name: "Previous page",
+  description: "Shows the previous page of the layout on the device.",
+}
+const modules: ModuleInfo[] = [
+  moduleInfo({ id: "deck", name: "Deck", actionTypes: [nextPage, previousPage] }),
+]
+// The library lists action types; a type's action is created when it is
+// placed (or the profile's action that is exactly it is reused).
+const PREVIOUS = catalogDragId("deck.previous-page")
+const NEXT = catalogDragId("deck.next-page")
 
 const createAction = vi.fn()
 const saveLayout = vi.fn()
@@ -158,11 +170,14 @@ function renderEditor() {
 
 const KEY: ControlId = { kind: "key", index: 2 }
 const slot = (gesture: Gesture) => gestureSlotId(KEY, gesture)
-/** A gesture's chooser; an empty gesture's is named "Assign an action to: …". */
-const row = (name: string) =>
-  screen.getByRole("combobox", {
-    name: (accessible) => accessible === name || accessible === `Assign an action to: ${name}`,
-  })
+/** What a gesture's card shows it does (its action's name, never a chooser). */
+const row = (name: string) => {
+  const header = screen
+    .getByRole("group", { name })
+    .querySelector<HTMLElement>("[data-slot=gesture-card-action]")
+  if (!header) throw new Error(`nothing is assigned to ${name}`)
+  return header
+}
 const describes = (name: string) => screen.getByRole("button", { name }).getAttribute("title")
 /** The gestures' slots (not the raw release's). */
 const slots = () =>
@@ -195,7 +210,10 @@ beforeEach(() => {
   )
   createAction.mockReset()
   createAction.mockImplementation((_profile: string, input: ActionInput) =>
-    Promise.resolve({ ...input, id: "next" }),
+    Promise.resolve({
+      ...input,
+      id: input.actionType === "deck.previous-page" ? "previous" : "next",
+    }),
   )
 })
 afterEach(cleanup)
@@ -219,13 +237,13 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
     // Each empty gesture, and the raw release, invites a drop.
     expect(screen.getAllByText("Drag an action here")).toHaveLength(4)
 
-    // Single press: a saved action from the library. With nothing else on
-    // the key it acts as soon as the key is pressed.
-    drop("library:action:shop", slot("click"))
+    // Single press: an action type from the library; its action is created.
+    // With nothing else on the key it acts as soon as the key is pressed.
+    drop(PREVIOUS, slot("click"))
     await waitFor(() => {
-      expect(row("Single press")).toHaveTextContent("Shop")
+      expect(row("Single press")).toHaveTextContent("Previous page")
     })
-    expect(describes("Key 3")).toBe("Key 3: Press: Shop")
+    expect(describes("Key 3")).toBe("Key 3: Press: Previous page")
     expect(slots()).toEqual(["filled", "empty", "empty"])
 
     // Double press: a workflow. The key now has to tell the two apart, so
@@ -234,19 +252,19 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Switch Key 3 to gestures?" })
     expect(dialog).toHaveTextContent("after the double-click window (300 ms)")
     await user.click(within(dialog).getByRole("button", { name: "Switch to gestures" }))
-    expect(describes("Key 3")).toBe("Key 3: Click: Shop · Double click: Build")
+    expect(describes("Key 3")).toBe("Key 3: Click: Previous page · Double click: Build")
     expect(screen.getByRole("note")).toHaveTextContent(
       "A single click fires after the double-click window (300 ms) has passed without a second press.",
     )
 
     // Hold: an action type from the catalog; its action is created.
-    drop(catalogDragId("deck.next-page"), slot("longPress"))
+    drop(NEXT, slot("longPress"))
     await waitFor(() => {
       expect(describes("Key 3")).toBe(
-        "Key 3: Click: Shop · Double click: Build · Long press: Next page",
+        "Key 3: Click: Previous page · Double click: Build · Long press: Next page",
       )
     })
-    expect(createAction).toHaveBeenCalledTimes(1)
+    expect(createAction).toHaveBeenCalledTimes(2)
     expect(slots()).toEqual(["filled", "filled", "filled"])
 
     await user.click(screen.getByRole("button", { name: /Save/ }))
@@ -254,7 +272,7 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
     expect(
       saved.pages[0]?.bindings.map((b) => [b.control.index, b.trigger.type, b.target]),
     ).toEqual([
-      [2, "click", { type: "action", action: "shop" }],
+      [2, "click", { type: "action", action: "previous" }],
       [2, "doubleClick", { type: "workflow", workflow: "build" }],
       [2, "longPress", { type: "action", action: "next" }],
     ])
@@ -263,18 +281,18 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
   it("replaces what a slot holds and removes it", async () => {
     const user = renderEditor()
     await user.click(screen.getByRole("button", { name: "Key 3" }))
-    drop("library:action:shop", slot("click"))
+    drop(PREVIOUS, slot("click"))
     await waitFor(() => {
-      expect(describes("Key 3")).toBe("Key 3: Press: Shop")
+      expect(describes("Key 3")).toBe("Key 3: Press: Previous page")
     })
     // Dropping on a slot that holds something replaces it.
-    drop("library:action:mail", slot("click"))
+    drop(NEXT, slot("click"))
     await waitFor(() => {
-      expect(describes("Key 3")).toBe("Key 3: Press: Mail")
+      expect(describes("Key 3")).toBe("Key 3: Press: Next page")
     })
     // One step back is the action that was there.
     await user.click(screen.getByRole("button", { name: "Undo" }))
-    expect(describes("Key 3")).toBe("Key 3: Press: Shop")
+    expect(describes("Key 3")).toBe("Key 3: Press: Previous page")
     await user.click(screen.getByRole("button", { name: "Redo" }))
 
     await user.click(screen.getByRole("button", { name: "Remove Single press" }))
@@ -295,9 +313,9 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
   it("refuses what is not an action, a workflow or another page", async () => {
     const user = renderEditor()
     await user.click(screen.getByRole("button", { name: "Key 1" }))
-    drop("library:action:shop", gestureSlotId({ kind: "key", index: 0 }, "click"))
+    drop(PREVIOUS, gestureSlotId({ kind: "key", index: 0 }, "click"))
     await waitFor(() => {
-      expect(describes("Key 1")).toBe("Key 1: Press: Shop")
+      expect(describes("Key 1")).toBe("Key 1: Press: Previous page")
     })
     await user.click(screen.getByRole("button", { name: "Key 3" }))
 
@@ -314,7 +332,7 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
     // Nothing changed: not the key with the slots, not the dragged key,
     // and no folder was made.
     expect(describes("Key 3")).toBe("Key 3")
-    expect(describes("Key 1")).toBe("Key 1: Press: Shop")
+    expect(describes("Key 1")).toBe("Key 1: Press: Previous page")
     expect(await pageNames(user)).toEqual(["Home", "Tools"])
     expect(slots()).toEqual(["empty", "empty", "empty"])
   })
@@ -322,18 +340,18 @@ describe("key logic in the layout editor", { timeout: 20_000 }, () => {
   it("takes a drop on the raw release through the release's assignment", async () => {
     const user = renderEditor()
     await user.click(screen.getByRole("button", { name: "Key 3" }))
-    drop("library:action:shop", slot("click"))
+    drop(PREVIOUS, slot("click"))
     await waitFor(() => {
-      expect(describes("Key 3")).toBe("Key 3: Press: Shop")
+      expect(describes("Key 3")).toBe("Key 3: Press: Previous page")
     })
-    drop("library:action:mail", releaseSlotId(KEY))
+    drop(NEXT, releaseSlotId(KEY))
     await waitFor(() => {
-      expect(describes("Key 3")).toBe("Key 3: Press: Shop · Release: Mail")
+      expect(describes("Key 3")).toBe("Key 3: Press: Previous page · Release: Next page")
     })
-    expect(row("Release")).toHaveTextContent("Mail")
+    expect(row("Release")).toHaveTextContent("Next page")
     // One step back removes it again.
     await user.click(screen.getByRole("button", { name: "Undo" }))
-    expect(describes("Key 3")).toBe("Key 3: Press: Shop")
+    expect(describes("Key 3")).toBe("Key 3: Press: Previous page")
   })
 
   it("has no slots where nothing is selected", () => {

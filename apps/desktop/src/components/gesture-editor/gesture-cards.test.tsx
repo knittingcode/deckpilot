@@ -27,6 +27,8 @@ const dnd = vi.hoisted(() => ({
   droppables: new Set<string>(),
   /** A drop target a drag is over, and what is dragged. */
   over: null as { id: string; data: unknown } | null,
+  /** Something dragged that is over none of the cards. */
+  dragging: null as { type: string; target: unknown } | null,
 }))
 
 vi.mock("@dnd-kit/core", async (original) => {
@@ -38,6 +40,12 @@ vi.mock("@dnd-kit/core", async (original) => {
       if (args.disabled) dnd.droppables.delete(String(args.id))
       else dnd.droppables.add(String(args.id))
       const result = actual.useDroppable(args)
+      if (dnd.dragging !== null && dnd.over === null) {
+        return {
+          ...result,
+          active: { id: "dragged", data: { current: dnd.dragging } },
+        } as unknown as typeof result
+      }
       if (dnd.over?.id !== String(args.id)) return result
       return {
         ...result,
@@ -151,11 +159,13 @@ function Harness({
   resolveDrop,
   issues = [],
   incompatible,
+  groups: offered = groups,
 }: {
   initial: DeviceLayout
   resolveDrop?: (dragged: unknown) => BindingTarget | null
   issues?: string[]
   incompatible?: (target: BindingTarget) => string | null
+  groups?: GestureTargetGroup[]
 }): ReactNode {
   const [draft, setDraft] = useState(initial)
   return (
@@ -165,7 +175,7 @@ function Harness({
         pageId="home"
         control={KEY}
         profile={profile}
-        groups={groups}
+        groups={offered}
         encode={encodeTarget}
         decode={decodeTarget}
         types={[pluginType]}
@@ -194,6 +204,14 @@ const shown = () =>
   [...document.querySelectorAll<HTMLElement>("[data-carousel-item][data-visible]")].map(
     (item) => within(item).getAllByRole("group")[0]?.getAttribute("aria-labelledby") ?? "",
   )
+/** What an assigned gesture's card shows it does. */
+const assigned = (name: string) => {
+  const header = screen
+    .getByRole("group", { name })
+    .querySelector<HTMLElement>("[data-slot=gesture-card-action]")
+  if (!header) throw new Error(`nothing assigned to ${name}`)
+  return header
+}
 const bindingsOf = (layout: DeviceLayout | null) =>
   layout?.pages[0]?.bindings.map((b) => [b.trigger.type, b.target]) ?? []
 
@@ -206,6 +224,7 @@ beforeEach(() => {
   dnd.monitors.clear()
   dnd.droppables.clear()
   dnd.over = null
+  dnd.dragging = null
   vi.stubGlobal("ResizeObserver", FixedResizeObserver)
 })
 afterEach(() => {
@@ -225,9 +244,14 @@ describe("gesture cards", () => {
         "gesture-card",
       )
     }
-    // Independent assignments, each in its own card.
-    expect(screen.getByRole("combobox", { name: "Single press" })).toHaveTextContent("Shop")
-    expect(screen.getByRole("combobox", { name: "Double click" })).toHaveTextContent("Deploy")
+    // Independent assignments, each in its own card, by name only: no
+    // chooser, nothing that opens a menu.
+    expect(assigned("Single press")).toHaveTextContent("Shop")
+    expect(assigned("Double click")).toHaveTextContent("Deploy")
+    expect(screen.queryByRole("combobox")).toBeNull()
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(assigned("Single press").querySelector("button, [tabindex], select")).toBeNull()
+    expect(assigned("Single press").querySelector("svg")).not.toBeNull()
   })
 
   it("keeps the raw release as a card of the same kind while the key has no gestures", () => {
@@ -291,34 +315,29 @@ describe("gesture cards", () => {
     expect(long).toHaveClass("border", "border-dashed")
     expect(within(long).queryByText(/Add action/)).toBeNull()
     expect(within(long).queryByRole("button")).toBeNull()
-    const body = within(long).getByRole("combobox", { name: "Assign an action to: Long press" })
-    expect(body).toHaveAttribute("data-slot", "gesture-card-empty")
+    const body = long.querySelector<HTMLElement>("[data-slot=gesture-card-empty]")
+    expect(body).toHaveAccessibleName("Nothing assigned to Long press")
     expect(body).toHaveClass("flex-1", "justify-center")
-    expect(body).toHaveAttribute("aria-description", expect.stringMatching(/press Enter/))
-    expect(body.querySelector("svg")).toHaveClass("size-5")
+    expect(body).toHaveAttribute("aria-description", expect.stringMatching(/Action Library/))
+    expect(body?.querySelector("svg")).toHaveClass("size-5")
+    // Nothing to open: not focusable, no chooser.
+    expect(body).not.toHaveAttribute("tabindex")
+    expect(within(long).queryByRole("combobox")).toBeNull()
+    await user.click(body as HTMLElement)
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(latest).toBeNull()
     // An assigned card has a solid border.
     expect(screen.getByRole("group", { name: "Single press" })).not.toHaveClass("border-dashed")
-
-    // Enter opens the same chooser.
-    body.focus()
-    await user.keyboard("{Enter}")
-    await user.click(await screen.findByRole("option", { name: "Mail" }))
-    expect(bindingsOf(latest)).toEqual([
-      ["click", { type: "action", action: "shop" }],
-      ["doubleClick", { type: "workflow", workflow: "deploy" }],
-      ["longPress", { type: "action", action: "mail" }],
-    ])
-    expect(screen.getByRole("combobox", { name: "Long press" })).toHaveTextContent("Mail")
-    expect(screen.getByRole("group", { name: "Long press" })).not.toHaveClass("border-dashed")
   })
 
   it("removes one gesture's assignment and leaves the others", async () => {
     const user = renderCards(gestureKey)
     await user.click(screen.getByRole("button", { name: "Remove Double click" }))
     expect(bindingsOf(latest)).toEqual([["click", { type: "action", action: "shop" }]])
-    expect(
-      screen.getByRole("combobox", { name: "Assign an action to: Double click" }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("group", { name: "Double click" })).toHaveTextContent(
+      "Drag an action here",
+    )
+    expect(assigned("Single press")).toHaveTextContent("Shop")
   })
 
   it("highlights a compatible drag and not an incompatible one", () => {
@@ -364,11 +383,131 @@ describe("gesture cards", () => {
     ])
   })
 
+  /** Drops what `resolveDrop` makes of it on the card of `gesture`. */
+  async function dropOn(gesture: "click" | "doubleClick" | "longPress") {
+    const event = {
+      active: { id: "library:dragged", data: { current: {} } },
+      over: { id: gestureSlotId(KEY, gesture) },
+    } as unknown as DragEndEvent
+    await act(async () => {
+      for (const monitor of dnd.monitors) monitor.onDragEnd?.(event)
+      await Promise.resolve()
+    })
+  }
+
+  it("replaces an assigned gesture's action by a drop on its card, and only that one", async () => {
+    const titled = layoutWith([
+      {
+        control: KEY,
+        trigger: { type: "click" },
+        target: {
+          type: "action",
+          action: "shop",
+          overrides: { level: { type: "choice", value: "warn" } },
+        },
+        label: "Buy",
+        appearance: { background: "#204060" },
+      },
+      {
+        control: KEY,
+        trigger: { type: "doubleClick" },
+        target: { type: "workflow", workflow: "deploy" },
+      },
+    ])
+    renderCards(titled, { resolveDrop: () => ({ type: "action", action: "mail" }) })
+    // An assigned card takes drops like an empty one.
+    expect(dnd.droppables.has(gestureSlotId(KEY, "click"))).toBe(true)
+    await dropOn("click")
+    // The new action, without the old one's parameter overrides; the key's
+    // title and look stay; the double click is untouched.
+    expect(latest?.pages[0]?.bindings).toEqual([
+      {
+        control: KEY,
+        trigger: { type: "click" },
+        target: { type: "action", action: "mail" },
+        label: "Buy",
+        appearance: { background: "#204060" },
+      },
+      {
+        control: KEY,
+        trigger: { type: "doubleClick" },
+        target: { type: "workflow", workflow: "deploy" },
+      },
+    ])
+    expect(assigned("Single press")).toHaveTextContent("Mail")
+    expect(assigned("Double click")).toHaveTextContent("Deploy")
+  })
+
+  it("refuses a replacement that cannot run from the gesture or cannot be placed", async () => {
+    const incompatible = (target: BindingTarget) =>
+      target.type === "workflow" ? "Workflows cannot run from a single press" : null
+    renderCards(gestureKey, {
+      resolveDrop: () => ({ type: "workflow", workflow: "deploy" }),
+      incompatible,
+    })
+    await dropOn("click")
+    expect(latest).toBeNull()
+    expect(assigned("Single press")).toHaveTextContent("Shop")
+    cleanup()
+
+    // A plugin action whose plugin is missing is not newly placed.
+    const unavailable: GestureTargetGroup[] = [
+      {
+        label: "Actions",
+        options: [
+          { value: "action:shop", label: "Shop", target: { type: "action", action: "shop" } },
+          {
+            value: "action:mail",
+            label: "Mail",
+            target: { type: "action", action: "mail" },
+            unavailable: "Plugin turned off",
+          },
+        ],
+      },
+    ]
+    render(
+      <Harness
+        initial={gestureKey}
+        groups={unavailable}
+        resolveDrop={() => ({ type: "action", action: "mail" })}
+      />,
+    )
+    await dropOn("click")
+    expect(latest).toBeNull()
+    expect(assigned("Single press")).toHaveTextContent("Shop")
+  })
+
+  it("keeps the carousel where it was after a replacement", async () => {
+    regionWidth = 400
+    const user = renderCards(gestureKey, {
+      resolveDrop: () => ({ type: "action", action: "mail" }),
+    })
+    await user.click(screen.getByRole("button", { name: "Next gesture" }))
+    expect(shown()).toEqual(["gesture-key:1-doubleClick-label"])
+    await dropOn("doubleClick")
+    expect(assigned("Double click")).toHaveTextContent("Mail")
+    expect(shown()).toEqual(["gesture-key:1-doubleClick-label"])
+  })
+
+  it("shows every card that takes a drag while one is dragged, assigned ones too", () => {
+    dnd.dragging = { type: "target", target: { type: "action", action: "mail" } }
+    render(<Harness initial={gestureKey} resolveDrop={() => null} />)
+    expect(screen.getByRole("group", { name: "Single press" })).toHaveAttribute(
+      "data-drop",
+      "available",
+    )
+    expect(screen.getByRole("group", { name: "Long press" })).toHaveAttribute(
+      "data-drop",
+      "available",
+    )
+    dnd.dragging = null
+  })
+
   it("draws a plugin action's parameters with the shared parameter fields", async () => {
     const user = renderCards(gestureKey)
     const click = screen.getByRole("group", { name: "Single press" })
     await user.click(
-      within(click).getByRole("button", { name: "Override parameters for this gesture" }),
+      within(click).getByRole("button", { name: "Override parameters for this key/gesture only" }),
     )
     await user.click(within(click).getByRole("checkbox", { name: "Override “Level”" }))
     await user.click(within(click).getByRole("combobox", { name: "Level" }))
@@ -478,9 +617,9 @@ describe("gesture carousel", () => {
     renderCards(gestureKey)
     expect(shown()).toEqual(["gesture-key:1-click-label"])
     act(() => {
-      screen.getByRole("combobox", { name: "Assign an action to: Long press" }).focus()
+      screen.getByRole("button", { name: "Remove Double click" }).focus()
     })
-    expect(shown()).toEqual(["gesture-key:1-longPress-label"])
+    expect(shown()).toEqual(["gesture-key:1-doubleClick-label"])
   })
 
   it("advances while a drag rests at an edge", () => {
@@ -528,11 +667,11 @@ describe("gesture carousel", () => {
       expect(screen.getByRole("button", { name: "Następny gest" })).toBeEnabled()
       const title = screen.getByText("Pojedyncze kliknięcie")
       expect(title).toHaveClass("break-words", "min-w-0")
-      // Empty gestures invite a drop; the raw release (no drop target) a choice.
-      expect(screen.getAllByText("Wybierz akcję")).toHaveLength(4)
+      // Empty gestures and the raw release invite a drop from the library.
+      expect(screen.getAllByText("Przeciągnij akcję tutaj")).toHaveLength(4)
       expect(
-        screen.getByRole("combobox", { name: "Przypisz akcję do: Dwukrotne kliknięcie" }),
-      ).toBeInTheDocument()
+        document.querySelector('[aria-label="Nic nie przypisano do: Dwukrotne kliknięcie"]'),
+      ).not.toBeNull()
     } finally {
       await i18n.changeLanguage("en")
     }

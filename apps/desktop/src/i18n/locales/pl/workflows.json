@@ -118,7 +118,7 @@
     "edit": "Edytuj {{reference}}"
   },
   "sharedVariables": {
-    "intro": "Każda wartość, którą mogą odczytać akcje, przepływy pracy i klawisze. Wstaw ją za pomocą {{syntax}}. W przypadku zmiennych współdzielonych wartość ustawiona dla projektu ma pierwszeństwo przed wartością profilu, a ta przed wartością globalną.",
+    "intro": "W przypadku zmiennych współdzielonych wartość ustawiona dla projektu ma pierwszeństwo przed wartością profilu, a ta przed wartością globalną.",
     "new": "Nowa zmienna",
     "empty": {
       "title": "Nie ma jeszcze zmiennych współdzielonych",

@@ -1,7 +1,8 @@
-// The catalog of the layout editor's library: action types that can be put
-// on a control directly, without creating an action in the Action Library
-// first. Dropping one creates the action with the type's default settings
-// (or reuses an action that already is exactly that) and binds it.
+// The catalog of the layout editor's library: the action types of the
+// enabled modules and plugins, put on a control directly. Dropping one
+// creates the action with the type's default settings (or reuses an action
+// that already is exactly that) and binds it; what it still needs is set in
+// the Inspector, which says so.
 
 import type { ActionInput } from "@/lib/api"
 import { missingParameters } from "@/lib/action-completeness"
@@ -20,6 +21,13 @@ export interface CatalogEntry {
   type: ActionType
   /** The module or plugin that provides it. */
   module: string
+  /** Why a plugin's type cannot be placed now (e.g. a permission it lacks). */
+  unavailable?: string
+  /**
+   * With `unavailable`, when all it lacks are permissions the user can
+   * grant: the "Grant" command of its row.
+   */
+  grant?: { label: string; pending: boolean; onGrant: () => void }
 }
 
 export interface CatalogGroup {
@@ -34,29 +42,24 @@ export function catalogDragId(actionType: string): string {
 }
 
 /**
- * Whether an action of the type works without any input: every required
- * parameter has a default. Types that need a value (a URL, an application)
- * are created in the Action Library, where they are configured.
- */
-export function needsNoInput(type: ActionType): boolean {
-  return type.parameters.every((p) => !p.required || p.default !== undefined)
-}
-
-/**
  * The types the library offers for dropping on a control, by category:
- * those of enabled, supported modules that are not deprecated and need no
- * input. Categories and types keep the order of the modules.
+ * those of enabled, supported modules and plugins that are not deprecated
+ * (a legacy id routed to a plugin is deprecated: only the plugin's type is
+ * listed, once). Types that need a value are listed too; the Inspector asks
+ * for it. Categories and types keep the order of the modules.
  */
 export function catalogGroups(modules: ModuleInfo[]): CatalogGroup[] {
   const groups = new Map<string, CatalogEntry[]>()
+  const seen = new Set<string>()
   for (const module of modules) {
-    // Plugin actions are placed from the Action Library, where their
-    // availability and permissions are shown.
-    if (module.plugin || !module.enabled || !module.supported) continue
+    if (!module.enabled || !module.supported) continue
     for (const type of creatableTypes(module.actionTypes)) {
-      if (!needsNoInput(type)) continue
+      // Once, whoever provides it.
+      if (seen.has(type.id)) continue
+      seen.add(type.id)
+      const unavailable = module.plugin?.unavailable[type.id]
       const entries = groups.get(type.category) ?? []
-      entries.push({ type, module: module.name })
+      entries.push({ type, module: module.name, ...(unavailable ? { unavailable } : {}) })
       groups.set(type.category, entries)
     }
   }
@@ -89,6 +92,7 @@ export function existingDefault(
   type: ActionType,
 ): ActionInstance | undefined {
   const defaults = defaultParameters(type)
+  if (missingParameters(type, defaults).length > 0) return undefined
   const keys = type.parameters.map((p) => p.key)
   return actions.find(
     (action) =>
@@ -121,14 +125,19 @@ export function newAction(actions: ActionInstance[], type: ActionType): ActionIn
 }
 
 /** Entries whose name, description, category or module contain `query`. */
-export function filterCatalog(groups: CatalogGroup[], query: string): CatalogGroup[] {
+export function filterCatalog(
+  groups: CatalogGroup[],
+  query: string,
+  /** The category's shown name, found too (e.g. "Nawigacja" for "Navigation"). */
+  categoryLabel: (category: string) => string = (category) => category,
+): CatalogGroup[] {
   const needle = query.trim().toLowerCase()
   if (needle === "") return groups
   return groups
     .map((group) => ({
       ...group,
       entries: group.entries.filter((entry) =>
-        `${entry.type.name} ${actionTypeName(entry.type)} ${actionTypeDescription(entry.type)} ${group.label} ${entry.module}`
+        `${entry.type.name} ${actionTypeName(entry.type)} ${actionTypeDescription(entry.type)} ${group.label} ${categoryLabel(group.label)} ${entry.module}`
           .toLowerCase()
           .includes(needle),
       ),
@@ -156,6 +165,8 @@ export function existingPreset(
   preset: ActionPreset,
 ): ActionInstance | undefined {
   const wanted = presetParameters(type, preset)
+  // An incomplete preset is a draft of its own on every drop, like a type.
+  if (missingParameters(type, wanted).length > 0) return undefined
   const keys = type.parameters.map((p) => p.key)
   const empty = (value: ParameterValue | undefined) =>
     value === undefined || (value.type === "text" && value.value === "") ? undefined : value

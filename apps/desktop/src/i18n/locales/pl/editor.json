@@ -129,16 +129,11 @@
   "library": {
     "title": "Biblioteka",
     "dock": "Biblioteka akcji",
-    "hint": "Przeciągnij na element sterujący albo zaznacz element sterujący i wybierz w inspektorze.",
     "search": "Szukaj w bibliotece",
-    "compatibleOnly": "Tylko zgodne",
-    "showingFits": "Widoczne elementy pasujące do: {{control}}.",
-    "selectControl": "Zaznacz element sterujący, aby zobaczyć, co do niego pasuje.",
-    "empty": "Nie ma jeszcze akcji ani przepływów pracy. Utwórz je w Bibliotece akcji.",
+    "empty": "Nie ma czego umieścić: żaden moduł ani wtyczka nie oferuje akcji.",
     "noMatches": "Brak wyników.",
     "navigation": "Nawigacja",
-    "newSequence": "Nowe: sekwencja",
-    "newCategory": "Nowe: {{category}}",
+    "sequences": "Sekwencje",
     "drag": "Przeciągnij {{name}} na element sterujący",
     "unavailable": "{{name}}: niedostępne, {{reason}}",
     "incompatible": "{{name}}: nie pasuje do zaznaczonego elementu sterującego. {{reason}}",
@@ -150,10 +145,12 @@
     "multiActionDrag": "Przeciągnij Multiakcję na element sterujący",
     "multiActionTitle": "Uruchamia kilka akcji po kolei, z opóźnieniami między nimi. Upuść ją na klawisz, a następnie dodaj kroki.",
     "searchFolder": "nowy folder foldery nawigacja",
-    "searchMulti": "nowa multiakcja sekwencja kroki przepływ pracy"
+    "searchMulti": "nowa multiakcja sekwencja kroki przepływ pracy",
+    "gestureOnly": "To trafia na gest: przeciągnij to w inspektorze na pojedyncze kliknięcie, dwukrotne kliknięcie lub długie naciśnięcie.",
+    "displays": "Wyświetlacze"
   },
   "targets": {
-    "actions": "Akcje",
+    "actions": "Zapisane akcje",
     "workflows": "Przepływy pracy",
     "navigation": "Nawigacja",
     "back": "Wstecz",
@@ -232,17 +229,12 @@
     "release": "Zwolnienie",
     "help": "Pomoc: {{gesture}}",
     "releaseHint": "Działa bez opóźnienia, gdy klawisz zostanie puszczony. Klawisze z dwukrotnym kliknięciem lub długim naciśnięciem nie mogą z tego korzystać.",
-    "nothing": "Nic",
-    "optionUnavailable": "(niedostępne)",
-    "optionNotHere": "(nie dla tego elementu)",
     "remove": "Usuń: {{gesture}}",
     "removeTitle": "Usuń działanie gestu „{{gesture}}”",
     "empty": {
       "drop": "Przeciągnij akcję tutaj",
-      "choose": "Wybierz akcję",
-      "assign": "Przypisz akcję do: {{gesture}}",
-      "description": "Upuść na tę kartę akcję, przepływ pracy lub stronę albo naciśnij Enter, aby wybrać.",
-      "chooseDescription": "Naciśnij Enter, aby wybrać akcję, przepływ pracy lub stronę."
+      "description": "Przeciągnij na tę kartę akcję, przepływ pracy lub stronę z biblioteki akcji.",
+      "label": "Nic nie przypisano do: {{gesture}}"
     },
     "carousel": {
       "role": "karuzela",
@@ -254,11 +246,11 @@
     "editSteps": "Edytuj kroki ({{count}})",
     "overrides": {
       "hide": "Ukryj parametry",
-      "some_one": "Parametry tego gestu ({{count}} nadpisany)",
-      "some_few": "Parametry tego gestu ({{count}} nadpisane)",
-      "some_many": "Parametry tego gestu ({{count}} nadpisanych)",
-      "some_other": "Parametry tego gestu ({{count}} nadpisanego)",
-      "none": "Nadpisz parametry tego gestu",
+      "some_one": "Parametry tylko tego klawisza/gestu ({{count}} nadpisany)",
+      "some_few": "Parametry tylko tego klawisza/gestu ({{count}} nadpisane)",
+      "some_many": "Parametry tylko tego klawisza/gestu ({{count}} nadpisanych)",
+      "some_other": "Parametry tylko tego klawisza/gestu ({{count}} nadpisanego)",
+      "none": "Nadpisz parametry tylko dla tego klawisza/gestu",
       "hint": "Nadpisania dotyczą tylko gestu „{{gesture}}”; sama akcja „{{action}}” pozostaje bez zmian.",
       "override": "Nadpisz „{{label}}”"
     },
@@ -376,7 +368,6 @@
     "save": "Zapisz"
   },
   "live": {
-    "live": "Na żywo na urządzeniu",
     "suspended": "Urządzenie pokazuje inny układ",
     "connecting": "Łączenie z urządzeniem…",
     "disconnected": "Urządzenie pokazuje zapisany układ (agent nie jest połączony)",
@@ -397,18 +388,11 @@
     "optionNotHere": "{{option}} (nie dla tego elementu sterującego)",
     "labelFor": "Etykieta dla: {{trigger}}",
     "labelPlaceholder": "Etykieta (opcjonalnie)",
-    "clearControl": "Wyczyść element sterujący",
     "region": "{{control}} – ustawienia",
     "regionMany_one": "Ustawienia {{count}} elementu sterującego",
     "regionMany_few": "Ustawienia {{count}} elementów sterujących",
     "regionMany_many": "Ustawienia {{count}} elementów sterujących",
     "regionMany_other": "Ustawienia {{count}} elementu sterującego",
-    "deselect": {
-      "key": "Odznacz klawisz",
-      "encoder": "Odznacz pokrętło",
-      "touchZone": "Odznacz strefę dotykową",
-      "many": "Odznacz elementy sterujące"
-    },
     "readOnly": "Tylko do odczytu: {{reason}}. Klawisze zachowują ten przepływ pracy, ale go nie uruchamiają, dopóki wtyczka jest wyłączona; po jej włączeniu (Ustawienia › Wtyczki) znów działa i można go wybrać lub zmienić."
   },
   "pageNav": {
@@ -982,6 +966,90 @@
     "noPluginBackgrounds": "Żadna zainstalowana wtyczka nie dodaje teł.",
     "backgroundDisabled": "Tło tego klawisza należy do wyłączonej wtyczki: klawisz pokazuje domyślne tło urządzenia, dopóki wtyczka nie zostanie ponownie włączona.",
     "backgroundMissing": "Tło tego klawisza nie jest tu dostępne (jego wtyczka nie jest zainstalowana): klawisz pokazuje domyślne tło urządzenia, dopóki nie będzie."
+  },
+  "missing": {
+    "title": {
+      "notInstalled": "Wtyczka nie jest zainstalowana",
+      "disabled": "Wtyczka jest wyłączona",
+      "incompatible": "Wersja wtyczki nie pasuje",
+      "integrity": "Wtyczka nie przeszła weryfikacji",
+      "revoked": "Wersja wtyczki została wycofana",
+      "busy": "Wtyczka jest chwilowo niedostępna",
+      "permission": "Potrzebne uprawnienie",
+      "moduleDisabled": "Moduł jest wyłączony"
+    },
+    "body": {
+      "notInstalled": "„{{action}}” pochodzi z wtyczki {{plugin}}, która nie jest zainstalowana. Po jej zainstalowaniu to przypisanie znów zadziała tak jak wcześniej.",
+      "disabled": "„{{action}}” pochodzi z wtyczki {{plugin}}, która jest wyłączona. Po jej włączeniu to przypisanie znów zadziała tak jak wcześniej.",
+      "incompatible": "Zainstalowana wersja wtyczki {{plugin}} nie udostępnia akcji „{{action}}” w tej postaci. Wersja, która ją udostępnia, przywróci przypisanie.",
+      "integrity": "Pliki wtyczki {{plugin}} zmieniły się po instalacji, więc DeckPilot jej nie uruchamia. Ponowna instalacja lub aktualizacja przywróci „{{action}}”.",
+      "revoked": "Marketplace wycofał zainstalowaną wersję wtyczki {{plugin}}, więc DeckPilot jej nie uruchamia. Aktualizacja przywróci „{{action}}”.",
+      "busy": "Wtyczka {{plugin}} nie może teraz uruchomić „{{action}}” (może się aktualizować lub uruchamiać). Akcja wróci sama.",
+      "permission": "Wtyczka {{plugin}} jest zainstalowana, ale „{{action}}” potrzebuje uprawnienia, na które nie pozwolono. Nic nie zostanie usunięte, dopóki czeka.",
+      "moduleDisabled": "„{{action}}” należy do modułu {{plugin}}, który jest wyłączony. Po jego włączeniu to przypisanie znów zadziała."
+    },
+    "kept": "Zachowane na czas jej powrotu:",
+    "keptTitle": "Tytuł „{{title}}”",
+    "keptSetting": "{{label}}: {{value}}",
+    "keptHidden_one": "{{count}} inne ustawienie",
+    "keptHidden_few": "{{count}} inne ustawienia",
+    "keptHidden_many": "{{count}} innych ustawień",
+    "keptHidden_other": "{{count}} innego ustawienia",
+    "keptLook": "Wygląd klawisza i jego pozostałe gesty",
+    "thisAction": "Ta akcja",
+    "itsPlugin": "jej wtyczka",
+    "recovery": {
+      "install": "Zainstaluj wtyczkę",
+      "enable": "Włącz wtyczkę",
+      "update": "Zaktualizuj wtyczkę",
+      "permissions": "Sprawdź uprawnienia",
+      "enableModule": "Włącz moduł",
+      "replace": "Zastąp akcję",
+      "remove": "Usuń przypisanie"
+    },
+    "replaceByDrop": "Aby użyć innej akcji, przeciągnij ją z biblioteki akcji na ten gest."
+  },
+  "context": {
+    "unsupported": "Ta akcja nie działa tutaj: {{where}}. Działa jako: {{supported}}.",
+    "displayOnly": "Tylko wyświetlanie — naciśnięcie nic nie robi.",
+    "kept": "Zachowano z zapisanej konfiguracji; nie uruchomi się tutaj.",
+    "notHere": "Niedostępne tutaj"
+  },
+  "migrate": {
+    "wrapSequence": "Opakuj w multiakcję",
+    "moveWorkflow": "Przenieś do przepływu pracy",
+    "removeStep": "Usuń krok",
+    "keep": "Zostaw",
+    "wrapTitle": "Opakować {{name}} w multiakcję?",
+    "wrapText": "Nowa multiakcja uruchomi {{name}} jako jedyny krok, a ten element sterujący uruchomi multiakcję. Nic poza tym się nie zmienia.",
+    "moveTitle": "Przenieść {{name}} do przepływu pracy?",
+    "moveText": "Nowy przepływ pracy uruchomi {{name}} po starcie, a ten element sterujący uruchomi przepływ pracy. Nic poza tym się nie zmienia.",
+    "removeTitle": "Usunąć krok {{name}}?",
+    "removeText": "Krok zostanie usunięty z tej multiakcji po zapisaniu. Sama akcja zostaje w Bibliotece akcji.",
+    "wrapped": "{{name}} działa teraz w multiakcji",
+    "moved": "{{name}} działa teraz w przepływie pracy",
+    "failed": "Nie udało się zmienić: {{name}}"
+  },
+  "savedAction": {
+    "menu": "Ustawienia akcji „{{name}}”",
+    "edit": "Edytuj akcję…",
+    "editShared": "Edytuj wspólną definicję…",
+    "usages": "Gdzie użyto…",
+    "usagesTitle": "Gdzie użyto akcji „{{name}}”",
+    "shared_one": "Używane w {{count}} miejscu",
+    "shared_few": "Używane w {{count}} miejscach",
+    "shared_many": "Używane w {{count}} miejscach",
+    "shared_other": "Używane w {{count}} miejsca",
+    "sharedEdit_one": "Wspólna dla {{count}} miejsca: zmiany obowiązują we wszystkich.",
+    "sharedEdit_few": "Wspólna dla {{count}} miejsc: zmiany obowiązują we wszystkich.",
+    "sharedEdit_many": "Wspólna dla {{count}} miejsc: zmiany obowiązują we wszystkich.",
+    "sharedEdit_other": "Wspólna dla {{count}} miejsca: zmiany obowiązują we wszystkich."
+  },
+  "grant": {
+    "required": "Wymaga uprawnienia",
+    "button": "Nadaj",
+    "label": "Nadaj uprawnienie dla {{action}} ({{plugin}})",
+    "granted": "Nadano uprawnienie"
   },
   "titleVariables": {
     "insert": "Wstaw zmienną do tytułu",

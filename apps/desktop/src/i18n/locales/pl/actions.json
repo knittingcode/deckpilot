@@ -2,10 +2,11 @@
   "completeness": {
     "badge": "Wymaga konfiguracji",
     "missing": "Brakuje: {{parameters}}",
-    "runRefused": "„{{name}}” wymaga konfiguracji, zanim będzie mogła działać."
+    "runRefused": "„{{name}}” wymaga konfiguracji, zanim będzie mogła działać.",
+    "fieldRequired": "Wymagane: uzupełnij, zanim akcja będzie mogła działać.",
+    "badgeLabel": "„{{name}}” wymaga konfiguracji"
   },
   "library": {
-    "description": "Skonfigurowane akcje, gotowe do użycia w przepływach pracy i na klawiszach",
     "new": "Nowa akcja",
     "search": "Szukaj",
     "listTitle": "Akcje",
@@ -135,14 +136,21 @@
       "title": "Ta akcja wprowadza zmiany",
       "body": "Jej uruchomienie zmienia stan na tym komputerze lub gdzie indziej (na przykład polecenie, żądanie lub kontenery). Niektóre moduły zezwalają na to dopiero po włączeniu tej możliwości w ich ustawieniach na każdym komputerze."
     },
-    "parameterRequired": "Pole „{{label}}” jest wymagane.",
     "save": "Zapisz",
     "create": "Utwórz akcję",
     "duplicate": "Duplikuj",
     "run": "Uruchom",
     "runHint": "Działa w agencie dla aktywnego profilu",
     "usedIn": "Używana w",
-    "deleteHint": "Aby usunąć akcję, wybierz dla każdego odwołania, czy ma używać innej akcji, czy zostać odpięte."
+    "deleteHint": "Aby usunąć akcję, wybierz dla każdego odwołania, czy ma używać innej akcji, czy zostać odpięte.",
+    "sharedDraft": {
+      "title": "Zapisać {{name}} bez wymaganych ustawień?",
+      "description_one": "Ta akcja jest używana w {{count}} miejscu. Bez wymaganych ustawień przestanie tam działać, dopóki nie zostanie ponownie skonfigurowana.",
+      "description_few": "Ta akcja jest używana w {{count}} miejscach. Bez wymaganych ustawień przestanie działać we wszystkich, dopóki nie zostanie ponownie skonfigurowana.",
+      "description_many": "Ta akcja jest używana w {{count}} miejscach. Bez wymaganych ustawień przestanie działać we wszystkich, dopóki nie zostanie ponownie skonfigurowana.",
+      "description_other": "Ta akcja jest używana w {{count}} miejsca. Bez wymaganych ustawień przestanie działać we wszystkich, dopóki nie zostanie ponownie skonfigurowana.",
+      "confirm": "Zapisz mimo to"
+    }
   },
   "references": {
     "notUsed": "Nieużywana w żadnym przepływie pracy ani układzie.",
@@ -277,6 +285,22 @@
     "trigger": "Przepływ pracy „{{workflow}}” uruchamia wyzwalacz: {{trigger}}",
     "triggerPaused": "Przepływ pracy „{{workflow}}” uruchamia wyzwalacz: {{trigger}} (wstrzymany)",
     "aTrigger": "wyzwalacz"
+  },
+  "categories": {
+    "navigation": "Nawigacja",
+    "device": "Urządzenie",
+    "general": "Ogólne",
+    "system": "System",
+    "deck": "Multiakcje",
+    "http": "HTTP",
+    "notifications": "Powiadomienia"
+  },
+  "contexts": {
+    "key": "Klawisz",
+    "sequence": "Krok multiakcji",
+    "workflow": "Węzeł przepływu pracy",
+    "display": "Wyświetlacz klawisza",
+    "gesture": "Gest"
   },
   "system": {
     "names": {

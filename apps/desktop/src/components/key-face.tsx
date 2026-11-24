@@ -1,4 +1,4 @@
-import { ArrowLeft, Folder, ListOrdered } from "lucide-react"
+import { ArrowLeft, Folder, ListOrdered, Plug } from "lucide-react"
 
 import { ActionIcon } from "@/components/action-icon"
 import type { KeyFace } from "@/lib/types"
@@ -37,17 +37,22 @@ export function FaceTile({
   unavailable?: boolean
   className?: string
 }) {
-  const style = face?.style ?? "empty"
+  // A key whose plugin is missing looks like any key, with the plug as
+  // its icon (as the device's renderer draws it), not like a warning.
+  const missingPlugin = face?.unavailable === true
+  const style = missingPlugin ? "action" : (face?.style ?? "empty")
   const folderBack = face?.symbol === FOLDER_BACK_SYMBOL
   const Glyph = folderBack
     ? null
-    : style === "folder"
-      ? Folder
-      : style === "back"
-        ? ArrowLeft
-        : style === "workflow"
-          ? ListOrdered
-          : null
+    : missingPlugin
+      ? Plug
+      : style === "folder"
+        ? Folder
+        : style === "back"
+          ? ArrowLeft
+          : style === "workflow"
+            ? ListOrdered
+            : null
   // Sized from the key (`--key` of the device canvas) in the proportions
   // the device's renderer uses (deckpilot-render): the icon about two
   // fifths of the key above a title, a little over half without one; a
@@ -63,6 +68,7 @@ export function FaceTile({
     <div
       data-slot="key-face"
       data-face={style}
+      data-missing-plugin={missingPlugin || undefined}
       data-unavailable={unavailable || undefined}
       className={cn(
         "flex size-full min-w-0 flex-col items-center justify-center gap-[calc(var(--key,4rem)*0.06)] overflow-hidden p-[calc(var(--key,4rem)*0.07)] text-center",

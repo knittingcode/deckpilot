@@ -1,24 +1,30 @@
 import { useDroppable } from "@dnd-kit/core"
-import { CircleHelp, HandGrab, ListOrdered, MousePointerClick, X } from "lucide-react"
-import { useState } from "react"
+import {
+  ArrowLeft,
+  CircleHelp,
+  Folder,
+  HandGrab,
+  ListOrdered,
+  MousePointerClick,
+  Timer,
+  X,
+} from "lucide-react"
+import { type ReactNode, useState } from "react"
 
+import { ActionIcon } from "@/components/action-icon"
 import { IncompatibleNote } from "@/components/incompatible-note"
+import { MissingActionNote } from "@/components/missing-action-note"
+import { missingForUse } from "@/lib/draft-actions"
+import { NeedsConfiguration } from "@/components/needs-configuration"
 import { ParameterField } from "@/components/parameter-field"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useTranslation } from "@/i18n"
+import type { MissingAction } from "@/lib/action-availability"
+import { targetLabel } from "@/lib/layout-model"
 import { initialValue } from "@/lib/parameters"
 import type {
   ActionParameters,
@@ -34,6 +40,7 @@ import { cn } from "@/lib/utils"
 import { setOverride } from "@/lib/workflow-model"
 
 import { TIMING_LIMITS, timingError, updateBinding, type TimingField } from "./model"
+import { ContextMigrations, type MigrationOffer } from "@/components/context-migrations"
 
 /** One option of the target selects; the layout editor's `TargetGroup`. */
 export interface GestureTargetGroup {
@@ -45,6 +52,10 @@ export interface GestureTargetGroup {
     unavailable?: string
     /** With `unavailable`: it still runs, it only cannot be changed here. */
     readOnly?: boolean
+    /** An action's own icon, shown with its name on the card. */
+    icon?: string | null
+    /** With `unavailable`: why its plugin cannot run it, for the card to explain. */
+    missing?: MissingAction
   }[]
 }
 
@@ -52,11 +63,15 @@ export interface GestureTargetGroup {
 function unavailableIn(
   groups: GestureTargetGroup[],
   value: string,
-): { reason: string; readOnly: boolean } | undefined {
+): { reason: string; readOnly: boolean; missing?: MissingAction } | undefined {
   for (const group of groups) {
     const found = group.options.find((o) => o.value === value)
     if (found?.unavailable !== undefined) {
-      return { reason: found.unavailable, readOnly: found.readOnly === true }
+      return {
+        reason: found.unavailable,
+        readOnly: found.readOnly === true,
+        ...(found.missing ? { missing: found.missing } : {}),
+      }
     }
     if (found) return undefined
   }
@@ -108,7 +123,11 @@ export interface GestureCardProps {
   /** Why `target` cannot run from this control for `trigger`; `null` when it can. */
   incompatible?: (target: BindingTarget, trigger: Trigger) => string | null
   /** Why the binding is kept but not run, if it is. */
-  notRun?: string
+  notRun?: string | undefined
+  /** What the kept binding can become (its action's contexts), if anything. */
+  migrate?: MigrationOffer | undefined
+  /** The assigned action only shows something on the key: its press does nothing. */
+  displayOnly?: boolean
   /**
    * The card's drop target id (gestures in the layout editor's drag and
    * drop); `droppable`: it takes drops now (its card is in view).
@@ -137,6 +156,8 @@ export interface GestureCardProps {
     labelPlaceholder?: (binding: ControlBinding) => string | undefined
     /** The label is the key's title, edited in the key header instead. */
     titleInHeader?: (binding: ControlBinding) => boolean
+    /** The settings of saved action `id` itself (shared with what else uses it). */
+    actionSettings?: (id: string) => ReactNode
   }
 }
 
@@ -153,11 +174,22 @@ export function GestureCard(props: GestureCardProps) {
     disabled: slot === undefined || props.droppable !== true,
   })
   const notes = binding ? unavailableIn(props.groups, props.encode(binding.target)) : undefined
-  const drop = isOver
-    ? dropRefused(active?.data.current, props.trigger, props.incompatible, props.pageId)
-      ? "rejected"
-      : "accepted"
-    : undefined
+  const refused =
+    active !== null &&
+    dropRefused(active.data.current, props.trigger, props.incompatible, props.pageId)
+  // While something is dragged, a card that takes it says so (an assigned
+  // one too: a drop replaces what it does), and the one under the pointer
+  // says whether the drop is taken.
+  const drop =
+    slot === undefined || props.droppable !== true || active === null
+      ? undefined
+      : isOver
+        ? refused
+          ? "rejected"
+          : "accepted"
+        : refused
+          ? undefined
+          : "available"
   return (
     <div
       ref={setNodeRef}
@@ -170,8 +202,7 @@ export function GestureCard(props: GestureCardProps) {
         // The state is the border's colour and style, never its width.
         "flex min-w-0 flex-1 flex-col gap-2 rounded-lg border bg-card p-3 text-card-foreground transition-[border-color,background-color,box-shadow]",
         !binding && "border-dashed",
-        // The empty card's chooser fills its body; the card shows its focus.
-        "has-[[data-slot=gesture-card-empty]:focus-visible]:border-ring has-[[data-slot=gesture-card-empty]:focus-visible]:ring-[3px] has-[[data-slot=gesture-card-empty]:focus-visible]:ring-ring/50",
+        drop === "available" && "border-workspace-selection/50",
         drop === "accepted" && "border-workspace-selection bg-workspace-selection/5",
         drop === "rejected" && "border-destructive",
       )}
@@ -180,7 +211,6 @@ export function GestureCard(props: GestureCardProps) {
         <div className="flex min-w-0 flex-1 items-start gap-1.5">
           <Label
             id={`${id}-label`}
-            htmlFor={id}
             // Long names (Polish) wrap within the header.
             className="min-w-0 pt-0.5 leading-snug break-words"
           >
@@ -203,21 +233,42 @@ export function GestureCard(props: GestureCardProps) {
           </Button>
         )}
       </div>
-      <TargetSelect
-        id={id}
-        groups={props.groups}
-        encode={props.encode}
-        trigger={props.trigger}
-        incompatible={props.incompatible}
-        value={binding?.target}
-        title={title}
-        droppable={slot !== undefined}
-        onValueChange={(value) => {
-          props.onAssign(props.decode(value))
-        }}
-      />
-      <UnavailableNote note={notes} />
+      {binding ? (
+        <AssignedTarget
+          id={id}
+          binding={binding}
+          value={props.encode(binding.target)}
+          groups={props.groups}
+          details={props.details}
+        />
+      ) : (
+        <EmptySlot id={id} title={title} droppable={slot !== undefined} />
+      )}
+      {binding && notes?.missing ? (
+        // Its plugin is missing: the gesture says why and how to get it
+        // back; its assignment and settings stay as they are.
+        <MissingActionNote
+          missing={notes.missing}
+          target={binding.target}
+          actions={props.details?.profile.actions ?? []}
+          types={props.details?.types ?? []}
+          projects={props.details?.profile.projects ?? []}
+          title={binding.label}
+          replaceByDrop
+          onRemove={() => {
+            props.onAssign(null)
+          }}
+        />
+      ) : (
+        <UnavailableNote note={notes} />
+      )}
       <IncompatibleNote reason={binding ? props.notRun : undefined} />
+      {binding && <ContextMigrations offer={props.migrate} />}
+      {binding && props.displayOnly && (
+        <p className="text-xs text-muted-foreground" role="note">
+          {t("editor:context.displayOnly")}
+        </p>
+      )}
       {binding && props.details && (
         <AssignmentDetails id={id} title={title} binding={binding} details={props.details} />
       )}
@@ -276,103 +327,122 @@ function dropRefused(
   if (source?.type === "actionType" || source?.type === "newMultiAction") return false
   if (source?.type !== "target" || !source.target) return true
   if (source.target.type === "openPage" && source.target.page === pageId) return true
+  // A stateful key needs gestures: never on the raw release.
+  if (source.target.type === "stateful" && trigger.type === "release") return true
   return Boolean(incompatible?.(source.target, trigger))
 }
 
+/** The option of the target `value` among `groups`, if it is offered. */
+function optionOf(groups: GestureTargetGroup[], value: string) {
+  for (const group of groups) {
+    const found = group.options.find((o) => o.value === value)
+    if (found) return found
+  }
+  return undefined
+}
+
+/** The icon of an assigned target: the action's own, else its kind's. */
+function TargetIcon({
+  target,
+  icon,
+  className,
+}: {
+  target: BindingTarget
+  icon: string | null | undefined
+  className: string
+}) {
+  switch (target.type) {
+    case "action":
+      return <ActionIcon name={icon} className={className} />
+    case "workflow":
+      return <ListOrdered aria-hidden className={className} />
+    case "openPage":
+      return <Folder aria-hidden className={className} />
+    case "back":
+      return <ArrowLeft aria-hidden className={className} />
+    case "stateful":
+      return <Timer aria-hidden className={className} />
+  }
+}
+
 /**
- * The chooser of what a gesture does. With nothing assigned it fills the
- * card's body as the drop hint, and opens the same list.
+ * What an assigned gesture does: its icon and name, for information only.
+ * It never opens a menu; the Action Library is the one way to choose:
+ * another action dragged onto the card replaces it, its X removes it.
  */
-function TargetSelect({
+function AssignedTarget({
   id,
-  groups,
-  encode,
-  trigger,
-  incompatible,
+  binding,
   value,
-  title,
-  droppable,
-  onValueChange,
+  groups,
+  details,
 }: {
   id: string
-  /** The gesture's name, for the empty chooser's name. */
-  title: string
-  /** The card takes drops: its empty body says so. */
-  droppable: boolean
+  binding: ControlBinding
+  /** The target encoded as the groups' option values. */
+  value: string
   groups: GestureTargetGroup[]
-  encode: (target: BindingTarget | undefined) => string
-  /** What the chosen target is bound to, for `incompatible`. */
-  trigger: Trigger
-  incompatible: GestureCardProps["incompatible"]
-  value: BindingTarget | undefined
-  onValueChange: (value: string) => void
+  details: GestureCardProps["details"]
 }) {
   const { t } = useTranslation()
-  const empty = value === undefined
+  const target = binding.target
+  const option = optionOf(groups, value)
+  const action =
+    target.type === "action"
+      ? details?.profile.actions.find((a) => a.id === target.action)
+      : undefined
+  const name =
+    option?.label ??
+    (details
+      ? targetLabel(target, details.profile.actions, details.profile.workflows, details.draft)
+      : t("editor:drag.missingAction"))
+  // A draft: its required settings are not all filled in yet.
+  const incomplete =
+    target.type === "action" && details
+      ? missingForUse(target.action, target.overrides, details.profile.actions, (id) =>
+          details.types.find((type) => type.id === id),
+        ).length > 0
+      : false
   return (
-    <Select
-      value={empty ? "" : encode(value)}
-      onValueChange={(next) => {
-        // Only a choice: not the placeholder's empty value, not the value
-        // it already has (a programmatic change must never assign).
-        if (next === "" || next === (empty ? "" : encode(value))) return
-        onValueChange(next)
-      }}
+    <div
+      id={id}
+      data-slot="gesture-card-action"
+      className="flex min-w-0 items-center gap-2 rounded-md bg-muted/40 px-2 py-1.5 text-sm"
     >
-      {empty ? (
-        <SelectTrigger
-          id={id}
-          data-slot="gesture-card-empty"
-          aria-label={t("editor:gesture.empty.assign", { gesture: title })}
-          aria-description={t(
-            droppable
-              ? "editor:gesture.empty.description"
-              : "editor:gesture.empty.chooseDescription",
-          )}
-          className="min-h-16 w-full flex-1 justify-center rounded-md border-0 bg-transparent p-2 whitespace-normal shadow-none outline-none hover:bg-transparent focus-visible:ring-0 data-[size=default]:h-auto dark:bg-transparent dark:hover:bg-transparent [&>svg:last-child]:hidden"
-        >
-          <span
-            data-slot="gesture-card-empty-content"
-            className="flex flex-col items-center gap-1.5 text-center text-xs text-muted-foreground"
-          >
-            {droppable ? (
-              <HandGrab aria-hidden className="size-5 opacity-70" />
-            ) : (
-              <MousePointerClick aria-hidden className="size-5 opacity-70" />
-            )}
-            {t(droppable ? "editor:gesture.empty.drop" : "editor:gesture.empty.choose")}
-          </span>
-        </SelectTrigger>
+      <TargetIcon
+        target={target}
+        icon={action?.icon ?? option?.icon}
+        className="size-4 shrink-0 text-muted-foreground"
+      />
+      <span className="min-w-0 flex-1 truncate" title={name}>
+        {name}
+      </span>
+      {incomplete && <NeedsConfiguration name={name} className="shrink-0" />}
+    </div>
+  )
+}
+
+/**
+ * The body of a gesture with nothing assigned: where an action from the
+ * Action Library is dropped. Not a control of its own: nothing opens.
+ */
+function EmptySlot({ id, title, droppable }: { id: string; title: string; droppable: boolean }) {
+  const { t } = useTranslation()
+  return (
+    <div
+      id={id}
+      data-slot="gesture-card-empty"
+      aria-label={t("editor:gesture.empty.label", { gesture: title })}
+      aria-description={t("editor:gesture.empty.description")}
+      className="flex min-h-16 w-full flex-1 flex-col items-center justify-center gap-1.5 rounded-md p-2 text-center text-xs text-muted-foreground"
+    >
+      {droppable ? (
+        <HandGrab aria-hidden className="size-5 opacity-70" />
       ) : (
-        <SelectTrigger id={id} className="w-full min-w-0">
-          <SelectValue />
-        </SelectTrigger>
+        <MousePointerClick aria-hidden className="size-5 opacity-70" />
       )}
-      <SelectContent>
-        <SelectItem value="none">{t("editor:gesture.nothing")}</SelectItem>
-        {groups.map((group) => (
-          <SelectGroup key={group.label}>
-            <SelectLabel>{group.label}</SelectLabel>
-            {group.options.map((option) => {
-              const why = incompatible?.(option.target, trigger) ?? undefined
-              return (
-                <SelectItem
-                  key={option.value}
-                  value={option.value}
-                  disabled={option.unavailable !== undefined || why !== undefined}
-                  title={why}
-                >
-                  {option.label}
-                  {option.unavailable !== undefined
-                    ? ` ${t("editor:gesture.optionUnavailable")}`
-                    : why !== undefined && ` ${t("editor:gesture.optionNotHere")}`}
-                </SelectItem>
-              )
-            })}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
+      {t("editor:gesture.empty.drop")}
+    </div>
   )
 }
 
@@ -441,6 +511,7 @@ function AssignmentDetails({
           <ListOrdered /> {t("editor:gesture.editSteps", { count: steps.steps.length })}
         </Button>
       )}
+      {action && details.actionSettings?.(action.id)}
       {action && type && type.parameters.length > 0 && (
         <>
           <Button

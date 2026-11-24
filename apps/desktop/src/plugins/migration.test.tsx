@@ -18,7 +18,7 @@ import {
   withPluginTypes,
 } from "@/lib/plugin-actions"
 import type { ActionType, ModuleInfo } from "@/lib/types"
-import { ActionsPage } from "@/pages/actions"
+import { ActionLibraryView } from "@/pages/actions"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { action, builtInModules, moduleInfo, profileView } from "@/test/fixtures"
@@ -510,7 +510,7 @@ describe("legacy action types a plugin replaces", () => {
     })
     api.getProfile.mockResolvedValue(profileView({ actions: [pr] }))
     const modules = [...builtInModules(), github()]
-    const { user, titlebarAction } = renderWithApp(<ActionsPage />, {
+    const { user, titlebarAction } = renderWithApp(<ActionLibraryView />, {
       modules,
       pluginModules: pluginModules([githubPlugin()], [], [githubMigration({ phase: "cutOver" })]),
     })
