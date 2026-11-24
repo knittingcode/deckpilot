@@ -64,6 +64,7 @@ import {
 import { StepEditor } from "@/pages/workflow-steps"
 import { useOptionalEditorSelection } from "@/shell/editor-selection-context"
 import { type TranslationKey, useTranslation } from "@/i18n"
+import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
 import type {
   ActionInstance,
   ActionType,
@@ -82,6 +83,7 @@ import type {
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
 import { type KeyLook, KeyLookContext } from "./key-look-context"
+import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
 import {
   catalogGroups,
   existingDefault,
@@ -336,11 +338,15 @@ export function LayoutEditor({
     countdown: FolderCountdown
   } | null>(null)
   const shownCountdown = deviceCountdown?.page === pageId ? deviceCountdown.countdown : null
+  // Titles and labels with variables are drawn again when the agent reports
+  // a change of what they show (profile, project, shared values), as the
+  // device is: the Canvas, the Inspector and the device agree.
+  const displayTick = useDisplayRefresh(profileId)
   const { faces, images, incompatible, reports, navigation } = usePreviewFaces(
     profileId,
     draft,
     pageId,
-    `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}`,
+    `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}|${String(displayTick)}`,
     liveStates.live,
     keyPixels,
     shownCountdown,
@@ -354,6 +360,7 @@ export function LayoutEditor({
   // What the Inspector's key header and its popovers read: the Canvas's
   // images of the keys, the icons and the one way to restyle the selection.
   const keyLook: KeyLook = {
+    profileId,
     draft,
     pageId,
     defaults: defaultAppearanceOf(model),
@@ -646,19 +653,33 @@ export function LayoutEditor({
   }, [pageBindings, actions])
   // The drawn faces' icons, for the key header's preview as for the Canvas.
   keyLook.symbols = icons
-  // Labels such as {project.key} show the profile's active project, as on
-  // the device; nothing to choose here (projects are an optional module).
-  const previewed = projects.find((p) => p.id === view.activeProjectId)
-  const summaries = useMemo(() => {
+  // Titles with placeholders or references ({project.key}, {{ … }}) show
+  // what the agent resolves for them (lib/display-templates.ts), as on the
+  // device; the editor never resolves them itself. `{page.…}` is the
+  // layout's and is expanded first.
+  const pageTitles = useMemo(() => {
     const position = pagePosition(draft, pageId)
-    const render = (text: string) =>
+    const pageName = findPage(draft, pageId)?.name ?? "-"
+    const expand = (text: string) =>
       text
-        .replaceAll("{profile}", view.profile.name)
-        .replaceAll("{project.key}", previewed?.key ?? "-")
-        .replaceAll("{project.name}", previewed?.name ?? "-")
         .replaceAll("{page.number}", String(position.number))
         .replaceAll("{page.count}", String(position.count))
-        .replaceAll("{page.name}", findPage(draft, pageId)?.name ?? "-")
+        .replaceAll("{page.name}", pageName)
+    const map = new Map<string, string>()
+    for (const control of orderedControls(model)) {
+      for (const b of bindingsFor(draft, pageId, control)) {
+        const label = b.label ?? targetLabel(b.target, actions, workflows, draft)
+        map.set(label, expand(label))
+      }
+    }
+    return map
+  }, [model, draft, pageId, actions, workflows])
+  const resolvedTitles = useResolvedTitles(profileId, pageTitles, view.activeProjectId, displayTick)
+  const summaries = useMemo(() => {
+    const render = (text: string) => {
+      const expanded = pageTitles.get(text) ?? text
+      return resolvedTitles.get(expanded) ?? expanded
+    }
     const map = new Map<string, string>()
     for (const control of orderedControls(model)) {
       const labels = bindingsFor(draft, pageId, control).map((b) =>
@@ -671,7 +692,7 @@ export function LayoutEditor({
     }
     return map
     // `t` changes with the language, as do the labels of the triggers.
-  }, [model, draft, pageId, actions, workflows, previewed, view.profile.name, t])
+  }, [model, draft, pageId, actions, workflows, pageTitles, resolvedTitles, t])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -1381,3 +1402,45 @@ function LiveBadge({ status, problem }: { status: LiveStatus; problem: string | 
     </span>
   )
 }
+
+/**
+ * What the agent shows for each of `titles`' expanded texts that has a
+ * placeholder or reference (`resolveDisplayTemplates`), cut as on the key;
+ * empty without an agent. Asked again when the texts or the active project
+ * change.
+ */
+function useResolvedTitles(
+  profileId: string,
+  titles: Map<string, string>,
+  activeProject: string | null | undefined,
+  /** `useDisplayRefresh`: the agent reported a change of what titles show. */
+  tick: number,
+): Map<string, string> {
+  const templates = [...new Set(titles.values())].filter((text) => text.includes("{"))
+  const key = JSON.stringify(templates)
+  const [resolved, setResolved] = useState<{ key: string; texts: Map<string, string> }>({
+    key: "",
+    texts: new Map(),
+  })
+  useEffect(() => {
+    const asked = JSON.parse(key) as string[]
+    if (asked.length === 0) return
+    let cancelled = false
+    resolveDisplayTemplates({ profile: profileId }, asked.slice(0, MAX_DISPLAY_TEMPLATES)).then(
+      (answers) => {
+        if (cancelled) return
+        setResolved({
+          key,
+          texts: new Map(answers.map((a) => [a.template, shownOnKey(a).text])),
+        })
+      },
+      () => undefined,
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [profileId, key, activeProject, tick])
+  return resolved.key === key ? resolved.texts : EMPTY_TITLES
+}
+
+const EMPTY_TITLES = new Map<string, string>()

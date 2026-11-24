@@ -31,6 +31,13 @@ released either. 0.6.0 is the first version intended for publication.
   device, the simulated MK.2 and the editor's Canvas in a live preview draw
   the same face (the live preview's navigation gains the optional
   `folderCountdown`; protocol 16 unchanged).
+- Device Editor: the key's title field has a picker of the variables a key
+  can show, which inserts `{{ reference }}` at the cursor, and shows under
+  the field what the key shows as the agent resolves it (cut to 32
+  characters as on the key, with each `-` that stands for a variable
+  marked and why it has no value). The title itself is not changed. The
+  Canvas summaries show the agent's answers instead of replacing
+  `{profile}`, `{project.key}` and `{project.name}` themselves.
 
 ### Changed
 
