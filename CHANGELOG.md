@@ -15,6 +15,13 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Changed
+
+- Device Editor: a label picked on the Canvas is nudged with the arrow
+  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
+  nudge starts from the last one. Escape or a click on the key lets go of
+  the label, and the arrows move between keys again.
+
 ## [0.15.0] - 2026-11-24
 
 ### Added
@@ -92,10 +99,6 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
-- Device Editor: a label picked on the Canvas is nudged with the arrow
-  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
-  nudge starts from the last one. Escape or a click on the key lets go of
-  the label, and the arrows move between keys again.
 - Plugin permissions are granted and revoked in Settings › Permissions;
   a plugin's page in the Marketplace shows them read-only, with a link
   there. Plugin diagnostics and module migrations are in Settings › Logs &
