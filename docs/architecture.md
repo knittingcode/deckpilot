@@ -213,7 +213,7 @@ persist it and notify the agent. Runtime changes and action execution are
 forwarded to the agent; a background task subscribes to agent events and
 forwards them to the window. The main window opens with the device editor;
 Layouts (every layout, the profiles that use it, its fit on each model),
-Dashboard, Action Library and Workflows are in its navigation rail, the
+Action Library and Workflows are in its navigation rail, the
 plugin Marketplace (builds with plugins) in its toolbar. The settings
 (general, profiles, devices, agent, security, updates, plugins, diagnostics,
 modules, …) are a window of their own. Settings › Devices shows the

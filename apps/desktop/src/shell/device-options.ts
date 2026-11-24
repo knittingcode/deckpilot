@@ -8,8 +8,11 @@ export interface DeviceOption {
   /** The model the editor shows for it. */
   model: string
   label: string
-  /** "Connected · <serial>" or "Not connected". */
-  detail: string
+  /**
+   * "Connected · <serial>" for a connected device, the serial of a known
+   * device that is not connected; none for a model without a device.
+   */
+  detail?: string
   connected: boolean
   device: DeviceId | null
   /** The catalog has the model, so its layouts can be edited. */
@@ -21,11 +24,16 @@ function modelOf(device: DeviceInfo) {
 }
 
 /**
- * Connected devices first (named as their descriptor says), then the
- * catalog's models without a connected device, marked "not connected".
+ * By connection state, as the agent reports it: the connected devices
+ * (named as their descriptor says), then what is not connected: the known
+ * devices that are not (each by its serial) and the catalog's models
+ * without any known device (to edit or simulate). A device moves between
+ * the two as it connects and disconnects. A disconnected device is chosen
+ * as its model, as choosing the model always was.
  */
 export function deviceOptions(models: DeviceModel[], devices: DeviceInfo[]): DeviceOption[] {
   const connected = devices.filter((d) => d.state === "connected")
+  const disconnected = devices.filter((d) => d.state !== "connected")
   const fromDevices = connected.map((device): DeviceOption => {
     const model = modelOf(device)
     const available = models.some((m) => m.id === model)
@@ -41,18 +49,29 @@ export function deviceOptions(models: DeviceModel[], devices: DeviceInfo[]): Dev
       available,
     }
   })
+  const fromKnown = disconnected.map((device): DeviceOption => {
+    const model = modelOf(device)
+    return {
+      key: `device:${model}:${device.id.serial}`,
+      model,
+      label: device.descriptor?.displayName ?? device.modelName,
+      detail: device.id.serial,
+      connected: false,
+      device: null,
+      available: models.some((m) => m.id === model),
+    }
+  })
   const fromCatalog = models
-    .filter((m) => !connected.some((d) => modelOf(d) === m.id))
+    .filter((m) => !devices.some((d) => modelOf(d) === m.id))
     .map((m): DeviceOption => ({
       key: `model:${m.id}`,
       model: m.id,
       label: m.name,
-      detail: i18n.t("navigation:device.optionNotConnected"),
       connected: false,
       device: null,
       available: true,
     }))
-  return [...fromDevices, ...fromCatalog]
+  return [...fromDevices, ...fromKnown, ...fromCatalog]
 }
 
 /**

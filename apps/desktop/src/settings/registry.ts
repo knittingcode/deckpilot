@@ -312,7 +312,10 @@ export function settingsPages(modules: ModuleInfo[]): SettingsPageEntry[] {
   const fromModules = moduleSettingsPages(modules).map((page): SettingsPageEntry => ({
     id: page.id,
     title: page.module.name,
-    description: i18n.t("settings:pages.module.description", { module: page.module.name }),
+    // What the module says it does; else that these are its settings.
+    description:
+      page.module.description ||
+      i18n.t("settings:pages.module.description", { module: page.module.name }),
     category: "extensions",
     icon: page.icon,
     keywords: ["module", page.module.id, ...page.module.config.map((spec) => spec.label)],

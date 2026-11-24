@@ -9,7 +9,8 @@
     "marketplace": "Marketplace",
     "settings": "Ustawienia",
     "settingsUpdate": "Ustawienia, dostępna jest aktualizacja",
-    "withShortcut": "{{label}} ({{shortcut}})"
+    "withShortcut": "{{label}} ({{shortcut}})",
+    "selection": "Bieżący wybór"
   },
   "rail": {
     "label": "Obszar roboczy",
@@ -19,7 +20,6 @@
   "pages": {
     "designer": "Edytor urządzenia",
     "layouts": "Układy",
-    "dashboard": "Pulpit",
     "actions": "Biblioteka akcji",
     "workflows": "Przepływy pracy",
     "projects": "Projekty"
@@ -35,20 +35,17 @@
     "selectorNotConnected": "Urządzenie: {{device}}, niepodłączone",
     "connectedGroup": "Podłączone urządzenia",
     "connected": "Podłączone",
-    "modelsGroup": "Modele urządzeń",
-    "otherModels": "Inne modele",
-    "models": "Modele",
+    "notConnectedGroup": "Niepodłączone urządzenia",
+    "notConnected": "Niepodłączone",
     "noModels": "Brak modeli urządzeń",
     "optionConnected": "Podłączone · {{serial}}",
-    "optionNotInCatalog": "Podłączone · {{serial}} · brak w katalogu urządzeń",
-    "optionNotConnected": "Niepodłączone"
+    "optionNotInCatalog": "Podłączone · {{serial}} · brak w katalogu urządzeń"
   },
   "profile": {
     "choose": "Wybierz profil do edycji",
     "selector": "Profil: {{profile}}",
     "selectorActive": "Profil: {{profile}}, aktywny na urządzeniu",
     "none": "Brak profilu",
-    "edit": "Edytuj profil",
     "noProfiles": "Nie ma jeszcze profili",
     "onDevice": "na urządzeniu",
     "manage": "Zarządzaj profilami…"

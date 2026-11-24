@@ -5,37 +5,22 @@
     "selector": "Layout: {{layout}}",
     "selectorDefault": "Layout: {{layout}}, default",
     "profileLayouts": "Layouts of this profile",
-    "noneForModel": "No layouts for {{model}} yet",
-    "noneForDevice": "No layouts for this device yet",
-    "forModel": "Layouts for {{model}}",
-    "forDevice": "Layouts for this device",
+    "empty": "No layouts for this device in this profile",
     "defaultMark": "default",
-    "sharedProfiles_one": "shared · {{count}} profile",
-    "sharedProfiles_other": "shared · {{count}} profiles",
     "onDevice": "Shown on the device",
-    "otherLayouts": "Other layouts for {{model}}",
-    "useLayout": "Use {{layout}} in this profile",
-    "unused": "Not used by any profile",
-    "usedBy": "Used by {{profiles}}",
-    "use": "Use in this profile",
-    "otherModels": "Layouts for other models",
-    "notForDevice": "Not for this device",
-    "madeFor": "Made for {{model}}; choose that device to edit it",
-    "anotherModel": "another model",
     "manageGroup": "Manage layouts",
     "new": "New layout…",
-    "duplicate": "Duplicate layout…",
-    "rename": "Rename layout…",
     "defaultHint": "The profile's layout for {{model}}: devices of the model show it",
-    "isDefault": "Default for this model",
-    "setDefault": "Set as default",
-    "delete": "Delete layout…",
     "manage": "Manage layouts…",
     "toast": {
-      "assigned": "{{layout}} is used in this profile",
-      "assignFailed": "“{{layout}}” was not added to this profile",
       "madeDefault": "{{layout}} is used for {{model}}",
       "defaultFailed": "“{{layout}}” was not made the default"
+    },
+    "star": {
+      "set": "Set as default",
+      "default": "Default layout",
+      "setDefaultLabel": "Set “{{layout}}” as default",
+      "isDefaultLabel": "“{{layout}}” is the default layout"
     }
   },
   "open": {
@@ -147,7 +132,10 @@
     "menu": {
       "rename": "Rename…",
       "duplicate": "Duplicate…",
-      "delete": "Delete…"
+      "delete": "Delete…",
+      "duplicateIn": "Duplicate into “{{profile}}”…",
+      "setDefaultIn": "Set as default in “{{profile}}”",
+      "defaultIn": "Default in “{{profile}}”"
     },
     "notUsed": "Not used",
     "profilesUsing": "Profiles using {{layout}}",
@@ -174,21 +162,18 @@
       "experimental": "(experimental)",
       "profile": "Assign to profile",
       "noProfile": "No profile (unassigned)"
+    },
+    "filter": {
+      "label": "Showing",
+      "profile": "Profile: {{profile}}",
+      "clear": "Show the layouts of every profile, not only {{profile}}",
+      "title": "Layouts of {{profile}}"
     }
   },
   "management": {
     "duplicateTitle": "Duplicate “{{layout}}”",
     "duplicateDescription": "The copy is added to this profile. The original stays as it is.",
     "copyName": "{{layout}} (copy)",
-    "duplicateFailed": "“{{layout}}” was not duplicated",
-    "renameTitle": "Rename “{{layout}}”",
-    "renameShared": "The layout is shared: every profile using it shows the new name.",
-    "renameFailed": "“{{layout}}” was not renamed",
-    "deleteShared": "Other profiles use this layout too, so it cannot be deleted here. Remove it from this profile in Settings › Profiles, or delete it for every profile on the Layouts page.",
-    "deleteOwn": "The layout and its pages are removed. Actions and workflows stay in the library.",
-    "deleting": "Deleting…",
-    "deleteFailed": "“{{layout}}” was not deleted",
-    "deleteFailedHint": "A layout other profiles use is deleted on the Layouts page, or removed from this profile in Settings › Profiles",
     "newTitle": "New layout for {{model}}",
     "newPlaceholder": "{{model}} layout",
     "createFailed": "“{{layout}}” was not created",

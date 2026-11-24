@@ -1,4 +1,15 @@
-import { Copy, MoreHorizontal, Pencil, Plus, Search, SquarePen, Trash2, Users } from "lucide-react"
+import {
+  Copy,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  SquarePen,
+  Star,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react"
 import { useContext, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
@@ -42,6 +53,9 @@ import { useAppContext } from "@/lib/app-context"
 import { hasUnknownModel, modelLabel } from "@/lib/shared-layouts"
 import type { ProfileSummary, SharedLayoutSummary } from "@/lib/types"
 import { isSupported } from "@/lib/verification"
+import { useSetDefaultLayout } from "@/layout-editor/set-default-layout"
+import { setLayoutProfileFilter, useLayoutProfileFilter } from "@/lib/layout-filter"
+import { ProfileLayouts } from "@/shell/profile-layouts"
 import { EditorSelectionContext } from "@/shell/editor-selection-context"
 import { useOpenLayout } from "@/shell/open-layout"
 
@@ -54,9 +68,14 @@ const NO_PROFILE = "none"
  */
 export function LayoutsPage() {
   const { t } = useTranslation()
-  const { revision, refresh } = useAppContext()
+  const { revision, refresh, profiles } = useAppContext()
   const { state, reload } = useAsync(() => api.listSharedLayouts(), `layouts:${revision}`)
   const [creating, setCreating] = useState(false)
+  const { open: openLayout, dialog: openDialog } = useOpenLayout()
+  // Filtered to one profile: its layouts in its order, with its defaults
+  // (what Settings › Profiles showed); cleared with the chip.
+  const filter = useLayoutProfileFilter()
+  const filtered = profiles.profiles.find((p) => p.id === filter)
   const searchRef = useRef<HTMLInputElement>(null)
   const changed = () => {
     reload()
@@ -86,9 +105,36 @@ export function LayoutsPage() {
         },
       ]}
     >
-      {state.status === "loading" && <Loading />}
-      {state.status === "error" && <ErrorNotice error={state.error} />}
-      {state.status === "ready" && (
+      {filtered && (
+        <div className="grid gap-6">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">{t("layouts:page.filter.label")}</span>
+            <Badge variant="secondary" className="gap-1 pr-1">
+              {t("layouts:page.filter.profile", { profile: filtered.name })}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="size-4 rounded-full"
+                aria-label={t("layouts:page.filter.clear", { profile: filtered.name })}
+                onClick={() => {
+                  setLayoutProfileFilter(null)
+                }}
+              >
+                <X />
+              </Button>
+            </Badge>
+          </div>
+          <ProfileLayouts
+            profileId={filtered.id}
+            title={t("layouts:page.filter.title", { profile: filtered.name })}
+            onOpenLayout={openLayout}
+          />
+          {openDialog}
+        </div>
+      )}
+      {!filtered && state.status === "loading" && <Loading />}
+      {!filtered && state.status === "error" && <ErrorNotice error={state.error} />}
+      {!filtered && state.status === "ready" && (
         <LayoutTable
           layouts={state.data}
           searchRef={searchRef}
@@ -113,6 +159,8 @@ export function LayoutsPage() {
 type RowDialog =
   | { kind: "rename"; layout: SharedLayoutSummary }
   | { kind: "duplicate"; layout: SharedLayoutSummary }
+  /** A copy added to the profile being edited (the editor's duplicate). */
+  | { kind: "duplicateIn"; layout: SharedLayoutSummary; profileId: string }
   | { kind: "delete"; layout: SharedLayoutSummary }
 
 function LayoutTable({
@@ -225,6 +273,22 @@ function LayoutTable({
           }}
         />
       )}
+      {dialog?.kind === "duplicateIn" && (
+        <NameDialog
+          title={t("layouts:management.duplicateTitle", { layout: dialog.layout.name })}
+          description={t("layouts:management.duplicateDescription")}
+          label={t("layouts:page.duplicate.label")}
+          confirmLabel={t("layouts:page.duplicate.confirm")}
+          initial={t("layouts:management.copyName", { layout: dialog.layout.name })}
+          onClose={close}
+          onSubmit={async (name) => {
+            await api.duplicateLayout(dialog.profileId, dialog.layout.id, name)
+            toast.success(t("layouts:page.toast.duplicated"))
+            close()
+            onChanged()
+          }}
+        />
+      )}
       {dialog?.kind === "delete" && (
         <DeleteDialog
           layout={dialog.layout}
@@ -250,6 +314,16 @@ function LayoutRow({
 }) {
   const { t } = useTranslation()
   const { open, dialog } = useOpenLayout()
+  const { editingProfileId, profiles } = useAppContext()
+  // The profile being edited, when it uses the layout: its default and a
+  // copy in it (what the editor's layout menu offered) are managed here.
+  const here = layout.profiles.find((p) => p.profileId === editingProfileId)
+  const hereName =
+    profiles.profiles.find((p) => p.id === here?.profileId)?.name ?? here?.profileName ?? ""
+  const { pending, setDefault } = useSetDefaultLayout(onChanged)
+  const makeDefault = () => {
+    if (here) void setDefault(here.profileId, layout, modelLabel(layout))
+  }
   // Unused: opening offers to assign it to the profile being edited, which
   // a layout of an unknown model cannot be.
   const closed = layout.profiles.length === 0 && hasUnknownModel(layout)
@@ -323,6 +397,29 @@ function LayoutRow({
                 <Copy />
                 {t("layouts:page.menu.duplicate")}
               </DropdownMenuItem>
+              {here && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      onDialog({ kind: "duplicateIn", layout, profileId: here.profileId })
+                    }}
+                  >
+                    <Copy />
+                    {t("layouts:page.menu.duplicateIn", { profile: hereName })}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={here.isDefault || pending !== null}
+                    title={t("layouts:menu.defaultHint", { model: modelLabel(layout) })}
+                    onSelect={makeDefault}
+                  >
+                    <Star />
+                    {here.isDefault
+                      ? t("layouts:page.menu.defaultIn", { profile: hereName })
+                      : t("layouts:page.menu.setDefaultIn", { profile: hereName })}
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"

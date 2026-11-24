@@ -66,7 +66,13 @@ import {
   pluginViewPage,
   usePluginNavigation,
 } from "@/shell/plugin-navigation"
-import { DeviceSelector, LayoutSelector, ProfileSelector, ToolbarEnd } from "@/shell/toolbar"
+import {
+  DeviceSelector,
+  LayoutSelector,
+  ProfileSelector,
+  SelectorTrail,
+  ToolbarEnd,
+} from "@/shell/toolbar"
 import { ViewActiveContext } from "@/shell/view-activity"
 
 type View = React.LazyExoticComponent<() => React.JSX.Element>
@@ -82,7 +88,6 @@ const PAGES: Partial<Record<CorePageId, View>> = {
   designer: lazy(() =>
     import("@/pages/layout-designer").then((m) => ({ default: m.LayoutDesignerPage })),
   ),
-  dashboard: lazy(() => import("@/pages/dashboard").then((m) => ({ default: m.DashboardPage }))),
   layouts: lazy(() => import("@/pages/layouts").then((m) => ({ default: m.LayoutsPage }))),
   actions: lazy(() => import("@/pages/actions").then((m) => ({ default: m.ActionsPage }))),
   ...(MARKETPLACE
@@ -101,7 +106,6 @@ const PAGES: Partial<Record<CorePageId, View>> = {
  */
 const PAGE_TITLES: Partial<Record<CorePageId, string>> = {
   designer: "",
-  dashboard: "Dashboard",
   layouts: "Layouts",
   actions: "Action Library",
   marketplace: "Marketplace",
@@ -313,11 +317,11 @@ function Studio() {
         : (corePageContext(page) ?? host?.context ?? modulePageContext(page))
   const selectors =
     showsDevice(viewContext) || showsProfile(viewContext) ? (
-      <>
+      <SelectorTrail>
         {showsDevice(viewContext) && <DeviceSelector onChosen={openEditor} />}
         {showsProfile(viewContext) && <ProfileSelector />}
         {showsLayout(viewContext) && <LayoutSelector />}
-      </>
+      </SelectorTrail>
     ) : undefined
   return (
     <AppContext value={context}>

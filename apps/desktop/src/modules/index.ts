@@ -76,15 +76,6 @@ export function moduleWindowView(id: string) {
   return module?.windows?.[id] ?? null
 }
 
-/** Dashboard cards of enabled modules. */
-export function dashboardCards(modules: ModuleInfo[]) {
-  return modules
-    .filter((m) => m.enabled)
-    .flatMap((m) =>
-      (frontend(m.id)?.dashboardCards ?? []).map((card, i) => ({ key: `${m.id}:${i}`, card })),
-    )
-}
-
 /** Identifier of a module's settings page: `module:<module id>`. */
 export function moduleSettingsId(module: string) {
   return `module:${module}`

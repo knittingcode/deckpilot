@@ -15,11 +15,11 @@
   "pages": {
     "language": {
       "title": "Język",
-      "description": "Język DeckPilot na tym komputerze"
+      "description": "Wybierz język interfejsu DeckPilot. Zmiana obowiązuje we wszystkich oknach i profilach na tym komputerze."
     },
     "profiles": {
       "title": "Profile",
-      "description": "Profile i profil aktywny na urządzeniu"
+      "description": "Zarządzaj profilami i ich ustawieniami."
     },
     "updates": {
       "title": "Aktualizacje",
@@ -51,7 +51,7 @@
     },
     "modules": {
       "title": "Moduły",
-      "description": "Funkcje DeckPilot, które można włączyć lub wyłączyć"
+      "description": "Natywne funkcje wbudowane w DeckPilot, które można włączyć lub wyłączyć"
     },
     "permissions": {
       "title": "Uprawnienia",
@@ -63,7 +63,7 @@
     },
     "about": {
       "title": "Informacje",
-      "description": "Wersja, licencja i system"
+      "description": "Zarządzanie urządzeniami Stream Deck w systemach macOS, Windows i Linux. Oprogramowanie open source na licencji Apache License 2.0."
     },
     "devDialogs": {
       "title": "Przegląd okien dialogowych",
@@ -82,10 +82,7 @@
     }
   },
   "language": {
-    "sectionTitle": "Język",
-    "sectionDescription": "Dotyczy wszystkich okien i profili na tym komputerze, od razu.",
-    "system": "Domyślny systemowy (zalecane)",
-    "systemHint": "Ustawienie domyślne systemowe stosuje kolejność języków z systemu operacyjnego. Jeśli żaden z nich nie jest dostępny, DeckPilot wyświetla się po angielsku."
+    "system": "Domyślny systemowy (zalecane)"
   },
   "shared": {
     "close": "Zamknij",
@@ -122,7 +119,6 @@
     "note": "Nie jest uruchamiane z tego elementu sterującego: {{reason}} Pozostaje przypisane, ale nie jest uruchamiane."
   },
   "about": {
-    "description": "Zarządzanie urządzeniami Stream Deck w systemach macOS, Windows i Linux. Oprogramowanie open source na licencji Apache License 2.0.",
     "version": "Wersja",
     "development": "(sesja deweloperska)",
     "previousVersion": "Poprzednia wersja",
@@ -134,7 +130,7 @@
     "statusUnreadable": "Nie udało się odczytać stanu agenta",
     "statusUnreadableNext": "Spróbuj ponownie; jeśli agent nie odpowiada, uruchom go ponownie",
     "status": "Stan",
-    "description": "Agent odpowiada za komunikację z urządzeniami i wykonywanie akcji oraz działa dalej po zamknięciu tego okna.",
+    "description": "Działa dalej po zamknięciu tego okna.",
     "process": "Proces",
     "processValue": "PID {{pid}}, uruchomiony {{time}}",
     "backend": "Obsługa urządzeń",
@@ -208,7 +204,7 @@
       "notEnabled": "Nie włączono modułu {{module}}",
       "notDisabled": "Nie wyłączono modułu {{module}}"
     },
-    "intro": "Wyłączenie modułu ukrywa jego strony i typy akcji. Akcje, przepływy pracy i układy, które go używają, są zachowywane i oznaczane jako niedostępne do czasu ponownego włączenia modułu. Wszystkie moduły są wbudowane w DeckPilot; instalowanie modułów z innych źródeł nie jest obsługiwane.",
+    "intro": "Wyłączenie modułu ukrywa jego strony i typy akcji. Akcje, przepływy pracy i układy, które go używają, są zachowywane i oznaczane jako niedostępne do czasu ponownego włączenia modułu.",
     "search": "Szukaj modułów",
     "show": "Pokaż moduły",
     "emptyTitle": "Nie znaleziono modułów",
@@ -253,7 +249,9 @@
       "requires_few": "Wymaga modułów {{modules}}. Najpierw je włącz.",
       "requires_many": "Wymaga modułów {{modules}}. Najpierw je włącz.",
       "requires_other": "Wymaga modułów {{modules}}. Najpierw je włącz."
-    }
+    },
+    "pluginsNote": "Osobno dystrybuowane wtyczki, takie jak GitHub, Docker czy Pomodoro, nie są modułami: instalujesz je i zarządzasz nimi w Marketplace.",
+    "openMarketplace": "Otwórz Marketplace"
   },
   "backup": {
     "windowFailed": "Nie otwarto okna",

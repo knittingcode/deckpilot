@@ -80,7 +80,6 @@ function MachineResources({
   const [editing, setEditing] = useState<ResourceCheck | "new" | null>(null)
   return (
     <SettingsSection
-      title={t("workspace:projects.machine.title")}
       description={t("workspace:projects.machine.description")}
       actions={
         <Button

@@ -1,4 +1,4 @@
-import { LayoutDashboard, LayoutGrid, LayoutTemplate, Library, type LucideIcon } from "lucide-react"
+import { LayoutGrid, LayoutTemplate, Library, type LucideIcon } from "lucide-react"
 
 import {
   Sidebar,
@@ -35,7 +35,6 @@ const RAIL_GROUPS: NavGroup[] = [
     items: [
       { id: "designer", label: "navigation:pages.designer", icon: LayoutGrid },
       { id: "layouts", label: "navigation:pages.layouts", icon: LayoutTemplate },
-      { id: "dashboard", label: "navigation:pages.dashboard", icon: LayoutDashboard },
     ],
   },
   {

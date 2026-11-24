@@ -1,35 +1,4 @@
 {
-  "dashboard": {
-    "title": "Pulpit",
-    "description": "Co działa w tej chwili",
-    "activateFailed": "Nie aktywowano profilu",
-    "updated": {
-      "title": "Zaktualizowano DeckPilot",
-      "description": "Zaktualizowano z wersji {{from}} do {{to}}. Konfiguracja została zachowana."
-    },
-    "updateAvailable": "Dostępna jest wersja {{version}}",
-    "viewUpdate": "Pokaż uaktualnienie",
-    "now": "Teraz",
-    "activeProfile": "Aktywny profil",
-    "activeProfileHint": "Profil działający na urządzeniu.",
-    "chooseProfile": "Wybierz profil",
-    "createProfile": "Utwórz profil",
-    "agent": "Agent w tle",
-    "agentSummary_one": "Wersja {{version}} · {{count}} urządzenie",
-    "agentSummary_few": "Wersja {{version}} · {{count}} urządzenia",
-    "agentSummary_many": "Wersja {{version}} · {{count}} urządzeń",
-    "agentSummary_other": "Wersja {{version}} · {{count}} urządzenia",
-    "noDevice": {
-      "title": "Nie wykryto urządzenia Stream Deck",
-      "description": "Podłącz obsługiwane urządzenie; zostanie wykryte automatycznie."
-    },
-    "inProfile": "W profilu {{profile}}",
-    "counts": {
-      "actions": "Akcje",
-      "workflows": "Przepływy pracy",
-      "layouts": "Układy"
-    }
-  },
   "profiles": {
     "new": "Nowy profil",
     "toast": {
@@ -38,10 +7,6 @@
       "activateFailed": "Nie aktywowano profilu {{profile}}",
       "deleted": "Usunięto profil"
     },
-    "all": {
-      "title": "Wszystkie profile",
-      "description": "Aktywny profil działa na urządzeniu. Każdy profil można edytować: wybierz go tutaj lub na pasku narzędzi."
-    },
     "empty": {
       "title": "Nie ma jeszcze profili",
       "body": "Utwórz pierwszy profil, klikając Nowy profil na pasku narzędzi."
@@ -49,22 +14,19 @@
     "table": {
       "label": "Profile",
       "name": "Nazwa",
-      "modified": "Ostatnia zmiana",
       "status": "Stan",
-      "actions": "Czynności"
+      "actions": "Czynności",
+      "description": "Opis",
+      "contents": "Zawartość"
     },
-    "beingEdited": "Edytowany",
-    "editProfile": "Edytuj profil {{profile}}",
     "runsOnDevice": "Działa na urządzeniu",
     "active": "Aktywny",
     "inactive": "Nieaktywny",
     "makeActive": "Aktywuj",
     "makeActiveLabel": "Aktywuj profil {{profile}}",
     "editing": {
-      "description": "Edytowany profil.",
       "editDetails": "Edytuj szczegóły…",
       "details": "Szczegóły profilu {{profile}}",
-      "description_label": "Opis",
       "noDescription": "Brak opisu",
       "actions": "Akcje",
       "workflows": "Przepływy pracy",
@@ -72,6 +34,7 @@
     },
     "menu": {
       "more": "Więcej dla profilu {{profile}}",
+      "open": "Otwórz",
       "rename": "Zmień nazwę…",
       "duplicate": "Duplikuj…",
       "delete": "Usuń…"
@@ -95,6 +58,29 @@
       "save": "Zapisz",
       "name": "Nazwa",
       "description": "Opis"
+    },
+    "summary": "{{layouts}} · {{actions}}",
+    "layoutCount_one": "{{count}} układ",
+    "layoutCount_few": "{{count}} układy",
+    "layoutCount_many": "{{count}} układów",
+    "layoutCount_other": "{{count}} układu",
+    "actionCount_one": "{{count}} akcja",
+    "actionCount_few": "{{count}} akcje",
+    "actionCount_many": "{{count}} akcji",
+    "actionCount_other": "{{count}} akcji",
+    "detail": {
+      "open": "Otwórz {{profile}}",
+      "back": "Wszystkie profile",
+      "status": "Stan",
+      "activeOn": "Aktywny na: {{devices}}",
+      "activeNoDevice": "Aktywny; żadne urządzenie nie jest podłączone",
+      "inactive": "Nieaktywny; urządzenia pokazują profil {{profile}}",
+      "noneActive": "Nieaktywny; żaden profil nie jest aktywny",
+      "layouts": "Układy",
+      "noLayouts": "Brak układów",
+      "layoutsShared": "Układy są współdzielone: ten profil się do nich odwołuje, a inne profile mogą używać tych samych.",
+      "manageLayouts": "Zarządzaj układami…",
+      "openInEditor": "Otwórz w edytorze"
     }
   },
   "pluginView": {
@@ -152,13 +138,6 @@
       "description": "Przełączenie zmienia tylko projekt, do którego odwołują się akcje. Nic nie jest pobierane, ponownie uruchamiane ani otwierane.",
       "inactiveWithProject": "Profil {{profile}} nie jest aktywny na urządzeniu. Jego aktywny projekt to {{key}}; zostanie przywrócony po aktywowaniu profilu.",
       "inactiveNoProject": "Profil {{profile}} nie jest aktywny na urządzeniu. Jego aktywny projekt nie jest ustawiony; zostanie przywrócony po aktywowaniu profilu."
-    },
-    "card": {
-      "label": "Aktywny projekt",
-      "project": "{{key}} · {{project}}",
-      "projectInProfile": "{{key}} · {{project}} w profilu {{profile}}",
-      "none": "Brak",
-      "noActiveProfile": "Aktywuj profil, aby przełączać projekty."
     },
     "actions": {
       "new": "Nowy projekt",
@@ -222,8 +201,7 @@
       "addResource": "Dodaj zasób"
     },
     "machine": {
-      "title": "Zasoby na tym komputerze",
-      "description": "Zasoby logiczne używane przez projekty, przypisane do ścieżek, aplikacji lub adresów URL na tym komputerze. Te przypisania nigdy nie są częścią profilu.",
+      "description": "Te przypisania nigdy nie są częścią profilu.",
       "add": "Dodaj przypisanie",
       "empty": "Brak używanych lub przypisanych zasobów",
       "value": "{{kind}}: {{value}}",

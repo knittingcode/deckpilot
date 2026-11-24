@@ -1,5 +1,5 @@
 import { Page } from "@/components/page"
-import { SettingsHeader } from "@/components/settings-layout"
+import { SettingsPage } from "@/components/settings-layout"
 import { useTranslation } from "@/i18n"
 import { useAppContext } from "@/lib/app-context"
 import { DEFAULT_SETTINGS_PAGE } from "@/lib/navigation"
@@ -15,7 +15,7 @@ export function SettingsView({ id }: { id: string }) {
   const View = page.view
   return (
     <Page
-      // The page shows its title itself (SettingsHeader); the toolbar shows
+      // The page shows its title itself (SettingsPage); the toolbar shows
       // only where it is, so the title is not there twice.
       title=""
       breadcrumbs={[
@@ -28,15 +28,13 @@ export function SettingsView({ id }: { id: string }) {
         { label: categoryLabel(page.category) },
       ]}
     >
-      {/* The page's sections: 2rem apart, each a heading over plain rows. */}
-      <div className="mx-auto grid w-full max-w-3xl content-start gap-8 pb-4">
-        <SettingsHeader title={page.title} description={page.description} />
+      <SettingsPage title={page.title} description={page.description}>
         {View ? (
           <View />
         ) : (
           page.module && <ModuleSettingsForm key={page.module.id} module={page.module} />
         )}
-      </div>
+      </SettingsPage>
     </Page>
   )
 }
