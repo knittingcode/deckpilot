@@ -161,11 +161,16 @@ impl std::fmt::Debug for CallSnapshot {
 }
 
 impl CallSnapshot {
-    /// The snapshot of a call as `observation` shows it, in `state`. The
-    /// title is taken only with the user's opt-in (`consent.titles`); it is
-    /// dropped otherwise, whatever the provider sent.
+    /// The snapshot of a call as `observation` shows it, in `state`,
+    /// which it entered at `since_unix_ms` (the engine's state-entry time,
+    /// mapped to wall time by the agent: a further observation of the same
+    /// state keeps it). The title is taken only with the user's opt-in
+    /// (`consent.titles`); it is dropped otherwise, whatever the provider
+    /// sent.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_observation(
         state: CallState,
+        since_unix_ms: u64,
         observation: &CallObservation,
         capabilities: CapabilitySet,
         provider: ProviderId,
@@ -180,7 +185,7 @@ impl CallSnapshot {
             camera_on: observation.camera_on,
             capabilities,
             provider: Some(provider),
-            since: observation.observed_at.as_millis(),
+            since: since_unix_ms,
             title: Self::title_with_consent(observation.title.as_ref(), consent),
             generation,
         }
@@ -238,6 +243,7 @@ mod tests {
     fn snapshot(titles: bool) -> CallSnapshot {
         CallSnapshot::from_observation(
             CallState::Active,
+            1_700_000_000_000,
             &observation(),
             CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
             ProviderId::new("mock").unwrap(),
@@ -257,6 +263,24 @@ mod tests {
         assert!(!serde_json::to_string(&without).unwrap().contains("layoffs"));
         assert_eq!(snapshot(true).title.as_deref(), Some("Board: layoffs"));
         assert_eq!(snapshot(true).mic_muted, Tri::Known(true));
+    }
+
+    #[test]
+    fn since_is_when_the_state_was_entered_not_the_observation() {
+        let first = snapshot(false);
+        let mut later = observation();
+        later.observed_at = Instant::from_secs(90);
+        let second = CallSnapshot::from_observation(
+            CallState::Active,
+            1_700_000_000_000,
+            &later,
+            CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
+            ProviderId::new("mock").unwrap(),
+            ConsentState::default(),
+            8,
+        );
+        assert_eq!(first.since, 1_700_000_000_000);
+        assert_eq!(second.since, first.since);
     }
 
     #[test]
