@@ -110,6 +110,13 @@ pub struct DeviceNavigation {
     /// other, the higher one is newer.
     #[serde(default)]
     pub seq: u64,
+    /// The Auto Exit countdown of the folder shown, as its protected Back
+    /// key shows it (whole seconds left, paused while a run started from
+    /// the folder is not over), so the editor's Canvas draws the same face
+    /// as the device. Absent without a countdown, and from agents before
+    /// it (protocol 16 still: an optional field, ignored by older apps).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_countdown: Option<deckpilot_core::FolderCountdown>,
 }
 
 impl DeviceNavigation {
