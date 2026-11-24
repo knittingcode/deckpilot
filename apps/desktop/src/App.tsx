@@ -88,7 +88,6 @@ const PAGES: Partial<Record<CorePageId, View>> = {
   designer: lazy(() =>
     import("@/pages/layout-designer").then((m) => ({ default: m.LayoutDesignerPage })),
   ),
-  actions: lazy(() => import("@/pages/actions").then((m) => ({ default: m.ActionsPage }))),
   ...(MARKETPLACE
     ? {
         marketplace: lazy(() =>
@@ -105,7 +104,6 @@ const PAGES: Partial<Record<CorePageId, View>> = {
  */
 const PAGE_TITLES: Partial<Record<CorePageId, string>> = {
   designer: "",
-  actions: "Action Library",
   marketplace: "Marketplace",
 }
 

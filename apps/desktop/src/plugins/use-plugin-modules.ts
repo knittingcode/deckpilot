@@ -17,6 +17,7 @@ import { pluginModules } from "@/lib/plugin-actions"
 import type { ModuleInfo } from "@/lib/types"
 
 import { type PluginClient, usePluginClientOverride } from "./api"
+import type { PluginDetails } from "./types"
 
 const NONE: ModuleInfo[] = []
 
@@ -46,8 +47,18 @@ export function usePluginModules(agentKey: string): ModuleInfo[] {
       const migrations = client.listModuleMigrations().catch(() => [])
       client.listPlugins().then(
         async (plugins) => {
-          const [names, moved] = await Promise.all([known, migrations])
-          if (active && current === generation) setModules(pluginModules(plugins, names, moved))
+          // The grants of enabled plugins with blocked actions: what each
+          // of those actions waits for, in structured form.
+          const blocked = plugins.filter(
+            (p) => p.state === "enabled" && p.actions.some((a) => !a.available),
+          )
+          const details = Promise.all(
+            blocked.map((p) => client.getPlugin(p.id).catch(() => null)),
+          ).then((all) => all.filter((d): d is PluginDetails => d !== null))
+          const [names, moved, grants] = await Promise.all([known, migrations, details])
+          if (active && current === generation) {
+            setModules(pluginModules(plugins, names, moved, grants))
+          }
         },
         () => {
           if (active && current === generation) setModules(NONE)

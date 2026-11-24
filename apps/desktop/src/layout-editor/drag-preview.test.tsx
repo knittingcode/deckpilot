@@ -105,14 +105,15 @@ describe("the drag preview", () => {
     )
     expect(document.querySelector("[data-slot=drag-preview]")).toBeNull()
     // A keyboard drag, as dnd-kit's keyboard sensor starts one.
-    screen.getByRole("button", { name: "Drag Mail onto a control" }).focus()
+    // (The library lists types and New folder; saved actions are not in it.)
+    screen.getByRole("button", { name: "Drag New folder onto an empty control" }).focus()
     await user.keyboard(" ")
     const chip = await vi.waitFor(() => {
       const found = document.querySelector("[data-slot=drag-preview]")
       expect(found).not.toBeNull()
       return found
     })
-    expect(chip).toHaveTextContent("Mail")
+    expect(chip).toHaveTextContent("New folder")
     expect(chip?.querySelector("svg")).toBeInTheDocument()
     await user.keyboard("{Escape}")
     await vi.waitFor(() => {

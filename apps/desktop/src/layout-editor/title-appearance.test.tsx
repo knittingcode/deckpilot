@@ -214,7 +214,9 @@ async function open(user: ReturnType<typeof userEvent.setup>, key: string) {
 }
 
 async function saved(user: ReturnType<typeof userEvent.setup>, index: number) {
-  await user.keyboard("{Escape}")
+  // Closes the popover when it is open (with nothing open, Escape would
+  // deselect the key).
+  if (document.querySelector("[data-slot=title-popover]")) await user.keyboard("{Escape}")
   await user.click(screen.getByRole("button", { name: /Save/ }))
   const [, layout] = api.saveLayout.mock.calls.at(-1) as [string, DeviceLayout]
   return layout.pages[0]?.bindings.find((b) => b.control.index === index)
@@ -338,14 +340,14 @@ describe("the title appearance popover", { timeout: 20_000 }, () => {
     reports = { 0: report({ mode: "autoFit", fits: false, truncated: true, fontSize: 9 }) }
     const user = renderEditor()
     const rows = await open(user, "Key 1")
-    expect(rows.getByRole("spinbutton", { name: "Maximum lines" })).toBeInTheDocument()
+    expect(rows.getByRole("textbox", { name: "Maximum lines" })).toBeInTheDocument()
     const mode = async (name: string) => {
       await user.click(rows.getByRole("combobox", { name: "Text mode" }))
       await user.click(within(screen.getByRole("listbox")).getByRole("option", { name }))
     }
     await mode("Single line")
     expect(rows.getByRole("radiogroup", { name: "When too long" })).toBeInTheDocument()
-    expect(rows.queryByRole("spinbutton", { name: "Maximum lines" })).not.toBeInTheDocument()
+    expect(rows.queryByRole("textbox", { name: "Maximum lines" })).not.toBeInTheDocument()
     await mode("Auto fit")
     expect(rows.getByRole("spinbutton", { name: "Minimum size (pt)" })).toBeInTheDocument()
     expect(rows.getByText(/Doesn't fit at the minimum size/)).toBeInTheDocument()
@@ -467,6 +469,108 @@ describe("scrolling titles in the previews", { timeout: 20_000 }, () => {
   })
 })
 
+describe("Maximum lines", { timeout: 20_000 }, () => {
+  const lines = (rows: ReturnType<typeof popover>) =>
+    rows.getByRole("textbox", { name: "Maximum lines" })
+
+  it("is one compact inline field: Auto or a number, without spinner arrows", async () => {
+    const user = renderEditor()
+    const rows = await open(user, "Key 2")
+    const field = lines(rows)
+    // A text field (no native spinner), the same look as Automatic exit's.
+    expect(rows.queryByRole("spinbutton", { name: "Maximum lines" })).toBeNull()
+    expect(field).toHaveAttribute("type", "text")
+    expect(field).toHaveAttribute("inputmode", "numeric")
+    expect(field).toHaveClass("[field-sizing:content]", "h-8", "w-auto", "text-center")
+    // Automatic: shown as Auto, not as zero; as wide as Auto either way.
+    expect(field).toHaveValue("")
+    expect(field).toHaveAttribute("placeholder", "Auto")
+    const width = field.style.minWidth
+    expect(width).toBe("calc(4ch + 1.25rem)")
+    // Label and field in one row, nothing else.
+    const row = field.parentElement as HTMLElement
+    expect(row).toHaveClass("flex", "items-center")
+    expect(row.textContent).toBe("Maximum lines")
+
+    await user.click(field)
+    await user.keyboard("3{Enter}")
+    expect(field).toHaveValue("3")
+    expect(field).not.toHaveAttribute("placeholder")
+    expect(field.style.minWidth).toBe(width)
+    // Live on the Canvas.
+    await waitFor(() => {
+      expect(control("Key 2").querySelector("img")?.getAttribute("src")).toContain('"maxLines":3')
+    })
+    expect((await saved(user, 1))?.appearance).toEqual({
+      textColor: "#ff0000",
+      bold: true,
+      titleAlign: "top",
+      text: { mode: "wrap", maxLines: 3 },
+    })
+  })
+
+  it("never stores what is not valid, and Escape cancels an edit", async () => {
+    const user = renderEditor()
+    const rows = await open(user, "Key 2")
+    const field = lines(rows)
+    for (const typed of ["0", "7", "2.5", "x"]) {
+      await user.clear(field)
+      await user.type(field, typed)
+      expect(field).toHaveAttribute("aria-invalid", "true")
+      expect(rows.getByText("Enter a whole number from 1 to 6.")).toBeInTheDocument()
+    }
+    // Enter does not store it: the stored value (Auto) comes back.
+    await user.keyboard("{Enter}")
+    expect(field).toHaveValue("")
+    expect(field).not.toHaveAttribute("aria-invalid")
+    // Escape cancels a valid but unfinished edit, and leaves the popover open.
+    await user.type(field, "4")
+    await user.keyboard("{Escape}")
+    expect(field).toHaveValue("")
+    expect(screen.getByRole("dialog", { name: "Title appearance" })).toBeInTheDocument()
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true)
+  })
+
+  it("goes back to Auto without touching the rest, with undo, redo and revert", async () => {
+    const user = renderEditor()
+    let rows = await open(user, "Key 2")
+    await user.click(lines(rows))
+    await user.keyboard("5{Enter}")
+    // Back to Auto: the field emptied (or the word typed).
+    await user.clear(lines(rows))
+    await user.type(lines(rows), "Auto{Enter}")
+    expect(lines(rows)).toHaveValue("")
+    expect(lines(rows)).toHaveAttribute("placeholder", "Auto")
+    // One undo step each.
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: "Undo" }))
+    rows = await open(user, "Key 2")
+    expect(lines(rows)).toHaveValue("5")
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: "Undo" }))
+    rows = await open(user, "Key 2")
+    expect(lines(rows)).toHaveValue("")
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: "Redo" }))
+    await user.click(screen.getByRole("button", { name: "Redo" }))
+    // Auto again: the other typography kept, nothing stored for the lines.
+    expect((await saved(user, 1))?.appearance).toEqual({
+      textColor: "#ff0000",
+      bold: true,
+      titleAlign: "top",
+    })
+    // Revert brings back what is saved.
+    rows = await open(user, "Key 2")
+    await user.click(lines(rows))
+    await user.keyboard("2{Enter}")
+    expect(lines(rows)).toHaveValue("2")
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: /Revert/ }))
+    rows = await open(user, "Key 2")
+    expect(lines(rows)).toHaveValue("")
+  })
+})
+
 describe("the title appearance popover in Polish", { timeout: 20_000 }, () => {
   afterEach(async () => {
     await act(async () => {
@@ -492,6 +596,9 @@ describe("the title appearance popover in Polish", { timeout: 20_000 }, () => {
       expect(rows.getByRole("button", { name })).toBeInTheDocument()
     }
     expect(rows.getByRole("combobox", { name: "Czcionka" })).toBeInTheDocument()
+    const lines = rows.getByRole("textbox", { name: "Maksymalna liczba linii" })
+    expect(lines).toHaveAttribute("placeholder", "Auto")
+    expect(lines.parentElement?.textContent).toBe("Maksymalna liczba linii")
     expect(rows.getByRole("button", { name: "Przywróć domyślny wygląd tytułu" })).toBeDisabled()
   })
 })

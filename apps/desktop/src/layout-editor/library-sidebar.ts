@@ -7,10 +7,15 @@
  * (`OBSOLETE_LIBRARY_KEYS`).
  */
 
-/** Where earlier versions remembered the library's width and collapsed state. */
+/**
+ * Where earlier versions remembered the library's width and collapsed state,
+ * and its "Compatible only" switch (the library now always lists everything,
+ * entries that do not fit the selected control disabled with the reason).
+ */
 export const OBSOLETE_LIBRARY_KEYS = [
   "deckpilot.editor.libraryWidth",
   "deckpilot.editor.libraryCollapsed",
+  "deckpilot.editor.compatibleOnly",
 ] as const
 
 type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">
@@ -31,24 +36,5 @@ export function removeObsoleteLibraryKeys(store: Storage | null = storage()) {
     } catch {
       // Nothing is read from it any more.
     }
-  }
-}
-
-export const LIBRARY_COMPATIBLE_ONLY_KEY = "deckpilot.editor.compatibleOnly"
-
-/** Whether the library hides what cannot go on the selected control. */
-export function loadCompatibleOnly(store: Storage | null = storage()) {
-  try {
-    return store?.getItem(LIBRARY_COMPATIBLE_ONLY_KEY) === "true"
-  } catch {
-    return false
-  }
-}
-
-export function saveCompatibleOnly(on: boolean, store: Storage | null = storage()) {
-  try {
-    store?.setItem(LIBRARY_COMPATIBLE_ONLY_KEY, String(on))
-  } catch {
-    // Remembered for this session only.
   }
 }

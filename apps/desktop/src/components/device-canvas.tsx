@@ -18,6 +18,7 @@ import {
   gridWidth,
 } from "@/components/device-geometry"
 import { KeyPreview } from "@/components/key-preview"
+import { NeedsConfiguration } from "@/components/needs-configuration"
 import { IS_MAC } from "@/hooks/use-navigation"
 import { useTranslation } from "@/i18n"
 import {
@@ -47,6 +48,12 @@ interface CanvasProps {
    * previous layout"): drawn dimmed with that detail, as on the device.
    */
   unavailable?: Map<string, string>
+  /**
+   * Controls whose action is a draft that needs configuration (required
+   * settings not filled in yet), by control key: the action's name. Marked
+   * on the key; it does not run until it is configured.
+   */
+  needsSetup?: Map<string, string>
   icons?: Map<string, string | null | undefined>
   /**
    * Protected system controls (a folder's Back key), with what they are in
@@ -141,6 +148,7 @@ const PER_CONTROL = new Set([
   "images",
   "animations",
   "unavailable",
+  "needsSetup",
   "system",
   "icons",
   "captions",
@@ -208,11 +216,13 @@ const Control = memo(function Control({ control, shape, tabStop, culled, props }
   const interactive = Boolean(props.onSelect)
   const face = props.faces?.get(key)
   const unavailable = props.unavailable?.get(key)
+  const draft = props.needsSetup?.get(key)
   // Empty keys are drawn by the app (the key's own LCD tone, in either
   // theme) rather than as the device's black image.
   const image =
     unavailable === undefined && face?.style !== "empty" ? props.images?.get(key) : undefined
   const described = props.summaries?.get(key) ?? (shape === "dial" ? props.captions?.get(key) : "")
+  // The draft mark names itself (`NeedsConfiguration`); the summary stays.
   const summary = unavailable && described ? `${described} (${unavailable})` : described
   const refusal =
     drop.isOver && props.dropRejection
@@ -290,6 +300,13 @@ const Control = memo(function Control({ control, shape, tabStop, culled, props }
           icon={props.icons?.get(key)}
           compact={shape === "zone"}
           unavailable={unavailable}
+        />
+      )}
+      {draft !== undefined && !culled && (
+        <NeedsConfiguration
+          name={draft}
+          compact
+          className="pointer-events-none absolute top-[6%] right-[6%]"
         />
       )}
     </button>

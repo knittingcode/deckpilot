@@ -1,3 +1,5 @@
+import { NeedsConfiguration } from "@/components/needs-configuration"
+import { isIncompleteIssue } from "@/lib/action-completeness"
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react"
 import {
   CircleAlert,
@@ -110,7 +112,10 @@ function RunBadge({ run }: { run: NodeRun }) {
 export function NodeView({ data, selected }: NodeProps<FlowNode>) {
   const { t } = useTranslation()
   const ports = outputPorts(data.type)
-  const errors = data.issues.filter((i) => i.severity === "error")
+  // Only configuration missing: a draft node, marked as such (it is saved,
+  // and does not run until it is configured), not drawn as broken.
+  const incomplete = data.issues.some(isIncompleteIssue)
+  const errors = data.issues.filter((i) => i.severity === "error" && !isIncompleteIssue(i))
   const warnings = data.issues.filter((i) => i.severity === "warning")
   const run = data.run
   const status = run?.state === "done" ? run.report.status : run?.state
@@ -151,6 +156,7 @@ export function NodeView({ data, selected }: NodeProps<FlowNode>) {
           {data.detail && (
             <span className="truncate text-xs text-muted-foreground">{data.detail}</span>
           )}
+          {incomplete && <NeedsConfiguration name={data.title} className="w-fit" />}
           {run && <RunBadge run={run} />}
         </div>
         {errors.length > 0 ? (

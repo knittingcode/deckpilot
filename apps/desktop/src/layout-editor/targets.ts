@@ -1,6 +1,7 @@
 // Targets offered by the library, the inspector and the context menu.
 
 import { i18n } from "@/i18n"
+import type { MissingAction } from "@/lib/action-availability"
 import type { BindingTarget, DeviceLayout, Profile, WorkflowEntry } from "@/lib/types"
 
 export interface TargetOption {
@@ -20,6 +21,11 @@ export interface TargetOption {
    * off: keys keep it and do not run it until the plugin is on again).
    */
   readOnly?: boolean
+  /**
+   * With `unavailable`, for an action whose plugin (or module) is missing:
+   * why, in terms the Inspector explains and offers a way out of.
+   */
+  missing?: MissingAction
   /** For an action: its type, so compatibility can be checked. */
   actionType?: string
   /**
@@ -84,6 +90,8 @@ export function targetGroups(
    * and cannot be placed on a key (it runs only from a Sub-workflow node).
    */
   entries: WorkflowEntry[] = [],
+  /** Why an assigned action of this type cannot run now, for the Inspector. */
+  missing: (actionType: string) => MissingAction | null = () => null,
 ): TargetGroup[] {
   const needsInputs = new Set(
     entries.filter((e) => e.block?.code === "needsInputs").map((e) => e.id),
@@ -100,11 +108,13 @@ export function targetGroups(
       label: i18n.t("editor:targets.actions"),
       options: profile.actions.map((a) => {
         const why = unavailable(a.actionType)
+        const lost = why ? missing(a.actionType) : null
         return {
           ...option({ type: "action", action: a.id }, a.name, "action"),
           icon: a.icon,
           actionType: a.actionType,
           ...(why ? { unavailable: why } : {}),
+          ...(lost ? { missing: lost } : {}),
         }
       }),
     },
@@ -161,6 +171,11 @@ export function markIncompatible(
 /** Why the option of `value` cannot be placed now, if it cannot. */
 export function unavailableTarget(groups: TargetGroup[], value: string): string | undefined {
   return findTarget(groups, value)?.unavailable
+}
+
+/** Why the action of `value` cannot run now, for the Inspector, if it cannot. */
+export function missingTarget(groups: TargetGroup[], value: string): MissingAction | undefined {
+  return findTarget(groups, value)?.missing
 }
 
 /** Whether the option of `value` is only read-only here (it still runs). */

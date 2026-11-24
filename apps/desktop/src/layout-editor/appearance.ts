@@ -40,6 +40,34 @@ export function shownBinding(
   )
 }
 
+/**
+ * After a gesture's action is removed, keeps the key's look and title: when
+ * the removed binding was the one the face showed and another binding now
+ * shows, that binding takes over the appearance and label it lacks. Nothing
+ * else changes; a key left with no binding has nowhere to keep them.
+ */
+export function keepShownLook(
+  before: DeviceLayout,
+  after: DeviceLayout,
+  pageId: string,
+  control: ControlId,
+): DeviceLayout {
+  const was = shownBinding(before, pageId, control)
+  const now = shownBinding(after, pageId, control)
+  if (!was || !now || now.trigger.type === was.trigger.type) return after
+  const appearance = now.appearance ?? was.appearance
+  const label = now.label ?? was.label
+  if (appearance === now.appearance && label === now.label) return after
+  const next: ControlBinding = { ...now, label: label ?? null }
+  if (appearance) next.appearance = appearance
+  return {
+    ...after,
+    pages: after.pages.map((p) =>
+      p.id === pageId ? { ...p, bindings: p.bindings.map((b) => (b === now ? next : b)) } : p,
+    ),
+  }
+}
+
 export function appearanceOf(
   layout: DeviceLayout,
   pageId: string,

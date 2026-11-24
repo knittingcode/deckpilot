@@ -234,13 +234,33 @@ describe("folder keys in the editor", { timeout: 20_000 }, () => {
     expect(fields[0]).toBe(within(region).getByRole("textbox", { name: "Folder name" }))
     expect(fields[0]).toHaveValue("Tools")
     expect(within(settings).queryByRole("textbox")).toBeNull()
+    // All of it in the settings column, in order: name, title appearance,
+    // Show title, then the folder's settings; the preview in its own column.
+    const scroll = document.querySelector<HTMLElement>("[data-slot=inspector-scroll]")
+    const ordered = [
+      within(region).getByRole("textbox", { name: "Folder name" }),
+      within(region).getByRole("button", { name: "Title appearance" }),
+      within(region).getByRole("switch", { name: "Show title" }),
+      within(settings).getByRole("switch", { name: "Automatic exit" }),
+      within(settings).getByRole("switch", { name: "Exit after action completes" }),
+    ]
+    for (const element of ordered) expect(scroll).toContainElement(element)
+    for (const [before, after] of ordered.slice(0, -1).map((e, i) => [e, ordered[i + 1]])) {
+      expect(before?.compareDocumentPosition(after as Node) ?? 0).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+    }
+    expect(
+      document.querySelector("[data-slot=inspector-preview-column] [data-slot=key-preview]"),
+    ).not.toBeNull()
+    expect(scroll?.querySelector("[data-slot=key-preview]")).toBeNull()
     expect(within(settings).getByRole("switch", { name: "Automatic exit" })).toBeInTheDocument()
     // No explanations about what is missing.
     expect(within(region).queryByText(/gesture.*not|cannot/i)).toBeNull()
     // An action key and a key that opens a top-level page keep their gestures.
     await user.click(control("Key 3"))
     expect(inspector().querySelector("[data-slot=folder-control]")).toBeNull()
-    expect(within(inspector()).getAllByRole("combobox").length).toBeGreaterThan(0)
+    expect(inspector().querySelectorAll("[data-slot=gesture-card]").length).toBeGreaterThan(0)
     await user.click(control("Key 4"))
     expect(inspector().querySelector("[data-slot=folder-control]")).toBeNull()
     // Opening the folder with a double click on its key.
@@ -262,7 +282,7 @@ describe("folder keys in the editor", { timeout: 20_000 }, () => {
 
   it("refuses Library drops on a folder key with the drop feedback", async () => {
     const user = renderEditor()
-    drop("library:action:shop", "key:1")
+    drop("library:back", "key:1")
     expect(toast.error).toHaveBeenCalledTimes(1)
     expect(vi.mocked(toast.error).mock.lastCall?.[1]).toMatchObject({
       description: "This key opens a folder and runs nothing else.",
@@ -376,7 +396,7 @@ describe("folder keys in the editor", { timeout: 20_000 }, () => {
         "Tools",
       )
       expect(within(inspector()).queryByRole("button", { name: /folderu/ })).toBeNull()
-      drop("library:action:shop", "key:1")
+      drop("library:back", "key:1")
       expect(vi.mocked(toast.error).mock.lastCall?.[1]).toMatchObject({
         description: "Ten klawisz otwiera folder i nie uruchamia niczego innego.",
       })

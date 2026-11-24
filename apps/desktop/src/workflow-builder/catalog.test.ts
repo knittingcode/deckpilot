@@ -124,3 +124,21 @@ describe("node descriptions", () => {
     expect(formatMs(1500)).toBe("1.5 s")
   })
 })
+
+describe("catalog by context", () => {
+  it("offers only what works as a workflow node, entries and new types alike", () => {
+    const keyOnly: ActionType = {
+      ...repository,
+      id: "deck.next-page",
+      contexts: ["key", "gesture"],
+    }
+    const node: ActionType = { ...repository, contexts: ["workflow"] }
+    const groups = moduleGroups(
+      [moduleInfo({ id: "projects", actionTypes: [node, keyOnly] })],
+      [...actions, { id: "a3", name: "Next", actionType: keyOnly.id, parameters: {} }],
+    )
+    const group = groups[0]
+    expect(group?.entries.map((e) => e.name)).toEqual(["Repo SHOP"])
+    expect(group?.types.map((t) => t.id)).toEqual(["projects.repository"])
+  })
+})
