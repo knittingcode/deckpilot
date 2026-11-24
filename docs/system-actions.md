@@ -140,14 +140,20 @@ Which icon a key shows, first match wins:
 
 1. the key's own icon or image (the Inspector's *Icon*, `KeyAppearance`),
    drawn by the renderer over everything below;
-2. the action's own icon, chosen in the action editor (an icon equal to
-   the type's, `file`, is the one new actions copy from their type and
-   does not count as a choice);
+2. the action's own icon, chosen in the action editor. New Open actions
+   are made without one (`icon: null`), so an icon set later is a choice.
+   Actions saved before this change were made with a copy of Open's icon,
+   `file`; they are never rewritten, and an own icon of exactly `file` is
+   treated as that default, not as a choice. A stored `file` cannot tell
+   the two apart, so choosing *File* by hand also shows the automatic icon;
+   to keep the document icon on a folder key, give the key its own icon
+   (1.);
 3. the automatic icon of the resolved target (`folder-open` or `file`);
 4. Open's default document icon (`file`).
 
-Nothing automatic is ever stored: the action keeps the icon it was made
-with, the key no icon of its own. A custom icon is never changed when the
+Nothing automatic is ever stored: a new Open action has no icon, an
+older one keeps the `file` it was made with, and the key has no icon of
+its own. A custom icon is never changed when the
 target changes; removing it shows the automatic icon again.
 
 **One computation.** The icon is chosen in the core's
@@ -172,9 +178,12 @@ that is not a local absolute path (network paths such as `\\server\share`
 or `//server/share` are never looked at), a `path` or location given by a
 variable (known only when the action runs), a missing file or folder, a
 permission error, a link out of the resource, or a lookup that takes more
-than 250 ms (a sleeping network drive; after 1 s of such waits the
-remaining targets are unknown until the next event, and a path whose
-lookup has not returned is not looked up again until it does).
+than 250 ms (a sleeping network drive), and a FIFO, socket or device
+file (only `stat`, never opened). Every lookup's time counts against a
+budget of 1 s per event: after it, the targets not looked at yet are
+unknown until the next event, so a page of keys on a slow mount holds
+the agent for about a second at most, once; a path whose lookup has not
+returned is not looked up again until it does.
 
 **When it is looked at again.** Answers are cached by resolved path
 (`TargetCache`) and never polled. The agent forgets them when the machine's

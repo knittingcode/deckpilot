@@ -2106,9 +2106,10 @@ fn binding_runs(
 /// The icon of a key that runs `instance` ([`KeyFace::symbol`]), in this
 /// order: the action's own icon, chosen by the user; the automatic icon of
 /// its target ([`crate::ActionHandler::automatic_symbol`]: Open shows a
-/// folder for a folder, a document for a file); the type's icon. An own
-/// icon that is the type's is the one new actions copy from their type,
-/// not a choice, so it does not hide the automatic icon. The key's own
+/// folder for a folder, a document for a file); the type's icon. New Open
+/// actions are made without an icon; older ones were made with a copy of
+/// the type's, which is never rewritten and so is not taken for a choice:
+/// an own icon equal to the type's does not hide the automatic icon. The key's own
 /// icon or image ([`crate::KeyAppearance`]) is drawn over all of them by
 /// the renderer. Nothing here is stored.
 fn action_symbol(

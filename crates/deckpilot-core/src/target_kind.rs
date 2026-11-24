@@ -55,9 +55,12 @@ impl TargetKinds for NoTargets {
 /// (a sleeping network drive) must not hold the device loop.
 const LOOKUP_TIMEOUT: Duration = Duration::from_millis(250);
 
-/// Longest total wait for lookups that timed out between two clears:
-/// after it, the remaining targets are unknown until the next clear.
-const TIMEOUT_BUDGET: Duration = Duration::from_secs(1);
+/// Longest total time spent on lookups between two clears, every lookup
+/// counted (fast, slow or timed out): after it, the targets not looked at
+/// yet are unknown until the next clear, so a page of keys on a slow
+/// mount holds the device loop for about this long at most, once per
+/// event.
+const LOOKUP_BUDGET: Duration = Duration::from_secs(1);
 
 /// The cache key: the resolved resource value and the relative path.
 type Key = (String, Option<String>);
@@ -65,23 +68,39 @@ type Key = (String, Option<String>);
 #[derive(Debug, Default)]
 struct Cached {
     kinds: HashMap<Key, TargetKind>,
-    /// Time spent on lookups that timed out since the last clear.
+    /// Time spent on lookups since the last clear.
     waited: Duration,
 }
 
 /// Answers of [`MachineTargets`], by resolved path, until [`TargetCache::clear`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TargetCache {
     cached: Mutex<Cached>,
+    /// [`LOOKUP_BUDGET`]; smaller in tests.
+    budget: Duration,
     /// Lookups whose thread has not answered yet, kept across clears: a
     /// path that hangs is not looked up again (no second thread) until
     /// its first lookup returns.
     pending: Arc<Mutex<HashSet<Key>>>,
 }
 
+impl Default for TargetCache {
+    fn default() -> Self {
+        Self::with_budget(LOOKUP_BUDGET)
+    }
+}
+
 impl TargetCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn with_budget(budget: Duration) -> Self {
+        Self {
+            cached: Mutex::default(),
+            budget,
+            pending: Arc::default(),
+        }
     }
 
     /// Forgets every answer: each target is looked at again when it is
@@ -115,16 +134,15 @@ impl TargetCache {
             if let Some(kind) = cached.kinds.get(&key) {
                 return *kind;
             }
-            if cached.waited >= TIMEOUT_BUDGET {
+            if cached.waited >= self.budget {
                 return TargetKind::Unknown;
             }
         }
         // Not under the lock: another caller may ask meanwhile.
-        let (kind, timed_out) = lookup_within(&key, &self.pending, LOOKUP_TIMEOUT);
+        let started = std::time::Instant::now();
+        let (kind, _) = lookup_within(&key, &self.pending, LOOKUP_TIMEOUT);
         let mut cached = self.lock();
-        if timed_out {
-            cached.waited += LOOKUP_TIMEOUT;
-        }
+        cached.waited += started.elapsed().min(LOOKUP_TIMEOUT);
         cached.kinds.insert(key, kind);
         kind
     }

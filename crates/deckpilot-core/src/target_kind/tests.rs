@@ -280,3 +280,89 @@ fn a_lookup_that_does_not_answer_in_time_is_unknown() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn every_lookup_counts_against_the_budget() {
+    // A budget smaller than any lookup: the first target is looked at, its
+    // real time is counted, and the next is unknown without a lookup until
+    // the cache is cleared (a slow mount holds the loop once, briefly).
+    let dir = scratch("budget");
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let folder = dir.to_string_lossy().into_owned();
+    let machine = machine(&[("folder.work", ResourceKind::Directory, &folder)]);
+    let cache = TargetCache::with_budget(Duration::from_nanos(1));
+    let targets = cache.on(&machine, None);
+    assert_eq!(
+        targets.kind_of(&fixed("folder.work"), Some("a")),
+        TargetKind::Directory
+    );
+    assert_eq!(
+        targets.kind_of(&fixed("folder.work"), Some("b")),
+        TargetKind::Unknown
+    );
+    // What was found is still answered from the cache.
+    assert_eq!(
+        targets.kind_of(&fixed("folder.work"), Some("a")),
+        TargetKind::Directory
+    );
+    cache.clear();
+    assert_eq!(
+        targets.kind_of(&fixed("folder.work"), Some("b")),
+        TargetKind::Directory
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn pipes_and_sockets_are_unknown_and_never_opened() {
+    let dir = scratch("special");
+    let fifo = dir.join("pipe");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .is_ok_and(|status| status.success());
+    assert!(made, "mkfifo");
+    // A socket's path must be short (`SUN_LEN`, 104 bytes on macOS).
+    let short = std::env::temp_dir().join(format!("dps{}", std::process::id()));
+    std::fs::create_dir_all(&short).unwrap();
+    let socket = short.join("socket");
+    let _ = std::fs::remove_file(&socket);
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    for path in [fifo, socket] {
+        // Opening a FIFO for reading blocks until a writer comes: a lookup
+        // that opened it would never answer. `lookup` itself, on a thread,
+        // must answer at once.
+        let value = path.to_string_lossy().into_owned();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(lookup(&value, None));
+        });
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)),
+            Ok(TargetKind::Unknown),
+            "{}",
+            path.display()
+        );
+    }
+    // As a binding (a picked "file") and inside a folder alike.
+    let folder = short.to_string_lossy().into_owned();
+    let pipe = dir.join("pipe").to_string_lossy().into_owned();
+    let machine = machine(&[
+        ("file.pipe", ResourceKind::Other, &pipe),
+        ("folder.special", ResourceKind::Directory, &folder),
+    ]);
+    let cache = TargetCache::new();
+    let targets = cache.on(&machine, None);
+    assert_eq!(
+        targets.kind_of(&fixed("file.pipe"), None),
+        TargetKind::Unknown
+    );
+    assert_eq!(
+        targets.kind_of(&fixed("folder.special"), Some("socket")),
+        TargetKind::Unknown
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&short);
+}

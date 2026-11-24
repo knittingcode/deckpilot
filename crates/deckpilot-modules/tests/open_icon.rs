@@ -587,3 +587,43 @@ fn the_preview_and_the_device_draw_the_same_key() {
     // And the two targets look different.
     assert_ne!(frames[0], frames[1]);
 }
+
+#[test]
+fn the_actions_own_icon_removed_or_set_to_the_default() {
+    let dir = Scratch::new("own-icon");
+    let machine = machine(&[("folder.work-abc123", ResourceKind::Directory, dir.path(""))]);
+    // A new Open action has no icon: the automatic one.
+    let mut instance = open(location("folder.work-abc123"));
+    instance.icon = None;
+    let mut profile = profile(instance, None);
+    assert_eq!(symbol(&profile, &machine), FOLDER);
+    // An icon chosen for the action wins on the device...
+    let mut runtime = runtime(&profile, machine.clone());
+    profile.actions[0].icon = Some("rocket".into());
+    runtime.reload_profile(profile.clone());
+    assert_eq!(device_face(&runtime).symbol.as_deref(), Some("rocket"));
+    // ...and removing it brings the automatic icon back.
+    profile.actions[0].icon = None;
+    runtime.reload_profile(profile.clone());
+    assert_eq!(device_face(&runtime).symbol.as_deref(), Some(FOLDER));
+    // `file`, Open's own icon, as older actions were saved with it (and as
+    // choosing File stores it): the default, not a choice, never rewritten.
+    profile.actions[0].icon = Some(FILE.into());
+    runtime.reload_profile(profile.clone());
+    assert_eq!(device_face(&runtime).symbol.as_deref(), Some(FOLDER));
+    assert_eq!(
+        runtime.profile().unwrap().actions[0].icon.as_deref(),
+        Some(FILE)
+    );
+    // The key's own icon is what keeps a document on a folder key.
+    let look = KeyAppearance {
+        icon: Some(IconRef {
+            id: AssetRef::parse("deckpilot.file").unwrap(),
+            fit: IconFit::Fit,
+        }),
+        ..KeyAppearance::default()
+    };
+    profile.layouts[0].pages[0].bindings[0].appearance = Some(look.clone());
+    runtime.reload_profile(profile);
+    assert_eq!(device_face(&runtime).appearance, Some(look));
+}

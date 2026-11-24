@@ -5024,11 +5024,11 @@ fn open_keys_preview_the_icon_of_what_they_open() {
     );
     let location =
         |key: &str| json!({ "type": "resource", "value": { "type": "fixed", "key": key } });
-    // A new Open action, as the library makes it (the type's icon copied).
+    // A new Open action, as the library makes it: no icon of its own.
     let action = h.ok(
         "create_action",
         json!({ "profileId": profile_id, "action": {
-            "name": "Open", "actionType": "system.open-file", "icon": "file",
+            "name": "Open", "actionType": "system.open-file", "icon": null,
             "parameters": { "location": location("file.report-pdf-abc123") } } }),
     );
     let mut layout = h.ok(
@@ -5065,7 +5065,10 @@ fn open_keys_preview_the_icon_of_what_they_open() {
             json!({ "profileId": profile_id, "action": edited }),
         );
         // Never written as the action's icon.
-        assert_eq!(saved["icon"], "file");
+        assert_eq!(
+            saved.get("icon").cloned().unwrap_or(Value::Null),
+            Value::Null
+        );
     };
 
     // A file, then a folder, then the file again.

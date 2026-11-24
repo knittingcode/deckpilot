@@ -7,6 +7,7 @@ import { controlKey, controlLabel } from "@/lib/layout-model"
 import type { ActionInstance, ActionType, KeyFace, Workflow } from "@/lib/types"
 
 import type { DragSource } from "./editing"
+import { shownActionIcon } from "@/lib/system-actions"
 
 const ICON = "size-4 shrink-0"
 
@@ -69,7 +70,7 @@ export function dragLook(
           const action = context.actions.find((a) => a.id === target.action)
           return {
             label: action?.name ?? i18n.t("editor:drag.missingAction"),
-            icon: <ActionIcon name={action?.icon} className={ICON} />,
+            icon: <ActionIcon name={shownActionIcon(action)} className={ICON} />,
           }
         }
         case "workflow":

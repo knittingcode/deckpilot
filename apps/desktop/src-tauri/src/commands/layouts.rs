@@ -647,6 +647,9 @@ fn page_preview(
     // as the agent does for the device (metadata only, cached).
     let machine = crate::state::machine_config(&store)?;
     let targets = state.open_targets(&store, layout.id)?.on(&machine, project);
+    // Everything is read: the lookups below (filesystem metadata) must not
+    // hold the session, which every other command waits for.
+    drop(store);
     let empty = std::collections::BTreeMap::new();
     let (faces, titles) = core_display(&profile, project, |core| {
         let agent = ResolvedTemplates {

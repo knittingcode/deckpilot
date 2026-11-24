@@ -16,7 +16,14 @@ import { KeyPreview } from "@/components/key-preview"
 import { MachineResourceField } from "@/components/machine-resource-field"
 import { i18n } from "@/i18n"
 import { creatableTypes } from "@/lib/modules"
-import { OPEN, OPEN_FOLDER, actionTypeName, machinePick } from "@/lib/system-actions"
+import {
+  OPEN,
+  OPEN_FOLDER,
+  actionTypeName,
+  machinePick,
+  newActionIcon,
+  shownActionIcon,
+} from "@/lib/system-actions"
 import { moduleInfo } from "@/lib/test-fixtures"
 import type { ActionInstance, ActionType, KeyFace, MachineResourceBinding } from "@/lib/types"
 import { eventAffects } from "@/lib/variables"
@@ -126,10 +133,19 @@ describe("the Action Library", () => {
     expect(actionTypeName(openFolder)).toBe("Open folder")
   })
 
-  it("makes new Open actions with Open's own icon, never an automatic one", () => {
+  it("makes new Open actions without an icon, never an automatic one", () => {
     const made = newAction([], open)
     expect(made.actionType).toBe(OPEN)
-    expect(made.icon).toBe("file")
+    // The keys show what they open; an icon set later is the user's.
+    expect(made.icon).toBeNull()
+    expect(newActionIcon(open)).toBeNull()
+    // Other types still start with their own icon.
+    expect(newActionIcon(openFolder)).toBe("folder-open")
+    // Lists show Open's document icon for an action without one, and an
+    // icon chosen for it as it is.
+    expect(shownActionIcon({ actionType: OPEN, icon: null })).toBe("file")
+    expect(shownActionIcon({ actionType: OPEN, icon: "rocket" })).toBe("rocket")
+    expect(shownActionIcon({ actionType: "general.log", icon: null })).toBeNull()
   })
 })
 
