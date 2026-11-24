@@ -345,7 +345,7 @@ describe("granting, from what the agent reports", () => {
         ...(t.id === status.id ? {} : { unavailableReason: RAW }),
         definition: t,
       })),
-    } as unknown as PluginSummary
+    }
   }
 
   it("reads the grants of a plugin with blocked actions and offers Grant (usePluginModules)", async () => {

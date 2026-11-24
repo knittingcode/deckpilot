@@ -17,11 +17,12 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
-- Device Editor: saved actions are managed in the editor's Action Library
-  (edit, duplicate, where they are used, delete when unused, new). The
-  Inspector says when a key's saved action is shared, and an edit says it
-  changes every place. The separate Action Library page and its rail entry
-  are gone.
+- Device Editor: a key's or gesture's saved action is managed from its
+  card in the Inspector: Edit opens the Action Library's editor, which says
+  when the action is shared and changes every place, and Usages lists where
+  it is used. An edit that would leave a shared action without a required
+  setting asks first and says how many places stop running. The separate
+  Action Library page and its rail entry are gone.
 - Device Editor: dropping an action type whose required settings have no
   defaults (the app of Open Application, say) places a draft: its own
   action per key or gesture, marked on the Canvas and its gesture card as

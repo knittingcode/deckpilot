@@ -138,7 +138,13 @@
     "run": "Run",
     "runHint": "Runs in the agent for the active profile",
     "usedIn": "Used in",
-    "deleteHint": "To delete the action, choose for each reference whether it uses another action or is unbound."
+    "deleteHint": "To delete the action, choose for each reference whether it uses another action or is unbound.",
+    "sharedDraft": {
+      "title": "Save {{name}} without its required settings?",
+      "description_one": "This action is used in {{count}} place. Without its required settings it stops running there until it is configured again.",
+      "description_other": "This action is used in {{count}} places. Without its required settings it stops running in all of them until it is configured again.",
+      "confirm": "Save anyway"
+    }
   },
   "references": {
     "notUsed": "Not used in any workflow or layout.",

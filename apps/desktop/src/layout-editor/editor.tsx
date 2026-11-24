@@ -285,8 +285,8 @@ export function LayoutEditor({
     for (const type of gestureContext.types) if (!map.has(type.id)) map.set(type.id, type)
     return map
   }, [modules, catalog, gestureContext.types])
-  // The saved actions' commands in the library (edit, duplicate, usages,
-  // delete when unused, new): the Action Library page's, in place.
+  // A binding's saved action in the Inspector: Edit (the Action Library's
+  // editor, which says when it changes every place) and Usages.
   const savedActionTools = useSavedActionTools({ profileId, view })
   // The profile's other layouts for this model, as "Switch to …" entries.
   const switchType = typeById.get(SWITCH_LAYOUT)

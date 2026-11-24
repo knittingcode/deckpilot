@@ -23,7 +23,9 @@ const draft = action("draft", "Notify", notify.id)
 beforeAll(installDomStubs)
 beforeEach(() => {
   resetApi()
-  api.updateAction.mockResolvedValue(undefined)
+  api.updateAction.mockImplementation((_profile: string, saved: ActionInstance) =>
+    Promise.resolve(saved),
+  )
 })
 afterEach(cleanup)
 
