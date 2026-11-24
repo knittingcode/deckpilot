@@ -82,6 +82,7 @@ import type {
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
 import { type KeyLook, KeyLookContext } from "./key-look-context"
+import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
 import {
   catalogGroups,
   existingDefault,
@@ -328,11 +329,15 @@ export function LayoutEditor({
   // preview: the device draws its own images.
   const pixelRatio = useDevicePixelRatio()
   const keyPixels = previewPixels(displayPixels(unit - 2 * keyBorderPixels(unit), pixelRatio))
+  // Titles and labels with variables are drawn again when the agent reports
+  // a change of what they show (profile, project, shared values), as the
+  // device is: the Canvas, the Inspector and the device agree.
+  const displayTick = useDisplayRefresh(profileId)
   const { faces, images, incompatible, reports, navigation } = usePreviewFaces(
     profileId,
     draft,
     pageId,
-    `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}`,
+    `${library.icons.map((i) => i.id).join(",")}|${String(visualLibrary.version)}|${String(displayTick)}`,
     liveStates.live,
     keyPixels,
   )
@@ -659,7 +664,7 @@ export function LayoutEditor({
     }
     return map
   }, [model, draft, pageId, actions, workflows])
-  const resolvedTitles = useResolvedTitles(profileId, pageTitles, view.activeProjectId)
+  const resolvedTitles = useResolvedTitles(profileId, pageTitles, view.activeProjectId, displayTick)
   const summaries = useMemo(() => {
     const render = (text: string) => {
       const expanded = pageTitles.get(text) ?? text
@@ -1392,6 +1397,8 @@ function useResolvedTitles(
   profileId: string,
   titles: Map<string, string>,
   activeProject: string | null | undefined,
+  /** `useDisplayRefresh`: the agent reported a change of what titles show. */
+  tick: number,
 ): Map<string, string> {
   const templates = [...new Set(titles.values())].filter((text) => text.includes("{"))
   const key = JSON.stringify(templates)
@@ -1416,7 +1423,7 @@ function useResolvedTitles(
     return () => {
       cancelled = true
     }
-  }, [profileId, key, activeProject])
+  }, [profileId, key, activeProject, tick])
   return resolved.key === key ? resolved.texts : EMPTY_TITLES
 }
 

@@ -15,12 +15,14 @@ import {
   type ResolvedDisplayTemplate,
   type UnresolvedReference,
   listDisplayVariables,
+  pickerEntries,
   resolveDisplayTemplates,
   shownOnKey,
   titleSegments,
 } from "@/lib/display-templates"
 import type { CatalogEntry } from "@/lib/types"
 import { insertedReference } from "@/lib/variable-catalog"
+import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
 
 /** How long typing rests before the title is resolved again. */
 const RESOLVE_DELAY_MS = 250
@@ -47,7 +49,7 @@ export function TitleVariablePicker({
     listDisplayVariables({ profile: profileId }).then(
       (found) => {
         if (!cancelled) {
-          setEntries(found)
+          setEntries(pickerEntries(found))
           setFailed(false)
         }
       },
@@ -145,6 +147,9 @@ export function TitleVariablePicker({
 function useResolvedTitle(profileId: string, template: string): ResolvedDisplayTemplate | null {
   const [resolved, setResolved] = useState<ResolvedDisplayTemplate | null>(null)
   const uses = template.includes("{")
+  // Asked again when the agent reports a change of the profile, its
+  // project or a shared value (no polling), as the device redraws.
+  const tick = useDisplayRefresh(profileId, uses)
   useEffect(() => {
     if (!uses) return
     let cancelled = false
@@ -163,7 +168,7 @@ function useResolvedTitle(profileId: string, template: string): ResolvedDisplayT
       cancelled = true
       clearTimeout(timer)
     }
-  }, [profileId, template, uses])
+  }, [profileId, template, uses, tick])
   // An answer for another text (typed since) is not shown.
   return uses && resolved?.template === template ? resolved : null
 }
