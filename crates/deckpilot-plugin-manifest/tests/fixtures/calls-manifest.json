@@ -46,7 +46,10 @@
             "key": "mode",
             "label": "Come back",
             "required": true,
-            "kind": { "type": "choice", "options": ["timer", "completion", "completion-or-timeout"] },
+            "kind": {
+              "type": "choice",
+              "options": ["timer", "completion", "completion-or-timeout"]
+            },
             "default": { "type": "choice", "value": "completion-or-timeout" }
           }
         ]
@@ -58,7 +61,10 @@
         "shape": "grid",
         "version": 1,
         "pages": [
-          { "page": "incoming", "controls": [{ "control": "key", "index": 0, "action": "answer" }] },
+          {
+            "page": "incoming",
+            "controls": [{ "control": "key", "index": 0, "action": "answer" }]
+          },
           {
             "page": "active",
             "controls": [
