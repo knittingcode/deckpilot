@@ -249,8 +249,7 @@ saved.
 
 One managed layout per device model, generated from the template of the
 model's capability class (`grid-small` ≤ 6 keys, `grid` 7–15, `grid-large`,
-`keys-dials`, `no-display`). Nothing assumes an MK.2: a template control
-the model lacks is left out. Ids are UUID v5: the layout of the model and
+`keys-dials`, `no-display`). Nothing assumes an MK.2. Ids are UUID v5: the layout of the model and
 the template's major version, pages and action instances of the layout and
 their key. Controls are placed relative to the grid: a template position
 the model has is kept, and one it lacks moves to the first free key, so

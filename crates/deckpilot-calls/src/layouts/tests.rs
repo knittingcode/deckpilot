@@ -67,7 +67,7 @@ fn ids_are_stable_and_follow_the_model_and_major_version() {
 }
 
 #[test]
-fn a_model_of_another_class_is_refused_and_missing_controls_are_left_out() {
+fn a_model_of_another_class_is_refused_and_missing_controls_move_to_free_keys() {
     let catalog = ModelCatalog::builtin();
     let mk2 = catalog
         .get(&DeviceModelId::new(models::STREAM_DECK_MK2_ID))
