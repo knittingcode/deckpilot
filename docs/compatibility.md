@@ -199,7 +199,7 @@ Plugin API 1.10 (unreleased,
 [gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
 additive. `contributes.gesturePresets` validates only with `^1.10`; a
 `^1.9` manifest without it validates exactly as before, and an agent of
-1.9 (0.14.0 and older) reports a `^1.10` version `incompatible`. Presets
+1.9 (0.15.0 and older) reports a `^1.10` version `incompatible`. Presets
 are data only: no capability operation, ABI or permission is added, and
 nothing of a preset is stored, so no document, schema or migration
 changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
