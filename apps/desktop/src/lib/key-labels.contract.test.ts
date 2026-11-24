@@ -27,6 +27,7 @@ describe("the key label contract", () => {
       padding: LABEL_DEFAULTS.padding,
       radius: LABEL_DEFAULTS.radius,
       plateOpacity: LABEL_DEFAULTS.plateOpacity,
+      coverPlateOpacity: LABEL_DEFAULTS.coverPlateOpacity,
       colorPlateOpacity: LABEL_DEFAULTS.colorPlateOpacity,
     }).toEqual(contract.defaults)
   })

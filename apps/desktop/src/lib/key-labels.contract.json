@@ -22,7 +22,8 @@
     "padding": 2,
     "radius": 2,
     "plateOpacity": 60,
-    "colorPlateOpacity": 100
+    "colorPlateOpacity": 100,
+    "coverPlateOpacity": 85
   },
   "keyLabels": [
     {
