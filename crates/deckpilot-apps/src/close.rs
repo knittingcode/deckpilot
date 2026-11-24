@@ -569,7 +569,18 @@ fn still_same(process: &ProcessInfo) -> bool {
         return false;
     }
     let owner = now.user_id().map(|uid| (**uid).to_string());
-    owner == process.owner && now.exe().map(Path::to_path_buf) == process.exe
+    let started = Some(now.start_time()).filter(|t| *t > 0);
+    owner == process.owner
+        && now.exe().map(Path::to_path_buf) == process.exe
+        && same_start(started, process.started)
+}
+
+/// The same, known start time: a process started later with the same id
+/// (and even the same executable) is another instance. A start time that
+/// cannot be read on either side is never taken as the same process, so
+/// nothing is signalled and a wait ends as "not running".
+fn same_start(now: Option<u64>, matched: Option<u64>) -> bool {
+    matches!((now, matched), (Some(a), Some(b)) if a == b)
 }
 
 /// `SIGTERM`, or `SIGKILL` when forced, after checking that the process

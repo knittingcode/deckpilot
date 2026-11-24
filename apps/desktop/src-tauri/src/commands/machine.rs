@@ -239,6 +239,26 @@ pub async fn application_present<R: Runtime>(
     .map_err(|e| CommandError::invalid("applicationsUnreadable", e.to_string()))
 }
 
+/// Whether what resource `key` is bound to on this computer is still there
+/// (a chosen file, folder or application), for the pickers to say that it
+/// was moved or deleted before the action runs. It takes a key, never a
+/// path, so only what the user bound is ever looked at.
+#[tauri::command]
+pub async fn resource_status<R: Runtime>(
+    window: WebviewWindow<R>,
+    state: State<'_, AppState>,
+    key: ResourceKey,
+) -> CommandResult<crate::modules::projects::ResourceStatus> {
+    main_only(&window)?;
+    let config = machine_config(&*state.store()?)?;
+    let Some(binding) = config.binding(&key).cloned() else {
+        return Ok(crate::modules::projects::ResourceStatus::Unbound);
+    };
+    tauri::async_runtime::spawn_blocking(move || crate::modules::projects::status_of(&binding))
+        .await
+        .map_err(|e| CommandError::invalid("resourceUnreadable", e.to_string()))
+}
+
 /// An application the user picked with the file picker, as a binding
 /// stores it: an `.app` by its bundle id, an installed `.desktop` file by
 /// its desktop-file id, a Windows executable registered under App Paths by
