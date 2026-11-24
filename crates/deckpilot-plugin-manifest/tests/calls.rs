@@ -206,6 +206,15 @@ fn a_calls_plugin_has_no_way_out_but_the_host() {
             "openUrl",
             json!({"kind": "openUrl", "hosts": ["teams.microsoft.com"], "justification": "x"}),
         ),
+        (
+            "credentials",
+            json!({"kind": "credentials", "refs": ["token"], "justification": "x"}),
+        ),
+        (
+            "tools",
+            json!({"kind": "tools", "tools": [{"executable": "git",
+                   "subcommands": [{"name": "status"}]}], "justification": "x"}),
+        ),
     ] {
         let mut value = calls();
         value["permissions"]

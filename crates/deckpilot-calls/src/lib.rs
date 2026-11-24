@@ -31,10 +31,10 @@ pub mod snapshot;
 pub use clock::Instant;
 pub use ops::{CallControlRequest, CallControlResult, GateError, OP_CALL_CONTROL, OP_CALL_STATE};
 pub use provider::{
-    Availability, CallAction, CallCommand, CallKey, CallKind, CallObservation, CallProvider,
-    Capability, CapabilitySet, CommandOutcome, CommandRefusal, CommandToken, Condition,
-    ConsentState, Direction, DisconnectReason, Discovery, Evidence, ObservedEnd, ObservedPhase,
-    Private, ProviderCx, ProviderError, ProviderEvent, ProviderId, ProviderSession, Support, Tri,
-    UnsupportedReason,
+    AppVersion, Availability, CallAction, CallCommand, CallKey, CallKind, CallObservation,
+    CallProvider, Capability, CapabilitySet, CommandOutcome, CommandRefusal, CommandToken,
+    Condition, ConsentState, Direction, DisconnectReason, Discovery, Evidence, ObservedEnd,
+    ObservedPhase, Private, ProviderCx, ProviderError, ProviderEvent, ProviderId, ProviderSession,
+    Support, Tri, UnsupportedReason,
 };
 pub use snapshot::{CallSnapshot, CallState, EndCause, FailureCode};

@@ -819,7 +819,9 @@ fn stale_and_forged_outcomes_are_dropped() {
     ] {
         h.event(ProviderEvent::CommandOutcome {
             token: forged,
-            outcome: CommandOutcome::Rejected { code: "no".into() },
+            outcome: CommandOutcome::Rejected {
+                code: crate::FailureCode::new("no"),
+            },
         });
     }
     assert_eq!(h.done().len(), 0);

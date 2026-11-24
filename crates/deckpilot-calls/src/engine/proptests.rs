@@ -134,7 +134,9 @@ fn run(seed: u64) {
                     let outcome = match rng.below(3) {
                         0 => CommandOutcome::Confirmed,
                         1 => CommandOutcome::Unknown,
-                        _ => CommandOutcome::Rejected { code: "no".into() },
+                        _ => CommandOutcome::Rejected {
+                            code: crate::FailureCode::new("no"),
+                        },
                     };
                     engine.on_event(
                         &providers[owner],

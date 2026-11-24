@@ -779,6 +779,21 @@ impl PluginManager {
         let consent = Consent::of(keys.iter().cloned(), decided_by);
         check_consent(id, &declared, &consent)?;
         check_bundled_tiers(id, &declared, &consent, crate::grants::Tier::Medium)?;
+        // Calls (plugin API 1.16) is never derived, not even its medium
+        // `calls` grant: watching the user's calls always takes the
+        // consent sheet.
+        if let Some(key) = keys
+            .iter()
+            .find(|key| key.kind == deckpilot_plugin_manifest::PermissionKind::Calls)
+        {
+            return Err(StoreError::BundledGrant {
+                id: id.clone(),
+                key: key.clone(),
+                tier: declared
+                    .get(key)
+                    .map_or(crate::grants::Tier::High, crate::grants::GrantScope::tier),
+            });
+        }
         let version = active.version.to_string();
         self.tx(|tx, ctx| {
             ensure_idle(tx, id)?;

@@ -1121,6 +1121,18 @@ fn calls_is_installed_only_from_the_bundle_and_never_seeded() {
             &Consent::none("bundled:0.16.0"),
         )
         .unwrap();
+    // Nor derived by a migration, though `calls` alone is medium tier.
+    let id = package.manifest().id.clone();
+    let observe: GrantKey = "calls".parse().unwrap();
+    let result = manager.derive_grants(
+        &id,
+        &std::collections::BTreeSet::from([observe]),
+        "migration:calls",
+    );
+    assert!(
+        matches!(result, Err(StoreError::BundledGrant { .. })),
+        "{result:?}"
+    );
 }
 
 #[test]

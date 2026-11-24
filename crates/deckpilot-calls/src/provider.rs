@@ -19,6 +19,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::clock::Instant;
+use crate::snapshot::FailureCode;
 
 #[cfg(test)]
 #[path = "provider/tests.rs"]
@@ -145,7 +146,7 @@ pub enum Availability {
     /// A stable error code (`[a-z0-9-]`, at most 48), never a message from
     /// the app.
     Error {
-        code: String,
+        code: FailureCode,
     },
 }
 
@@ -402,7 +403,28 @@ pub struct Discovery {
     pub availability: Availability,
     pub capabilities: CapabilitySet,
     /// For diagnostics only, never logged together with a title.
-    pub app_version: Option<String>,
+    pub app_version: Option<AppVersion>,
+}
+
+/// An app's version for diagnostics: 1 to 32 characters of letters,
+/// digits, `.`, `-` and `+`. Anything else is not kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct AppVersion(String);
+
+impl AppVersion {
+    /// `None` for text that is not a version.
+    pub fn new(text: &str) -> Option<Self> {
+        let valid = (1..=32).contains(&text.len())
+            && text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+        valid.then(|| Self(text.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// The consents the user gave the Calls plugin and this provider.
@@ -434,7 +456,7 @@ pub enum ProviderError {
     ConsentNotGiven,
     /// A stable code (`[a-z0-9-]`), never a message from the app.
     #[error("the provider failed: {code}")]
-    Failed { code: String },
+    Failed { code: FailureCode },
 }
 
 /// Why a provider connection ended.
@@ -601,7 +623,7 @@ pub enum CommandOutcome {
     Confirmed,
     /// A stable code (`[a-z0-9-]`).
     Rejected {
-        code: String,
+        code: FailureCode,
     },
     /// Sent, but whether it worked cannot be known (a blind toggle). Shown
     /// as unconfirmed, never as success.
@@ -610,7 +632,7 @@ pub enum CommandOutcome {
 
 /// What a command does to a call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", try_from = "RawAction")]
 pub enum CallAction {
     Answer,
     Reject,
@@ -620,6 +642,38 @@ pub enum CallAction {
     MicSet { muted: bool },
     CameraToggle,
     CameraSet { on: bool },
+}
+
+/// What a [`CallAction`] is read from: every field an action may have,
+/// and nothing else. An action with a field it does not have (`end` with a
+/// `muted`, any action naming a call or a provider) is refused.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawAction {
+    kind: String,
+    #[serde(default)]
+    muted: Option<bool>,
+    #[serde(default)]
+    on: Option<bool>,
+}
+
+impl TryFrom<RawAction> for CallAction {
+    type Error = String;
+
+    fn try_from(raw: RawAction) -> Result<Self, String> {
+        let action = match (raw.kind.as_str(), raw.muted, raw.on) {
+            ("answer", None, None) => Self::Answer,
+            ("reject", None, None) => Self::Reject,
+            ("cancelOutgoing", None, None) => Self::CancelOutgoing,
+            ("end", None, None) => Self::End,
+            ("micToggle", None, None) => Self::MicToggle,
+            ("micSet", Some(muted), None) => Self::MicSet { muted },
+            ("cameraToggle", None, None) => Self::CameraToggle,
+            ("cameraSet", None, Some(on)) => Self::CameraSet { on },
+            (kind, _, _) => return Err(format!("not a call action with these fields: `{kind}`")),
+        };
+        Ok(action)
+    }
 }
 
 impl CallAction {
