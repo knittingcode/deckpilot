@@ -133,6 +133,26 @@ pub enum RuntimeOutcome {
         binding: StatefulBinding,
         gesture: Gesture,
     },
+    /// A key of an overlay (`presentation.rs`) is bound to one of the
+    /// overlay's actions. The runtime runs nothing: the overlay's owner
+    /// does what the action stands for.
+    OverlayAction {
+        device: DeviceId,
+        session: OverlaySession,
+        control: ControlId,
+        page: PageId,
+        action: ActionInstanceId,
+        action_type: crate::ActionTypeId,
+        /// The instance's parameters with the binding's overrides.
+        #[serde(default, skip_serializing_if = "ActionParameters::is_empty")]
+        parameters: ActionParameters,
+    },
+    /// The overlay's dismiss key (or *Back* on its first page) took the
+    /// overlay away: the device shows its own presentation again.
+    OverlayDismissed {
+        device: DeviceId,
+        session: OverlaySession,
+    },
     /// The control is bound to an action that cannot run from it (an
     /// encoder rotation bound to a key-only action, a gesture the action
     /// does not support; see [`crate::compatibility`]). Nothing ran. The
@@ -253,6 +273,10 @@ pub struct Runtime {
     /// instead of the saved one, while a live preview session lasts
     /// (`working.rs`): in memory only, never saved.
     working: BTreeMap<DeviceId, working::WorkingLayout>,
+    /// Overlays (the Calls overlay) devices show instead of their own
+    /// presentation, which they never change (`presentation.rs`): in
+    /// memory only, never saved.
+    presentation: presentation::Presentation,
     /// Which absent workflows are another profile's and whether graph
     /// workflows run from keys (the agent sets it with the profile).
     workflow_scope: crate::WorkflowScope,
@@ -285,6 +309,7 @@ impl Runtime {
             device_layouts_changed: false,
             folders: FolderTimers::default(),
             working: BTreeMap::new(),
+            presentation: presentation::Presentation::default(),
             workflow_scope: crate::WorkflowScope::default(),
             clock: Clock::default(),
         }
@@ -469,6 +494,10 @@ impl Runtime {
         device: &DeviceId,
         control: ControlId,
     ) -> Option<(BoundGestures, GestureTimings)> {
+        // An overlay's keys react to their raw press.
+        if self.shows_overlay(device) {
+            return None;
+        }
         if self.system_back(device) == Some(control)
             || self.folder_control(device, control).is_some()
         {
@@ -511,6 +540,11 @@ impl Runtime {
         };
         if !self.devices.is_connected(device) {
             return ignored("device is not connected");
+        }
+        // A gesture recognized on the device's own page never runs while an
+        // overlay covers it.
+        if self.shows_overlay(device) {
+            return ignored("an overlay covers the device");
         }
         if self.session.is_none() {
             return ignored("no active profile");
@@ -1195,6 +1229,10 @@ impl Runtime {
                 .collect()
         };
 
+        // An overlay shows instead of the device's own presentation.
+        if let Some(faces) = self.overlay_faces(device, &controls, &model.capabilities) {
+            return (faces, Vec::new());
+        }
         let Some(profile) = self.profile() else {
             return (
                 notice(self.placeholder.as_deref().ok_or(SystemText::NoProfile)),
@@ -1315,6 +1353,10 @@ impl Runtime {
     /// one, for decorating faces with live state. Empty without a profile
     /// or layout.
     pub fn shown_targets(&self, device: &DeviceId) -> Vec<(ControlId, BindingTarget)> {
+        // An overlay's faces are its owner's: no live state of its own.
+        if self.shows_overlay(device) {
+            return Vec::new();
+        }
         let (Some(layout), Some(page)) = (self.layout_of(device), self.current_page(device)) else {
             return Vec::new();
         };
@@ -1379,6 +1421,7 @@ impl Runtime {
                 // A device that comes back starts no countdown: only
                 // entering a folder does.
                 self.follow_folders(device, true);
+                self.presentation_connected(device);
                 Ok(RuntimeOutcome::DeviceConnected {
                     device: device.clone(),
                 })
@@ -1389,6 +1432,7 @@ impl Runtime {
                     self.parked.insert(device.clone(), stack);
                 }
                 self.folders.forget(device);
+                self.presentation_disconnected(device);
                 Ok(RuntimeOutcome::DeviceDisconnected {
                     device: device.clone(),
                 })
@@ -1406,6 +1450,14 @@ impl Runtime {
                 };
                 if model.capabilities.validate_input(*control, *input).is_err() {
                     return ignored("input is not supported by the device model");
+                }
+                // Held across a change of what the device shows: the rest
+                // of this control's input is dropped until it is released.
+                if self.fence_input(device, *control, *input) {
+                    return ignored("the control was held when the presentation changed");
+                }
+                if let Some(outcome) = self.overlay_input(device, *control, *input) {
+                    return outcome;
                 }
                 if self.session.is_none() {
                     return ignored("no active profile");
@@ -2254,6 +2306,15 @@ pub use folder_activity::folder_back_face;
 
 mod working;
 pub use working::{EditorTarget, NavigationError, NavigationState};
+
+mod presentation;
+pub use presentation::{
+    MAX_FRAMES, OverlayError, OverlayOwner, OverlayPriority, OverlaySession, OverlaySpec,
+    OverlayView,
+};
+
+#[cfg(test)]
+mod presentation_tests;
 
 #[cfg(test)]
 mod compat_tests;
