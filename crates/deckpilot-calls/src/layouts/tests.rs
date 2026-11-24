@@ -80,7 +80,8 @@ fn a_model_of_another_class_is_refused_and_missing_controls_are_left_out() {
         generate(&small, &mk2.id, &mk2.capabilities),
         Err(GenerateError::WrongShape { .. })
     ));
-    // A grid template with a key the model lacks: that key is left out.
+    // A grid template with a key the model lacks: that key moves to a free
+    // one, nothing is dropped.
     let mut grid = template_for(&mk2.capabilities);
     grid.pages[2].1.push(TemplateControl {
         control: ControlId::Key { index: 40 },
@@ -88,7 +89,10 @@ fn a_model_of_another_class_is_refused_and_missing_controls_are_left_out() {
         parameters: ActionParameters::new(),
     });
     let generated = generate(&grid, &mk2.id, &mk2.capabilities).unwrap();
-    assert_eq!(generated.skipped, [ControlId::Key { index: 40 }]);
+    assert_eq!(
+        generated.moved,
+        [(ControlId::Key { index: 40 }, ControlId::Key { index: 0 })]
+    );
     // The action types are the Calls plugin's.
     assert!(
         generated
@@ -117,4 +121,98 @@ fn bad_templates_are_refused() {
         generate(&bad, &mk2.id, &mk2.capabilities),
         Err(GenerateError::BadAction(_))
     ));
+}
+
+fn grid(rows: u16, columns: u16, displays: bool) -> DeviceCapabilities {
+    let mk2 = ModelCatalog::builtin()
+        .get(&DeviceModelId::new(models::STREAM_DECK_MK2_ID))
+        .unwrap()
+        .capabilities
+        .clone();
+    DeviceCapabilities {
+        keys: Some(deckpilot_device::KeyGrid {
+            rows,
+            columns,
+            image: if displays {
+                mk2.keys.unwrap().image
+            } else {
+                None
+            },
+        }),
+        encoders: None,
+        touch: None,
+        brightness: displays,
+    }
+}
+
+/// Small grids and a pedal: every action of every page is placed, the
+/// dismiss key is always there, and no binding is on it.
+#[test]
+fn small_grids_and_pedals_keep_every_action_and_a_dismiss_key() {
+    for (rows, columns, displays) in [(2, 3, true), (2, 4, true), (1, 3, false)] {
+        let caps = grid(rows, columns, displays);
+        let model = DeviceModelId::new("test.synthetic");
+        let template = template_for(&caps);
+        let generated = generate(&template, &model, &caps).unwrap();
+        let dismiss = generated.dismiss.expect("a dismiss key");
+        assert_eq!(
+            dismiss,
+            ControlId::Key {
+                index: rows * columns - 1
+            }
+        );
+        for (page, controls) in &template.pages {
+            let layout_page = generated.layout.page(generated.pages[page]).unwrap();
+            assert_eq!(
+                layout_page.bindings.len(),
+                controls.len(),
+                "{rows}x{columns} {page:?}"
+            );
+            assert!(layout_page.bindings.iter().all(|b| b.control != dismiss));
+            for control in controls {
+                assert!(
+                    layout_page
+                        .bindings
+                        .iter()
+                        .any(|b| generated.action_of(b.target.action_id().unwrap())
+                            == Some(control.action.as_str())),
+                    "{rows}x{columns}: {} placed",
+                    control.action
+                );
+            }
+        }
+    }
+    // The 2x4 grid gets Reject and "Back to work" although the template's
+    // positions are beyond it.
+    let caps = grid(2, 4, true);
+    let generated = generate(&template_for(&caps), &DeviceModelId::new("test.2x4"), &caps).unwrap();
+    let ids: Vec<&str> = generated
+        .layout
+        .pages
+        .iter()
+        .flat_map(|p| &p.bindings)
+        .filter_map(|b| generated.action_of(b.target.action_id()?))
+        .collect();
+    assert!(
+        ids.contains(&"reject") && ids.contains(&"return-to-work"),
+        "{ids:?}"
+    );
+}
+
+#[test]
+fn a_model_too_small_or_without_keys_is_refused() {
+    let one = grid(1, 1, true);
+    assert!(matches!(
+        generate(&template_for(&one), &DeviceModelId::new("test.one"), &one),
+        Err(GenerateError::NoRoom(_))
+    ));
+    let none = DeviceCapabilities::default();
+    let pedal = builtin_templates()
+        .into_iter()
+        .find(|t| t.shape == Shape::NoDisplay)
+        .unwrap();
+    assert_eq!(
+        generate(&pedal, &DeviceModelId::new("test.none"), &none),
+        Err(GenerateError::NoDismiss)
+    );
 }

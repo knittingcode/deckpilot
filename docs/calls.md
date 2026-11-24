@@ -252,8 +252,11 @@ model's capability class (`grid-small` ≤ 6 keys, `grid` 7–15, `grid-large`,
 `keys-dials`, `no-display`). Nothing assumes an MK.2: a template control
 the model lacks is left out. Ids are UUID v5: the layout of the model and
 the template's major version, pages and action instances of the layout and
-their key. The model's last key is the protected dismiss key unless the
-template uses it.
+their key. Controls are placed relative to the grid: a template position
+the model has is kept, and one it lacks moves to the first free key, so
+nothing is dropped on a small grid. The model's last key is always the
+protected dismiss key. A model without keys, or one too small for a page,
+is refused rather than given an overlay it could not leave.
 
 Storage (`managed_layouts` table, additive migration 14), following D2:
 
@@ -270,6 +273,11 @@ Storage (`managed_layouts` table, additive migration 14), following D2:
 - Removing takes the unedited layouts, and the edited ones only when asked.
   Imports never delete a managed layout, and deleting one as an ordinary
   layout is refused.
+- A managed layout is never a profile's: assigning one, or saving a
+  profile that names one, is refused. Managed layouts are not in the
+  Layouts list and are not exported; each machine seeds its own.
+- *Restore defaults* copies the layout's whole action closure (a Multi
+  Action's steps too), and the copies name each other.
 
 ## Driver (`deckpilot-calls::driver`)
 
@@ -285,8 +293,13 @@ frames in step. All of it runs on the engine clock.
   "Waiting…", one that was not confirmed shows "Not confirmed", and an
   unsupported control is disabled with its reason. Teams is detection-only,
   so its controls show "The call app offers no control".
-- A dismissed device stays on its own presentation for the rest of the
-  call. *Show calls* or a new incoming call brings the overlay back.
+- A dismissed device stays on its own presentation while the call it was
+  dismissed for has the focus. *Show calls*, or another call taking the
+  focus (a new incoming call), brings the overlay back.
+- Gestures: the gesture engine records the device's presentation
+  generation when a sequence starts. A gesture that fires after the
+  presentation changed is stale and is dropped, so it never runs on the
+  other presentation.
 - *Back to work* suspends the frame with a return session whose settings
   are the action's parameters (`mode`, `seconds`, `maxSeconds`,
   `onFailure`, `onCancel`, `countNavigation`, `returnAllDevices`). Runs

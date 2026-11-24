@@ -10,8 +10,12 @@
 //!   major version; pages and action instances are UUID v5 of the layout
 //!   and their key. Generating again gives the same ids on every machine,
 //!   so seeding is idempotent and exports name the same layout.
-//! - **The protected dismiss key** is the model's last key, unless the
-//!   template uses it: it always takes the overlay away.
+//! - **Placed relative to the grid.** A template control at a position the
+//!   model has stays there; one the model lacks (a key beyond a small
+//!   grid, the dismiss key) moves to the first free key. Nothing is
+//!   dropped: a model too small for a page is refused.
+//! - **The protected dismiss key** is always the model's last key: it
+//!   always takes the overlay away. A model without keys is refused.
 //!
 //! The templates are data of the Calls plugin's manifest
 //! (`contributes.layoutTemplates`); [`builtin_templates`] are the reference
@@ -126,9 +130,10 @@ pub struct Generated {
     pub layout: DeviceLayout,
     pub actions: Vec<ActionInstance>,
     pub pages: BTreeMap<Page, PageId>,
+    /// The protected dismiss key: always there.
     pub dismiss: Option<ControlId>,
-    /// Template controls the model does not have, left out.
-    pub skipped: Vec<ControlId>,
+    /// Template controls placed elsewhere: `(template position, used)`.
+    pub moved: Vec<(ControlId, ControlId)>,
 }
 
 impl Generated {
@@ -163,6 +168,10 @@ pub enum GenerateError {
     NoActivePage,
     #[error("`{0}` is not a Calls action id")]
     BadAction(String),
+    #[error("the model has no keys: the overlay would have no dismiss key")]
+    NoDismiss,
+    #[error("the model has too few keys for the `{0}` page")]
+    NoRoom(&'static str),
 }
 
 fn has(capabilities: &DeviceCapabilities, control: ControlId) -> bool {
@@ -205,7 +214,12 @@ pub fn generate(
     layout.pages.clear();
     let mut pages = BTreeMap::new();
     let mut actions = Vec::new();
-    let mut skipped = Vec::new();
+    let mut moved = Vec::new();
+    let keys = capabilities.keys.map_or(0, |grid| grid.key_count());
+    let dismiss = keys
+        .checked_sub(1)
+        .map(|index| ControlId::Key { index })
+        .ok_or(GenerateError::NoDismiss)?;
     // The active page first: it is the layout's home page.
     let ordered = std::iter::once(active_controls).chain(
         template
@@ -213,8 +227,8 @@ pub fn generate(
             .iter()
             .filter(|(page, _)| *page != Page::Active),
     );
-    let mut used = Vec::new();
     for (page, controls) in ordered {
+        let mut taken = vec![dismiss];
         let page_uuid = Uuid::new_v5(&layout_uuid, format!("page:{}", page.as_str()).as_bytes());
         let mut layout_page = LayoutPage::new(page.name());
         layout_page.id = page_uuid.to_string().parse().expect("a UUID is a page id");
@@ -222,20 +236,21 @@ pub fn generate(
             if !is_action_id(&control.action) {
                 return Err(GenerateError::BadAction(control.action.clone()));
             }
-            if !has(capabilities, control.control) {
-                skipped.push(control.control);
-                continue;
-            }
-            used.push(control.control);
+            let placed = if has(capabilities, control.control) && !taken.contains(&control.control)
+            {
+                control.control
+            } else {
+                let free = (0..keys)
+                    .map(|index| ControlId::Key { index })
+                    .find(|key| !taken.contains(key))
+                    .ok_or(GenerateError::NoRoom(page.as_str()))?;
+                moved.push((control.control, free));
+                free
+            };
+            taken.push(placed);
             let action_uuid = Uuid::new_v5(
                 &layout_uuid,
-                format!(
-                    "action:{}:{}:{}",
-                    page.as_str(),
-                    control.control,
-                    control.action
-                )
-                .as_bytes(),
+                format!("action:{}:{}:{}", page.as_str(), placed, control.action).as_bytes(),
             );
             let instance = ActionInstance {
                 id: action_uuid
@@ -251,7 +266,7 @@ pub fn generate(
                 label: None,
             };
             layout_page.bindings.push(ControlBinding::new(
-                control.control,
+                placed,
                 Trigger::Press,
                 BindingTarget::action(instance.id),
             ));
@@ -261,18 +276,12 @@ pub fn generate(
         layout.pages.push(layout_page);
     }
     layout.home_page = pages[&Page::Active];
-    let last_key = capabilities
-        .keys
-        .map_or(0, |grid| grid.key_count())
-        .checked_sub(1)
-        .map(|index| ControlId::Key { index });
-    let dismiss = last_key.filter(|key| !used.contains(key));
     Ok(Generated {
         layout,
         actions,
         pages,
-        dismiss,
-        skipped,
+        dismiss: Some(dismiss),
+        moved,
     })
 }
 

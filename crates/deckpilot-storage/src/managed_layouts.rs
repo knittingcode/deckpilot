@@ -92,6 +92,15 @@ fn snapshot(layout: &DeviceLayout, actions: &[ActionInstance]) -> Result<String>
 
 /// Whether layout `id` is a managed layout.
 pub(crate) fn is_managed(connection: &Connection, id: &str) -> Result<bool> {
+    // Migrations before this one store profiles before the table exists.
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'managed_layouts')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(false);
+    }
     Ok(connection.query_row(
         "SELECT EXISTS (SELECT 1 FROM managed_layouts WHERE layout_id = ?1)",
         [id],
@@ -294,12 +303,19 @@ impl SqliteStore {
         let mut kept = None;
         if stored.edited {
             let stamp = now();
-            let mut map = HashMap::new();
+            // Every action of the layout's closure (a Multi Action's steps
+            // too) is copied, and the copies name each other: nothing of the
+            // user's version points at the regenerated actions.
+            let map: HashMap<ActionInstanceId, ActionInstanceId> = stored
+                .actions
+                .iter()
+                .map(|action| (action.id, ActionInstanceId::new()))
+                .collect();
             let mut copies = Vec::new();
             for action in &stored.actions {
                 let mut copy = action.clone();
-                copy.id = ActionInstanceId::new();
-                map.insert(action.id, copy.id);
+                copy.id = map[&action.id];
+                copy.parameters = remap_parameters(&copy.parameters, &map)?;
                 upsert_action(&tx, &copy, stamp)?;
                 copies.push(copy);
             }
@@ -325,8 +341,19 @@ impl SqliteStore {
         owner: &str,
         include_edited: bool,
     ) -> Result<Vec<LayoutId>> {
-        let layouts = self.managed_layouts(owner)?;
         let tx = self.write_transaction()?;
+        // Read and filter inside the transaction: an edit made meanwhile is
+        // seen.
+        let models: Vec<String> = tx
+            .prepare("SELECT model FROM managed_layouts WHERE owner = ?1 ORDER BY model")?
+            .query_map([owner], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut layouts = Vec::new();
+        for model in &models {
+            if let Some(row) = row(&tx, owner, model)? {
+                layouts.push(load(&tx, owner, &row)?);
+            }
+        }
         let mut removed = Vec::new();
         for managed in layouts.iter().filter(|m| include_edited || !m.edited) {
             remove(&tx, &managed.layout.id.to_string())?;
@@ -336,6 +363,19 @@ impl SqliteStore {
         tx.commit()?;
         Ok(removed)
     }
+}
+
+/// `parameters` with every id of `map` replaced by its copy (references to
+/// actions are their ids, as text, anywhere in the parameters).
+fn remap_parameters(
+    parameters: &deckpilot_core::ActionParameters,
+    map: &HashMap<ActionInstanceId, ActionInstanceId>,
+) -> Result<deckpilot_core::ActionParameters> {
+    let mut text = serde_json::to_string(parameters)?;
+    for (old, new) in map {
+        text = text.replace(&old.to_string(), &new.to_string());
+    }
+    Ok(serde_json::from_str(&text)?)
 }
 
 /// Every action the layout binds is one of `actions`.

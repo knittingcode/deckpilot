@@ -467,3 +467,32 @@ fn settings_are_read_from_the_parameters_with_defaults() {
     assert_eq!(completion.on_cancel, AfterRun::Resume);
     assert!(completion.qualify.navigation);
 }
+
+#[test]
+fn dismissed_while_ringing_stays_gone_through_ticks() {
+    let mut w = World::new();
+    let mk2 = w.mk2.clone();
+    w.see("c", ObservedPhase::Ringing, Tri::Unknown);
+    let dismiss = w.driver.layouts[&mk2.model].dismiss.unwrap();
+    w.tap(&mk2, dismiss);
+    assert!(!w.shows(&mk2));
+    w.at(1);
+    w.at(5);
+    w.see("c", ObservedPhase::Ringing, Tri::Unknown);
+    assert!(!w.shows(&mk2), "the same ringing call: still dismissed");
+    // Answered, still the same call: still dismissed.
+    w.see("c", ObservedPhase::Connected, Tri::Known(false));
+    assert!(!w.shows(&mk2));
+    // Another incoming call shows it; when it goes, the dismissed call has
+    // the focus again and the overlay goes with it.
+    w.see("x", ObservedPhase::Ringing, Tri::Unknown);
+    assert_eq!(w.page(&mk2), Some(Page::Incoming));
+    w.see(
+        "x",
+        ObservedPhase::Ended {
+            cause: ObservedEnd::Missed,
+        },
+        Tri::Unknown,
+    );
+    assert!(!w.shows(&mk2));
+}
