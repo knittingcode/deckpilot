@@ -1,9 +1,10 @@
-import { keepShownLook } from "@/layout-editor/appearance"
 import { useDndMonitor } from "@dnd-kit/core"
 import { type ReactNode, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/dialogs"
+import { LookMoveDialog } from "@/layout-editor/look-move-dialog"
+import { type LookMove, keepLookOnRemoval, lookTransfer } from "@/layout-editor/labels"
 import {
   bindingsFor,
   controlKey,
@@ -11,6 +12,7 @@ import {
   removeBinding,
   setBinding,
   targetLabel,
+  triggerLabel,
 } from "@/lib/layout-model"
 import { type TranslationKey, useTranslation } from "@/i18n"
 import type {
@@ -170,6 +172,40 @@ export function GestureEditor(props: GestureEditorProps) {
   const { t } = useTranslation()
   const { draft, pageId, control, defaults, onChange } = props
   const [pending, setPending] = useState<PendingConversion | null>(null)
+  // A removal that moves a look with labels onto a binding with a look of
+  // its own: the user chooses how (keep, replace or merge the labels).
+  const [lookChoice, setLookChoice] = useState<{
+    after: DeviceLayout
+    labels: number
+    to: Trigger
+  } | null>(null)
+  /**
+   * Commits a removal, keeping the key's title and look on the binding now
+   * shown in the same step; says when labels moved, and asks first when the
+   * new binding has a look of its own.
+   */
+  const removeKeepingLook = (after: DeviceLayout) => {
+    const transfer = lookTransfer(draft, after, pageId, control)
+    if (transfer?.conflict) {
+      setLookChoice({ after, labels: transfer.labels, to: transfer.to.trigger })
+      return
+    }
+    onChange(keepLookOnRemoval(draft, after, pageId, control))
+    if (transfer && transfer.labels > 0) {
+      toast.info(
+        t("editor:labels.moved", {
+          count: transfer.labels,
+          trigger: triggerLabel(transfer.to.trigger),
+        }),
+      )
+    }
+  }
+  const chooseLook = (move: LookMove | null) => {
+    const choice = lookChoice
+    setLookChoice(null)
+    if (!choice || move === null) return
+    onChange(keepLookOnRemoval(draft, choice.after, pageId, control, move))
+  }
   const mode = keyMode(draft, pageId, control)
   const timing = clickTiming(draft, pageId, control)
   const own = keyTimings(draft, pageId, control)
@@ -199,7 +235,8 @@ export function GestureEditor(props: GestureEditorProps) {
     }
     const next = setGesture(draft, pageId, control, gesture, target)
     // Removing an action keeps the key's title and look (on the binding now shown).
-    onChange(target ? next : keepShownLook(draft, next, pageId, control))
+    if (target) onChange(next)
+    else removeKeepingLook(next)
   }
 
   /**
@@ -253,17 +290,19 @@ export function GestureEditor(props: GestureEditorProps) {
       )
       return
     }
-    onChange(
-      target
-        ? setBinding(draft, pageId, {
-            control,
-            trigger,
-            target,
-            label: release?.label ?? null,
-            ...(release?.appearance ? { appearance: release.appearance } : {}),
-          })
-        : keepShownLook(draft, removeBinding(draft, pageId, control, trigger), pageId, control),
-    )
+    if (target) {
+      onChange(
+        setBinding(draft, pageId, {
+          control,
+          trigger,
+          target,
+          label: release?.label ?? null,
+          ...(release?.appearance ? { appearance: release.appearance } : {}),
+        }),
+      )
+    } else {
+      removeKeepingLook(removeBinding(draft, pageId, control, trigger))
+    }
   }
 
   const bound = (gesture: Gesture) =>
@@ -399,6 +438,12 @@ export function GestureEditor(props: GestureEditorProps) {
         onCancel={() => {
           setPending(null)
         }}
+      />
+      <LookMoveDialog
+        open={lookChoice !== null}
+        labels={lookChoice?.labels ?? 0}
+        trigger={lookChoice ? triggerLabel(lookChoice.to) : ""}
+        onChoose={chooseLook}
       />
     </section>
   )

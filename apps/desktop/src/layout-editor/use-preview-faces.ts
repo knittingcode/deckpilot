@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 
 import { api } from "@/lib/api"
+import type { LabelBox } from "@/lib/key-labels"
 import { controlKey } from "@/lib/layout-model"
 import type {
   ControlFace,
@@ -59,6 +60,8 @@ export function usePreviewFaces(
     /** Bindings kept although they cannot run from their control. */
     incompatible: new Map<string, NonNullable<ControlFace["incompatible"]>>(),
     reports: new Map<string, TextLayoutReport>(),
+    /** Where the renderer put each key's labels (lib/key-labels.ts). */
+    labelBoxes: new Map<string, LabelBox[]>(),
     /**
      * What each control does to the editor's view, as the agent resolves
      * it (docs/editor-navigation-and-simulation.md): its only source for
@@ -86,6 +89,11 @@ export function usePreviewFaces(
             ),
             reports: new Map(
               result.flatMap((r) => (r.text ? [[controlKey(r.control), r.text] as const] : [])),
+            ),
+            labelBoxes: new Map(
+              result.flatMap((r) =>
+                r.labelBoxes?.length ? [[controlKey(r.control), r.labelBoxes] as const] : [],
+              ),
             ),
             navigation: new Map(
               result.flatMap((r) =>

@@ -55,6 +55,7 @@ import { shownBinding, stylable } from "./appearance"
 import { FolderControlPanel, FolderSettings } from "./folder-settings"
 import { KeyAppearanceEditor, KeysAppearanceEditor } from "./key-appearance-editor"
 import { useKeyLook } from "./key-look-context"
+import { labelsOf } from "./labels"
 import { LayoutNavigationPanels, type LayoutNavigationContext } from "./layout-switch-inspector"
 import { SystemActionPanels } from "./system-action-inspector"
 import {
@@ -450,6 +451,17 @@ function ControlInspector({
                 />
               )}
               {binding?.target.type === "action" && actionSettings?.(binding.target.action)}
+              {binding &&
+                (binding.trigger.type === "doubleClick" || binding.trigger.type === "longPress") &&
+                labelsOf(binding.appearance).length > 0 && (
+                  <p
+                    className="text-xs text-muted-foreground"
+                    role="note"
+                    data-slot="dormant-labels"
+                  >
+                    {t("editor:labels.dormant", { trigger: triggerLabel(binding.trigger) })}
+                  </p>
+                )}
               {binding && displayOnly(binding) && (
                 <p className="text-xs text-muted-foreground" role="note">
                   {t("editor:context.displayOnly")}

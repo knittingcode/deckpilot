@@ -17,6 +17,14 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Device Editor: the key labels editor. The Inspector lists a key's labels
+  (up to 8) with their text (and variables, through the same picker as
+  the title), position, size, colour, background, opacity and layer, and
+  can add, duplicate, reorder, hide and remove them. On the Canvas a
+  selected key outlines its labels; a label can be dragged to another
+  place and edited in place with a double click. Labels on a double
+  click or long press are kept and marked as not drawn (a key shows the
+  labels of its press).
 - Device Editor: saved actions are managed in the editor's Action Library
   (edit, duplicate, where they are used, delete when unused, new). The
   Inspector says when a key's saved action is shared, and an edit says it

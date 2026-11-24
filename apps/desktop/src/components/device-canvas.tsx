@@ -86,6 +86,12 @@ interface CanvasProps {
   dropRejection?: (control: ControlId, dragged: unknown) => string | null
   /** A control that just refused a drop, shown as refused for a moment. */
   rejected?: ControlId | null
+  /**
+   * Drawn over a control's image, inside its border, e.g. the outlines of
+   * the selected key's labels (layout-editor/label-outlines.tsx). The layer
+   * lets the pointer through except where its content takes it.
+   */
+  overlays?: Map<string, ReactNode>
   /** Wraps each control, e.g. in a context menu. */
   wrapControl?: (control: ControlId, element: ReactElement) => ReactNode
   size?: "sm" | "md"
@@ -153,6 +159,7 @@ const PER_CONTROL = new Set([
   "icons",
   "captions",
   "summaries",
+  "overlays",
 ])
 /** Props a control does not read (their effect comes as `tabStop` or `culled`), or reads as below. */
 const NOT_READ = new Set([
@@ -311,7 +318,20 @@ const Control = memo(function Control({ control, shape, tabStop, culled, props }
       )}
     </button>
   )
-  return props.wrapControl ? props.wrapControl(control, button) : button
+  const wrapped = props.wrapControl ? props.wrapControl(control, button) : button
+  const overlay = culled ? undefined : props.overlays?.get(key)
+  if (overlay === undefined) return wrapped
+  return (
+    <div className="relative min-w-0" data-slot="control-with-overlay">
+      {wrapped}
+      <div
+        data-slot="control-overlay"
+        className="pointer-events-none absolute inset-(--key-border) overflow-hidden rounded-[calc(var(--key-radius)*0.8)]"
+      >
+        {overlay}
+      </div>
+    </div>
+  )
 }, sameControlProps)
 
 /** The CSS size of one key: `keySize` pixels, else the size step. */
