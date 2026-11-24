@@ -383,6 +383,27 @@ describe("moving labels before the renderer answers", () => {
     expect(applied({ labels })?.labels?.[0]?.position).toEqual({ mode: "absolute", x: 528, y: 778 })
   })
 
+  it("puts a label against the edges from where a nudge left it, before the boxes refresh", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    // Without a move: the mode change places it from the renderer's box.
+    const still = render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    await user.click(screen.getByRole("radio", { name: "Edge" }))
+    const fromBox = applied({ labels })?.labels?.[0]
+    still.unmount()
+    render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    await user.click(screen.getByRole("button", { name: /SHOP/ }))
+    const stage = screen.getByRole("group", { name: /Labels on Key 1/ })
+    fireEvent.keyDown(stage, { key: "ArrowUp", shiftKey: true })
+    // The same boxes still: Edge starts where the nudge put the label, so
+    // the nudge is not undone.
+    await user.click(screen.getByRole("radio", { name: "Edge" }))
+    const fromNudge = applied({ labels })?.labels?.[0]
+    expect(fromNudge?.position).toMatchObject({ mode: "anchored" })
+    expect(fromNudge).not.toEqual(fromBox)
+  })
+
   it("keeps a corner label where it is when it is put against the edges", async () => {
     const user = userEvent.setup()
     sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")

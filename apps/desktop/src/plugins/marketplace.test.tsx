@@ -1089,6 +1089,42 @@ describe("install states", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("forgets a failure once the agent did it, so an uninstall later offers Install again", async () => {
+    const { user, client } = renderMarketplace()
+    const real = client.installPlugin.getMockImplementation()
+    if (!real) throw new Error("the fake installs plugins")
+    client.installPlugin.mockRejectedValueOnce(new PluginError("storeUnavailable", "locked"))
+    await openDetails(user, "Home Lights")
+    await consentAndInstall(user)
+    await within(screen.getByRole("dialog")).findByRole("alert")
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: "Back to plugins" }))
+    expect(within(card("Home Lights")).getByRole("alert")).toBeInTheDocument()
+    // Installed elsewhere (another window), then uninstalled again.
+    await real({ type: "registry", plugin: LIGHTS }, [])
+    act(() => {
+      client.emit({ type: "changed", plugin: LIGHTS, state: "disabled" })
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/Couldn’t install/)).not.toBeInTheDocument()
+    })
+    await client.uninstallPlugin(LIGHTS)
+    act(() => {
+      client.emit({ type: "changed", plugin: LIGHTS })
+    })
+    // The old failure does not come back: Install, not Retry, on its page.
+    await waitFor(() => {
+      expect(client.listPlugins).toHaveBeenCalled()
+    })
+    await openDetails(user, "Home Lights")
+    const page = screen.getByRole("article")
+    expect(await within(page).findByRole("button", { name: "Install Home Lights" })).toBeEnabled()
+    expect(within(page).queryByText(/Couldn’t install/)).not.toBeInTheDocument()
+    expect(
+      within(page).queryByRole("button", { name: "Try installing Home Lights again" }),
+    ).not.toBeInTheDocument()
+  })
+
   it("keeps a failed install visible on its tile in the catalog", async () => {
     const { user, client } = renderMarketplace()
     client.installPlugin.mockRejectedValueOnce(new PluginError("storeUnavailable", "locked"))
