@@ -3181,6 +3181,7 @@ fn declares_privileged_kind<'a>(
         PermissionKind::Resources,
         PermissionKind::ProjectContext,
         PermissionKind::HostViews,
+        PermissionKind::Connections,
     ]
     .into_iter()
     .filter(|k| k.is_first_party_only())

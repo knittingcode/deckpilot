@@ -500,8 +500,9 @@ fn host_views(c: &mut Checker, m: &Manifest) {
 /// manifest that is not a first-party plugin shipped inside the
 /// application bundle.
 pub(crate) fn first_party_only(m: &Manifest) -> Vec<Issue> {
-    usages(m)
+    super::privileged_usages(m)
         .into_iter()
+        .chain(super::connections::gated(m))
         .map(|(path, what)| Issue {
             path,
             code: IssueCode::FirstPartyOnly,

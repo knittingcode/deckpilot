@@ -677,6 +677,9 @@ const KNOWN_OPS: &[&str] = &[
     "dialog.open",
     "locale.get",
     "locale.translate",
+    "connections.get",
+    "connections.reportStatus",
+    "time.sleep",
 ];
 
 fn abi_error(msg: &str) -> wasmtime::Error {

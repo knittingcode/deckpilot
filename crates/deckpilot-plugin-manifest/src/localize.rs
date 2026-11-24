@@ -32,6 +32,20 @@ fn kind_texts(path: &str, kind: &mut ParameterKind, f: &mut dyn FnMut(&str, usiz
     }
 }
 
+/// The labels of `contributes.connectionTypes` (plugin API 1.14).
+fn connection_type_texts(
+    types: &mut Option<Vec<crate::connections::ConnectionType>>,
+    f: &mut dyn FnMut(&str, usize, &mut String),
+) {
+    for (i, kind) in types.iter_mut().flatten().enumerate() {
+        let path = format!("contributes.connectionTypes[{i}]");
+        f(&format!("{path}.label"), 48, &mut kind.label);
+        if let Some(text) = kind.self_hosted.as_mut().and_then(|s| s.label.as_mut()) {
+            f(&format!("{path}.selfHosted.label"), 48, text);
+        }
+    }
+}
+
 impl Manifest {
     /// Whether the manifest's texts may name translation keys (`t:…`): it
     /// requires plugin API 1.6. For an older manifest `t:…` is plain text.
@@ -150,6 +164,7 @@ impl Manifest {
                 );
             }
         }
+        connection_type_texts(&mut contributes.connection_types, f);
         for (i, entry) in contributes.navigation.iter_mut().flatten().enumerate() {
             f(
                 &format!("contributes.navigation[{i}].label"),
