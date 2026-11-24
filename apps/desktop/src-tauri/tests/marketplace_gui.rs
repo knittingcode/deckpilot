@@ -372,8 +372,9 @@ impl Gui {
     }
 
     /// Hello Weather's page (Installed › its Details), unless it is open:
-    /// the granted permissions, each with Revoke, and the installed
-    /// version's actions, each with Run.
+    /// its permissions, each with its status (read-only: granting and
+    /// revoking are Settings › Permissions'), and the installed version's
+    /// actions, each with Run.
     fn plugin_page(&mut self) {
         if !self.visible(&plugin_heading()) {
             self.installed_tab();
@@ -724,10 +725,16 @@ impl Driver for Gui {
 
     fn revoke(&mut self, permission: &str) -> Vec<Via> {
         assert_eq!(permission, marketplace::NETWORK);
-        self.plugin_page();
-        self.click(&labelled(
-            "Revoke: Send data to and receive data from https://api.open-meteo.com",
-        ));
+        // Toolbar › Settings › Permissions: every plugin's permissions,
+        // each with Revoke or Grant (the plugin's page only shows them).
+        self.settings();
+        self.click(&format!("{SETTINGS_VIEW}{}", button("Permissions")));
+        let row = format!(
+            "//ul[@aria-label='Permissions of installed plugins']/li[@aria-labelledby={}]",
+            lit(&format!("plugin-permissions-{HELLO}"))
+        );
+        let title = "Send data to and receive data from https://api.open-meteo.com";
+        self.click(&format!("{row}{}", labelled(&format!("Revoke: {title}"))));
         wait_until(LONG, "the revoked permission", || {
             let details = self.ok("get_plugin", json!({"plugin": HELLO}));
             details["permissions"]
@@ -737,6 +744,9 @@ impl Driver for Gui {
                 .any(|p| p["key"] == permission && p["status"] == "revoked")
                 .then_some(())
         });
+        // The list shows it: Grant in place of Revoke.
+        self.wait(&format!("{row}{}", labelled(&format!("Grant: {title}"))));
+        self.screenshot("17-revoked-in-settings");
         vec![Via::Ui]
     }
 

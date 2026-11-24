@@ -65,9 +65,10 @@ import type {
   RuntimeAvailability,
 } from "./types"
 import { DEPENDENCIES_FEATURE, RESTORE_BUNDLED_FEATURE } from "./types"
-import { focusMigrations, takeFocusedMigrations, takeFocusedPlugin } from "./focus"
+import { focusMigrations, onFocusPlugin, takeFocusedMigrations, takeFocusedPlugin } from "./focus"
 import { UpdatesView } from "./updates"
 import { pluginViewPage } from "@/shell/plugin-navigation"
+import { useViewActive } from "@/shell/view-activity"
 import type { PageId } from "@/lib/app-context"
 
 /**
@@ -83,6 +84,16 @@ const COMPACT_WIDTH = 760
 
 /** How long the search waits for the user to pause typing. */
 export const SEARCH_DELAY_MS = 180
+
+/**
+ * Fetching and verifying: also how the agent reports the downloads of an
+ * install it only plans (`planPluginInstall`), with no terminal event
+ * after them, and the dependencies a confirmed plan downloads, for which
+ * only the requested plugin gets one.
+ */
+function downloading(progress: Progress): boolean {
+  return progress.stage === "fetching" || progress.stage === "verifying"
+}
 
 /** The nearest ancestor that scrolls (the workspace), whose position a plugin's page keeps. */
 function scrollParent(element: Element | null): HTMLElement | null {
@@ -123,6 +134,8 @@ export interface MarketplaceActions {
   showInstalled: () => void
   /** Opens the plugin diagnostics in Settings (module migrations, the registry). */
   openDiagnostics: () => void
+  /** Opens Settings › Permissions, where plugins' permissions are granted and revoked. */
+  openPermissions: () => void
   /** Why installs and updates are not possible right now. */
   blocked: string | null
   /** Plugins can be enabled and run here (not on Windows). */
@@ -245,6 +258,8 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
   const [consentFor, setConsentFor] = useState<ModuleMigration | null>(null)
   /** Installs and updates this page started, by plugin id. */
   const [pending, setPending] = useState<Map<string, "install" | "update">>(new Map())
+  /** The same, for the callbacks that settle a request. */
+  const confirmed = useRef(new Set<string>())
   /** Installs and updates that failed, by plugin id, until retried. */
   const [failures, setFailures] = useState<Map<string, PluginFailure>>(new Map())
   /** The installed plugin whose settings dialog is open. */
@@ -263,13 +278,37 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
     [client],
   )
 
-  // The agent started, stopped or was replaced: ask again.
+  // The agent started, stopped or was replaced: ask again. Its progress
+  // reports were the old agent's: none of them will finish.
   const agentKey = agent
     ? `${String(agent.running)}:${agent.status?.version ?? ""}:${String(agent.protocol)}`
     : "unknown"
+  const [progressOf, setProgressOf] = useState(agentKey)
+  if (progressOf !== agentKey) {
+    setProgressOf(agentKey)
+    setProgress(new Map())
+  }
   useEffect(() => {
     void reload()
   }, [reload, agentKey])
+
+  /**
+   * Forgets the downloads the agent reported for requests of this page
+   * that have been answered (a plan, a confirmed install): the agent sends
+   * no terminal event for them. Those of a confirmed request still in
+   * flight stay.
+   */
+  const dropDownloads = useCallback(() => {
+    setProgress((previous) => {
+      const stale = [...previous.values()].filter(
+        (p) => downloading(p) && !confirmed.current.has(p.plugin),
+      )
+      if (stale.length === 0) return previous
+      const next = new Map(previous)
+      for (const p of stale) next.delete(p.plugin)
+      return next
+    })
+  }, [])
 
   useEffect(
     () =>
@@ -287,6 +326,21 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
       }),
     [client, reload],
   )
+
+  // A screen asked to open at a plugin while the Marketplace stayed
+  // mounted (under the settings, or on screen): take it when it shows.
+  const active = useViewActive()
+  useEffect(() => {
+    if (variant !== "marketplace" || !active) return
+    const take = () => {
+      const plugin = takeFocusedPlugin()
+      if (plugin === null) return
+      scrolledTo.current = null
+      setSelected(plugin)
+    }
+    take()
+    return onFocusPlugin(take)
+  }, [variant, active])
 
   // Back from a plugin's page: where the page was.
   useLayoutEffect(() => {
@@ -458,16 +512,25 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
     id: string,
     operation: "install" | "update",
     request: () => Promise<T>,
+    /** The version an update goes to. */
+    version?: string,
   ): Promise<T> => {
+    confirmed.current.add(id)
     setPendingOf(id, operation)
     setFailureOf(id, null)
     try {
       return await request()
     } catch (error) {
-      setFailureOf(id, { operation, error: pluginErrorText(error) })
+      setFailureOf(id, {
+        operation,
+        error: pluginErrorText(error),
+        ...(version === undefined ? {} : { version }),
+      })
       throw error
     } finally {
+      confirmed.current.delete(id)
       setPendingOf(id, null)
+      dropDownloads()
     }
   }
 
@@ -544,7 +607,7 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
       confirm: (consent) =>
         run(
           id,
-          () => tracked(id, "update", () => client.approveUpdate(id, consent)),
+          () => tracked(id, "update", () => client.approveUpdate(id, consent), version),
           i18n.t("marketplace:toast.updated", { name: item.summary.name, version }),
         ),
       decline: () =>
@@ -562,7 +625,10 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
    * opens; nothing is installed until the user confirms it.
    */
   const reviewPlan = (plugin: AvailablePlugin, version: AvailableVersion) => {
-    const replan = (optional: string[]) => client.planInstall(plugin.id, version.version, optional)
+    // Each plan downloads and verifies what it would install; the agent
+    // reports that as progress but sends nothing once the plan is made.
+    const replan = (optional: string[]) =>
+      client.planInstall(plugin.id, version.version, optional).finally(dropDownloads)
     setBusy(plugin.id)
     setFailureOf(plugin.id, null)
     replan([])
@@ -639,9 +705,12 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
       })
   }
 
-  // Progress the agent reports counts too (e.g. an install another window started).
+  // Progress the agent reports counts too (e.g. an install another window
+  // started); downloads only while this page has a confirmed request in
+  // flight, since planning an install reports them too and never ends them.
   const pendingAll = new Map(pending)
   for (const p of progress.values()) {
+    if (downloading(p) && pending.size === 0) continue
     if ((p.operation === "install" || p.operation === "update") && !pendingAll.has(p.plugin)) {
       pendingAll.set(p.plugin, p.operation)
     }
@@ -679,6 +748,9 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
     openDiagnostics: () => {
       focusMigrations()
       openSettings("diagnostics")
+    },
+    openPermissions: () => {
+      openSettings("permissions")
     },
     openDetails: (id) => {
       scrolledTo.current = scrollParent(page.current)?.scrollTop ?? null
@@ -729,7 +801,7 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
         return
       }
       setBusy(id)
-      tracked(id, "update", () => client.updatePlugin(id, candidate.version, []))
+      tracked(id, "update", () => client.updatePlugin(id, candidate.version, []), candidate.version)
         .then(async (result) => {
           if (result.outcome.type === "applied") {
             toast.success(
@@ -1045,6 +1117,7 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
           request={planReview}
           onClose={() => {
             setPlanReview(null)
+            dropDownloads()
             returnFocus.current?.focus()
           }}
         />

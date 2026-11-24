@@ -1,7 +1,8 @@
 // Settings › Permissions, for plugins: every installed plugin's permissions
-// as the agent holds them, to review and revoke (or grant) across plugins.
-// The same list, data and requests as each plugin's page in the
-// Marketplace; managing anything else stays there.
+// as the agent holds them, to review and revoke (or grant) across plugins:
+// the only place they are granted and revoked. Each plugin's page in the
+// Marketplace shows the same list from the same data, read-only; managing
+// anything else stays there.
 
 import { ExternalLink } from "lucide-react"
 

@@ -27,10 +27,11 @@ import {
   searchField,
 } from "@/test/marketplace"
 import { renderWithApp } from "@/test/render"
+import { ViewActiveContext } from "@/shell/view-activity"
 import { resetToasts, toast } from "@/test/toast"
 
 import { PluginClientContext, PluginError } from "./api"
-import { takeFocusedPlugin } from "./focus"
+import { focusPlugin, takeFocusedPlugin } from "./focus"
 import { PluginsSettings } from "./marketplace"
 
 vi.mock("sonner", async () => (await import("@/test/toast")).sonnerModule)
@@ -696,15 +697,27 @@ describe("plugin pages and permissions", () => {
     await openDetails(user, "Hello Weather")
     const trust = screen.getByRole("list", { name: "Verification" })
     expect(trust).toHaveTextContent("Included with DeckPilot")
-    // Its grants, with Revoke, from the agent's data.
-    expect(
-      screen.getByRole("button", {
-        name: "Revoke: Send data to and receive data from https://api.open-meteo.com",
-      }),
-    ).toBeEnabled()
+    // Its grants, from the agent's data: read-only here.
+    const permissions = screen.getByRole("group", { name: "Permissions" })
+    expect(permissions).toHaveTextContent(
+      "Send data to and receive data from https://api.open-meteo.com",
+    )
+    expect(permissions).toHaveTextContent("Granted")
     expect(screen.getByRole("region", { name: "Status and resources" })).toHaveTextContent(
       "No failures since the agent started",
     )
+  })
+
+  it("shows an installed plugin's permissions read-only, managed in Settings › Permissions", async () => {
+    const { user, context } = renderMarketplace({ helloInstalled: true })
+    await openDetails(user, "Hello Weather")
+    const permissions = screen.getByRole("group", { name: "Permissions" })
+    expect(permissions).toHaveTextContent("Granted")
+    expect(within(permissions).queryAllByRole("button")).toEqual([])
+    expect(screen.queryByRole("button", { name: /^Revoke: / })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Grant: / })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Manage in Settings › Permissions" }))
+    expect(context.openSettings).toHaveBeenCalledWith("permissions")
   })
 
   it("never features a plugin because its own record says so (placements are the storefront's)", async () => {
@@ -740,6 +753,57 @@ describe("plugin pages and permissions", () => {
     expect(context.navigate).toHaveBeenCalledWith("marketplace")
     // …opened at that plugin.
     expect(takeFocusedPlugin()).toBe(HELLO)
+  })
+})
+
+describe("opening at a plugin from another screen", () => {
+  afterEach(() => {
+    takeFocusedPlugin()
+  })
+
+  /** The Marketplace as the workspace keeps it: mounted, hidden under the settings. */
+  function renderUnderSettings(active: boolean) {
+    const client = createFakePluginClient({ helloInstalled: true })
+    const ui = (on: boolean) => (
+      <ViewActiveContext value={on}>
+        <PluginClientContext value={client}>
+          <PluginsSettings />
+        </PluginClientContext>
+      </ViewActiveContext>
+    )
+    const result = renderWithApp(ui(active))
+    return {
+      ...result,
+      show: () => {
+        result.rerender(ui(true))
+      },
+    }
+  }
+
+  it("opens at the plugin Settings › Permissions asked for when it shows again", async () => {
+    const { show } = renderUnderSettings(false)
+    await discoverReady()
+    // Settings › Permissions › "Open in Marketplace", the Marketplace mounted under them.
+    focusPlugin(HELLO)
+    expect(screen.queryByRole("heading", { name: "Hello Weather", level: 3 })).toBeNull()
+    show()
+    expect(
+      await screen.findByRole("heading", { name: "Hello Weather", level: 3 }),
+    ).toBeInTheDocument()
+    // Taken: it never opens there again by itself.
+    expect(takeFocusedPlugin()).toBeNull()
+  })
+
+  it("opens at once at a plugin asked for while it is on screen", async () => {
+    renderUnderSettings(true)
+    await discoverReady()
+    act(() => {
+      focusPlugin(LIGHTS)
+    })
+    expect(
+      await screen.findByRole("heading", { name: "Home Lights", level: 3 }),
+    ).toBeInTheDocument()
+    expect(takeFocusedPlugin()).toBeNull()
   })
 })
 
@@ -969,6 +1033,62 @@ describe("install states", () => {
     expect(client.installPlugin).toHaveBeenCalledTimes(2)
   })
 
+  it("offers no Retry while installs are blocked", async () => {
+    const { user, client } = renderMarketplace()
+    client.installPlugin.mockRejectedValueOnce(new PluginError("registryUnavailable", "offline"))
+    await openDetails(user, "Home Lights")
+    await consentAndInstall(user)
+    await within(screen.getByRole("dialog")).findByRole("alert")
+    await user.keyboard("{Escape}")
+    const retry = () => screen.getByRole("button", { name: "Try installing Home Lights again" })
+    await waitFor(() => {
+      expect(retry()).toBeEnabled()
+    })
+    // The registry is no longer current: nothing installs until it is.
+    const real = client.listAvailablePlugins.getMockImplementation()
+    if (!real) throw new Error("the fake lists the registry")
+    client.listAvailablePlugins.mockImplementation(async (refresh) => ({
+      ...(await real(refresh)),
+      registry: { source: "/tmp/registry", freshness: "stale", seq: 3 },
+    }))
+    act(() => {
+      client.emit({ type: "changed", plugin: HELLO, state: "enabled" })
+    })
+    await waitFor(() => {
+      expect(retry()).toBeDisabled()
+    })
+  })
+
+  it("drops a failed update once the agent reports the version it tried", async () => {
+    const { user, client } = renderMarketplace({ helloInstalled: true })
+    const real = client.updatePlugin.getMockImplementation()
+    if (!real) throw new Error("the fake updates plugins")
+    client.updatePlugin.mockRejectedValueOnce(new PluginError("registryUnavailable", "offline"))
+    await discoverReady()
+    await user.type(searchField(), "weather")
+    await screen.findByRole("heading", { name: "Results for “weather”" })
+    await user.click(
+      within(card("Hello Weather")).getByRole("button", { name: "Update Hello Weather" }),
+    )
+    expect(await within(card("Hello Weather")).findByRole("alert")).toHaveTextContent(
+      "Couldn’t update. The registry is not available: offline",
+    )
+    // Updated since, elsewhere (another window): the agent announces it.
+    await real(HELLO, "1.1.0", [])
+    await client.approveUpdate(HELLO, ["notifications"])
+    act(() => {
+      client.emit({ type: "changed", plugin: HELLO, state: "enabled" })
+    })
+    await waitFor(() => {
+      expect(within(card("Hello Weather")).queryByRole("alert")).not.toBeInTheDocument()
+    })
+    expect(
+      within(card("Hello Weather")).queryByRole("button", {
+        name: "Try updating Hello Weather again",
+      }),
+    ).not.toBeInTheDocument()
+  })
+
   it("keeps a failed install visible on its tile in the catalog", async () => {
     const { user, client } = renderMarketplace()
     client.installPlugin.mockRejectedValueOnce(new PluginError("storeUnavailable", "locked"))
@@ -1079,7 +1199,13 @@ describe("installed plugins", () => {
   })
 
   it("runs actions, revokes, sees the refusal, grants again and disables", async () => {
-    const { user, client } = renderMarketplace({ helloInstalled: true })
+    const client = createFakePluginClient({ helloInstalled: true })
+    const { user } = renderWithApp(
+      <PluginClientContext value={client}>
+        <PluginsSettings />
+        <PluginsSettings variant="permissions" />
+      </PluginClientContext>,
+    )
     // On the plugin's page: its actions with Run, and its permissions.
     await openDetails(user, "Hello Weather")
     const item = () => within(screen.getByRole("article"))
@@ -1091,8 +1217,11 @@ describe("installed plugins", () => {
     )
     expect(client.invokeAction).toHaveBeenCalledWith(HELLO, "greet", { name: "Ada" })
 
+    // Revoking and granting are Settings › Permissions' (beside the page here).
+    const settings = () =>
+      within(screen.getByRole("list", { name: "Permissions of installed plugins" }))
     await user.click(
-      item().getByRole("button", {
+      settings().getByRole("button", {
         name: "Revoke: Send data to and receive data from https://api.open-meteo.com",
       }),
     )
@@ -1100,13 +1229,20 @@ describe("installed plugins", () => {
       expect(toast.success).toHaveBeenCalledWith("Permission revoked")
     })
     expect(client.revokePermission).toHaveBeenCalledWith(HELLO, "network:api.open-meteo.com")
+    // As the agent announces the change: the page reads it again.
+    act(() => {
+      client.emit({ type: "changed", plugin: HELLO, state: "enabled" })
+    })
+    await waitFor(() => {
+      expect(screen.getByRole("group", { name: "Permissions" })).toHaveTextContent("Revoked")
+    })
     await user.click(item().getByRole("button", { name: "Run Current temperature" }))
     expect(
       await item().findByRole("status", { name: "Result of Current temperature" }),
     ).toHaveTextContent("Failed (not-permitted)")
 
     await user.click(
-      item().getByRole("button", {
+      settings().getByRole("button", {
         name: "Grant: Send data to and receive data from https://api.open-meteo.com",
       }),
     )

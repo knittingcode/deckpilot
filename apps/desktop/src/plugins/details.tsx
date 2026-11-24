@@ -3,6 +3,7 @@ import {
   BadgeCheck,
   ChevronDown,
   Copy,
+  KeyRound,
   Library,
   Settings2,
   ShieldCheck,
@@ -374,11 +375,18 @@ export function PluginDetailsView({
             <p className="text-xs text-muted-foreground">
               {t("marketplace:details.grantedPermissionsHint")}
             </p>
+            {/* Shown here, managed in Settings › Permissions only. */}
             <InstalledPermissions
               item={installed}
               actions={actions}
               label={t("marketplace:details.permissionsLabel")}
+              readOnly
             />
+            <div>
+              <Button variant="outline" size="sm" onClick={actions.openPermissions}>
+                <KeyRound /> {t("marketplace:details.managePermissions")}
+              </Button>
+            </div>
           </section>
         ) : (
           shown && (
