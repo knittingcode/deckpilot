@@ -80,6 +80,13 @@ released either. 0.6.0 is the first version intended for publication.
   only DeckPilot's built-in modules, with a link to the Marketplace for
   plugins.
 - Notifications show their time beside the title.
+- Folders: Automatic exit pauses while a run started from the folder is
+  going on and resumes with the time that was left; the time a run takes
+  is not counted. Only the folder shown counts down: a folder around it
+  keeps its remaining time until the device returns to it.
+- Folder Inspector: Automatic exit is one compact row, "Automatic exit
+  after [10] seconds", with the time edited inline (stored with Enter or
+  when the field is left; Escape restores it).
 - A key whose plugin is missing, disabled, incompatible, waiting for a
   permission or briefly away keeps its assignment, title, icon and look,
   and shows a compact face: a plug icon with the key's title and colours,
