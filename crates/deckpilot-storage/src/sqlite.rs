@@ -1939,10 +1939,20 @@ impl ConfigStore for SqliteStore {
 
     fn record_launch(&self, component: &str, version: &str) -> Result<LaunchInfo> {
         let tx = self.write_transaction()?;
-        let previous: Option<String> = tx
+        let last: Option<String> = tx
             .query_row(
                 "SELECT app_version FROM app_launches WHERE component = ?1 ORDER BY id DESC LIMIT 1",
                 [component],
+                |row| row.get(0),
+            )
+            .optional()?;
+        // The version used before this one: not the last start's, which is
+        // this version again after an ordinary restart.
+        let previous: Option<String> = tx
+            .query_row(
+                "SELECT app_version FROM app_launches WHERE component = ?1 AND app_version <> ?2
+                 ORDER BY id DESC LIMIT 1",
+                params![component, version],
                 |row| row.get(0),
             )
             .optional()?;
@@ -1950,16 +1960,19 @@ impl ConfigStore for SqliteStore {
             "INSERT INTO app_launches (component, app_version, launched_at) VALUES (?1, ?2, ?3)",
             params![component, version, now()],
         )?;
-        // Keep a short history only.
+        // Keep a short history only: the last 20 starts, and the last start
+        // of the version before this one, so it survives any number of
+        // restarts (at most 21 rows).
         tx.execute(
-            "DELETE FROM app_launches WHERE component = ?1 AND id NOT IN
-               (SELECT id FROM app_launches WHERE component = ?1 ORDER BY id DESC LIMIT 20)",
-            [component],
+            "DELETE FROM app_launches WHERE component = ?1
+               AND id NOT IN
+                 (SELECT id FROM app_launches WHERE component = ?1 ORDER BY id DESC LIMIT 20)
+               AND id IS NOT
+                 (SELECT max(id) FROM app_launches WHERE component = ?1 AND app_version <> ?2)",
+            params![component, version],
         )?;
         tx.commit()?;
-        let first_after_update = previous
-            .as_deref()
-            .is_some_and(|previous| previous != version);
+        let first_after_update = last.as_deref().is_some_and(|last| last != version);
         Ok(LaunchInfo {
             previous_version: previous,
             current_version: version.to_owned(),
@@ -2344,7 +2357,60 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(rows, 20);
+        // The last 20 starts, and the last one of 0.2.0.
+        assert_eq!(rows, 21);
+        // After any number of restarts, the version before is still known.
+        let restarted = store.record_launch("desktop", "0.3.0").unwrap();
+        assert!(!restarted.first_after_update);
+        assert_eq!(restarted.previous_version.as_deref(), Some("0.2.0"));
+    }
+
+    #[test]
+    fn the_version_before_is_the_last_other_one() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.record_launch("desktop", "0.2.0").unwrap();
+        // A restart of the same version has none before it.
+        let again = store.record_launch("desktop", "0.2.0").unwrap();
+        assert_eq!(again.previous_version, None);
+        assert!(!again.first_after_update);
+        store.record_launch("desktop", "0.3.0").unwrap();
+        let updated = store.record_launch("desktop", "0.4.0").unwrap();
+        assert!(updated.first_after_update);
+        assert_eq!(updated.previous_version.as_deref(), Some("0.3.0"));
+        // Going back (a reinstall) names the version it came from.
+        let back = store.record_launch("desktop", "0.3.0").unwrap();
+        assert!(back.first_after_update);
+        assert_eq!(back.previous_version.as_deref(), Some("0.4.0"));
+    }
+
+    #[test]
+    fn the_history_stays_short_over_many_versions() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let rows = |store: &SqliteStore| -> i64 {
+            store
+                .connection
+                .query_row(
+                    "SELECT count(*) FROM app_launches WHERE component = 'desktop'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        for minor in 0..30 {
+            let version = format!("0.{minor}.0");
+            let updated = store.record_launch("desktop", &version).unwrap();
+            let before = (minor > 0).then(|| format!("0.{}.0", minor - 1));
+            assert_eq!(updated.previous_version, before);
+            assert_eq!(updated.first_after_update, minor > 0);
+            // Restarts in between, more than the 20 kept starts.
+            for _ in 0..25 {
+                let again = store.record_launch("desktop", &version).unwrap();
+                assert!(!again.first_after_update);
+                assert_eq!(again.previous_version, before);
+            }
+            assert!(rows(&store) <= 21, "{} rows after {version}", rows(&store));
+        }
+        assert_eq!(rows(&store), 21);
     }
 
     #[test]
