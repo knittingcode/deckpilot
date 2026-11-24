@@ -562,14 +562,22 @@ impl Driver for Gui {
         self.wait_plugin("version", "1.0.0");
         // The page shows it: 1.0.0 as the version, marked Installed in the
         // versions.
+        // Found in the page as rendered (they may be scrolled out of view).
         wait_until(WAIT, "Installed 1.0.0 in the details", || {
-            let about = self.wd().find("//dl[@aria-label='About']").ok().flatten()?;
-            let about = self.wd().text(&about).ok()?;
-            let marked = self.visible(
-                "//ul[@aria-label='Versions']/li[.//span[normalize-space(.)='1.0.0'] \
-                 and .//*[@data-slot='badge' and normalize-space(.)='Installed']]",
-            );
-            (about.contains("1.0.0") && marked).then_some(())
+            let version = self
+                .wd()
+                .find("//dl[@aria-label='About']//dd[normalize-space(.)='1.0.0']")
+                .ok()
+                .flatten();
+            let marked = self
+                .wd()
+                .find(
+                    "//ul[@aria-label='Versions']/li[.//span[normalize-space(.)='1.0.0'] \
+                     and .//*[@data-slot='badge' and normalize-space(.)='Installed']]",
+                )
+                .ok()
+                .flatten();
+            (version.is_some() && marked.is_some()).then_some(())
         });
         vec![Via::Ui]
     }
