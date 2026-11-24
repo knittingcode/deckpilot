@@ -65,13 +65,6 @@ released either. 0.6.0 is the first version intended for publication.
 - Escape clears the Device Editor's selection (after closing a menu,
   cancelling a drag or leaving a text field first); the deselect button is
   gone.
-- Device Editor: the key's title field has a picker of the variables a key
-  can show, which inserts `{{ reference }}` at the cursor, and shows under
-  the field what the key shows as the agent resolves it (cut to 32
-  characters as on the key, with each `-` that stands for a variable
-  marked and why it has no value). The title itself is not changed. The
-  Canvas summaries show the agent's answers instead of replacing
-  `{profile}`, `{project.key}` and `{project.name}` themselves.
 - Folders: **Exit after action completes**, a switch of its own in the
   folder key's Inspector next to Automatic exit. The folder is left once
   what its key started is over (an action, a plugin's action, a workflow or
@@ -86,6 +79,13 @@ released either. 0.6.0 is the first version intended for publication.
   device, the simulated MK.2 and the editor's Canvas in a live preview draw
   the same face (the live preview's navigation gains the optional
   `folderCountdown`; protocol 16 unchanged).
+- Device Editor: the key's title field has a picker of the variables a key
+  can show, which inserts `{{ reference }}` at the cursor, and shows under
+  the field what the key shows as the agent resolves it (cut to 32
+  characters as on the key, with each `-` that stands for a variable
+  marked and why it has no value). The title itself is not changed. The
+  Canvas summaries show the agent's answers instead of replacing
+  `{profile}`, `{project.key}` and `{project.name}` themselves.
 
 ### Changed
 
@@ -100,13 +100,6 @@ released either. 0.6.0 is the first version intended for publication.
   only" switch is gone).
 - A dial's or strip's choices list only the saved actions that control
   already runs.
-- Folders: Automatic exit pauses while a run started from the folder is
-  going on and resumes with the time that was left; the time a run takes
-  is not counted. Only the folder shown counts down: a folder around it
-  keeps its remaining time until the device returns to it.
-- Folder Inspector: Automatic exit is one compact row, "Automatic exit
-  after [10] seconds", with the time edited inline (stored with Enter or
-  when the field is left; Escape restores it).
 - The main window starts in the Device Editor; the Dashboard is gone (a
   session that was on it opens the Device Editor). Pages that plugins and
   modules add stay in the rail as before.
@@ -128,6 +121,13 @@ released either. 0.6.0 is the first version intended for publication.
   only DeckPilot's built-in modules, with a link to the Marketplace for
   plugins.
 - Notifications show their time beside the title.
+- Folders: Automatic exit pauses while a run started from the folder is
+  going on and resumes with the time that was left; the time a run takes
+  is not counted. Only the folder shown counts down: a folder around it
+  keeps its remaining time until the device returns to it.
+- Folder Inspector: Automatic exit is one compact row, "Automatic exit
+  after [10] seconds", with the time edited inline (stored with Enter or
+  when the field is left; Escape restores it).
 - A key whose plugin is missing, disabled, incompatible, waiting for a
   permission or briefly away keeps its assignment, title, icon and look,
   and shows a compact face: a plug icon with the key's title and colours,
