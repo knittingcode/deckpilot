@@ -139,6 +139,12 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- The workflow node catalog cut descriptions and unavailable reasons to
+  one line; they now wrap to two lines and show in full in the tooltip.
+  Marketplace tiles show their whole summary on hover.
+- Saved actions that read alike in the workflow node catalog say which one
+  is still a draft ("not set up yet"); Random action and Multi Action
+  Switch are under "Multi Actions".
 - The file and folder pickers of Open and Open folder say when the bound
   file or folder was moved or deleted, as the application picker does for
   an application that is no longer installed.
