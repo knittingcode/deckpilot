@@ -1,16 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest"
 
-import { cleanup, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { installDomStubs } from "@/test/dom"
 import { availablePlugins, createFakePluginClient, readyRuntime } from "@/test/plugins"
+import { openDetails as openPluginDetails, openInstalled } from "@/test/marketplace"
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
 import { PluginClientContext, PluginError } from "./api"
 import { PluginsSettings } from "./marketplace"
+import type { AgentConnection } from "@/lib/types"
+
 import type { AvailablePlugin, ManifestPermission } from "./types"
 
 vi.mock("sonner", async () => (await import("@/test/toast")).sonnerModule)
@@ -89,15 +92,13 @@ function render(features = ["dependencies"]) {
 
 type User = ReturnType<typeof render>["user"]
 
-async function openDetails(user: User, name: string) {
-  await user.click(await screen.findByRole("button", { name: new RegExp(name) }))
-  return screen.findByRole("heading", { name, level: 3 })
-}
+/** A plugin's page: from its tile in Discover, or (installed) from Installed. */
+const openDetails = (user: User, name: string) => openPluginDetails(user, name)
 
 /** Installs Project Dash with every permission of the plan. */
 async function installDash(user: User) {
   await openDetails(user, "Project Dash")
-  await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+  await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
   const dialog = await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
   await user.click(within(dialog).getByRole("button", { name: "Allow all 2" }))
   await user.click(within(dialog).getByRole("button", { name: "Install 2" }))
@@ -128,7 +129,7 @@ describe("plugin dependencies", () => {
   it("shows the whole plan and consents per plugin, dependencies first", async () => {
     const { user, client } = render()
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
     expect(client.planInstall).toHaveBeenCalledWith(DASH, "1.0.0", [])
     const steps = within(within(dialog).getByRole("list", { name: "Install plan" }))
@@ -163,7 +164,7 @@ describe("plugin dependencies", () => {
   it("installs an optional integration only when it is selected", async () => {
     const { user, client } = render()
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
     const plan = within(dialog).getByRole("list", { name: "Install plan" })
     expect(plan).not.toHaveTextContent(CALENDAR)
@@ -183,7 +184,7 @@ describe("plugin dependencies", () => {
     const { user, client } = render()
     await installDash(user)
     await user.click(screen.getByRole("button", { name: /Back to plugins/ }))
-    await user.click(screen.getByRole("tab", { name: /Installed/ }))
+    await openInstalled()
     await user.click(
       installedItem("Base Library").getByRole("switch", { name: "Disable Base Library" }),
     )
@@ -201,7 +202,7 @@ describe("plugin dependencies", () => {
     const { user, client } = render()
     await installDash(user)
     await user.click(screen.getByRole("button", { name: /Back to plugins/ }))
-    await user.click(screen.getByRole("tab", { name: /Installed/ }))
+    await openInstalled()
     await user.click(installedItem("Project Dash").getByRole("button", { name: "Uninstall" }))
     const confirm = screen.getByRole("alertdialog", { name: "Uninstall Project Dash?" })
     await user.click(within(confirm).getByRole("button", { name: "Uninstall" }))
@@ -222,7 +223,7 @@ describe("plugin dependencies", () => {
   it("installs one plugin at a time with an agent without dependency plans", async () => {
     const { user, client } = render([])
     await openDetails(user, "Hello Weather")
-    await user.click(screen.getByRole("button", { name: "Install 1.1.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Hello Weather" }))
     expect(
       await screen.findByRole("dialog", { name: "Install Hello Weather 1.1.0?" }),
     ).toBeInTheDocument()
@@ -240,7 +241,7 @@ describe("plugin dependencies", () => {
       ),
     )
     await openDetails(user, "Project Dash")
-    await user.click(screen.getByRole("button", { name: "Install 1.0.0" }))
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
     const dialog = await screen.findByRole("alertdialog", {
       name: "Project Dash 1.0.0 cannot be installed",
     })
@@ -256,6 +257,123 @@ describe("plugin dependencies", () => {
       expect(
         screen.queryByRole("alertdialog", { name: "Project Dash 1.0.0 cannot be installed" }),
       ).not.toBeInTheDocument()
+    })
+  })
+})
+
+// Planning an install downloads and verifies what it would install: the
+// agent reports that as progress (fetching, verifying) and sends no
+// terminal event once the plan is made or refused.
+describe("progress while planning an install", () => {
+  /** The agent's reports of a plan's downloads, before it answers. */
+  function reportDownloads(client: ReturnType<typeof render>["client"]) {
+    const real = client.planInstall.getMockImplementation()
+    if (!real) throw new Error("the fake plans installs")
+    client.planInstall.mockImplementation((id, version, optional) => {
+      for (const plugin of [BASE, DASH]) {
+        client.emit({ type: "progress", plugin, operation: "install", stage: "fetching" })
+        client.emit({ type: "progress", plugin, operation: "install", stage: "verifying" })
+      }
+      return real(id, version, optional)
+    })
+  }
+
+  it("leaves nothing installing when the plan's dialog is cancelled", async () => {
+    const { user, client } = render()
+    reportDownloads(client)
+    await openDetails(user, "Project Dash")
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
+    await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
+    await user.keyboard("{Escape}")
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole("button", { name: "Install Project Dash" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: /Installing…/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("status", { name: "Plugin operations" })).not.toBeInTheDocument()
+    expect(client.installPlan).not.toHaveBeenCalled()
+  })
+
+  it("leaves nothing installing when the plan is refused", async () => {
+    const { user, client } = render()
+    client.planInstall.mockImplementationOnce(() => {
+      client.emit({ type: "progress", plugin: DASH, operation: "install", stage: "verifying" })
+      return Promise.reject(new PluginError("invalidPackage", "not a verified release"))
+    })
+    await openDetails(user, "Project Dash")
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
+    await screen.findByRole("alertdialog", { name: "Project Dash 1.0.0 cannot be installed" })
+    await user.keyboard("{Escape}")
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole("status", { name: "Plugin operations" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Installing…/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Try installing Project Dash again" })).toBeEnabled()
+  })
+
+  it("forgets a download reported after the plan was answered once its dialog closes", async () => {
+    const { user, client } = render()
+    await openDetails(user, "Project Dash")
+    await user.click(screen.getByRole("button", { name: "Install Project Dash" }))
+    await screen.findByRole("dialog", { name: "Install Project Dash 1.0.0?" })
+    // Late: after the plan's answer, while its dialog is open.
+    act(() => {
+      client.emit({ type: "progress", plugin: DASH, operation: "install", stage: "verifying" })
+    })
+    expect(screen.getByRole("status", { name: "Plugin operations", hidden: true })).toBeTruthy()
+    await user.keyboard("{Escape}")
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole("status", { name: "Plugin operations" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Install Project Dash" })).toBeEnabled()
+  })
+
+  it("counts a download as installing only while this page has a confirmed request", async () => {
+    const { user, client } = render()
+    await openDetails(user, "Project Dash")
+    act(() => {
+      client.emit({ type: "progress", plugin: DASH, operation: "install", stage: "fetching" })
+    })
+    // Shown as what the agent reports, but nothing waits on it here.
+    expect(screen.getByRole("status", { name: "Plugin operations" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Install Project Dash" })).toBeEnabled()
+    // Past downloading, the agent is installing it (another window's request).
+    act(() => {
+      client.emit({ type: "progress", plugin: DASH, operation: "install", stage: "installing" })
+    })
+    expect(screen.getByRole("button", { name: /Installing…/ })).toBeDisabled()
+  })
+
+  it("forgets the old agent's progress when the agent changes", async () => {
+    const client = createFakePluginClient({
+      available: withDependencies(),
+      runtime: readyRuntime({ features: ["dependencies"] }),
+    })
+    const agent = (version: string) => ({
+      running: true,
+      status: { version } as NonNullable<AgentConnection["status"]>,
+      canStart: true,
+      compatibility: null,
+      appVersion: "0.13.0",
+      protocol: 1,
+    })
+    const ui = (
+      <PluginClientContext value={client}>
+        <PluginsSettings />
+      </PluginClientContext>
+    )
+    const { rerender, context } = renderWithApp(ui, { agent: agent("0.13.0") })
+    await screen.findByRole("heading", { level: 2 })
+    act(() => {
+      client.emit({ type: "progress", plugin: DASH, operation: "install", stage: "installing" })
+    })
+    expect(screen.getByRole("status", { name: "Plugin operations" })).toBeInTheDocument()
+    // The agent was restarted: the install it reported will never finish.
+    rerender(ui, { ...context, agent: agent("0.13.1") })
+    await waitFor(() => {
+      expect(screen.queryByRole("status", { name: "Plugin operations" })).not.toBeInTheDocument()
     })
   })
 })

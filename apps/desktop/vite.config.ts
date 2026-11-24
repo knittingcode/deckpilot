@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react"
 import { defineConfig } from "vitest/config"
 
 import { layoutProbe } from "./dev/layout-probe-plugin"
+import { storefrontFixture } from "./dev/storefront-fixture-plugin"
 
 const host = process.env.TAURI_DEV_HOST
 // A second development session (e.g. the integration preview) uses its own
@@ -13,8 +14,9 @@ const host = process.env.TAURI_DEV_HOST
 const port = Number(process.env.DECKPILOT_VITE_PORT ?? 1420)
 
 export default defineConfig({
-  // layoutProbe: development only (`apply: "serve"`), see docs/development.md.
-  plugins: [react(), tailwindcss(), layoutProbe()],
+  // layoutProbe and storefrontFixture: development only (`apply: "serve"`),
+  // see docs/development.md and src/plugins/storefront/dev-fixture.ts.
+  plugins: [react(), tailwindcss(), layoutProbe(), storefrontFixture()],
   resolve: {
     alias: { "@": path.resolve(import.meta.dirname, "./src") },
   },

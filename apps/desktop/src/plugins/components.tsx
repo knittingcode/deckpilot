@@ -1,4 +1,4 @@
-import { BadgeCheck, CircleAlert, FlaskConical, Loader2, Puzzle, RefreshCw } from "lucide-react"
+import { BadgeCheck, CircleAlert, Loader2, Puzzle, RefreshCw } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -85,18 +85,6 @@ export function Compatibility({ version }: { version: AvailableVersion }) {
       {version.deckpilot && <span>DeckPilot {version.deckpilot}</span>}
       <span>{platformsText(version.platforms)}</span>
     </span>
-  )
-}
-
-/** Shown above the marketplace in every state: what it is and what it is not. */
-export function ExperimentalNotice() {
-  const { t } = useTranslation()
-  return (
-    <Alert role="note" aria-label={t("marketplace:experimental.title")}>
-      <FlaskConical />
-      <AlertTitle className="line-clamp-none">{t("marketplace:experimental.title")}</AlertTitle>
-      <AlertDescription>{t("marketplace:experimental.text")}</AlertDescription>
-    </Alert>
   )
 }
 
@@ -196,10 +184,9 @@ export function RegistryNotice({
       <AlertTitle className="line-clamp-none">{title}</AlertTitle>
       <AlertDescription className="grid gap-2">
         <p>{text}</p>
-        {registry && <p className="font-mono text-xs break-all select-text">{registry.source}</p>}
         <div>
           <Button variant="outline" size="sm" disabled={busy} onClick={onRetry}>
-            <RefreshCw /> {t("marketplace:registry.check")}
+            <RefreshCw /> {t("marketplace:registry.retry")}
           </Button>
         </div>
       </AlertDescription>
@@ -233,6 +220,8 @@ export interface Progress {
   operation: PluginOperation
   stage: PluginStage
   message?: string | undefined
+  /** The plugin's name when the page knows it; its id otherwise. */
+  name?: string | undefined
 }
 
 /** Operations in flight, from the agent's progress events. */
@@ -257,11 +246,18 @@ export function ProgressList({ progress }: { progress: Progress[] }) {
               }
               values={{
                 operation: t(OPERATION_LABELS[p.operation]),
-                plugin: p.plugin,
+                plugin: p.name ?? p.plugin,
                 stage: t(STAGE_LABELS[p.stage]),
                 message: p.message ?? "",
               }}
-              components={{ id: <span className="font-mono text-xs" /> }}
+              components={{
+                id:
+                  p.name && p.name !== p.plugin ? (
+                    <span className="font-medium" />
+                  ) : (
+                    <span className="font-mono text-xs" />
+                  ),
+              }}
             />
           </span>
         </p>

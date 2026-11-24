@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { ShieldQuestion } from "lucide-react"
 import { toast } from "sonner"
 
 import { AlertDialog, ConfirmDialog } from "@/components/dialogs"
 import { Loading } from "@/components/page"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { i18n, useTranslation } from "@/i18n"
 import { useAppContext } from "@/lib/app-context"
 
@@ -16,24 +16,29 @@ import {
 } from "./api"
 import { createTauriPluginClient } from "./client"
 import { errorSentence } from "./dialog-error"
-import {
-  ExperimentalNotice,
-  Notice,
-  ProgressList,
-  RegistryNotice,
-  RuntimeNotice,
-  type Progress,
-} from "./components"
+import { Notice, ProgressList, RegistryNotice, RuntimeNotice, type Progress } from "./components"
 import { PluginDetailsView } from "./details"
-import { MigrationNotice } from "./migration"
 import { MigrationConsentDialog } from "./migration-dialog"
-import { DiscoverView } from "./discover"
+import { CategoriesSection, CollectionSection, DiscoverSection, SearchResults } from "./home"
+import { DiscoverEditorial } from "./storefront/discover-editorial"
+import { StorefrontProvider } from "./storefront/storefront-provider"
+import { MarketplaceSidebar } from "./marketplace-sidebar"
+import { PluginPermissionsReview } from "./permissions-review"
 import { InstalledView } from "./installed"
+import { DiagnosticsView } from "./diagnostics"
+import { ConfigureDialog } from "./configure"
+import {
+  listingOf,
+  type MarketplaceSection,
+  pluginDisplayName,
+  type PluginFailure,
+} from "./catalog"
 import {
   availabilityOf,
   availabilityOfError,
   installBlock,
   loadSnapshot,
+  offeredVersion,
   updateCandidates,
   type UpdateCandidate,
 } from "./model"
@@ -55,13 +60,49 @@ import type {
   PermissionChanges,
   PluginActionOutcome,
   PluginDetails,
+  PluginNavigationEntry,
   PluginRetention,
   RuntimeAvailability,
 } from "./types"
 import { DEPENDENCIES_FEATURE, RESTORE_BUNDLED_FEATURE } from "./types"
+import { focusMigrations, onFocusPlugin, takeFocusedMigrations, takeFocusedPlugin } from "./focus"
 import { UpdatesView } from "./updates"
+import { pluginViewPage } from "@/shell/plugin-navigation"
+import { useViewActive } from "@/shell/view-activity"
+import type { PageId } from "@/lib/app-context"
 
-type Tab = "discover" | "installed" | "updates"
+/**
+ * Where the plugin data is shown: the Marketplace (the only place plugins
+ * are discovered, installed and managed), the plugin section of Settings ›
+ * Logs & Diagnostics, or the plugin section of Settings › Permissions. All
+ * three use the same client, state and requests.
+ */
+export type PluginsVariant = "marketplace" | "diagnostics" | "permissions"
+
+/** Below this width the Marketplace's sidebar shows its icons only. */
+const COMPACT_WIDTH = 760
+
+/** How long the search waits for the user to pause typing. */
+export const SEARCH_DELAY_MS = 180
+
+/**
+ * Fetching and verifying: also how the agent reports the downloads of an
+ * install it only plans (`planPluginInstall`), with no terminal event
+ * after them, and the dependencies a confirmed plan downloads, for which
+ * only the requested plugin gets one.
+ */
+function downloading(progress: Progress): boolean {
+  return progress.stage === "fetching" || progress.stage === "verifying"
+}
+
+/** The nearest ancestor that scrolls (the workspace), whose position a plugin's page keeps. */
+function scrollParent(element: Element | null): HTMLElement | null {
+  for (let e = element?.parentElement ?? null; e; e = e.parentElement) {
+    const overflow = getComputedStyle(e).overflowY
+    if (overflow === "auto" || overflow === "scroll") return e
+  }
+  return null
+}
 
 type Load =
   | { status: "loading" }
@@ -79,6 +120,22 @@ type Load =
 export interface MarketplaceActions {
   /** Id of the plugin with a request in flight, or "registry". */
   busy: string | null
+  /** Installs and updates this page started that have not finished, by plugin id. */
+  pending: ReadonlyMap<string, "install" | "update">
+  /** The last failed install or update of a plugin, until retried or done. */
+  failures: ReadonlyMap<string, PluginFailure>
+  /** Tries a failed install or update again (with its consent, as before). */
+  retry: (plugin: AvailablePlugin) => void
+  /** Opens a toolbar view of an installed plugin. */
+  openView: (plugin: string, entry: PluginNavigationEntry) => void
+  /** Opens an installed plugin's settings and credentials. */
+  configure: (item: PluginDetails) => void
+  /** Shows the installed plugins. */
+  showInstalled: () => void
+  /** Opens the plugin diagnostics in Settings (module migrations, the registry). */
+  openDiagnostics: () => void
+  /** Opens Settings › Permissions, where plugins' permissions are granted and revoked. */
+  openPermissions: () => void
   /** Why installs and updates are not possible right now. */
   blocked: string | null
   /** Plugins can be enabled and run here (not on Windows). */
@@ -156,14 +213,30 @@ function updateItems(changes: PermissionChanges): ReviewRequest["items"] {
  * VITE_DECKPILOT_PLUGINS=1. Everything comes from the agent; the page says
  * why when the agent cannot answer plugin requests.
  */
-export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab } = {}) {
+export function PluginsSettings({ variant = "marketplace" }: { variant?: PluginsVariant } = {}) {
   const { t } = useTranslation()
   const override = usePluginClientOverride()
   const [client] = useState<PluginClient>(() => override ?? createTauriPluginClient())
-  const { agent } = useAppContext()
+  const { agent, navigate, openSettings } = useAppContext()
   const [load, setLoad] = useState<Load>({ status: "loading" })
-  const [tab, setTab] = useState<Tab>(initialTab)
-  const [selected, setSelected] = useState<string | null>(null)
+  // A screen may have asked to open at one plugin (`focusPlugin`).
+  const [selected, setSelected] = useState<string | null>(() =>
+    variant === "marketplace" ? takeFocusedPlugin() : null,
+  )
+  /** Discover's category; kept while a plugin's page is open. */
+  const [category, setCategory] = useState<string | null>(null)
+  /** The sidebar's search as typed, and as searched (after a short pause). */
+  const [query, setQuery] = useState("")
+  const [searched, setSearched] = useState("")
+  /** Where the section was scrolled when search results replaced it. */
+  const beforeSearch = useRef<number | null>(null)
+  /** The Marketplace's sidebar destination; kept while a plugin's page is open. */
+  const [section, setSection] = useState<MarketplaceSection>("discover")
+  const page = useRef<HTMLDivElement>(null)
+  const root = useRef<HTMLDivElement>(null)
+  const [compact, setCompact] = useState(false)
+  /** Where the page was scrolled when a plugin's page replaced it. */
+  const scrolledTo = useRef<number | null>(null)
   const [review, setReview] = useState<ReviewRequest | null>(null)
   const [planReview, setPlanReview] = useState<InstallPlanRequest | null>(null)
   /**
@@ -183,6 +256,14 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
   const [packageFile, setPackageFile] = useState<string | null>(null)
   /** A module migration whose consent dialog is open. */
   const [consentFor, setConsentFor] = useState<ModuleMigration | null>(null)
+  /** Installs and updates this page started, by plugin id. */
+  const [pending, setPending] = useState<Map<string, "install" | "update">>(new Map())
+  /** The same, for the callbacks that settle a request. */
+  const confirmed = useRef(new Set<string>())
+  /** Installs and updates that failed, by plugin id, until retried. */
+  const [failures, setFailures] = useState<Map<string, PluginFailure>>(new Map())
+  /** The installed plugin whose settings dialog is open. */
+  const [configuring, setConfiguring] = useState<string | null>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
   const generation = useRef(0)
 
@@ -197,13 +278,37 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
     [client],
   )
 
-  // The agent started, stopped or was replaced: ask again.
+  // The agent started, stopped or was replaced: ask again. Its progress
+  // reports were the old agent's: none of them will finish.
   const agentKey = agent
     ? `${String(agent.running)}:${agent.status?.version ?? ""}:${String(agent.protocol)}`
     : "unknown"
+  const [progressOf, setProgressOf] = useState(agentKey)
+  if (progressOf !== agentKey) {
+    setProgressOf(agentKey)
+    setProgress(new Map())
+  }
   useEffect(() => {
     void reload()
   }, [reload, agentKey])
+
+  /**
+   * Forgets the downloads the agent reported for requests of this page
+   * that have been answered (a plan, a confirmed install): the agent sends
+   * no terminal event for them. Those of a confirmed request still in
+   * flight stay.
+   */
+  const dropDownloads = useCallback(() => {
+    setProgress((previous) => {
+      const stale = [...previous.values()].filter(
+        (p) => downloading(p) && !confirmed.current.has(p.plugin),
+      )
+      if (stale.length === 0) return previous
+      const next = new Map(previous)
+      for (const p of stale) next.delete(p.plugin)
+      return next
+    })
+  }, [])
 
   useEffect(
     () =>
@@ -222,38 +327,124 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
     [client, reload],
   )
 
+  // A screen asked to open at a plugin while the Marketplace stayed
+  // mounted (under the settings, or on screen): take it when it shows.
+  const active = useViewActive()
+  useEffect(() => {
+    if (variant !== "marketplace" || !active) return
+    const take = () => {
+      const plugin = takeFocusedPlugin()
+      if (plugin === null) return
+      scrolledTo.current = null
+      setSelected(plugin)
+    }
+    take()
+    return onFocusPlugin(take)
+  }, [variant, active])
+
+  // Back from a plugin's page: where the page was.
+  useLayoutEffect(() => {
+    if (selected !== null) return
+    const top = scrolledTo.current
+    scrolledTo.current = null
+    const scroller = scrollParent(page.current)
+    if (top !== null && scroller) scroller.scrollTop = top
+  }, [selected])
+
+  // Search as the user types, once they pause (no Enter needed).
+  useEffect(() => {
+    // Clearing is immediate (the query handler); only typing waits.
+    if (query.trim() === "") return
+    const timer = setTimeout(() => {
+      setSearched(query)
+    }, SEARCH_DELAY_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [query])
+
+  // Results replace the section: remember where it was scrolled, and go
+  // back there once the search is cleared.
+  const searching = searched.trim() !== ""
+  useLayoutEffect(() => {
+    const scroller = scrollParent(page.current)
+    if (searching) {
+      beforeSearch.current ??= scroller?.scrollTop ?? 0
+      if (scroller) scroller.scrollTop = 0
+    } else if (beforeSearch.current !== null) {
+      if (scroller) scroller.scrollTop = beforeSearch.current
+      beforeSearch.current = null
+    }
+  }, [searching])
+
+  // Narrow, the sidebar shows its icons only (the content needs the room).
+  const ready = load.status === "ready"
+  useEffect(() => {
+    const element = root.current
+    if (!element || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setCompact(entry.contentRect.width < COMPACT_WIDTH)
+    })
+    observer.observe(element)
+    return () => {
+      observer.disconnect()
+    }
+  }, [ready])
+
+  // Opened from the Marketplace to review a migration: bring it into view.
+  const [revealMigrations] = useState(() => variant === "diagnostics" && takeFocusedMigrations())
+  useEffect(() => {
+    if (revealMigrations && ready) {
+      document.getElementById("module-migrations-title")?.scrollIntoView({ block: "start" })
+    }
+  }, [revealMigrations, ready])
+
   const retry = () => {
     setLoad({ status: "loading" })
     void reload()
   }
 
+  const names = (id: string) =>
+    load.status === "ready" ? pluginDisplayName(id, undefined, load.snapshot) : id
   const header = (
     <>
-      <ExperimentalNotice />
-      {progress.size > 0 && <ProgressList progress={[...progress.values()]} />}
+      {progress.size > 0 && (
+        <ProgressList
+          progress={[...progress.values()].map((p) => ({ ...p, name: names(p.plugin) }))}
+        />
+      )}
     </>
   )
 
+  // Before the plugins are known, the Marketplace has no sidebar: the
+  // state alone, padded like its content.
+  const frame = (node: ReactNode) =>
+    variant === "marketplace" ? (
+      <div className="grid content-start gap-4 px-6 py-5">{node}</div>
+    ) : (
+      node
+    )
+
   if (load.status === "loading") {
-    return (
+    return frame(
       <>
         {header}
         <Loading />
-      </>
+      </>,
     )
   }
   if (load.status === "unavailable") {
-    return (
+    return frame(
       <>
         {header}
         <RuntimeNotice availability={load.availability} busy={false} onRetry={retry} />
-      </>
+      </>,
     )
   }
   if (load.status === "error") {
     // Read at render time, so the words follow the language on screen.
     const failure = pluginErrorText(load.error)
-    return (
+    return frame(
       <>
         {header}
         <Notice tone="destructive" title={t("marketplace:loadFailed")}>
@@ -265,11 +456,17 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
             </Button>
           </div>
         </Notice>
-      </>
+      </>,
     )
   }
 
-  const { snapshot, availability, migrations } = load
+  const { snapshot, availability } = load
+  // A manifest may name its plugin with a key of its locale files
+  // (`t:plugin.name`); the agent resolves it only for installed plugins.
+  const migrations = load.migrations.map((m) => ({
+    ...m,
+    pluginName: pluginDisplayName(m.plugin, m.pluginName, snapshot),
+  }))
   const blocked = installBlock(snapshot)
   // Dependency plans (plugin API 1.4): agents without them install one
   // plugin at a time, as before.
@@ -289,6 +486,54 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
       setBusy(null)
     }
   }
+  const setPendingOf = (id: string, operation: "install" | "update" | null) => {
+    setPending((previous) => {
+      const next = new Map(previous)
+      if (operation) next.set(id, operation)
+      else next.delete(id)
+      return next
+    })
+  }
+  const setFailureOf = (id: string, failure: PluginFailure | null) => {
+    setFailures((previous) => {
+      if (!failure && !previous.has(id)) return previous
+      const next = new Map(previous)
+      if (failure) next.set(id, failure)
+      else next.delete(id)
+      return next
+    })
+  }
+  /**
+   * An install or update of `id`: shown as in progress until the agent
+   * answers, and as failed (with Retry) when it refuses. "Installed" comes
+   * only from the agent's list read afterwards.
+   */
+  const tracked = async <T,>(
+    id: string,
+    operation: "install" | "update",
+    request: () => Promise<T>,
+    /** The version an update goes to. */
+    version?: string,
+  ): Promise<T> => {
+    confirmed.current.add(id)
+    setPendingOf(id, operation)
+    setFailureOf(id, null)
+    try {
+      return await request()
+    } catch (error) {
+      setFailureOf(id, {
+        operation,
+        error: pluginErrorText(error),
+        ...(version === undefined ? {} : { version }),
+      })
+      throw error
+    } finally {
+      confirmed.current.delete(id)
+      setPendingOf(id, null)
+      dropDownloads()
+    }
+  }
+
   /** Like `run`, but reports failures as a toast instead of to a dialog. */
   const runReported = (id: string, request: () => Promise<unknown>, success: string) => {
     run(id, request, success).catch((error: unknown) => {
@@ -362,7 +607,7 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
       confirm: (consent) =>
         run(
           id,
-          () => client.approveUpdate(id, consent),
+          () => tracked(id, "update", () => client.approveUpdate(id, consent), version),
           i18n.t("marketplace:toast.updated", { name: item.summary.name, version }),
         ),
       decline: () =>
@@ -380,8 +625,12 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
    * opens; nothing is installed until the user confirms it.
    */
   const reviewPlan = (plugin: AvailablePlugin, version: AvailableVersion) => {
-    const replan = (optional: string[]) => client.planInstall(plugin.id, version.version, optional)
+    // Each plan downloads and verifies what it would install; the agent
+    // reports that as progress but sends nothing once the plan is made.
+    const replan = (optional: string[]) =>
+      client.planInstall(plugin.id, version.version, optional).finally(dropDownloads)
     setBusy(plugin.id)
+    setFailureOf(plugin.id, null)
     replan([])
       .then((plan) => {
         returnFocus.current =
@@ -395,7 +644,10 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
           confirm: (confirmed, optional, consent) =>
             run(
               plugin.id,
-              () => client.installPlan(confirmed, optional, consent, canRun),
+              () =>
+                tracked(plugin.id, "install", () =>
+                  client.installPlan(confirmed, optional, consent, canRun),
+                ),
               confirmed.steps.length > 1
                 ? i18n.t("marketplace:toast.installedWithMore", {
                     name: plugin.name,
@@ -406,12 +658,16 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
         })
       })
       .catch((error: unknown) => {
+        // The plan could not be made: nothing was installed. The card
+        // keeps the failure; the dialog says why.
+        const text = pluginErrorText(error)
+        setFailureOf(plugin.id, { operation: "install", error: text })
         returnFocus.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null
         setInstallRefused({
           name: plugin.name,
           version: version.version,
-          error: pluginErrorText(error),
+          error: text,
         })
       })
       .finally(() => {
@@ -449,12 +705,55 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
       })
   }
 
+  // Progress the agent reports counts too (e.g. an install another window
+  // started); downloads only while this page has a confirmed request in
+  // flight, since planning an install reports them too and never ends them.
+  const pendingAll = new Map(pending)
+  for (const p of progress.values()) {
+    if (downloading(p) && pending.size === 0) continue
+    if ((p.operation === "install" || p.operation === "update") && !pendingAll.has(p.plugin)) {
+      pendingAll.set(p.plugin, p.operation)
+    }
+  }
+
   const actions: MarketplaceActions = {
     busy,
     blocked,
     canRun,
     client,
+    pending: pendingAll,
+    failures,
+    retry: (plugin) => {
+      const failure = failures.get(plugin.id)
+      setFailureOf(plugin.id, null)
+      if (failure?.operation === "update") {
+        const candidate = updates.find((u) => u.plugin.summary.id === plugin.id)
+        if (candidate) actions.update(candidate)
+        return
+      }
+      const version = offeredVersion(plugin)
+      if (version) actions.install(plugin, version)
+    },
+    openView: (plugin, entry) => {
+      navigate(pluginViewPage({ plugin, id: entry.id }) as PageId)
+    },
+    configure: (item) => {
+      setConfiguring(item.summary.id)
+    },
+    showInstalled: () => {
+      scrolledTo.current = null
+      setSelected(null)
+      setSection("installed")
+    },
+    openDiagnostics: () => {
+      focusMigrations()
+      openSettings("diagnostics")
+    },
+    openPermissions: () => {
+      openSettings("permissions")
+    },
     openDetails: (id) => {
+      scrolledTo.current = scrollParent(page.current)?.scrollTop ?? null
       setSelected(id)
     },
     install: (plugin, version) => {
@@ -474,9 +773,11 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
           run(
             plugin.id,
             () =>
-              client.installPlugin(
-                { type: "registry", plugin: plugin.id, version: version.version },
-                consent,
+              tracked(plugin.id, "install", () =>
+                client.installPlugin(
+                  { type: "registry", plugin: plugin.id, version: version.version },
+                  consent,
+                ),
               ),
             i18n.t("marketplace:toast.installed", { name: plugin.name }),
           ),
@@ -500,8 +801,7 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
         return
       }
       setBusy(id)
-      client
-        .updatePlugin(id, candidate.version, [])
+      tracked(id, "update", () => client.updatePlugin(id, candidate.version, []), candidate.version)
         .then(async (result) => {
           if (result.outcome.type === "applied") {
             toast.success(
@@ -636,9 +936,58 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
     returnFocus.current?.focus()
   }
 
-  const selectedPlugin = selected ? snapshot.available.find((p) => p.id === selected) : undefined
+  // Every installed plugin has a page, listed by the registry or not.
+  const selectedInstalled = selected
+    ? snapshot.installed.find((p) => p.summary.id === selected)
+    : undefined
+  const selectedPlugin = selected
+    ? (snapshot.available.find((p) => p.id === selected) ??
+      (selectedInstalled ? listingOf(selectedInstalled) : undefined))
+    : undefined
+  const configuringItem = configuring
+    ? snapshot.installed.find((p) => p.summary.id === configuring)
+    : undefined
+  const waiting = migrations.filter((m) => m.phase === "awaitingConsent")
 
-  return (
+  /** A sidebar destination: its content from the top, any plugin page and search closed. */
+  const go = (next: MarketplaceSection) => {
+    scrolledTo.current = null
+    beforeSearch.current = null
+    setSelected(null)
+    setQuery("")
+    setSearched("")
+    setSection(next)
+    const scroller = scrollParent(page.current)
+    if (scroller) scroller.scrollTop = 0
+  }
+
+  const migrationNotice = waiting.length > 0 && (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl bg-card p-3 text-sm ring-1 ring-border">
+      <ShieldQuestion className="size-4 shrink-0" aria-hidden />
+      <p className="min-w-0 flex-1">
+        {t("marketplace:home.migrationWaiting", {
+          count: waiting.length,
+          modules: waiting.map((m) => m.moduleName).join(", "),
+        })}
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          if (variant === "marketplace") actions.openDiagnostics()
+          else {
+            document.getElementById("module-migrations-title")?.scrollIntoView({ block: "start" })
+          }
+        }}
+      >
+        {variant === "marketplace"
+          ? t("marketplace:home.migrationReviewInSettings")
+          : t("marketplace:home.migrationReview")}
+      </Button>
+    </div>
+  )
+
+  const notices = (
     <>
       {header}
       <RuntimeNotice availability={availability} busy={busy !== null} onRetry={retry} />
@@ -648,66 +997,119 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
         busy={busy !== null}
         onRetry={actions.refresh}
       />
-      <MigrationNotice
-        migrations={migrations}
-        busy={busy}
-        onReview={(migration) => {
-          returnFocus.current =
-            document.activeElement instanceof HTMLElement ? document.activeElement : null
-          setConsentFor(migration)
-        }}
-        onRetry={(migration) => {
-          runReported(
-            migration.module,
-            () => client.retryModuleMigration(migration.module),
-            i18n.t("marketplace:toast.migrationRetry", { module: migration.moduleName }),
-          )
-        }}
-      />
-      {selectedPlugin ? (
-        <PluginDetailsView
-          key={selectedPlugin.id}
-          plugin={selectedPlugin}
-          snapshot={snapshot}
-          updates={updates}
-          actions={actions}
-          onBack={() => {
-            setSelected(null)
-          }}
-        />
-      ) : (
-        <Tabs
-          value={tab}
-          onValueChange={(value) => {
-            setTab(value as Tab)
-          }}
-        >
-          <TabsList aria-label={t("marketplace:tabs.label")}>
-            <TabsTrigger value="discover">{t("marketplace:tabs.discover")}</TabsTrigger>
-            <TabsTrigger value="installed">
-              {t("marketplace:tabs.installed", { number: snapshot.installed.length })}
-            </TabsTrigger>
-            <TabsTrigger value="updates">
-              {t("marketplace:tabs.updates", { number: updates.length })}
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="discover" className="grid gap-4 pt-2">
-            <DiscoverView snapshot={snapshot} updates={updates} actions={actions} />
-          </TabsContent>
-          <TabsContent value="installed" className="grid gap-4 pt-2">
+    </>
+  )
+
+  const details = selectedPlugin && (
+    <PluginDetailsView
+      key={selectedPlugin.id}
+      plugin={selectedPlugin}
+      snapshot={snapshot}
+      updates={updates}
+      migrations={migrations}
+      actions={actions}
+      onBack={() => {
+        setSelected(null)
+      }}
+    />
+  )
+
+  const sectionContent = (() => {
+    switch (section) {
+      case "discover":
+        return (
+          <>
+            <DiscoverSection
+              snapshot={snapshot}
+              updates={updates}
+              migrations={migrations}
+              actions={actions}
+              category={category}
+              onCategory={setCategory}
+            />
+            {migrationNotice}
+            {/* With a category chosen, its plugins under the chips are the catalog. */}
+            {/* The storefront's sections, else (catalog-only) the built-in home. */}
+            {category === null && (
+              <DiscoverEditorial
+                snapshot={snapshot}
+                updates={updates}
+                migrations={migrations}
+                actions={actions}
+                onSection={go}
+                onCategory={setCategory}
+              />
+            )}
+          </>
+        )
+      case "installed":
+        return (
+          <section aria-labelledby="marketplace-installed-title" className="grid gap-4">
+            <div className="grid gap-1">
+              <h2 id="marketplace-installed-title" className="text-xl font-semibold tracking-tight">
+                {t("marketplace:nav.installed")}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {t("marketplace:sections.yours.text")}
+              </p>
+            </div>
+            {migrationNotice}
             <InstalledView
               snapshot={snapshot}
               updates={updates}
               actions={actions}
               onBrowse={() => {
-                setTab("discover")
+                go("discover")
               }}
             />
-          </TabsContent>
-          <TabsContent value="updates" className="grid gap-4 pt-2">
-            <UpdatesView updates={updates} actions={actions} />
-          </TabsContent>
-        </Tabs>
+          </section>
+        )
+      case "updates":
+        return (
+          <section aria-labelledby="marketplace-updates-title" className="grid gap-4">
+            <h2 id="marketplace-updates-title" className="text-xl font-semibold tracking-tight">
+              {t("marketplace:nav.updates")}
+            </h2>
+            <UpdatesView updates={updates} actions={actions} snapshot={snapshot} />
+          </section>
+        )
+      case "categories":
+        return (
+          <CategoriesSection
+            snapshot={snapshot}
+            onCategory={(id) => {
+              go("discover")
+              setCategory(id)
+            }}
+          />
+        )
+      default:
+        return (
+          <CollectionSection
+            id={section}
+            snapshot={snapshot}
+            updates={updates}
+            migrations={migrations}
+            actions={actions}
+            onCategories={() => {
+              go("categories")
+            }}
+          />
+        )
+    }
+  })()
+
+  const dialogs = (
+    <>
+      {configuringItem && (
+        <ConfigureDialog
+          item={configuringItem}
+          client={client}
+          onChanged={actions.reload}
+          onClose={() => {
+            setConfiguring(null)
+          }}
+        />
       )}
       {review && <PermissionReviewDialog request={review} onClose={closeReview} />}
       {planReview && (
@@ -715,6 +1117,7 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
           request={planReview}
           onClose={() => {
             setPlanReview(null)
+            dropDownloads()
             returnFocus.current?.focus()
           }}
         />
@@ -788,9 +1191,113 @@ export function PluginsSettings({ initialTab = "discover" }: { initialTab?: Tab 
       </ConfirmDialog>
     </>
   )
+
+  if (variant === "diagnostics") {
+    return (
+      <>
+        {notices}
+        {migrationNotice}
+        <DiagnosticsView
+          snapshot={snapshot}
+          migrations={migrations}
+          actions={actions}
+          onReviewMigration={(migration) => {
+            returnFocus.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null
+            setConsentFor(migration)
+          }}
+          onRetryMigration={(migration) => {
+            runReported(
+              migration.module,
+              () => client.retryModuleMigration(migration.module),
+              i18n.t("marketplace:toast.migrationRetry", { module: migration.moduleName }),
+            )
+          }}
+        />
+        {dialogs}
+      </>
+    )
+  }
+
+  if (variant === "permissions") {
+    return (
+      <>
+        {header}
+        <PluginPermissionsReview snapshot={snapshot} actions={actions} />
+        {dialogs}
+      </>
+    )
+  }
+
+  // One full-height row between the title bar and the status bar: the
+  // sidebar (its right border is the divider) and the content, each
+  // scrolling on its own. Spacing scale: sections 32 px apart (gap-8),
+  // blocks within a section 16 px (gap-4), rows and cards 12 px (gap-3),
+  // a heading and its description 4 px (gap-1); content padding 24 px
+  // sideways and 20 px at the top and bottom (px-6 py-5).
+  const marketplace = (
+    <div ref={root} data-slot="marketplace" className="flex min-h-0 flex-1">
+      <MarketplaceSidebar
+        // Results are not a section: no item looks selected meanwhile.
+        current={searching ? null : section}
+        onInstallFile={actions.installFile}
+        installFileDisabled={busy !== null || blocked !== null}
+        query={query}
+        onQuery={(next) => {
+          // A plugin's page closes for the results; Back no longer applies.
+          if (next.trim() !== "" && selected !== null) {
+            scrolledTo.current = null
+            setSelected(null)
+          }
+          setQuery(next)
+          if (next.trim() === "") setSearched("")
+        }}
+        installed={snapshot.installed.length}
+        updates={updates.length}
+        compact={compact}
+        onSelect={go}
+      />
+      <div
+        data-slot="marketplace-content"
+        className="@container relative min-h-0 min-w-0 flex-1 [scrollbar-gutter:stable] overflow-x-hidden overflow-y-auto"
+      >
+        <div ref={page} className="mx-auto grid w-full max-w-5xl content-start gap-8 px-6 py-5">
+          {notices}
+          {details ??
+            (searching ? (
+              <SearchResults
+                query={searched}
+                snapshot={snapshot}
+                updates={updates}
+                migrations={migrations}
+                actions={actions}
+              />
+            ) : (
+              sectionContent
+            ))}
+        </div>
+      </div>
+      {dialogs}
+    </div>
+  )
+  // The signed storefront (editorial Discover, collections, listings), when the agent has one.
+  return (
+    <StorefrontProvider
+      runtime={snapshot.runtime}
+      available={snapshot.available}
+      seq={snapshot.registry?.seq}
+    >
+      {marketplace}
+    </StorefrontProvider>
+  )
 }
 
-/** Settings › Extensions › Plugins: the marketplace, at the installed plugins. */
-export function InstalledPluginsSettings() {
-  return <PluginsSettings initialTab="installed" />
+/** Settings › Logs & Diagnostics: the plugin diagnostics (module migrations, registry). */
+export function PluginDiagnostics() {
+  return <PluginsSettings variant="diagnostics" />
+}
+
+/** Settings › Permissions: every installed plugin's permissions, to review and revoke. */
+export function PluginPermissions() {
+  return <PluginsSettings variant="permissions" />
 }

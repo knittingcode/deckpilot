@@ -8,6 +8,8 @@
 
 import type { ActionType } from "@/lib/types"
 
+import type { MediaRef } from "./storefront-types"
+
 // ---- Manifest permissions (plugin-manifest.schema.json) ----
 
 export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE"
@@ -457,6 +459,18 @@ export interface AvailableVersion {
   publishedAt?: number
   /** Its dependencies from the signed registry detail, with their state here. */
   dependencies?: PluginDependencyInfo[]
+  /**
+   * Optional, not sent by any agent yet (a proposed registry field): what
+   * changed in this version, plain text. Shown as "What's new" when present.
+   */
+  releaseNotes?: string
+}
+
+/** A screenshot of a registry plugin (proposed; not sent by any agent yet). */
+export interface PluginScreenshot {
+  /** Only `data:image/png` / `data:image/jpeg` URLs the agent verified are shown; never a remote image. */
+  src: string
+  caption?: string
 }
 
 /** The publisher of a registry plugin, as the registry index lists it. */
@@ -489,6 +503,33 @@ export interface AvailablePlugin {
   sourceRepository?: string
   /** Why the registry deprecated the plugin. */
   deprecated?: string
+  // ---- Sent by an agent with the `storefront` feature
+  // (`AvailablePluginStorefrontFields`, storefront-types.ts); older agents
+  // send none of them. Editorial placements (featured plugins, collections)
+  // are not fields of a plugin: they come from the signed storefront
+  // (`StorefrontView`), which can never change these.
+  /**
+   * The storefront listing's icon, a verified image fetched by sha256
+   * (`StorefrontClient.getRegistryMedia`). An installed plugin's own icon
+   * (`PluginDetails.icon`, a data URL) is preferred where there is one.
+   */
+  icon?: MediaRef
+  /** One of DeckPilot's official plugins (derived by the agent; sent only when true). */
+  official?: boolean
+  /** Only ever installed as the copy bundled with DeckPilot (derived by the agent; sent only when true). */
+  bundledOnly?: boolean
+  // ---- Optional presentation fields (proposed; absent from every agent so
+  // far). Each is shown only when present, so older agents keep working.
+  // A storefront listing (`ListingView`) takes precedence where it has the
+  // same information (screenshots, links, release notes).
+  /** Screenshots for the plugin's page. */
+  screenshots?: PluginScreenshot[]
+  /** The publisher signatures an official release carries (e.g. 2 of 3 keys). */
+  officialSignature?: { threshold: number; keys: number }
+  /** Where to read the plugin's documentation (https). */
+  documentationUrl?: string
+  /** Where to ask for help or report a problem (https). */
+  supportUrl?: string
 }
 
 export interface AvailablePlugins {

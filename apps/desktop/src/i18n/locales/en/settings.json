@@ -59,11 +59,11 @@
     },
     "permissions": {
       "title": "Permissions",
-      "description": "What each module is allowed to access"
+      "description": "What modules and plugins are allowed to access"
     },
     "diagnostics": {
       "title": "Logs & Diagnostics",
-      "description": "Logs and technical details for troubleshooting"
+      "description": "Logs, plugin diagnostics and technical details for troubleshooting"
     },
     "about": {
       "title": "About",
@@ -72,10 +72,6 @@
     "devDialogs": {
       "title": "Dialog showcase",
       "description": "Development only: every dialog template in its states"
-    },
-    "plugins": {
-      "title": "Plugins",
-      "description": "Experimental: installed plugins, their permissions, settings and updates"
     },
     "module": {
       "description": "Settings of the {{module}} module"
@@ -160,17 +156,22 @@
     "copied": "Diagnostics copied",
     "notCopied": "The diagnostics were not copied",
     "copyByHand": "Select the report and copy it by hand",
-    "reportInEnglish": "The report is always in English, so that anyone who helps you can read it."
+    "reportInEnglish": "The report is always in English, so that anyone who helps you can read it.",
+    "pluginsTitle": "Plugins",
+    "pluginsDescription": "Built-in modules moving to plugins, what DeckPilot is made of and the plugin registry this computer verified."
   },
   "moduleSettings": {
     "saved": "{{module}} settings saved",
     "notSaved": "{{module}} settings were not saved"
   },
   "permissions": {
+    "modulesTitle": "Modules",
     "intro": "Every module declares what it may access. A disabled module has no access. To withdraw a permission, disable the module under <page>Modules</page>.",
     "unused": "No module uses this permission.",
     "granted": "Granted",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "pluginsTitle": "Plugins",
+    "pluginsIntro": "What each installed plugin may do, as you allowed it. Revoke a permission here or on the plugin’s page in the Marketplace; both show the same grants."
   },
   "storage": {
     "title": "Configuration database",

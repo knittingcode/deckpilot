@@ -7,6 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { i18n } from "@/i18n"
 import { installDomStubs } from "@/test/dom"
 import { LIGHTS, createFakePluginClient } from "@/test/plugins"
+import { marketplaceSidebar } from "@/test/marketplace"
 import { renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
@@ -36,50 +37,78 @@ afterEach(async () => {
   })
 })
 
-function renderMarketplace() {
+function renderMarketplace(variant: "marketplace" | "diagnostics" = "marketplace") {
   const client = createFakePluginClient({ helloInstalled: true })
   const result = renderWithApp(
     <PluginClientContext value={client}>
-      <PluginsSettings />
+      <PluginsSettings variant={variant} />
     </PluginClientContext>,
   )
   return { ...result, client }
 }
 
 describe("the marketplace in Polish", () => {
-  it("shows the catalog, its badges and plural forms in Polish; plugin data stays as provided", async () => {
-    renderMarketplace()
-    const list = await screen.findByRole("list", { name: "Wtyczki" })
-    expect(screen.getByRole("tab", { name: "Odkrywaj" })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: "Zainstalowane 1" })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: "Aktualizacje 1" })).toBeInTheDocument()
-    expect(screen.getByRole("searchbox", { name: "Szukaj wtyczek" })).toBeInTheDocument()
-    expect(screen.getByRole("note", { name: "Funkcja eksperymentalna" })).toBeInTheDocument()
+  it("shows the sidebar, the catalog, its states and plural forms in Polish; plugin data stays as provided", async () => {
+    const { user } = renderMarketplace()
+    expect(await screen.findByRole("heading", { name: "Odkrywaj wtyczki" })).toBeInTheDocument()
+    const nav = within(marketplaceSidebar())
+    expect(
+      within(nav.getAllByRole("list")[0] as HTMLElement)
+        .getAllByRole("button")
+        .map((b) => b.querySelector("span")?.textContent),
+    ).toEqual([
+      "Odkrywaj",
+      "Zainstalowane",
+      "Uaktualnienia",
+      "Kategorie",
+      "Programuj",
+      "Graj",
+      "Pracuj",
+      "Automatyzuj",
+      "Monitoruj",
+    ])
+    expect(nav.getByRole("searchbox", { name: "Szukaj wtyczek" })).toBeInTheDocument()
+    expect(nav.getByRole("button", { name: "Zainstaluj z pliku" })).toBeInTheDocument()
+    expect(screen.queryByRole("note", { name: "Funkcja eksperymentalna" })).not.toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Twoje wtyczki" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Zarządzaj 1 wtyczką" })).toBeInTheDocument()
+    const recent = screen.getByRole("list", { name: "Ostatnio dodane" })
+    expect(within(recent).getAllByRole("listitem")).toHaveLength(3)
+    expect(within(recent).getByText("Niezgodna")).toBeInTheDocument()
+    expect(within(recent).getByText("Niedostępna")).toBeInTheDocument()
 
-    const overview = screen.getByRole("region", { name: "Co zawiera DeckPilot" })
-    expect(overview).toHaveTextContent("1 wtyczka zainstalowana przez Ciebie")
-    expect(overview).toHaveTextContent("3 wtyczki w rejestrze, niezainstalowane.")
-
+    // Searching finds installed plugins too, with Polish quotes in the heading.
+    await user.type(nav.getByRole("searchbox", { name: "Szukaj wtyczek" }), "weather")
+    expect(
+      await screen.findByRole("heading", { name: "Wyniki dla: „weather”" }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole("status")).toHaveTextContent("1 wtyczka")
+    const list = screen.getByRole("list", { name: "Wtyczki" })
     const hello = within(list).getByText("Hello Weather").closest("li") as HTMLElement
     // The plugin's own texts are not translated.
-    expect(hello).toHaveTextContent("Hello Weather")
     expect(hello).toHaveTextContent("Greets someone and shows the temperature.")
-    expect(hello).toHaveTextContent("wydawca: Acme Tools")
-    expect(hello).toHaveTextContent("Zweryfikowany wydawca")
-    expect(hello).toHaveTextContent("macOS, Windows i Linux")
-    expect(hello).toHaveTextContent("Najnowsza 1.1.0")
-    expect(hello).toHaveTextContent("Zainstalowana 1.0.0")
-    expect(hello).toHaveTextContent("Dostępna aktualizacja")
-    expect(screen.getByText("Niezgodna")).toBeInTheDocument()
-    expect(screen.getByText("Wycofana")).toBeInTheDocument()
-    expect(document.body).not.toHaveTextContent(/Install from package file|Refresh|Discover/)
+    expect(hello).toHaveTextContent("Acme Tools")
+    expect(within(hello).getByRole("img", { name: "Zweryfikowany wydawca" })).toBeInTheDocument()
+    expect(within(hello).getByRole("button", { name: "Aktualizuj Hello Weather" })).toBeEnabled()
+    expect(document.body).not.toHaveTextContent(
+      /Install from|Refresh|Discover|Incompatible|Recently added|Results for/,
+    )
+  })
+
+  it("shows what DeckPilot is made of in Polish in the diagnostics", async () => {
+    renderMarketplace("diagnostics")
+    const overview = await screen.findByRole("region", { name: "Co zawiera DeckPilot" })
+    expect(overview).toHaveTextContent("1 wtyczka zainstalowana przez Ciebie")
+    expect(overview).toHaveTextContent("3 wtyczki w rejestrze, niezainstalowane.")
+    expect(screen.getByRole("region", { name: "Rejestr" })).toHaveTextContent("Zweryfikowany")
   })
 
   it("asks for consent in Polish, with the risk tiers and every permission spelled out", async () => {
     const { user, client } = renderMarketplace()
-    await user.click(await screen.findByRole("button", { name: /Home Lights/ }))
+    const catalog = await screen.findByRole("list", { name: "Ostatnio dodane" })
+    await user.click(within(catalog).getByRole("button", { name: "Home Lights" }))
     await screen.findByRole("heading", { name: "Home Lights", level: 3 })
-    await user.click(screen.getByRole("button", { name: "Zainstaluj 0.3.0" }))
+    await user.click(screen.getByRole("button", { name: "Zainstaluj Home Lights" }))
 
     const dialog = within(screen.getByRole("dialog", { name: "Zainstalować Home Lights 0.3.0?" }))
     expect(dialog.getByRole("region", { name: "Wysokie ryzyko" })).toBeInTheDocument()

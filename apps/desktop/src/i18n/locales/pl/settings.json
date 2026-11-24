@@ -59,11 +59,11 @@
     },
     "permissions": {
       "title": "Uprawnienia",
-      "description": "Do czego każdy moduł ma dostęp"
+      "description": "Do czego mają dostęp moduły i wtyczki"
     },
     "diagnostics": {
       "title": "Dzienniki i diagnostyka",
-      "description": "Dzienniki i szczegóły techniczne do rozwiązywania problemów"
+      "description": "Dzienniki, diagnostyka wtyczek i szczegóły techniczne do rozwiązywania problemów"
     },
     "about": {
       "title": "Informacje",
@@ -72,10 +72,6 @@
     "devDialogs": {
       "title": "Przegląd okien dialogowych",
       "description": "Tylko w trybie deweloperskim: każdy szablon okna dialogowego we wszystkich stanach"
-    },
-    "plugins": {
-      "title": "Wtyczki",
-      "description": "Eksperymentalne: zainstalowane wtyczki, ich uprawnienia, ustawienia i aktualizacje"
     },
     "module": {
       "description": "Ustawienia modułu {{module}}"
@@ -160,17 +156,22 @@
     "copied": "Skopiowano dane diagnostyczne",
     "notCopied": "Nie skopiowano danych diagnostycznych",
     "copyByHand": "Zaznacz raport i skopiuj go ręcznie",
-    "reportInEnglish": "Raport jest zawsze po angielsku, aby każdy, kto pomaga Ci rozwiązać problem, mógł go przeczytać."
+    "reportInEnglish": "Raport jest zawsze po angielsku, aby każdy, kto pomaga Ci rozwiązać problem, mógł go przeczytać.",
+    "pluginsTitle": "Wtyczki",
+    "pluginsDescription": "Wbudowane moduły przenoszone do wtyczek, z czego składa się DeckPilot i rejestr wtyczek zweryfikowany na tym komputerze."
   },
   "moduleSettings": {
     "saved": "Zapisano ustawienia modułu {{module}}",
     "notSaved": "Nie zapisano ustawień modułu {{module}}"
   },
   "permissions": {
+    "modulesTitle": "Moduły",
     "intro": "Każdy moduł deklaruje, do czego może mieć dostęp. Wyłączony moduł nie ma żadnego dostępu. Aby wycofać uprawnienie, wyłącz moduł w sekcji <page>Moduły</page>.",
     "unused": "Żaden moduł nie używa tego uprawnienia.",
     "granted": "Przyznane",
-    "disabled": "Wyłączony"
+    "disabled": "Wyłączony",
+    "pluginsTitle": "Wtyczki",
+    "pluginsIntro": "Co może robić każda zainstalowana wtyczka, zgodnie z Twoją zgodą. Uprawnienie odbierzesz tutaj lub na stronie wtyczki w Marketplace; oba miejsca pokazują te same zgody."
   },
   "storage": {
     "title": "Baza danych konfiguracji",
