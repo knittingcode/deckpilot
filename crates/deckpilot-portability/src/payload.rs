@@ -26,7 +26,17 @@ use crate::{PortabilityError, archive};
 /// (`KeyAppearance.labels`): a release that reads at most 3 refuses it
 /// instead of importing the keys without their labels. An export without
 /// labels is written as version 2 or 3, as before.
-pub const PAYLOAD_VERSION: u32 = 4;
+/// Version 5 marks an export with project repositories (`repositories`,
+/// `defaultRepository`) other than the one the `repository` role stands
+/// for: a release that reads at most 4 refuses it instead of dropping the
+/// repositories. An export whose projects have only that derived
+/// repository leaves it out (the importer derives it again) and is
+/// written as before.
+pub const PAYLOAD_VERSION: u32 = 5;
+
+/// The version of an export without repositories whose layouts have key
+/// labels.
+pub const PAYLOAD_VERSION_WITH_LABELS: u32 = 4;
 
 /// The version of an export without key labels whose
 /// [`Payload::library`] is not empty.
@@ -53,8 +63,16 @@ pub fn payload_version(profiles: &[Profile], library: &LibraryExport) -> u32 {
                 })
         })
     };
-    if profiles.iter().any(|profile| labelled(&profile.layouts)) || labelled(&library.layouts) {
+    let with_repositories = profiles
+        .iter()
+        .flat_map(|profile| &profile.projects)
+        .any(|project| !project.repositories.is_empty() || project.default_repository.is_some());
+    if with_repositories {
         PAYLOAD_VERSION
+    } else if profiles.iter().any(|profile| labelled(&profile.layouts))
+        || labelled(&library.layouts)
+    {
+        PAYLOAD_VERSION_WITH_LABELS
     } else if library.is_empty() {
         PAYLOAD_VERSION_WITHOUT_LIBRARY
     } else {
@@ -230,14 +248,54 @@ fn export_variables(
     })
 }
 
-/// Resource keys a profile refers to: project resources and fixed resource
-/// parameters (including step overrides).
+/// The projects of `profile` as an export carries them: a project whose
+/// only repository is the one its `repository` role stands for (and is its
+/// default) leaves it out, since the importer derives the same one again;
+/// remotes leave out `connectionId`, which only means something on this
+/// computer. Paths are never in a project (they are machine bindings).
+pub fn portable_projects(profile: &mut Profile) {
+    for project in &mut profile.projects {
+        let derived = project.derived_repository();
+        if derived.is_some_and(|derived| {
+            project.repositories == [derived.clone()]
+                && project.default_repository == Some(derived.id)
+        }) {
+            project.repositories.clear();
+            project.default_repository = None;
+        }
+        for repository in &mut project.repositories {
+            for remote in &mut repository.remotes {
+                *remote = remote.portable();
+            }
+        }
+    }
+}
+
+/// Resource keys of the repositories of `profile` (with the derived one).
+fn repository_keys(profile: &Profile) -> BTreeSet<ResourceKey> {
+    profile
+        .projects
+        .iter()
+        .flat_map(|project| {
+            project
+                .effective_repositories()
+                .iter()
+                .map(|r| r.resource.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Resource keys a profile refers to: project resources, the folders of
+/// its repositories, and fixed resource parameters (including step
+/// overrides).
 pub fn resource_keys(profile: &Profile) -> BTreeSet<ResourceKey> {
     let mut keys: BTreeSet<ResourceKey> = profile
         .projects
         .iter()
         .flat_map(|project| project.resources.values().cloned())
         .collect();
+    keys.extend(repository_keys(profile));
     let fixed = |parameters: &ActionParameters| -> Vec<ResourceKey> {
         parameters
             .iter()
@@ -295,7 +353,8 @@ pub fn export(
         if profiles.is_some_and(|wanted| !wanted.contains(&summary.id)) {
             continue;
         }
-        if let Some(profile) = store.load_profile(summary.id)? {
+        if let Some(mut profile) = store.load_profile(summary.id)? {
+            portable_projects(&mut profile);
             selected.push(profile);
         }
     }
@@ -308,11 +367,14 @@ pub fn export(
     }
     let machine = store.load_machine_config()?;
     let mut resources = BTreeMap::new();
+    let folders: BTreeSet<ResourceKey> = selected.iter().flat_map(repository_keys).collect();
     for key in selected.iter().flat_map(resource_keys) {
+        // A repository's resource is a folder, also where it is not bound.
         let kind = machine
             .as_ref()
             .and_then(|machine| machine.binding(&key))
-            .map(|binding| binding.kind);
+            .map(|binding| binding.kind)
+            .or_else(|| folders.contains(&key).then_some(ResourceKind::Directory));
         resources.insert(key, kind);
     }
     let mut exported_modules = BTreeMap::new();

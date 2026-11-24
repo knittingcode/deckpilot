@@ -139,7 +139,7 @@ fn schema_10(path: &Path, encryption: &Encryption, f: &Fixture) {
     store.assign_layout(f.home.id, f.shared.id).unwrap();
     store
         .connection_for_tests()
-        .execute_batch("DELETE FROM migration_history; PRAGMA user_version = 10;")
+        .execute_batch("DELETE FROM migration_history; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 10;")
         .unwrap();
 }
 
@@ -156,7 +156,7 @@ fn the_upgrade_reserves_back_keys_without_losing_bindings() {
     schema_10(&path, &encryption, &f);
 
     let store = SqliteStore::open(&path, &encryption).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(store.schema_version().unwrap(), 14);
     let history = store.migration_history().unwrap();
     assert_eq!(
         (
@@ -164,7 +164,7 @@ fn the_upgrade_reserves_back_keys_without_losing_bindings() {
             history[0].to_version,
             history[0].result.as_str()
         ),
-        (10, 13, "ok")
+        (10, 14, "ok")
     );
     let backup = history[0].backup.clone().unwrap();
     assert!(backup.contains("deckpilot-schema10-"), "{backup}");
