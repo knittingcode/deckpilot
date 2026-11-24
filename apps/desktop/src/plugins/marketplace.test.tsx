@@ -445,7 +445,7 @@ describe("discover and details", () => {
     const available = availablePlugins().map((p) =>
       p.id === HELLO ? { ...p, categories: ["monitoring"] } : p,
     )
-    renderMarketplace({ available })
+    const { user } = renderMarketplace({ available })
     await discoverReady()
     await openSection("Monitor")
     const monitor = await screen.findByRole("list", { name: "Monitor" })
@@ -454,6 +454,15 @@ describe("discover and details", () => {
     // No category of the fixtures maps to Play, and no name decides it.
     await openSection("Play")
     expect(await screen.findByText("Nothing here yet")).toBeInTheDocument()
+    // It says what would fill it, invents nothing, and leads to Categories.
+    expect(
+      screen.getByText("Plugins in Media appear here as soon as the registry has some."),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("list", { name: "Play" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Browse all categories" }))
+    expect(
+      await screen.findByText("Every category the registry uses. Choose one to see its plugins."),
+    ).toBeInTheDocument()
   })
 
   it("opens the catalog filtered by a category from Categories", async () => {

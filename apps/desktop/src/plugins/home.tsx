@@ -17,6 +17,7 @@ import { useFormat } from "@/i18n/format"
 import {
   byRecency,
   COLLECTION_IDS,
+  COLLECTIONS,
   type CollectionId,
   categoryCounts,
   categoryName,
@@ -485,12 +486,15 @@ export function CollectionSection({
   updates,
   migrations,
   actions,
+  onCategories,
 }: {
   id: CollectionId | EditorialSectionId
   snapshot: MarketplaceSnapshot
   updates: UpdateCandidate[]
   migrations: ModuleMigration[]
   actions: MarketplaceActions
+  /** Opens Categories (from an empty built-in collection). */
+  onCategories?: () => void
 }) {
   if (isEditorialSection(id)) {
     return (
@@ -510,6 +514,7 @@ export function CollectionSection({
       updates={updates}
       migrations={migrations}
       actions={actions}
+      onCategories={onCategories}
     />
   )
 }
@@ -520,12 +525,15 @@ function BuiltInCollection({
   updates,
   migrations,
   actions,
+  onCategories,
 }: {
   id: CollectionId
   snapshot: MarketplaceSnapshot
   updates: UpdateCandidate[]
   migrations: ModuleMigration[]
   actions: MarketplaceActions
+  /** Opens Categories (from the empty state). */
+  onCategories?: () => void
 }) {
   const { t } = useTranslation()
   const look = COLLECTION_LOOK[id]
@@ -540,7 +548,24 @@ function BuiltInCollection({
       </div>
       {plugins.length === 0 ? (
         <EmptyState variant="plain" title={t("marketplace:collection.empty.title")}>
-          {t("marketplace:collection.empty.text")}
+          <p>{t("marketplace:collection.empty.text")}</p>
+          {/* Which categories fill it: nothing is made up to fill it. */}
+          <p>
+            {t("marketplace:collection.empty.categories", {
+              categories: COLLECTIONS[id].categories.map((c) => categoryName(c)).join(", "),
+            })}
+          </p>
+          {onCategories && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={onCategories}
+            >
+              {t("marketplace:collection.empty.browse")}
+            </Button>
+          )}
         </EmptyState>
       ) : (
         <Tiles

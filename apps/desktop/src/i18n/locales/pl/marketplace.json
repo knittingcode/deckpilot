@@ -498,7 +498,9 @@
     "count_other": "{{count}} wtyczki",
     "empty": {
       "title": "Na razie nic tu nie ma",
-      "text": "Żadna wtyczka z rejestru nie należy jeszcze do tej kolekcji."
+      "text": "Żadna wtyczka z rejestru nie należy jeszcze do tej kolekcji.",
+      "categories": "Wtyczki z kategorii {{categories}} pojawią się tu, gdy tylko rejestr będzie je mieć.",
+      "browse": "Przeglądaj wszystkie kategorie"
     },
     "code": {
       "title": "Programuj",

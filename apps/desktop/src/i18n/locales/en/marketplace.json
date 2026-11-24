@@ -466,7 +466,9 @@
     "count_other": "{{count}} plugins",
     "empty": {
       "title": "Nothing here yet",
-      "text": "No plugin in the registry belongs to this collection yet."
+      "text": "No plugin in the registry belongs to this collection yet.",
+      "categories": "Plugins in {{categories}} appear here as soon as the registry has some.",
+      "browse": "Browse all categories"
     },
     "code": {
       "title": "Code",

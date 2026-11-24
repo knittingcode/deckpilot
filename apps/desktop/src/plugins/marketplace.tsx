@@ -1019,6 +1019,9 @@ export function PluginsSettings({ variant = "marketplace" }: { variant?: Plugins
             updates={updates}
             migrations={migrations}
             actions={actions}
+            onCategories={() => {
+              go("categories")
+            }}
           />
         )
     }
