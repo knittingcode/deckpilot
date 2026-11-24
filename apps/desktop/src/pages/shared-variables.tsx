@@ -98,11 +98,8 @@ export function SharedVariablesSettings() {
 
   return (
     <>
-      <p className="text-sm text-muted-foreground">
-        {t("workflows:sharedVariables.intro", { syntax: "{{ reference }}" })}
-      </p>
       <SettingsSection
-        title={t("workflows:sharedVariables.title")}
+        description={t("workflows:sharedVariables.intro")}
         actions={
           <Button
             type="button"

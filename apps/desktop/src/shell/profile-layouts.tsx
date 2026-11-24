@@ -36,9 +36,12 @@ import type { ProfileLayoutEntry, SharedLayoutSummary } from "@/lib/types"
  */
 export function ProfileLayouts({
   profileId,
+  title,
   onOpenLayout,
 }: {
   profileId: string
+  /** The section's heading; "Layouts" by default. */
+  title?: string
   onOpenLayout?: (layout: SharedLayoutSummary) => void
 }) {
   const { t } = useTranslation()
@@ -84,7 +87,7 @@ export function ProfileLayouts({
 
   return (
     <SettingsSection
-      title={t("layouts:profileLayouts.title")}
+      title={title ?? t("layouts:profileLayouts.title")}
       description={t("layouts:profileLayouts.description")}
       actions={
         <AssignPicker

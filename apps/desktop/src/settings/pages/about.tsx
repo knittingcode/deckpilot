@@ -1,5 +1,5 @@
 import { ErrorNotice, Loading } from "@/components/page"
-import { Property, PropertyList, SettingsSection } from "@/components/settings-layout"
+import { Property, PropertyList } from "@/components/settings-layout"
 import { useAsync } from "@/hooks/use-async"
 import { api } from "@/lib/api"
 import { osLabel } from "@/lib/format"
@@ -9,7 +9,7 @@ export function AboutSettings() {
   const { t } = useTranslation()
   const { state } = useAsync(() => Promise.all([api.getOverview(), api.launchInfo()]), "about")
   return (
-    <SettingsSection title="DeckPilot" description={t("settings:about.description")}>
+    <div className="grid">
       {state.status === "loading" && <Loading />}
       {state.status === "error" && <ErrorNotice error={state.error} />}
       {state.status === "ready" && (
@@ -25,6 +25,6 @@ export function AboutSettings() {
           <Property label={t("settings:about.source")}>github.com/knittingcode/deckpilot</Property>
         </PropertyList>
       )}
-    </SettingsSection>
+    </div>
   )
 }

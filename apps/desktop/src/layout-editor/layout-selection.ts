@@ -57,3 +57,20 @@ export function useConfirmDiscard(): () => Promise<boolean> {
     return discard
   }
 }
+
+/**
+ * Secondary text that tells apart layouts of the same name in the
+ * selector: their contents (pages and keys).
+ */
+export function disambiguate(
+  layouts: { id: string; name: string }[],
+  contents: (id: string) => string | undefined,
+): Map<string, string> {
+  const notes = new Map<string, string>()
+  for (const layout of layouts) {
+    if (!layouts.some((l) => l.id !== layout.id && l.name === layout.name)) continue
+    const note = contents(layout.id)
+    if (note) notes.set(layout.id, note)
+  }
+  return notes
+}

@@ -105,7 +105,7 @@ export function AppTitlebar({
       {leading && (
         <div
           data-slot="titlebar-leading"
-          className="flex shrink-0 items-center gap-(--titlebar-gap) pl-(--titlebar-padding-x)"
+          className="flex min-w-0 shrink items-center gap-(--titlebar-gap) pl-(--titlebar-padding-x)"
         >
           {leading}
         </div>

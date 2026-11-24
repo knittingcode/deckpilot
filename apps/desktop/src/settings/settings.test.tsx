@@ -99,6 +99,12 @@ describe("settings registry", () => {
       "Devices",
       "Background Agent",
     ])
+    // The Layout Manager is in General, right after Profiles.
+    const general = groups.find((g) => g.id === "general")?.pages.map((p) => p.id) ?? []
+    expect(general.slice(general.indexOf("profiles"), general.indexOf("profiles") + 2)).toEqual([
+      "profiles",
+      "layouts",
+    ])
     const onlyGeneral = groupedSettings(settingsPages([]).filter((p) => p.category === "general"))
     expect(onlyGeneral.map((g) => g.id)).toEqual(["general"])
   })
@@ -238,6 +244,8 @@ describe("navigation hook", () => {
       ["models", "devices"],
       ["devices", "devices"],
       ["profiles", "profiles"],
+      // The Layout Manager moved from the rail to Settings › Layouts.
+      ["layouts", "layouts"],
       ["settings:security", "security"],
     ]
     for (const [reference, page] of references) {

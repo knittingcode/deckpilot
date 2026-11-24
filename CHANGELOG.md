@@ -41,6 +41,27 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
+- The main window starts in the Device Editor; the Dashboard is gone (a
+  session that was on it opens the Device Editor). Pages that plugins and
+  modules add stay in the rail as before.
+- The toolbar shows Device › Profile › Layout as one trail. The device menu
+  lists the connected devices first, then the known devices that are not
+  connected (by serial) and the models without a device; the layout menu
+  lists only the layouts of the profile being edited that fit the device,
+  a new layout and the way to the Layout Manager.
+- The Layout Manager moved from the rail to Settings › Layouts. It
+  duplicates, renames, sets defaults, deletes and assigns layouts to
+  profiles, and can be filtered to one profile; "Manage layouts…" in the
+  Device Editor's layout menu and in Settings › Profiles opens it there. An
+  old link to the Layouts page opens the settings page.
+- Settings › Profiles lists every profile in one table and shows a
+  profile's details in a view of its own; opening a profile neither
+  activates it nor changes what a device shows.
+- The settings pages share one layout (title, sections, rows). Language
+  names each language in that language and applies at once. Modules lists
+  only DeckPilot's built-in modules, with a link to the Marketplace for
+  plugins.
+- Notifications show their time beside the title.
 - Folders: Automatic exit pauses while a run started from the folder is
   going on and resumes with the time that was left; the time a run takes
   is not counted. Only the folder shown counts down: a folder around it

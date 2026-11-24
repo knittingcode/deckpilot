@@ -1,16 +1,21 @@
-import { Copy, Ellipsis, Pencil, Plus, Trash2 } from "lucide-react"
-import { useState } from "react"
+import {
+  ArrowLeft,
+  Copy,
+  Ellipsis,
+  Library,
+  PanelRight,
+  Pencil,
+  Plus,
+  Power,
+  SquarePen,
+  Trash2,
+} from "lucide-react"
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { DestructiveDialog, FormDialog } from "@/components/dialogs"
 import { EmptyState, ErrorNotice, Loading } from "@/components/page"
-import {
-  InlineStatus,
-  Property,
-  PropertyList,
-  SettingsGroup,
-  SettingsSection,
-} from "@/components/settings-layout"
+import { InlineStatus, Property, PropertyList, SectionHeader } from "@/components/settings-layout"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -30,17 +35,16 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { useEditingProfile } from "@/hooks/use-profile"
+import { useAsync } from "@/hooks/use-async"
 import { useTranslation } from "@/i18n"
+import { useFormat } from "@/i18n/format"
 import { useTitlebar } from "@/hooks/use-titlebar"
 import { api } from "@/lib/api"
 import { failureMessage, toastFailure } from "@/lib/failure"
 import { useAppContext } from "@/lib/app-context"
 import { PROJECTS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
-import { formatShortTimestamp, formatTimestamp } from "@/lib/format"
-import type { ProfileSummary } from "@/lib/types"
-import { useOpenLayout } from "@/shell/open-layout"
-import { ProfileLayouts } from "@/shell/profile-layouts"
+import { setLayoutProfileFilter } from "@/lib/layout-filter"
+import type { ProfileSummary, ProfileView } from "@/lib/types"
 
 type DialogState =
   | { mode: "create" }
@@ -49,16 +53,32 @@ type DialogState =
   | null
 
 /**
- * Settings › Profiles: every profile, the one active on the device, and
- * the one the editors work on (chosen in the main window's toolbar).
+ * Settings › Profiles: every profile in one table, and a profile's details
+ * in a view of their own (Back returns to the table where it was). Only
+ * the explicit commands change anything: opening a profile's details
+ * neither activates it nor changes what a device shows. Its layouts are
+ * shared references, managed in the Layout Manager filtered to it.
  */
 export function ProfilesSettings() {
   const { t } = useTranslation()
-  const { profiles, refresh, editingProfileId, setEditingProfileId } = useAppContext()
+  const { profiles, refresh, revision, setEditingProfileId, navigate, openSettings } =
+    useAppContext()
   const [dialog, setDialog] = useState<DialogState>(null)
-  const { state } = useEditingProfile()
-  const { open: openLayout, dialog: openDialog } = useOpenLayout()
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  // Where the table was scrolled to when a profile was opened.
+  const [savedScroll, setSavedScroll] = useState(0)
   const projectsActive = useIsPluginActive(PROJECTS_PLUGIN)
+  // Read only: each profile's description and contents for the table.
+  const ids = profiles.profiles.map((p) => p.id)
+  const views = useAsync(
+    () => Promise.all(ids.map((id) => api.getProfile(id).catch(() => null))),
+    `profiles-overview:${revision}:${ids.join(",")}`,
+  )
+  const viewOf = (id: string) =>
+    views.state.status === "ready"
+      ? (views.state.data.find((v) => v?.profile.id === id) ?? null)
+      : null
 
   const run = (operation: () => Promise<unknown>, message: string, failed: string) => {
     operation().then(
@@ -69,6 +89,13 @@ export function ProfilesSettings() {
       (e: unknown) => {
         toastFailure(failed, e)
       },
+    )
+  }
+  const activate = (profile: ProfileSummary) => {
+    run(
+      () => api.setActiveProfile(profile.id),
+      t("workspace:profiles.toast.activated", { profile: profile.name }),
+      t("workspace:profiles.toast.activateFailed", { profile: profile.name }),
     )
   }
 
@@ -96,171 +123,187 @@ export function ProfilesSettings() {
         toastFailure(t("workspace:profiles.toast.openFailed", { profile: profile.name }), e)
       })
   }
+  const show = (profile: ProfileSummary) => {
+    setSavedScroll(scrollParent(rowOf(profile.id))?.scrollTop ?? 0)
+    setSelected(profile.id)
+    setOpenId(profile.id)
+  }
+  const back = () => {
+    setOpenId(null)
+  }
+  // Back: the table where it was, the profile's row focused.
+  const shownBefore = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const was = shownBefore.current
+    shownBefore.current = openId
+    if (openId !== null || was === null) return
+    const row = rowOf(was)
+    const parent = scrollParent(row)
+    if (parent) parent.scrollTop = savedScroll
+    row?.querySelector<HTMLElement>("[data-slot='profile-open']")?.focus({ preventScroll: true })
+  }, [openId, savedScroll])
+  const manageLayouts = (profile: ProfileSummary) => {
+    setLayoutProfileFilter(profile.id)
+    openSettings("layouts")
+  }
+  const menu = (profile: ProfileSummary, active: boolean) => (
+    <ProfileMenu
+      profile={profile}
+      active={active}
+      onOpen={
+        openId === profile.id
+          ? undefined
+          : () => {
+              show(profile)
+            }
+      }
+      onRename={() => {
+        openDetails(profile)
+      }}
+      onActivate={
+        active
+          ? undefined
+          : () => {
+              activate(profile)
+            }
+      }
+      onManageLayouts={() => {
+        manageLayouts(profile)
+      }}
+      onDuplicate={() => {
+        setDialog({ mode: "duplicate", profile })
+      }}
+      onDelete={async () => {
+        await api.deleteProfile(profile.id)
+        toast.success(t("workspace:profiles.toast.deleted"))
+        if (openId === profile.id) back()
+        refresh()
+      }}
+    />
+  )
 
+  const opened = profiles.profiles.find((p) => p.id === openId)
   return (
     <>
-      <SettingsSection
-        title={t("workspace:profiles.all.title")}
-        description={t("workspace:profiles.all.description")}
-      >
-        {profiles.profiles.length === 0 ? (
-          <EmptyState variant="plain" title={t("workspace:profiles.empty.title")}>
-            {t("workspace:profiles.empty.body")}
-          </EmptyState>
-        ) : (
-          <Table aria-label={t("workspace:profiles.table.label")} className="table-fixed">
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>{t("workspace:profiles.table.name")}</TableHead>
-                <TableHead className="hidden w-44 sm:table-cell">
-                  {t("workspace:profiles.table.modified")}
-                </TableHead>
-                <TableHead className="w-20">{t("workspace:profiles.table.status")}</TableHead>
-                <TableHead className="w-32">
-                  <span className="sr-only">{t("workspace:profiles.table.actions")}</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {profiles.profiles.map((profile) => {
-                const active = profile.id === profiles.activeProfileId
-                const editing = profile.id === editingProfileId
-                return (
-                  <TableRow key={profile.id} data-state={editing ? "selected" : undefined}>
-                    <TableCell className="truncate">
-                      <button
-                        type="button"
-                        aria-current={editing ? "true" : undefined}
-                        title={
-                          editing
-                            ? t("workspace:profiles.beingEdited")
-                            : t("workspace:profiles.editProfile", { profile: profile.name })
-                        }
-                        className="max-w-full truncate rounded-sm font-medium outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                        onClick={() => {
-                          setEditingProfileId(profile.id)
-                        }}
+      {opened ? (
+        <ProfileDetails
+          profile={opened}
+          view={viewOf(opened.id)}
+          loading={views.state.status === "loading"}
+          active={opened.id === profiles.activeProfileId}
+          activeName={profiles.profiles.find((p) => p.id === profiles.activeProfileId)?.name}
+          projects={projectsActive}
+          menu={menu(opened, opened.id === profiles.activeProfileId)}
+          onBack={back}
+          onEdit={() => {
+            openDetails(opened)
+          }}
+          onActivate={() => {
+            activate(opened)
+          }}
+          onOpenInEditor={() => {
+            setEditingProfileId(opened.id)
+            navigate("designer")
+          }}
+          onManageLayouts={() => {
+            manageLayouts(opened)
+          }}
+        />
+      ) : (
+        <div className="grid min-w-0">
+          {profiles.profiles.length === 0 ? (
+            <EmptyState variant="plain" title={t("workspace:profiles.empty.title")}>
+              {t("workspace:profiles.empty.body")}
+            </EmptyState>
+          ) : (
+            <Table aria-label={t("workspace:profiles.table.label")} className="table-fixed">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-40">{t("workspace:profiles.table.name")}</TableHead>
+                  <TableHead>{t("workspace:profiles.table.description")}</TableHead>
+                  <TableHead className="hidden w-40 md:table-cell">
+                    {t("workspace:profiles.table.contents")}
+                  </TableHead>
+                  <TableHead className="w-24">{t("workspace:profiles.table.status")}</TableHead>
+                  <TableHead className="w-10">
+                    <span className="sr-only">{t("workspace:profiles.table.actions")}</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {profiles.profiles.map((profile) => {
+                  const active = profile.id === profiles.activeProfileId
+                  const view = viewOf(profile.id)
+                  const description = view?.profile.description ?? ""
+                  return (
+                    <TableRow
+                      key={profile.id}
+                      data-profile={profile.id}
+                      data-state={profile.id === selected ? "selected" : undefined}
+                      className="cursor-pointer"
+                      onClick={(e) => {
+                        // The row opens the profile; its menu is its own.
+                        if ((e.target as HTMLElement).closest("[data-slot='profile-menu']")) return
+                        show(profile)
+                      }}
+                    >
+                      <TableCell className="truncate">
+                        <button
+                          type="button"
+                          data-slot="profile-open"
+                          title={profile.name}
+                          aria-label={t("workspace:profiles.detail.open", {
+                            profile: profile.name,
+                          })}
+                          className="max-w-full truncate rounded-sm font-medium outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            show(profile)
+                          }}
+                        >
+                          {profile.name}
+                        </button>
+                      </TableCell>
+                      <TableCell
+                        className="truncate text-caption text-muted-foreground"
+                        title={description || undefined}
                       >
-                        {profile.name}
-                      </button>
-                    </TableCell>
-                    <TableCell className="hidden text-caption text-muted-foreground tabular-nums sm:table-cell">
-                      <time
-                        dateTime={new Date(profile.updatedAt * 1000).toISOString()}
-                        title={formatTimestamp(profile.updatedAt)}
-                      >
-                        {formatShortTimestamp(profile.updatedAt)}
-                      </time>
-                    </TableCell>
-                    <TableCell>
-                      {active ? (
-                        <InlineStatus tone="positive" title={t("workspace:profiles.runsOnDevice")}>
-                          {t("workspace:profiles.active")}
-                        </InlineStatus>
-                      ) : (
-                        <span className="sr-only">{t("workspace:profiles.inactive")}</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        {!active && (
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            className="h-7 px-2.5 text-caption"
-                            aria-label={t("workspace:profiles.makeActiveLabel", {
-                              profile: profile.name,
-                            })}
-                            onClick={() => {
-                              run(
-                                () => api.setActiveProfile(profile.id),
-                                t("workspace:profiles.toast.activated", { profile: profile.name }),
-                                t("workspace:profiles.toast.activateFailed", {
-                                  profile: profile.name,
-                                }),
-                              )
-                            }}
+                        {description}
+                      </TableCell>
+                      <TableCell className="hidden truncate text-caption text-muted-foreground tabular-nums md:table-cell">
+                        {view &&
+                          t("workspace:profiles.summary", {
+                            layouts: t("workspace:profiles.layoutCount", {
+                              count: view.profile.layouts.length,
+                            }),
+                            actions: t("workspace:profiles.actionCount", {
+                              count: view.profile.actions.length,
+                            }),
+                          })}
+                      </TableCell>
+                      <TableCell>
+                        {active ? (
+                          <InlineStatus
+                            tone="positive"
+                            title={t("workspace:profiles.runsOnDevice")}
                           >
-                            {t("workspace:profiles.makeActive")}
-                          </Button>
+                            {t("workspace:profiles.active")}
+                          </InlineStatus>
+                        ) : (
+                          <span className="sr-only">{t("workspace:profiles.inactive")}</span>
                         )}
-                        <ProfileMenu
-                          profile={profile}
-                          active={active}
-                          onRename={() => {
-                            openDetails(profile)
-                          }}
-                          onDuplicate={() => {
-                            setDialog({ mode: "duplicate", profile })
-                          }}
-                          onDelete={async () => {
-                            await api.deleteProfile(profile.id)
-                            toast.success(t("workspace:profiles.toast.deleted"))
-                            refresh()
-                          }}
-                        />
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </SettingsSection>
-
-      {state.status === "loading" && editingProfileId && <Loading />}
-      {state.status === "error" && editingProfileId && <ErrorNotice error={state.error} />}
-      {state.status === "ready" && (
-        <SettingsSection
-          title={state.data.profile.name}
-          description={t("workspace:profiles.editing.description")}
-          actions={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const summary = profiles.profiles.find((p) => p.id === state.data.profile.id)
-                if (summary) openDetails(summary)
-              }}
-            >
-              <Pencil /> {t("workspace:profiles.editing.editDetails")}
-            </Button>
-          }
-        >
-          <SettingsGroup className="py-3">
-            <PropertyList
-              aria-label={t("workspace:profiles.editing.details", {
-                profile: state.data.profile.name,
-              })}
-            >
-              <Property label={t("workspace:profiles.editing.description_label")}>
-                {state.data.profile.description || (
-                  <span className="text-muted-foreground">
-                    {t("workspace:profiles.editing.noDescription")}
-                  </span>
-                )}
-              </Property>
-              <Property label={t("workspace:profiles.editing.actions")}>
-                {state.data.profile.actions.length}
-              </Property>
-              <Property label={t("workspace:profiles.editing.workflows")}>
-                {state.data.profile.workflows.length}
-              </Property>
-              {projectsActive && (
-                <Property label={t("workspace:profiles.editing.projects")}>
-                  {state.data.profile.projects.length}
-                </Property>
-              )}
-            </PropertyList>
-          </SettingsGroup>
-          {state.data.issues.length > 0 && <ErrorNotice error={state.data.issues.join(" ")} />}
-        </SettingsSection>
+                      </TableCell>
+                      <TableCell data-slot="profile-menu">
+                        <div className="flex justify-end">{menu(profile, active)}</div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </div>
       )}
-      {state.status === "ready" && (
-        <ProfileLayouts profileId={state.data.profile.id} onOpenLayout={openLayout} />
-      )}
-      {openDialog}
 
       <ProfileDialog
         state={dialog}
@@ -277,17 +320,188 @@ export function ProfilesSettings() {
   )
 }
 
-/** Rename, duplicate and delete: the less frequent commands of a profile. */
+/** A profile's row in the table. */
+function rowOf(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-profile="${CSS.escape(id)}"]`)
+}
+
+/** The element that scrolls `element`: the page's content. */
+function scrollParent(element: HTMLElement | null): HTMLElement | null {
+  for (let node = element?.parentElement ?? null; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node)
+    if (overflowY === "auto" || overflowY === "scroll") return node
+  }
+  return null
+}
+
+/**
+ * One profile: what it is, what it holds, where it is active and its
+ * commands. Escape or Back returns to the table.
+ */
+function ProfileDetails({
+  profile,
+  view,
+  loading,
+  active,
+  activeName,
+  projects,
+  menu,
+  onBack,
+  onEdit,
+  onActivate,
+  onOpenInEditor,
+  onManageLayouts,
+}: {
+  profile: ProfileSummary
+  view: ProfileView | null
+  loading: boolean
+  active: boolean
+  activeName: string | undefined
+  projects: boolean
+  menu: React.ReactNode
+  onBack: () => void
+  onEdit: () => void
+  onActivate: () => void
+  onOpenInEditor: () => void
+  onManageLayouts: () => void
+}) {
+  const { t } = useTranslation()
+  const format = useFormat()
+  const { agent } = useAppContext()
+  const backRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    backRef.current?.focus()
+  }, [])
+  const devices = (agent?.status?.devices ?? []).filter((d) => d.state === "connected")
+  const headingId = useId()
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="grid gap-6"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !e.defaultPrevented) {
+          e.preventDefault()
+          onBack()
+        }
+      }}
+    >
+      <div>
+        <Button ref={backRef} variant="ghost" size="sm" className="-ml-2" onClick={onBack}>
+          <ArrowLeft /> {t("workspace:profiles.detail.back")}
+        </Button>
+      </div>
+      <SectionHeader
+        id={headingId}
+        title={
+          <>
+            <span className="truncate" title={profile.name}>
+              {profile.name}
+            </span>
+            {active && (
+              <InlineStatus tone="positive">{t("workspace:profiles.active")}</InlineStatus>
+            )}
+          </>
+        }
+        description={
+          view?.profile.description || (
+            <span className="italic">{t("workspace:profiles.editing.noDescription")}</span>
+          )
+        }
+        actions={
+          <>
+            {!active && (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={t("workspace:profiles.makeActiveLabel", { profile: profile.name })}
+                onClick={onActivate}
+              >
+                {t("workspace:profiles.makeActive")}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={onEdit}>
+              <Pencil /> {t("workspace:profiles.editing.editDetails")}
+            </Button>
+            {menu}
+          </>
+        }
+      />
+      {loading && !view && <Loading />}
+      {view && (
+        <PropertyList
+          className="border-t pt-3"
+          aria-label={t("workspace:profiles.editing.details", { profile: profile.name })}
+        >
+          <Property label={t("workspace:profiles.detail.status")}>
+            {active
+              ? devices.length > 0
+                ? t("workspace:profiles.detail.activeOn", {
+                    devices: format.list(
+                      devices.map((d) => d.descriptor?.displayName ?? d.modelName),
+                    ),
+                  })
+                : t("workspace:profiles.detail.activeNoDevice")
+              : activeName
+                ? t("workspace:profiles.detail.inactive", { profile: activeName })
+                : t("workspace:profiles.detail.noneActive")}
+          </Property>
+          <Property label={t("workspace:profiles.editing.actions")}>
+            {view.profile.actions.length}
+          </Property>
+          <Property label={t("workspace:profiles.editing.workflows")}>
+            {view.profile.workflows.length}
+          </Property>
+          {projects && (
+            <Property label={t("workspace:profiles.editing.projects")}>
+              {view.profile.projects.length}
+            </Property>
+          )}
+          <Property label={t("workspace:profiles.detail.layouts")}>
+            <span className="grid justify-items-start gap-1">
+              <span>
+                {view.profile.layouts.length === 0
+                  ? t("workspace:profiles.detail.noLayouts")
+                  : t("workspace:profiles.layoutCount", { count: view.profile.layouts.length })}
+              </span>
+              <span className="text-caption text-muted-foreground">
+                {t("workspace:profiles.detail.layoutsShared")}
+              </span>
+            </span>
+          </Property>
+        </PropertyList>
+      )}
+      {view && view.issues.length > 0 && <ErrorNotice error={view.issues.join(" ")} />}
+      <div className="flex flex-wrap gap-2 border-t pt-4">
+        <Button variant="outline" size="sm" onClick={onManageLayouts}>
+          <Library /> {t("workspace:profiles.detail.manageLayouts")}
+        </Button>
+        <Button variant="outline" size="sm" onClick={onOpenInEditor}>
+          <SquarePen /> {t("workspace:profiles.detail.openInEditor")}
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+/** The profile's commands: open, edit, activate, layouts, duplicate and delete. */
 function ProfileMenu({
   profile,
   active,
+  onOpen,
   onRename,
+  onActivate,
+  onManageLayouts,
   onDuplicate,
   onDelete,
 }: {
   profile: ProfileSummary
   active: boolean
+  /** Absent in the profile's own details. */
+  onOpen?: () => void
   onRename: () => void
+  /** Absent for the active profile. */
+  onActivate?: () => void
+  onManageLayouts: () => void
   onDuplicate: () => void
   /** Rejects with the backend's error; the confirmation then shows it. */
   onDelete: () => Promise<void>
@@ -308,8 +522,21 @@ function ProfileMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {onOpen && (
+            <DropdownMenuItem onSelect={onOpen}>
+              <PanelRight /> {t("workspace:profiles.menu.open")}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onSelect={onRename}>
             <Pencil /> {t("workspace:profiles.menu.rename")}
+          </DropdownMenuItem>
+          {onActivate && (
+            <DropdownMenuItem onSelect={onActivate}>
+              <Power /> {t("workspace:profiles.makeActive")}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={onManageLayouts}>
+            <Library /> {t("workspace:profiles.detail.manageLayouts")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onDuplicate}>
             <Copy /> {t("workspace:profiles.menu.duplicate")}

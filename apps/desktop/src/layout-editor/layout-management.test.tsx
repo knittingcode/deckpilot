@@ -138,39 +138,163 @@ describe("resolveLayout", () => {
 })
 
 describe("the toolbar's layout selector", { timeout: 20_000 }, () => {
-  it("marks the default and shared layouts and offers the model's others", async () => {
+  it("lists only this profile's layouts for the device's model, the default starred", async () => {
     const { user } = await renderDesigner()
     expect(await trigger(/^Layout: Main, default$/)).toBeInTheDocument()
-    await waitFor(() => {
-      expect(screen.getByRole("note")).toHaveTextContent(
-        "Shared: edits apply to every profile using this layout (Work, Home).",
-      )
-    })
-    await openMenu(user)
-    const own = await screen.findByRole("group", { name: "Layouts of this profile" })
+    const menu = await openMenu(user)
+    const own = within(menu).getByRole("group", { name: "Layouts of this profile" })
     const items = within(own).getAllByRole("menuitem")
-    expect(items.map((i) => i.textContent)).toEqual(["Maindefault · shared · 2 profiles", "Teams"])
+    expect(items.map((i) => i.textContent)).toEqual(["Main", "Teams"])
     expect(items[0]).toHaveAttribute("aria-current", "true")
-    const others = screen.getByRole("group", { name: "Other layouts for Stream Deck MK.2" })
-    // Layouts for another model are not offered there.
+    // A star per layout: filled for the profile's default, outlined otherwise.
     expect(
-      within(others)
-        .getAllByRole("menuitem")
+      within(own)
+        .getAllByRole("menuitemcheckbox")
         .map((i) => i.getAttribute("aria-label")),
-    ).toEqual(["Use Media in this profile", "Use Spare in this profile"])
-    expect(within(others).getByText("Used by Home")).toBeInTheDocument()
-    expect(within(others).getByText("Not used by any profile")).toBeInTheDocument()
+    ).toEqual(["“Main” is the default layout", "Set “Teams” as default"])
+    // Not other profiles' layouts (Media, Spare), not other models' (Big board).
+    expect(menu).not.toHaveTextContent(/Media|Spare|Big board|From other profiles/)
+    expect(within(menu).queryByRole("group", { name: /other/i })).not.toBeInTheDocument()
+    // Below one divider: only New and Manage; the rest is in the Layout Manager.
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .slice(2)
+        .map((i) => i.textContent.trim()),
+    ).toEqual(["New layout…", "Manage layouts…"])
+    expect(menu.querySelectorAll("[role='separator']")).toHaveLength(1)
+    expect(
+      within(menu).queryByRole("menuitem", { name: /^(Duplicate|Rename|Delete|Set as default)/ }),
+    ).toBeNull()
   })
 
-  it("lists the profile's layouts of other models, but they cannot be chosen", async () => {
-    const { user, editor } = await renderDesigner()
-    await openMenu(user)
-    const group = screen.getByRole("group", { name: "Layouts for other models" })
-    const item = within(group).getByRole("menuitem", { name: /Big board/ })
-    expect(item).toHaveAttribute("aria-disabled", "true")
-    expect(item).toHaveTextContent("Stream Deck XL")
-    await user.click(item)
-    expect(editor.selectLayout).not.toHaveBeenCalled()
+  describe("the default star", () => {
+    const star = (menu: HTMLElement, name: RegExp) =>
+      within(menu).getByRole("menuitemcheckbox", { name })
+
+    it("is filled for the default, outlined for the others, with tooltips", async () => {
+      const { user } = await renderDesigner()
+      const menu = await openMenu(user)
+      const main = star(menu, /Main/)
+      const teams = star(menu, /Teams/)
+      expect(main).toHaveAttribute("aria-checked", "true")
+      expect(main.querySelector("svg")).toHaveClass("fill-warning", "text-warning")
+      expect(teams).toHaveAttribute("aria-checked", "false")
+      expect(teams.querySelector("svg")).not.toHaveClass("fill-warning")
+      expect(teams.querySelector("svg")).toHaveClass("text-muted-foreground")
+      await user.hover(teams)
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("Set as default")
+      await user.hover(main)
+      await waitFor(() => {
+        expect(screen.getByRole("tooltip")).toHaveTextContent("Default layout")
+      })
+    })
+
+    it("sets the default without switching the layout or closing the menu", async () => {
+      const { user, editor, context } = await renderDesigner()
+      const menu = await openMenu(user)
+      await user.click(star(menu, /Teams/))
+      await waitFor(() => {
+        expect(api.activateLayout).toHaveBeenCalledWith("profile-1", "teams")
+      })
+      expect(editor.selectLayout).not.toHaveBeenCalled()
+      expect(screen.getByRole("menu")).toBeInTheDocument()
+      await waitFor(() => {
+        expect(context.refresh).toHaveBeenCalled()
+      })
+      expect(toast.success).toHaveBeenCalledWith("Teams is used for Stream Deck MK.2")
+    })
+
+    it("does nothing for the default's own star", async () => {
+      const { user } = await renderDesigner()
+      const menu = await openMenu(user)
+      await user.click(star(menu, /Main/))
+      expect(api.activateLayout).not.toHaveBeenCalled()
+      expect(screen.getByRole("menu")).toBeInTheDocument()
+    })
+
+    it("keeps the old default when saving fails, with an error", async () => {
+      api.activateLayout.mockRejectedValue(new Error("disk full"))
+      const { user, context } = await renderDesigner()
+      const menu = await openMenu(user)
+      await user.click(star(menu, /Teams/))
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalled()
+      })
+      expect(context.refresh).not.toHaveBeenCalled()
+      expect(star(menu, /Main/)).toHaveAttribute("aria-checked", "true")
+      expect(star(menu, /Teams/)).toHaveAttribute("aria-checked", "false")
+    })
+
+    it("is disabled while the default is being saved", async () => {
+      let resolve = () => {}
+      api.activateLayout.mockReturnValue(
+        new Promise<null>((done) => {
+          resolve = () => {
+            done(null)
+          }
+        }),
+      )
+      const { user } = await renderDesigner()
+      const menu = await openMenu(user)
+      await user.click(star(menu, /Teams/))
+      await waitFor(() => {
+        expect(star(menu, /Teams/)).toHaveAttribute("aria-disabled", "true")
+      })
+      expect(star(menu, /Main/)).toHaveAttribute("aria-disabled", "true")
+      resolve()
+      await waitFor(() => {
+        expect(star(menu, /Teams/)).not.toHaveAttribute("aria-disabled")
+      })
+      expect(api.activateLayout).toHaveBeenCalledTimes(1)
+    })
+
+    it("is reached with the arrow keys after its layout and set with Enter", async () => {
+      const { user, editor } = await renderDesigner()
+      ;(await trigger()).focus()
+      await user.keyboard("{Enter}")
+      const menu = await screen.findByRole("menu")
+      // Main, Main's star, Teams, Teams' star.
+      await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}")
+      expect(document.activeElement).toBe(star(menu, /Teams/))
+      await user.keyboard("{Enter}")
+      await waitFor(() => {
+        expect(api.activateLayout).toHaveBeenCalledWith("profile-1", "teams")
+      })
+      expect(editor.selectLayout).not.toHaveBeenCalled()
+    })
+  })
+
+  it("tells apart layouts of the same name by their contents", async () => {
+    api.getProfile.mockResolvedValue(
+      profileView({ layouts: [main, layout("main-2", "Main")], activeLayouts: { [MK2]: "main" } }),
+    )
+    api.listSharedLayouts.mockResolvedValue([
+      sharedLayout({ id: "main", name: "Main", pages: 2, bindings: 9, profiles: [work] }),
+      sharedLayout({ id: "main-2", name: "Main", pages: 1, bindings: 3, profiles: [work] }),
+    ])
+    const { user } = await renderDesigner()
+    const menu = await openMenu(user)
+    await waitFor(() => {
+      expect(
+        within(menu)
+          .getAllByRole("menuitem")
+          .slice(0, 2)
+          .map((i) => i.textContent),
+      ).toEqual(["Main2 pages · 9 keys", "Main1 page · 3 keys"])
+    })
+  })
+
+  it("truncates a long name, with the full name on hover", async () => {
+    const long = "A very long layout name that does not fit into the menu at all"
+    api.getProfile.mockResolvedValue(
+      profileView({ layouts: [main, layout("long", long)], activeLayouts: { [MK2]: "main" } }),
+    )
+    const { user } = await renderDesigner()
+    const menu = await openMenu(user)
+    const item = within(menu).getByRole("menuitem", { name: long })
+    expect(item).toHaveAttribute("title", long)
+    expect(within(item).getByText(long)).toHaveClass("truncate")
   })
 
   it("selects a layout of the profile by its id", async () => {
@@ -178,6 +302,7 @@ describe("the toolbar's layout selector", { timeout: 20_000 }, () => {
     await openMenu(user)
     await user.click(await screen.findByRole("menuitem", { name: /^Teams/ }))
     expect(editor.selectLayout).toHaveBeenCalledWith("teams")
+    expectNoWrites()
   })
 
   it("is used with the keyboard", async () => {
@@ -188,8 +313,8 @@ describe("the toolbar's layout selector", { timeout: 20_000 }, () => {
     ;(await trigger()).focus()
     await user.keyboard("{Enter}")
     await screen.findByRole("menu")
-    // The first item has the focus; the next one is Teams.
-    await user.keyboard("{ArrowDown}")
+    // The first item has the focus; after its star comes Teams.
+    await user.keyboard("{ArrowDown}{ArrowDown}")
     expect(document.activeElement).toHaveTextContent(/^Teams/)
     await user.keyboard("{Enter}")
     expect(editor.selectLayout).toHaveBeenCalledWith("teams")
@@ -219,20 +344,6 @@ describe("the toolbar's layout selector", { timeout: 20_000 }, () => {
       expect(editor.selectLayout).toHaveBeenCalledWith("teams")
     })
     expect(editor.setDirty).toHaveBeenCalledWith(false)
-  })
-
-  it("uses another layout of the model in this profile and opens it, without copying it", async () => {
-    const { user, editor } = await renderDesigner()
-    await openMenu(user)
-    await user.click(await screen.findByRole("menuitem", { name: "Use Spare in this profile" }))
-    await waitFor(() => {
-      expect(api.assignLayout).toHaveBeenCalledWith("profile-1", "spare")
-    })
-    await waitFor(() => {
-      expect(editor.showLayout).toHaveBeenCalledWith("spare", MK2)
-    })
-    expect(api.duplicateLayout).not.toHaveBeenCalled()
-    expect(api.duplicateSharedLayout).not.toHaveBeenCalled()
   })
 
   it("has no shared note for a layout only this profile uses", async () => {
@@ -299,107 +410,102 @@ describe("the toolbar's layout selector", { timeout: 20_000 }, () => {
     expect(context.refresh).toHaveBeenCalled()
   })
 
-  it("duplicates the open layout under a new name", async () => {
-    const { user, editor } = await renderDesigner()
-    await openMenu(user)
-    await user.click(await screen.findByRole("menuitem", { name: /Duplicate layout/ }))
-    const dialog = await screen.findByRole("dialog", { name: "Duplicate “Main”" })
-    const name = within(dialog).getByLabelText("Name")
-    expect(name).toHaveValue("Main (copy)")
-    await user.clear(name)
-    await user.type(name, "Main 2")
-    await user.click(within(dialog).getByRole("button", { name: "Duplicate" }))
-    await waitFor(() => {
-      expect(api.duplicateLayout).toHaveBeenCalledWith("profile-1", "main", "Main 2")
-    })
-    await waitFor(() => {
-      expect(editor.showLayout).toHaveBeenCalledWith("main-copy", MK2)
-    })
-  })
-
-  it("renames the open layout, for every profile using it", async () => {
-    const { user, context } = await renderDesigner()
-    await openMenu(user)
-    await user.click(await screen.findByRole("menuitem", { name: /Rename layout/ }))
-    const dialog = await screen.findByRole("dialog", { name: "Rename “Main”" })
-    expect(dialog).toHaveTextContent("every profile using it shows the new name")
-    const name = within(dialog).getByLabelText("Name")
-    await user.clear(name)
-    await user.type(name, "Desk")
-    await user.click(within(dialog).getByRole("button", { name: "Rename" }))
-    await waitFor(() => {
-      expect(api.renameSharedLayout).toHaveBeenCalledWith("main", "Desk")
-    })
-    expect(context.refresh).toHaveBeenCalled()
-  })
-
-  it("asks to discard unsaved changes before renaming", async () => {
-    const { user } = await renderDesigner(selection({ isDirty: vi.fn(() => true) }))
-    await openMenu(user)
-    await user.click(await screen.findByRole("menuitem", { name: /Rename layout/ }))
-    const confirm = await screen.findByRole("alertdialog")
-    await user.click(within(confirm).getByRole("button", { name: "Cancel" }))
-    await waitFor(() => {
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
-    })
-    expect(screen.queryByRole("dialog", { name: /Rename/ })).not.toBeInTheDocument()
-  })
-
-  it("explains that a shared layout is deleted on the Layouts page", async () => {
-    api.deleteLayout.mockRejectedValue(new Error("Home uses this layout too"))
-    const { user } = await renderDesigner()
-    await waitFor(() => {
-      expect(screen.getByRole("note")).toHaveTextContent("Shared")
-    })
-    await openMenu(user)
-    await user.click(await screen.findByRole("menuitem", { name: /Delete layout/ }))
-    const dialog = await screen.findByRole("alertdialog")
-    expect(dialog).toHaveTextContent("Other profiles use this layout too")
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }))
-    // The refusal is shown in the dialog, which stays open.
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "“Main” was not deleted: Home uses this layout too. A layout other profiles use is deleted on the Layouts page, or removed from this profile in Settings › Profiles.",
-    )
-    expect(dialog).toBeInTheDocument()
-    expect(toast.error).not.toHaveBeenCalled()
-  })
-
-  it("deletes a layout only this profile uses", async () => {
-    const { user, context } = await renderDesigner(selection({ layoutId: "teams" }))
-    await openMenu(user, /^Layout: Teams$/)
-    await user.click(await screen.findByRole("menuitem", { name: /Delete layout/ }))
-    const dialog = await screen.findByRole("alertdialog")
-    expect(dialog).toHaveTextContent("The layout and its pages are removed")
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }))
-    await waitFor(() => {
-      expect(api.deleteLayout).toHaveBeenCalledWith("profile-1", "teams")
-    })
-    expect(context.refresh).toHaveBeenCalled()
-  })
-
-  it("sets the open layout as the profile's default for the model", async () => {
-    const { user } = await renderDesigner(selection({ layoutId: "teams" }))
-    await openMenu(user, /^Layout: Teams$/)
-    await user.click(await screen.findByRole("menuitem", { name: /Set as default/ }))
-    await waitFor(() => {
-      expect(api.activateLayout).toHaveBeenCalledWith("profile-1", "teams")
-    })
-  })
-
-  it("does not offer to set the default layout as the default again", async () => {
-    const { user } = await renderDesigner()
-    await openMenu(user)
-    expect(await screen.findByRole("menuitem", { name: /Default for this model/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    )
-  })
-
   it("opens the Layout Library to manage layouts", async () => {
     const { user, context } = await renderDesigner()
     await openMenu(user)
     await user.click(await screen.findByRole("menuitem", { name: /Manage layouts/ }))
-    expect(context.navigate).toHaveBeenCalledWith("layouts")
+    // The Layout Manager is a settings page.
+    expect(context.openSettings).toHaveBeenCalledWith("layouts")
+  })
+})
+
+/** Nothing about layouts or profiles was written. */
+function expectNoWrites() {
+  for (const call of [
+    api.assignLayout,
+    api.unassignLayout,
+    api.activateLayout,
+    api.createLayout,
+    api.duplicateLayout,
+    api.duplicateSharedLayout,
+    api.renameSharedLayout,
+    api.deleteLayout,
+    api.deleteSharedLayout,
+  ]) {
+    expect(call).not.toHaveBeenCalled()
+  }
+}
+
+/** The selector alone, for profile switches and empty profiles. */
+function renderMenu(editingProfileId = "profile-1") {
+  const editor = selection()
+  const ui = (
+    <DialogProvider>
+      <EditorSelectionContext value={editor}>
+        <LayoutMenu />
+      </EditorSelectionContext>
+    </DialogProvider>
+  )
+  const people = profiles([
+    { id: "profile-1", name: "Work" },
+    { id: "profile-2", name: "Home" },
+  ])
+  const view = renderWithApp(ui, { profiles: people, editingProfileId })
+  return { ...view, editor, ui, people }
+}
+
+describe("the layout selector across profiles", { timeout: 20_000 }, () => {
+  const homeMain = layout("home-main", "Home desk")
+  const homeAlt = layout("home-alt", "Home alt")
+  beforeEach(() => {
+    api.getProfile.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === "profile-2"
+          ? profileView({
+              id: "profile-2",
+              name: "Home",
+              layouts: [homeAlt, homeMain, big],
+              activeLayouts: { [MK2]: "home-main" },
+            })
+          : profileView({ layouts: [main, teams, big], activeLayouts: { [MK2]: "main" } }),
+      ),
+    )
+  })
+
+  it("lists the new profile's layouts and opens its default, writing nothing", async () => {
+    const { rerender, ui, context } = renderMenu()
+    expect(await trigger(/^Layout: Main, default$/)).toBeInTheDocument()
+    rerender(ui, { ...context, editingProfileId: "profile-2" })
+    expect(await trigger(/^Layout: Home desk, default$/)).toBeInTheDocument()
+    expect(api.getProfile).toHaveBeenLastCalledWith("profile-2")
+    expectNoWrites()
+  })
+
+  it("opens the first compatible layout of a profile without a default", async () => {
+    api.getProfile.mockResolvedValue(
+      profileView({ id: "profile-2", layouts: [big, homeAlt, homeMain], activeLayouts: {} }),
+    )
+    renderMenu("profile-2")
+    expect(await trigger(/^Layout: Home alt/)).toBeInTheDocument()
+    expectNoWrites()
+  })
+
+  it("says when the profile has no layouts for the device, and offers a new one in it", async () => {
+    api.getProfile.mockResolvedValue(profileView({ layouts: [big], activeLayouts: {} }))
+    const { user } = renderMenu()
+    const menu = await openMenu(user, /^Choose a layout$/)
+    expect(
+      within(menu).getByRole("menuitem", { name: "No layouts for this device in this profile" }),
+    ).toHaveAttribute("aria-disabled", "true")
+    expect(menu).not.toHaveTextContent("Big board")
+    await user.click(within(menu).getByRole("menuitem", { name: /New layout/ }))
+    const dialog = await screen.findByRole("dialog", { name: "New layout for Stream Deck MK.2" })
+    await user.type(within(dialog).getByLabelText("Name"), "Fresh")
+    await user.click(within(dialog).getByRole("button", { name: "Create" }))
+    await waitFor(() => {
+      expect(api.createLayout).toHaveBeenCalledWith("profile-1", MK2, "Fresh", true)
+    })
+    expect(api.assignLayout).not.toHaveBeenCalled()
   })
 })
 

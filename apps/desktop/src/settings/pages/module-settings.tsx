@@ -4,7 +4,6 @@ import { toast } from "sonner"
 import { ParameterField } from "@/components/parameter-field"
 import { VariableScopeProvider } from "@/components/variable-picker/scope-provider"
 import { Button } from "@/components/ui/button"
-import { SettingsSection } from "@/components/settings-layout"
 import { api } from "@/lib/api"
 import { toastFailure } from "@/lib/failure"
 import { useAppContext } from "@/lib/app-context"
@@ -20,8 +19,10 @@ export function ModuleSettingsForm({ module }: { module: ModuleInfo }) {
   const [saving, setSaving] = useState(false)
   const changed = JSON.stringify(draft) !== JSON.stringify(module.configValues)
   return (
-    <SettingsSection title={t("settings:title")} description={module.description}>
-      <div className="grid max-w-xl gap-4 border-t pt-4">
+    // The fields straight under the page's title, which is the module's
+    // name and description; no "Settings" heading on a settings page.
+    <div className="grid gap-4">
+      <div className="grid max-w-xl gap-4">
         {/* Module settings are read as saved; no resolver turns references
             in them into values, so the picker is off here. */}
         <VariableScopeProvider disabled>
@@ -73,6 +74,6 @@ export function ModuleSettingsForm({ module }: { module: ModuleInfo }) {
           {t("settings:shared.save")}
         </Button>
       </div>
-    </SettingsSection>
+    </div>
   )
 }

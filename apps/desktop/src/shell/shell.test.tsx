@@ -99,6 +99,8 @@ beforeEach(() => {
     ]),
   )
   api.listModules.mockResolvedValue([])
+  // The Workflows page checks its graph after a short delay.
+  api.validateWorkflowGraph.mockResolvedValue([])
   api.agentStatus.mockResolvedValue(
     agentConnection({
       status: agentStatus({
@@ -190,8 +192,22 @@ describe("main window shell", { timeout: 20_000 }, () => {
     await user.click(screen.getByRole("button", { name: /^Device:/ }))
     const menu = screen.getByRole("menu")
     expect(within(menu).getByText("Connected · PLUS-1")).toBeInTheDocument()
-    const mk2Item = within(menu).getByRole("menuitem", { name: /Stream Deck MK\.2/ })
-    expect(mk2Item).toHaveTextContent("Not connected")
+    // Two sections by connection state, labelled "Connected" and "Not connected".
+    expect(within(menu).getByRole("group", { name: "Connected devices" })).toHaveTextContent(
+      "Connected",
+    )
+    const others = within(menu).getByRole("group", { name: "Devices not connected" })
+    expect(others).toHaveTextContent(/^Not connected/)
+    const mk2Item = within(others).getByRole("menuitem", { name: /Stream Deck MK\.2/ })
+    // No redundant "Not connected" under each entry.
+    expect(mk2Item).toHaveTextContent(/^Stream Deck MK\.2$/)
+    // Green (the success token) when connected, neutral gray when not.
+    const dot = (item: HTMLElement) => item.querySelector("[data-slot='connection-dot']")
+    const plusItem = within(menu).getByRole("menuitem", { name: /Stream Deck \+/ })
+    expect(dot(plusItem)).toHaveClass("bg-success")
+    expect(dot(plusItem)).toHaveAttribute("data-state", "connected")
+    expect(dot(mk2Item)).toHaveClass("bg-muted-foreground/40")
+    expect(dot(mk2Item)).toHaveAttribute("data-state", "disconnected")
     await user.click(mk2Item)
     expect(await layoutShown("Work MK.2")).toBeInTheDocument()
     expect(
@@ -243,18 +259,73 @@ describe("main window shell", { timeout: 20_000 }, () => {
     const { user, toolbar } = await renderShell()
     await user.click(await layoutShown("Work Plus"))
     const menu = await screen.findByRole("menu")
-    // The profile's Plus layout; its MK.2 layout is for another model.
-    expect(
-      within(within(menu).getByRole("group", { name: "Layouts for other models" })).getByRole(
-        "menuitem",
-        { name: /Work MK\.2/ },
-      ),
-    ).toHaveAttribute("aria-disabled", "true")
+    // The profile's Plus layout only; its MK.2 layout is for another model.
+    expect(within(menu).queryByRole("menuitem", { name: /Work MK\.2/ })).not.toBeInTheDocument()
     await user.keyboard("{Escape}")
     // Choosing the device revalidates: the MK.2 layout is the one now.
     await user.click(within(toolbar).getByRole("button", { name: /^Device:/ }))
     await user.click(screen.getByRole("menuitem", { name: /Stream Deck MK\.2/ }))
     expect(await layoutShown("Work MK.2")).toBeInTheDocument()
+  })
+
+  describe("the selectors as a trail, Device › Profile › Layout", () => {
+    it("separates them with decorative chevrons, in tab order, without status dots", async () => {
+      const { user, toolbar } = await renderShell()
+      await layoutShown("Work Plus")
+      const trail = within(toolbar).getByRole("group", { name: "Current selection" })
+      const triggers = within(trail).getAllByRole("button")
+      expect(triggers.map((b) => b.getAttribute("aria-label"))).toEqual([
+        "Device: Stream Deck +, connected",
+        "Profile: Work, active on the device",
+        "Layout: Work Plus, default",
+      ])
+      // Menu buttons each, not links.
+      for (const trigger of triggers) expect(trigger).toHaveAttribute("aria-haspopup", "menu")
+      const separators = trail.querySelectorAll("[data-slot='selector-separator']")
+      expect(separators).toHaveLength(2)
+      for (const separator of separators) {
+        expect(separator).toHaveAttribute("aria-hidden", "true")
+        expect(separator).not.toHaveAttribute("tabindex")
+        expect(separator).toHaveClass("pointer-events-none")
+        // Between two selectors.
+        expect(separator.previousElementSibling?.tagName).toBe("BUTTON")
+        expect(separator.nextElementSibling?.tagName).toBe("BUTTON")
+      }
+      // No status dot in the triggers; the device menu still has them.
+      expect(trail.querySelector("[data-slot='connection-dot']")).toBeNull()
+      // Tab moves device → profile → layout.
+      const [device, profile, layout] = triggers as [HTMLElement, HTMLElement, HTMLElement]
+      device.focus()
+      await user.tab()
+      expect(profile).toHaveFocus()
+      await user.tab()
+      expect(layout).toHaveFocus()
+      await user.click(device)
+      const [first] = within(screen.getByRole("menu")).getAllByRole("menuitem")
+      expect(first?.querySelector("[data-slot='connection-dot']")).toHaveClass("bg-success")
+    })
+
+    it("truncates long names, with the full name as the title", async () => {
+      const { toolbar } = await renderShell()
+      await layoutShown("Work Plus")
+      const trail = within(toolbar).getByRole("group", { name: "Current selection" })
+      for (const trigger of within(trail).getAllByRole("button")) {
+        expect(trigger).toHaveClass("min-w-0")
+        expect(trigger.querySelector(".truncate")).not.toBeNull()
+        expect(trigger.getAttribute("title")).toBe(trigger.getAttribute("aria-label"))
+      }
+    })
+
+    it("changing the layout changes neither the device nor the profile", async () => {
+      const { user, toolbar } = await renderShell()
+      await user.click(await layoutShown("Work Plus"))
+      const [first] = within(screen.getByRole("menu")).getAllByRole("menuitem")
+      if (first) await user.click(first)
+      expect(selectorsOf(toolbar).slice(0, 2)).toEqual([
+        "Device: Stream Deck +, connected",
+        "Profile: Work, active on the device",
+      ])
+    })
   })
 
   it("opens the settings inside the main window, never in a window of their own", async () => {
@@ -306,7 +377,7 @@ describe("main window shell", { timeout: 20_000 }, () => {
     const nav = await screen.findByRole("generic", { name: "Settings" })
     await user.click(within(nav).getByRole("button", { name: "Profiles" }))
     expect(
-      await screen.findByText("All profiles", undefined, { timeout: 5000 }),
+      await screen.findByRole("table", { name: "Profiles" }, { timeout: 5000 }),
     ).toBeInTheDocument()
     expect(localStorage.getItem("deckpilot.settings.page")).toBe("profiles")
 
@@ -351,13 +422,29 @@ describe("main window shell", { timeout: 20_000 }, () => {
     )
   })
 
+  it("lists the profiles first in its menu, with Manage profiles under one divider", async () => {
+    const { user } = await renderShell()
+    await user.click(screen.getByRole("button", { name: /^Profile:/ }))
+    // Named by its trigger, as every menu of the toolbar.
+    const menu = screen.getByRole("menu", { name: "Profile: Work, active on the device" })
+    // No heading above the profiles: the first item is a profile.
+    expect(within(menu).queryByText("Edit profile")).not.toBeInTheDocument()
+    const items = within(menu).getAllByRole("menuitem")
+    expect(items[0]).toHaveTextContent(/^Work/)
+    // The profile being edited is checked; the one on the device says so.
+    expect(items[0]).toHaveAttribute("aria-current", "true")
+    expect(items[0]).toHaveTextContent("on device")
+    expect(items.at(-1)).toHaveTextContent("Manage profiles…")
+    expect(menu.querySelectorAll("[role='separator']")).toHaveLength(1)
+  })
+
   it("opens settings sections asked for by menus and other windows, and searches them", async () => {
     const { user } = await renderShell()
     // "Manage profiles…" leads to Settings › Profiles, in this window.
     await user.click(screen.getByRole("button", { name: /^Profile:/ }))
     await user.click(screen.getByRole("menuitem", { name: "Manage profiles…" }))
     expect(
-      await screen.findByText("All profiles", undefined, { timeout: 5000 }),
+      await screen.findByRole("table", { name: "Profiles" }, { timeout: 5000 }),
     ).toBeInTheDocument()
 
     // Another window (or the agent, through the app) asks for a section.
@@ -397,7 +484,7 @@ describe("main window shell", { timeout: 20_000 }, () => {
     profiles.focus()
     await user.keyboard("{Enter}")
     expect(
-      await screen.findByText("All profiles", undefined, { timeout: 5000 }),
+      await screen.findByRole("table", { name: "Profiles" }, { timeout: 5000 }),
     ).toBeInTheDocument()
     // The rail's Device Editor is a focusable button too.
     screen.getByRole("button", { name: "Device Editor" }).focus()
@@ -434,9 +521,12 @@ describe("main window shell", { timeout: 20_000 }, () => {
     expect(rail).toHaveAttribute("data-state", "collapsed")
 
     // Every page has its name as label (and tooltip); the current one is marked.
-    for (const name of ["Device Editor", "Dashboard", "Action Library", "Workflows"]) {
+    for (const name of ["Device Editor", "Action Library", "Workflows"]) {
       expect(screen.getAllByRole("button", { name }).length).toBeGreaterThan(0)
     }
+    // The Layout Manager is in Settings › Layouts.
+    expect(screen.queryByRole("button", { name: "Layouts" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument()
     const editor = screen.getByRole("button", { name: "Device Editor" })
     expect(editor).toHaveAttribute("aria-current", "page")
     expect(editor).toHaveAttribute("data-active", "true")
@@ -541,7 +631,7 @@ describe("context-aware toolbar", { timeout: 20_000 }, () => {
     await user.click(gearOf(toolbar))
     const nav = await screen.findByRole("generic", { name: "Settings" })
     await user.click(within(nav).getByRole("button", { name: "Profiles" }))
-    await screen.findByText("All profiles", undefined, { timeout: 5000 })
+    await screen.findByRole("table", { name: "Profiles" }, { timeout: 5000 })
     // No selectors and no status of them; no empty room where they were.
     expect(selectorsOf(toolbar)).toEqual([])
     expect(toolbar.querySelector("[data-slot='titlebar-leading']")).toBeNull()
@@ -571,18 +661,55 @@ describe("context-aware toolbar", { timeout: 20_000 }, () => {
     })
   })
 
-  it("shows only the profile for the profile's pages, nothing on the dashboard", async () => {
+  it("shows only the profile for the profile's pages, and has the Layout Manager in Settings", async () => {
     const { user, toolbar } = await renderShell()
     await user.click(screen.getByRole("button", { name: "Workflows" }))
     await waitFor(() => {
       expect(toolbar).toHaveAttribute("data-context", "profile")
     })
     expect(selectorsOf(toolbar)).toEqual(["Profile: Work, active on the device"])
-    await user.click(screen.getByRole("button", { name: "Dashboard" }))
+    await user.click(gearOf(toolbar))
+    const nav = await screen.findByRole("generic", { name: "Settings" })
+    // Settings › Layouts (its content: pages/layouts.test.tsx).
+    const layouts = within(nav).getByRole("button", { name: "Layouts" })
+    await user.click(layouts)
+    expect(layouts).toHaveAttribute("aria-current", "page")
+  })
+
+  it("starts in the Device Editor, also from a session that was on the removed Dashboard", async () => {
+    // The last session was on the Dashboard, after the Device Editor.
+    localStorage.setItem(
+      "deckpilot.navigation",
+      JSON.stringify({
+        entries: [
+          { mode: "workspace", page: "designer" },
+          { mode: "workspace", page: "dashboard" },
+        ],
+        index: 1,
+        workspace: "dashboard",
+      }),
+    )
+    const { user, toolbar } = await renderShell()
+    expect(screen.getByRole("button", { name: "Device Editor" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    )
+    expect(await layoutShown("Work Plus")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Dashboard" })).not.toBeInTheDocument()
+    // What is stored now has no Dashboard: Back can never land on it.
     await waitFor(() => {
-      expect(toolbar).toHaveAttribute("data-context", "none")
+      expect(localStorage.getItem("deckpilot.navigation")).not.toContain("dashboard")
     })
-    expect(selectorsOf(toolbar)).toEqual([])
+    // Settings and back: the Device Editor again, its selection kept.
+    await user.click(gearOf(toolbar))
+    await screen.findByRole("generic", { name: "Settings" })
+    await user.click(screen.getByRole("button", { name: "Device Editor" }))
+    expect(await layoutShown("Work Plus")).toBeInTheDocument()
+    expect(selectorsOf(toolbar)).toEqual([
+      "Device: Stream Deck +, connected",
+      "Profile: Work, active on the device",
+      "Layout: Work Plus, default",
+    ])
   })
 
   it("keeps the device, the profile, the layout's page and the selected key across views", async () => {
@@ -852,11 +979,6 @@ describe("main window with plugins", { timeout: 20_000 }, () => {
     // No project switcher anywhere in the toolbar.
     expect(within(toolbar).queryByText("SHOP")).not.toBeInTheDocument()
     expect(within(toolbar).queryByRole("button", { name: /project/i })).not.toBeInTheDocument()
-    // The dashboard: no active project card.
-    await user.click(screen.getByRole("button", { name: "Dashboard" }))
-    await screen.findByRole("heading", { name: "Dashboard" })
-    expect(screen.queryByText("Active project")).not.toBeInTheDocument()
-    expect(screen.queryByText(/SHOP/)).not.toBeInTheDocument()
     // Settings: the core modules only, no developer module and no Projects.
     await user.click(gearOf(toolbar))
     await screen.findByRole("generic", { name: "Settings" })

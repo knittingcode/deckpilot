@@ -1,73 +1,55 @@
-import {
-  Check,
-  ChevronDown,
-  Copy,
-  LayoutGrid,
-  Library,
-  Monitor,
-  Pencil,
-  Plus,
-  Star,
-  Trash2,
-} from "lucide-react"
+import { Check, ChevronDown, LayoutGrid, Library, Monitor, Plus, Star } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { DestructiveDialog, FormDialog } from "@/components/dialogs"
+import { FormDialog } from "@/components/dialogs"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useAsync } from "@/hooks/use-async"
-import { useFormat } from "@/i18n/format"
-import { i18n, useTranslation } from "@/i18n"
+import { useTranslation } from "@/i18n"
 import { api } from "@/lib/api"
 import { useAppContext } from "@/lib/app-context"
-import { failureMessage, toastFailure } from "@/lib/failure"
+import { failureMessage } from "@/lib/failure"
 import { shownLayout } from "@/lib/layout-navigation"
-import type { DeviceLayout, DeviceModel, SharedLayoutSummary } from "@/lib/types"
+import type { DeviceModel } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { selectedDevice } from "@/shell/device-options"
 import { useEditorSelection } from "@/shell/editor-selection-context"
 
-import { defaultLayoutOf, resolveLayout, useConfirmDiscard } from "./layout-selection"
+import { defaultLayoutOf, disambiguate, resolveLayout, useConfirmDiscard } from "./layout-selection"
+import { useSetDefaultLayout } from "./set-default-layout"
 
 /**
- * Layout selection and management of the Device Editor, shown in the main
- * window's toolbar (`LayoutSelector` in shell/toolbar.tsx): the profile's
- * layouts for the device's model, the model's other layouts to use in the
- * profile, and new, duplicate, rename, default and delete. Layouts are
- * shared between profiles; everything here goes by the layout's id and
- * never copies a layout behind the user's back.
+ * Layout switching of the Device Editor, shown in the main window's
+ * toolbar (`LayoutSelector` in shell/toolbar.tsx): only the layouts of the
+ * profile being edited that fit the device's model, a new layout (created
+ * in that profile), and the way to the Layout Manager (pages/layouts.tsx),
+ * which duplicates, renames, sets defaults, deletes, assigns layouts to
+ * profiles and manages other models' layouts. Nothing here copies, moves,
+ * assigns or overwrites a layout, and no other profile is written.
  */
 
-const profilesLabel = (count: number) => i18n.t("layouts:menu.sharedProfiles", { count })
-
-type Dialog =
-  | { kind: "new" }
-  | { kind: "rename"; layout: DeviceLayout }
-  | { kind: "duplicate"; layout: DeviceLayout }
-  | { kind: "delete"; layout: DeviceLayout }
+type Dialog = { kind: "new" }
 
 /**
- * The toolbar's layout selector: a compact dropdown with the layouts of
- * the profile being edited for the device's model, then a separate section
- * that manages them. Layouts of other models are listed, but cannot be
- * chosen.
+ * The toolbar's layout selector: a switcher between the layouts that fit
+ * the device's model. Layouts of other models are managed in the Layout
+ * Manager.
  */
 export function LayoutMenu({ className }: { className?: string }) {
   const { t } = useTranslation()
-  const format = useFormat()
-  const { editingProfileId, revision, refresh, agent, navigate } = useAppContext()
+  const { editingProfileId, revision, refresh, agent, openSettings } = useAppContext()
   const selection = useEditorSelection()
   const confirmDiscard = useConfirmDiscard()
   const profileId = editingProfileId
@@ -83,7 +65,6 @@ export function LayoutMenu({ className }: { className?: string }) {
   const profile = view.state.status === "ready" ? view.state.data?.profile : undefined
   const all = profile?.layouts ?? []
   const layouts = model ? all.filter((l) => l.model === model.id) : []
-  const otherModels = model ? all.filter((l) => l.model !== model.id) : []
   const device = model
     ? selectedDevice(agent?.status?.devices ?? [], model.id, selection.device)
     : null
@@ -97,16 +78,23 @@ export function LayoutMenu({ className }: { className?: string }) {
       )
     : null
   const current = resolveLayout(layouts, selection.layoutId, defaultLayout)
+  // The profile's default for the model, as stored (the star; the device
+  // may show another layout, which the editor follows when opening).
+  const stored = profile?.activeLayouts?.[model?.id ?? ""]
+  const profileDefault = layouts.some((l) => l.id === stored) ? stored : layouts[0]?.id
+  const { pending, setDefault } = useSetDefaultLayout(refresh)
   const shared = sharedState.state.status === "ready" ? sharedState.state.data : null
   const summary = (id: string) => shared?.find((l) => l.id === id)
-  const own = new Set(all.map((l) => l.id))
-  const others = (shared ?? [])
-    .filter((l) => l.model === model?.id && !own.has(l.id))
-    .sort((a, b) => a.name.localeCompare(b.name))
-  const modelName = (id: string): string =>
-    models.find((m) => m.id === id)?.name ??
-    shared?.find((l) => l.model === id)?.modelName ??
-    t("layouts:menu.anotherModel")
+  const contents = (id: string) => {
+    const s = summary(id)
+    return s
+      ? t("layouts:page.contents", {
+          pages: t("layouts:page.pages", { count: s.pages }),
+          keys: t("layouts:page.keys", { count: s.bindings }),
+        })
+      : undefined
+  }
+  const notes = disambiguate(layouts, contents)
   const ready = Boolean(profileId && model && profile)
 
   const changed = (message: string, id?: string) => {
@@ -119,34 +107,8 @@ export function LayoutMenu({ className }: { className?: string }) {
     if (!(await confirmDiscard())) return
     selection.selectLayout(id)
   }
-  const use = async (layout: SharedLayoutSummary) => {
-    if (!profileId || !model || !(await confirmDiscard())) return
-    api.assignLayout(profileId, layout.id).then(
-      () => {
-        changed(t("layouts:menu.toast.assigned", { layout: layout.name }), layout.id)
-      },
-      (e: unknown) => {
-        toastFailure(t("layouts:menu.toast.assignFailed", { layout: layout.name }), e)
-      },
-    )
-  }
-  const makeDefault = (layout: DeviceLayout) => {
-    if (!profileId || !model) return
-    api.activateLayout(profileId, layout.id).then(
-      () => {
-        changed(
-          t("layouts:menu.toast.madeDefault", { layout: layout.name, model: model.name }),
-          layout.id,
-        )
-      },
-      (e: unknown) => {
-        toastFailure(t("layouts:menu.toast.defaultFailed", { layout: layout.name }), e)
-      },
-    )
-  }
-
   const label = current
-    ? current.id === defaultLayout
+    ? current.id === profileDefault
       ? t("layouts:menu.selectorDefault", { layout: current.name })
       : t("layouts:menu.selector", { layout: current.name })
     : t("layouts:menu.choose")
@@ -167,110 +129,86 @@ export function LayoutMenu({ className }: { className?: string }) {
             <ChevronDown className="opacity-60" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-80">
+        <DropdownMenuContent align="start" className="w-72">
           <DropdownMenuGroup aria-label={t("layouts:menu.profileLayouts")}>
-            <DropdownMenuLabel className="text-xs text-muted-foreground">
-              {layouts.length === 0
-                ? model
-                  ? t("layouts:menu.noneForModel", { model: model.name })
-                  : t("layouts:menu.noneForDevice")
-                : model
-                  ? t("layouts:menu.forModel", { model: model.name })
-                  : t("layouts:menu.forDevice")}
-            </DropdownMenuLabel>
+            {layouts.length === 0 && (
+              <DropdownMenuItem disabled>{t("layouts:menu.empty")}</DropdownMenuItem>
+            )}
             {layouts.map((layout) => {
-              const users = summary(layout.id)?.profiles.length ?? 1
-              const marks = [
-                layout.id === defaultLayout && t("layouts:menu.defaultMark"),
-                users > 1 && profilesLabel(users),
-              ].filter(Boolean)
+              const note = notes.get(layout.id)
+              const isDefault = layout.id === profileDefault
               return (
-                <DropdownMenuItem
-                  key={layout.id}
-                  aria-current={layout.id === current?.id ? "true" : undefined}
-                  onSelect={() => {
-                    void choose(layout.id)
-                  }}
-                >
-                  <Check
-                    className={cn(layout.id === current?.id ? "opacity-100" : "opacity-0")}
-                    aria-hidden
-                  />
-                  <span className="min-w-0 flex-1 truncate">{layout.name}</span>
-                  {layout.id === onDevice && (
-                    <Monitor
-                      className="text-emerald-500"
-                      aria-label={t("layouts:menu.onDevice")}
-                      role="img"
-                    />
-                  )}
-                  {marks.length > 0 && (
-                    <span className="text-xs text-muted-foreground">{marks.join(" · ")}</span>
-                  )}
-                </DropdownMenuItem>
+                // A row of two menu items: the layout, and its star after it
+                // (arrow keys reach both, in this order).
+                <div key={layout.id} className="flex items-center gap-0.5">
+                  <DropdownMenuItem
+                    className="min-w-0 flex-1"
+                    aria-current={layout.id === current?.id ? "true" : undefined}
+                    title={layout.name}
+                    onSelect={() => {
+                      void choose(layout.id)
+                    }}
+                  >
+                    <Check className={cn(layout.id !== current?.id && "invisible")} aria-hidden />
+                    <span className="grid min-w-0 flex-1">
+                      <span className="truncate">{layout.name}</span>
+                      {note && (
+                        <span className="truncate text-xs text-muted-foreground">{note}</span>
+                      )}
+                    </span>
+                    {layout.id === onDevice && (
+                      <Monitor
+                        className="text-success"
+                        aria-label={t("layouts:menu.onDevice")}
+                        role="img"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuItem
+                        data-slot="default-star"
+                        data-state={isDefault ? "on" : "off"}
+                        role="menuitemcheckbox"
+                        aria-checked={isDefault}
+                        aria-label={
+                          isDefault
+                            ? t("layouts:menu.star.isDefaultLabel", { layout: layout.name })
+                            : t("layouts:menu.star.setDefaultLabel", { layout: layout.name })
+                        }
+                        disabled={pending !== null}
+                        className={cn(
+                          "size-7 shrink-0 justify-center p-0 focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                          isDefault ? "cursor-default" : "focus:[&_svg]:text-warning",
+                        )}
+                        onSelect={(e) => {
+                          // Stays open, on the layout chosen before.
+                          e.preventDefault()
+                          if (!isDefault && profileId && model) {
+                            void setDefault(profileId, layout, model.name)
+                          }
+                        }}
+                      >
+                        <Star
+                          aria-hidden
+                          className={cn(
+                            isDefault ? "fill-warning text-warning" : "text-muted-foreground",
+                          )}
+                        />
+                      </DropdownMenuItem>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {isDefault ? t("layouts:menu.star.default") : t("layouts:menu.star.set")}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               )
             })}
           </DropdownMenuGroup>
-          {others.length > 0 && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup
-                aria-label={t("layouts:menu.otherLayouts", { model: model?.name ?? "" })}
-              >
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  {t("layouts:menu.otherLayouts", { model: model?.name ?? "" })}
-                </DropdownMenuLabel>
-                {others.map((layout) => (
-                  <DropdownMenuItem
-                    key={layout.id}
-                    aria-label={t("layouts:menu.useLayout", { layout: layout.name })}
-                    onSelect={() => {
-                      void use(layout)
-                    }}
-                  >
-                    <span className="grid min-w-0 flex-1">
-                      <span className="truncate">{layout.name}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {layout.profiles.length === 0
-                          ? t("layouts:menu.unused")
-                          : t("layouts:menu.usedBy", {
-                              profiles: format.list(
-                                layout.profiles
-                                  .filter((p) => p.profileId !== profileId)
-                                  .map((p) => p.profileName),
-                              ),
-                            })}
-                      </span>
-                    </span>
-                    <span className="text-xs">{t("layouts:menu.use")}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-            </>
-          )}
-          {otherModels.length > 0 && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup aria-label={t("layouts:menu.otherModels")}>
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  {t("layouts:menu.notForDevice")}
-                </DropdownMenuLabel>
-                {otherModels.map((layout) => (
-                  <DropdownMenuItem
-                    key={layout.id}
-                    disabled
-                    title={t("layouts:menu.madeFor", { model: modelName(layout.model) })}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{layout.name}</span>
-                    <span className="text-xs text-muted-foreground">{modelName(layout.model)}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-            </>
-          )}
           <DropdownMenuSeparator />
           <DropdownMenuGroup aria-label={t("layouts:menu.manageGroup")}>
             <DropdownMenuItem
+              disabled={!ready}
               onSelect={() => {
                 setDialog({ kind: "new" })
               }}
@@ -278,50 +216,8 @@ export function LayoutMenu({ className }: { className?: string }) {
               <Plus /> {t("layouts:menu.new")}
             </DropdownMenuItem>
             <DropdownMenuItem
-              disabled={!current}
               onSelect={() => {
-                if (current) setDialog({ kind: "duplicate", layout: current })
-              }}
-            >
-              <Copy /> {t("layouts:menu.duplicate")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!current}
-              onSelect={() => {
-                if (!current) return
-                const layout = current
-                void confirmDiscard().then((ok) => {
-                  if (ok) setDialog({ kind: "rename", layout })
-                })
-              }}
-            >
-              <Pencil /> {t("layouts:menu.rename")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!current || current.id === defaultLayout}
-              title={model ? t("layouts:menu.defaultHint", { model: model.name }) : undefined}
-              onSelect={() => {
-                if (current) makeDefault(current)
-              }}
-            >
-              <Star />{" "}
-              {current && current.id === defaultLayout
-                ? t("layouts:menu.isDefault")
-                : t("layouts:menu.setDefault")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={!current}
-              onSelect={() => {
-                if (current) setDialog({ kind: "delete", layout: current })
-              }}
-            >
-              <Trash2 /> {t("layouts:menu.delete")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={() => {
-                navigate("layouts")
+                openSettings("layouts")
               }}
             >
               <Library /> {t("layouts:menu.manage")}
@@ -343,131 +239,7 @@ export function LayoutMenu({ className }: { className?: string }) {
           }}
         />
       )}
-      {profileId && dialog?.kind === "duplicate" && (
-        <NameDialog
-          title={t("layouts:management.duplicateTitle", { layout: dialog.layout.name })}
-          description={t("layouts:management.duplicateDescription")}
-          confirmLabel={t("layouts:page.duplicate.confirm")}
-          initial={t("layouts:management.copyName", { layout: dialog.layout.name })}
-          onClose={() => {
-            setDialog(null)
-          }}
-          onSubmit={async (name) => {
-            if (!(await confirmDiscard())) return
-            const id = await api.duplicateLayout(profileId, dialog.layout.id, name)
-            setDialog(null)
-            changed(t("layouts:page.toast.duplicated"), id)
-          }}
-          describeError={(e) =>
-            failureMessage(
-              t("layouts:management.duplicateFailed", { layout: dialog.layout.name }),
-              e,
-            )
-          }
-        />
-      )}
-      {dialog?.kind === "rename" && (
-        <NameDialog
-          title={t("layouts:management.renameTitle", { layout: dialog.layout.name })}
-          description={
-            (summary(dialog.layout.id)?.profiles.length ?? 1) > 1
-              ? t("layouts:management.renameShared")
-              : undefined
-          }
-          confirmLabel={t("layouts:page.rename.confirm")}
-          initial={dialog.layout.name}
-          onClose={() => {
-            setDialog(null)
-          }}
-          onSubmit={async (name) => {
-            await api.renameSharedLayout(dialog.layout.id, name)
-            setDialog(null)
-            changed(t("layouts:page.toast.renamed"))
-          }}
-          describeError={(e) =>
-            failureMessage(t("layouts:management.renameFailed", { layout: dialog.layout.name }), e)
-          }
-        />
-      )}
-      {profileId && dialog?.kind === "delete" && (
-        <DestructiveDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setDialog(null)
-          }}
-          title={t("layouts:page.delete.title", { layout: dialog.layout.name })}
-          description={
-            (summary(dialog.layout.id)?.profiles.length ?? 1) > 1
-              ? t("layouts:management.deleteShared")
-              : t("layouts:management.deleteOwn")
-          }
-          busyLabel={t("layouts:management.deleting")}
-          onConfirm={async () => {
-            await api.deleteLayout(profileId, dialog.layout.id)
-            selection.setDirty(false)
-            setDialog(null)
-            changed(t("layouts:page.toast.deleted"))
-          }}
-          describeError={(e) =>
-            failureMessage(
-              t("layouts:management.deleteFailed", { layout: dialog.layout.name }),
-              e,
-              t("layouts:management.deleteFailedHint"),
-            )
-          }
-        />
-      )}
     </>
-  )
-}
-
-/** Asks for a layout's name: rename and duplicate. */
-function NameDialog({
-  title,
-  description,
-  confirmLabel,
-  initial,
-  onClose,
-  onSubmit,
-  describeError,
-}: {
-  title: string
-  description?: string
-  confirmLabel: string
-  initial: string
-  onClose: () => void
-  /** Rejects with the backend's error; the dialog then stays open and shows it. */
-  onSubmit: (name: string) => Promise<void>
-  describeError: (error: unknown) => string
-}) {
-  const { t } = useTranslation()
-  const [name, setName] = useState(initial)
-  const trimmed = name.trim()
-  return (
-    <FormDialog
-      open
-      size="compact"
-      title={title}
-      description={description}
-      submitLabel={confirmLabel}
-      canSubmit={Boolean(trimmed)}
-      dirty={name !== initial}
-      onClose={onClose}
-      onSubmit={() => onSubmit(trimmed)}
-      describeError={describeError}
-    >
-      <div className="grid gap-1.5">
-        <Label htmlFor="layout-name">{t("layouts:page.create.name")}</Label>
-        <Input
-          id="layout-name"
-          autoFocus
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value)
-          }}
-        />
-      </div>
-    </FormDialog>
   )
 }
 
