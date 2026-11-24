@@ -192,7 +192,10 @@ describe("applying a plan", () => {
     const layout = layoutWith([
       { control: key(0), trigger: { type: "press" }, target: { type: "back" }, label: "Mine" },
     ])
-    for (const preset of [BRIGHTNESS_CONTROL, { ...BRIGHTNESS_CONTROL, gestures: [gestureAt(2)] }]) {
+    for (const preset of [
+      BRIGHTNESS_CONTROL,
+      { ...BRIGHTNESS_CONTROL, gestures: [gestureAt(2)] },
+    ]) {
       const refused = plan(preset, layout)
       expect(refused.ok).toBe(false)
       if (refused.ok) throw new Error("unreachable")
