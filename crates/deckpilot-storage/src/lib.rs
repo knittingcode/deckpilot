@@ -85,6 +85,8 @@ pub struct MigrationNote {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchInfo {
+    /// The version the component last ran with before this one (`None`
+    /// before the first update), also after later restarts of this one.
     pub previous_version: Option<String>,
     pub current_version: String,
     /// The component started with a different version than last time.

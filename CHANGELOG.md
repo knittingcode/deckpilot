@@ -140,6 +140,10 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- Settings › About: "Previous version" names the version DeckPilot ran
+  before the last update, also after later restarts. It showed the
+  version of the last start, which after an ordinary restart was the
+  current version again.
 - Marketplace: an install or update that failed and was done later
   (another window, a retry elsewhere) no longer shows its old error and
   Retry again after the plugin is uninstalled.
