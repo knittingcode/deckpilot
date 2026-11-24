@@ -22,6 +22,7 @@ import { lazy } from "react"
 import { type TranslationKey, i18n } from "@/i18n"
 import type { ModuleInfo } from "@/lib/types"
 import { moduleSettingsPages } from "@/modules"
+import { matchesWords, searchWords } from "@/lib/search"
 
 type View = React.LazyExoticComponent<() => React.JSX.Element>
 
@@ -336,10 +337,6 @@ export function groupedSettings(pages: SettingsPageEntry[]) {
 
 /** Pages whose title, description or keywords contain every word of `query`. */
 export function searchSettings(pages: SettingsPageEntry[], query: string) {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (words.length === 0) return pages
-  return pages.filter((page) => {
-    const text = [page.title, page.description, ...page.keywords].join(" ").toLowerCase()
-    return words.every((word) => text.includes(word))
-  })
+  if (searchWords(query).length === 0) return pages
+  return pages.filter((page) => matchesWords(query, page.title, page.description, ...page.keywords))
 }

@@ -233,6 +233,23 @@ describe("catalog sections", () => {
     expect(categoryName("home-office")).toBe("Home office")
   })
 
+  it("lists plugins by name as every other list does: numbers by value", () => {
+    const plugins = [
+      plugin("acme.ten", { name: "Timer 10", categories: ["productivity"] }),
+      plugin("acme.two", { name: "Timer 2", categories: ["productivity"] }),
+      plugin("acme.b", { name: "beta", categories: ["productivity"] }),
+      plugin("acme.a", { name: "Alpha", categories: ["productivity"] }),
+    ]
+    expect(collectionPlugins(plugins, "work").map((p) => p.name)).toEqual([
+      "Alpha",
+      "beta",
+      "Timer 2",
+      "Timer 10",
+    ])
+    // Undated plugins, by name the same way.
+    expect(byRecency(plugins).map((p) => p.name)).toEqual(["Alpha", "beta", "Timer 2", "Timer 10"])
+  })
+
   it("filters only when there is a search or a category", () => {
     expect(isFiltering({ query: "  ", category: null })).toBe(false)
     expect(isFiltering({ query: "git", category: null })).toBe(true)

@@ -86,6 +86,12 @@ describe("catalog", () => {
     expect(searchCatalog(groups, "projects")[0]?.entries).toHaveLength(1)
     expect(searchCatalog(groups, "zzz")).toEqual([])
     expect(searchCatalog(groups, " ")).toBe(groups)
+    // Every word, in any order, also across the group's title and the entry's.
+    const found = searchCatalog(groups, "repository project")
+    expect(found.flatMap((g) => g.types.map((t) => t.name))).toEqual(["Project repository"])
+    expect(
+      searchCatalog(groups, "flow delay").flatMap((g) => g.entries.map((e) => e.title)),
+    ).toEqual(["Delay"])
   })
 })
 

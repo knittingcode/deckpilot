@@ -27,6 +27,8 @@ import type {
   PluginNavigationEntry,
   PluginRuntimeStatus,
 } from "./types"
+import { compareText } from "@/i18n/format"
+import { matchesWords } from "@/lib/search"
 
 /**
  * DeckPilot's privileged plugins: they reach users only as the copies
@@ -224,7 +226,7 @@ export function byRecency(plugins: AvailablePlugin[]): AvailablePlugin[] {
     if (x !== undefined && y !== undefined && x !== y) return y - x
     if (x === undefined && y !== undefined) return 1
     if (y === undefined && x !== undefined) return -1
-    return a.name.localeCompare(b.name)
+    return compareText(a.name, b.name)
   })
 }
 
@@ -266,7 +268,7 @@ export function categoryCounts(plugins: AvailablePlugin[]): { id: string; count:
   }
   return [...counts]
     .map(([id, count]) => ({ id, count }))
-    .sort((a, b) => categoryName(a.id).localeCompare(categoryName(b.id)))
+    .sort((a, b) => compareText(categoryName(a.id), categoryName(b.id)))
 }
 
 /** The first category of a plugin, if it names one. */
@@ -305,7 +307,7 @@ export function inCollection(plugin: AvailablePlugin, id: CollectionId): boolean
 
 /** The registry's plugins in a collection, by name. */
 export function collectionPlugins(plugins: AvailablePlugin[], id: CollectionId): AvailablePlugin[] {
-  return plugins.filter((p) => inCollection(p, id)).sort((a, b) => a.name.localeCompare(b.name))
+  return plugins.filter((p) => inCollection(p, id)).sort((a, b) => compareText(a.name, b.name))
 }
 
 /**
@@ -319,9 +321,8 @@ export type MarketplaceSection =
 
 /** Entries whose name, id, summary, description, publisher or category contain every word. */
 export function matchesSearch(plugin: AvailablePlugin, query: string): boolean {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (words.length === 0) return true
-  const text = [
+  return matchesWords(
+    query,
     plugin.name,
     plugin.id,
     plugin.summary,
@@ -329,11 +330,7 @@ export function matchesSearch(plugin: AvailablePlugin, query: string): boolean {
     plugin.publisher,
     plugin.publisherInfo?.displayName,
     ...(plugin.categories ?? []).flatMap((c) => [c, categoryName(c)]),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
-  return words.every((word) => text.includes(word))
+  )
 }
 
 /** The name people know the developer by. */

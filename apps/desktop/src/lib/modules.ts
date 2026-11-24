@@ -2,6 +2,7 @@ import { currentLanguage, i18n } from "@/i18n"
 import { formatList } from "@/i18n/format"
 
 import type { ActionType, ModuleInfo } from "./types"
+import { matchesWords } from "@/lib/search"
 
 /** The module that provides an action type, enabled or not. */
 export function moduleOf(modules: ModuleInfo[], typeId: string): ModuleInfo | undefined {
@@ -85,15 +86,12 @@ export function moduleMatches(module: ModuleInfo, filter: ModuleFilter, query: s
     (filter === "disabled" && !module.enabled && module.supported) ||
     (filter === "unavailable" && !module.supported)
   if (!state) return false
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  const text = [
+  return matchesWords(
+    query,
     module.id,
     module.name,
     module.description,
     ...module.actionTypes.map((t) => t.name),
     ...module.pages.map((p) => p.title),
-  ]
-    .join(" ")
-    .toLowerCase()
-  return words.every((word) => text.includes(word))
+  )
 }

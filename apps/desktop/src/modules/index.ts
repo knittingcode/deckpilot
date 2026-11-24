@@ -6,6 +6,7 @@ import type { ModuleInfo } from "@/lib/types"
 import { httpModule } from "./http"
 import type { FrontendModule } from "./types"
 import { workSessionModule } from "./work-session"
+import { compareText } from "@/i18n/format"
 
 /**
  * Every module with a user interface. Modules without one need no entry.
@@ -104,7 +105,7 @@ export interface ModuleSettingsPage {
 export function moduleSettingsPages(modules: ModuleInfo[]): ModuleSettingsPage[] {
   return modules
     .filter((m) => m.enabled && m.supported && (m.config.length > 0 || frontend(m.id)?.settings))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => compareText(a.name, b.name))
     .map((module) => ({
       id: moduleSettingsId(module.id),
       module,

@@ -25,6 +25,7 @@ import { type CatalogProps, SectionHeading } from "./shared"
 import { Spotlight } from "./spotlight"
 import { clip, LIMITS } from "./text"
 import { useStorefront } from "./use-storefront"
+import { compareText } from "@/i18n/format"
 
 export function DiscoverEditorial({
   onSection,
@@ -130,7 +131,7 @@ function CatalogGrid({ title, ...catalog }: CatalogProps & { title?: string | un
   const { t } = useTranslation()
   const name = title ? clip(title, LIMITS.title) : t("marketplace:storefront.catalog")
   const official = officialIds(catalog.snapshot, catalog.migrations)
-  const plugins = [...catalog.snapshot.available].sort((a, b) => a.name.localeCompare(b.name))
+  const plugins = [...catalog.snapshot.available].sort((a, b) => compareText(a.name, b.name))
   return (
     <section aria-labelledby="discover-catalog-title" className="grid gap-3">
       <SectionHeading id="discover-catalog-title" title={name} />

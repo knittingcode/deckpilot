@@ -31,6 +31,7 @@ import {
 import type { ActionPreset, DragSource } from "./editing"
 import type { TargetGroup, TargetOption } from "./targets"
 import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
+import { matchesWords } from "@/lib/search"
 
 /** A 16px icon in a small neutral square, the same for every row. */
 function EntryIcon({ children }: { children: ReactNode }) {
@@ -421,7 +422,8 @@ function Section({
   )
 }
 
-const matches = (text: string, needle: string) => text.toLowerCase().includes(needle)
+/** Every word of the search in `text` (lib/search.ts), as in every search of the app. */
+const matches = (text: string, needle: string) => matchesWords(needle, text)
 
 /**
  * What can be dragged onto controls, in one searchable list: the

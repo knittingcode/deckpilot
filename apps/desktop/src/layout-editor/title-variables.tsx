@@ -23,6 +23,7 @@ import {
 import type { CatalogEntry } from "@/lib/types"
 import { insertedReference } from "@/lib/variable-catalog"
 import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
+import { matchesWords } from "@/lib/search"
 
 /** How long typing rests before the title is resolved again. */
 const RESOLVE_DELAY_MS = 250
@@ -62,13 +63,7 @@ export function TitleVariablePicker({
     }
   }, [open, profileId])
 
-  const needle = query.trim().toLowerCase()
-  const shown = (entries ?? []).filter(
-    (e) =>
-      needle === "" ||
-      e.label.toLowerCase().includes(needle) ||
-      e.reference.toLowerCase().includes(needle),
-  )
+  const shown = (entries ?? []).filter((e) => matchesWords(query, e.label, e.reference))
   return (
     <Popover
       open={open}

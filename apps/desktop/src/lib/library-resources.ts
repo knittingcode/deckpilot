@@ -7,6 +7,7 @@
 
 import { WORKFLOWS_PLUGIN } from "./plugin-features"
 import type { BindingTarget, WorkflowEntry } from "./types"
+import { compareText } from "@/i18n/format"
 
 export interface LibraryResourceEntry {
   /** The target's encoding (`encodeTarget`): `workflow:<id>`. */
@@ -73,7 +74,7 @@ export function workflowResourceEntries(
       }
       return { ...base, state: "ready" }
     })
-    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id))
+    .sort((a, b) => compareText(a.label, b.label) || a.id.localeCompare(b.id))
 }
 
 /** Whether an entry can be dragged onto a key or gesture. */

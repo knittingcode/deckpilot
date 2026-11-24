@@ -114,6 +114,13 @@ describe("the library's rows", () => {
     expect(screen.getByRole("button", { name: "Drag Docker status onto a control" })).toBeVisible()
   })
 
+  it("finds entries by every word of the search, in any order, as other searches do", async () => {
+    const user = renderPanel()
+    await user.type(screen.getByRole("searchbox", { name: "Search the library" }), "status docker")
+    expect(screen.getByRole("button", { name: "Drag Docker status onto a control" })).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Drag Mail onto a control" })).toBeNull()
+  })
+
   it("still comes as a card of its own", () => {
     renderPanel("card")
     expect(screen.getByText("Library", { selector: "[data-slot=card-title]" })).toBeInTheDocument()

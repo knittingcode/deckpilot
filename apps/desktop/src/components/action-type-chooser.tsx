@@ -9,6 +9,7 @@ import { creatableTypes } from "@/lib/modules"
 import { pluginTypeUnavailable } from "@/lib/plugin-actions"
 import type { ActionType, ModuleInfo } from "@/lib/types"
 import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
+import { matchesWords } from "@/lib/search"
 
 /**
  * The first step of creating an action: one of the action types the
@@ -29,15 +30,19 @@ export function ActionTypeChooser({
   const { t } = useTranslation()
   const [query, setQuery] = useState("")
   const groups = useMemo(() => {
-    const needle = query.trim().toLowerCase()
     return modules
       .filter((m) => m.plugin || (m.enabled && m.supported))
       .map((m) => ({
         module: m,
         types: creatableTypes(m.actionTypes).filter((type) =>
-          `${type.name} ${actionTypeName(type)} ${actionTypeDescription(type)} ${type.category} ${m.name}`
-            .toLowerCase()
-            .includes(needle),
+          matchesWords(
+            query,
+            type.name,
+            actionTypeName(type),
+            actionTypeDescription(type),
+            type.category,
+            m.name,
+          ),
         ),
       }))
       .filter((g) => g.types.length > 0)

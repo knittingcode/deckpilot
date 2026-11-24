@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress"
 import { useTranslation } from "@/i18n"
 import { errorMessage } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { matchesWords } from "@/lib/search"
 
 /**
  * The dialog templates of DeckPilot. Each is a thin, typed arrangement of
@@ -368,10 +369,7 @@ export function SelectionDialog({
   const { busy, error, run } = useAction(describeError)
   const name = useId()
   if (!open) return null
-  const query = filter.trim().toLowerCase()
-  const shown = query
-    ? options.filter((o) => `${o.label} ${o.description ?? ""}`.toLowerCase().includes(query))
-    : options
+  const shown = options.filter((o) => matchesWords(filter, o.label, o.description))
   return (
     <ModalShell
       presentation="dialog"

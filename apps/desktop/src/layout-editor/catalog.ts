@@ -16,6 +16,7 @@ import type {
   ParameterValue,
 } from "@/lib/types"
 import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
+import { matchesWords, searchWords } from "@/lib/search"
 
 export interface CatalogEntry {
   type: ActionType
@@ -124,22 +125,27 @@ export function newAction(actions: ActionInstance[], type: ActionType): ActionIn
   }
 }
 
-/** Entries whose name, description, category or module contain `query`. */
+/** Entries whose name, description, category and module hold every word of `query`. */
 export function filterCatalog(
   groups: CatalogGroup[],
   query: string,
   /** The category's shown name, found too (e.g. "Nawigacja" for "Navigation"). */
   categoryLabel: (category: string) => string = (category) => category,
 ): CatalogGroup[] {
-  const needle = query.trim().toLowerCase()
-  if (needle === "") return groups
+  if (searchWords(query).length === 0) return groups
   return groups
     .map((group) => ({
       ...group,
       entries: group.entries.filter((entry) =>
-        `${entry.type.name} ${actionTypeName(entry.type)} ${actionTypeDescription(entry.type)} ${group.label} ${categoryLabel(group.label)} ${entry.module}`
-          .toLowerCase()
-          .includes(needle),
+        matchesWords(
+          query,
+          entry.type.name,
+          actionTypeName(entry.type),
+          actionTypeDescription(entry.type),
+          group.label,
+          categoryLabel(group.label),
+          entry.module,
+        ),
       ),
     }))
     .filter((group) => group.entries.length > 0)

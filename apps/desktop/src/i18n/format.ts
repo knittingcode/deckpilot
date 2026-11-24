@@ -98,6 +98,19 @@ export function collator(locale: string, options?: Intl.CollatorOptions) {
   return new Intl.Collator(locale, { sensitivity: "base", numeric: true, ...options })
 }
 
+let compareCache: { locale: Language; collator: Intl.Collator } | null = null
+
+/**
+ * Compares two names by the alphabet of the window's language, numbers by
+ * value ("Key 2" before "Key 10"): the one order of every list sorted by
+ * name, also outside components (`useFormat().compare` in them).
+ */
+export function compareText(a: string, b: string): number {
+  const locale = currentLanguage()
+  if (compareCache?.locale !== locale) compareCache = { locale, collator: collator(locale) }
+  return compareCache.collator.compare(a, b)
+}
+
 export interface Format {
   locale: Language
   date: (value: DateInput, options?: Intl.DateTimeFormatOptions) => string
