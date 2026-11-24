@@ -521,8 +521,9 @@ impl Driver for Gui {
                     .unwrap();
             }
         }
+        // The tile names the publisher; its summary is on the plugin's
+        // page (`inspect`), which a compact tile only shows on hover.
         let text = self.text_of(&card);
-        assert!(text.contains("Sample plugin"), "{text}");
         assert!(text.to_lowercase().contains("acme"), "{text}");
         vec![Via::Ui]
     }
@@ -534,6 +535,8 @@ impl Driver for Gui {
             lit(NAME)
         ));
         assert_eq!(self.text_of("//h3[@id='plugin-detail-name']"), NAME);
+        let page = self.text_of("//article[@aria-labelledby='plugin-detail-name']");
+        assert!(page.contains("Sample plugin"), "{page}");
         let permissions = self.text_of("//section[@aria-labelledby='plugin-detail-permissions']");
         assert!(permissions.contains("api.open-meteo.com"), "{permissions}");
         let versions = self.text_of("//ul[@aria-label='Versions']");
