@@ -63,6 +63,12 @@ released either. 0.6.0 is the first version intended for publication.
   what a key started: a workflow, a plugin's action, or an action run in
   place. Agent tests cover this with the mock provider and a simulated
   Stream Deck.
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
 
 ## [0.15.0] - 2026-11-24
 

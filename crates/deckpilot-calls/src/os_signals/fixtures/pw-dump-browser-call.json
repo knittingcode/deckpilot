@@ -1,0 +1,50 @@
+[
+  {
+    "id": 31,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "state": "running",
+      "props": {
+        "media.class": "Audio/Source",
+        "node.name": "alsa_input.usb-headset"
+      }
+    }
+  },
+  {
+    "id": 77,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "state": "running",
+      "props": {
+        "media.class": "Stream/Input/Audio",
+        "application.name": "Chromium",
+        "application.process.binary": "/usr/lib/chromium/chromium",
+        "application.process.id": 4242
+      }
+    }
+  },
+  {
+    "id": 78,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "state": "running",
+      "props": {
+        "media.class": "Stream/Input/Video",
+        "application.name": "Chromium",
+        "application.process.binary": "chromium"
+      }
+    }
+  },
+  {
+    "id": 79,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "state": "idle",
+      "props": {
+        "media.class": "Stream/Input/Audio",
+        "application.process.binary": "obs"
+      }
+    }
+  },
+  { "id": 5, "type": "PipeWire:Interface:Link", "info": {} }
+]

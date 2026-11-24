@@ -14,6 +14,8 @@ publish.workspace = true
 deckpilot-core.workspace = true
 deckpilot-device.workspace = true
 serde.workspace = true
+# `pw-dump` and the platform sources' records (`os_signals.rs`).
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 

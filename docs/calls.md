@@ -392,6 +392,44 @@ Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 - the stored layout seeded, a user edit shown, and an agent restart
   without a stale suspension (T-R6).
 
-Still to come: a provider in a build (C5); the plugin (C7), whose
+## Operating-system signals and Teams (`deckpilot-calls::os_signals`)
+
+The `os-signals` provider with its Teams profile is detection only:
+
+- **Inferred call.** A call or meeting is probably active while Teams holds
+  an active audio capture session. The engine believes it after 2 s and
+  lets it go 8 s after the session is gone.
+- **Teams processes:** `MSTeams`, `Microsoft Teams` and
+  `Microsoft Teams (work or school)` on macOS; `ms-teams.exe` and
+  `Teams.exe` on Windows. They are compared by executable name only (never
+  a path or a command line), and the names are dropped: only the call
+  observation leaves the module.
+- **What is never claimed:**
+  - The microphone's mute state is **unknown**: holding the microphone is
+    never shown as "not muted".
+  - The camera is not attributed on macOS (`isInUseByAnotherApplication`
+    names no app), and Windows has no supported signal for it.
+  - On Linux Teams is a browser tab: nothing is attributed, and the
+    provider reports `unsupported { platformNotSupported }`.
+- **Every control is unsupported** (`providerHasNoApi`). A command is
+  refused before anything happens, and the faces show the reason.
+- **Signal sources.** The sources produce platform-neutral `Signals`
+  through `SignalSource`:
+  - Core Audio process objects with `kAudioProcessPropertyIsRunningInput`,
+    and `AVCaptureDevice.isInUseByAnotherApplication`, on macOS;
+  - WASAPI capture sessions on Windows;
+  - PipeWire streams (`pw-dump`) on Linux.
+
+  This change has the parsers of their outputs and a fixture source. **No
+  live query is made by any build:** no platform source exists yet.
+- **Owner verification, a release blocker:** whether the macOS Core Audio
+  and AVCapture queries trigger a TCC (microphone or camera) prompt. A
+  signal that would prompt is dropped, never prompted for. Also to check
+  on a real machine: Teams' current process names, and whether Teams keeps
+  the microphone stream open while muted (assumed yes).
+- **Default:** the OS-signals provider is off until the user enables it
+  (OD-C3). It inspects other processes' audio sessions.
+
+Still to come: a live source per platform (after the TCC verification); the plugin (C7), whose
 enabling with consent installs Calls; and the IPC event for the editor
 (C6, a release blocker).
