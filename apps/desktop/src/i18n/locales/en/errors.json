@@ -261,6 +261,7 @@
     "tooManyRemotes": "a repository can have at most {{max}} remotes",
     "duplicateRemote": "remote `{{name}}` is listed more than once",
     "severalPrimaryRemotes": "only one remote of a repository can be the primary one",
-    "notFound": "the repository does not exist in this project"
+    "notFound": "the repository does not exist in this project",
+    "lastWithRole": "the last repository cannot be removed while the project has the repository role; remove the role first"
   }
 }

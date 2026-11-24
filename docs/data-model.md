@@ -303,13 +303,19 @@ id. A `connectionId` in an archive is dropped.
 
 **Commands** (configuration app): `create_project` and `update_project`
 take `repositories` (`[{ id?, key, name, resource?, description? }]`, in
-order) and `defaultRepository`; without `repositories`, the stored ones
-are kept. Remotes are kept by repository id. `set_default_repository
+order) and `defaultRepository` (left out: the stored default is kept while
+it is listed; `null`: none). Without `repositories`, the stored ones are
+kept, except a list that is still exactly the derived repository as the
+migration stored it: it is dropped, so the repository is derived again from
+the project as saved (a renamed project or a new role) and exports as
+before. An empty list is refused while the project keeps the `repository`
+role (`repository.lastWithRole`: the role would bring the repository back,
+R3); remove the role in the same save. Remotes are kept by repository id. `set_default_repository
 { profileId, projectId, repositoryId | null }` applies R2 in one save.
 Errors have the codes `repository.<code>` (`invalidKey`, `duplicateKey`,
 `duplicateId`, `invalidName`, `descriptionTooLong`, `tooMany`,
 `unknownDefault`, `invalidRemote`, `tooManyRemotes`, `duplicateRemote`,
-`severalPrimaryRemotes`, `notFound`). `check_resources` lists a
+`severalPrimaryRemotes`, `notFound`, `lastWithRole`). `check_resources` lists a
 repository's resource as used by `PROJECT repositories.<key>`; a missing
 folder is a status, never removed.
 

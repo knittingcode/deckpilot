@@ -952,6 +952,126 @@ fn project_repositories_are_edited_and_never_deleted_automatically() {
     );
 }
 
+/// Review of #449: the repository the migration stored for the role
+/// follows a rename or a new role (and exports as before), the last
+/// repository is not removed while the role would bring it back, and a save
+/// without `defaultRepository` keeps the default.
+#[test]
+#[allow(clippy::too_many_lines)] // One review finding after the other.
+fn a_migrated_repository_follows_its_project_and_the_last_one_stays() {
+    let h = Harness::new();
+    let work = new_profile(&h, "Work");
+    let shop = h.ok(
+        "create_project",
+        json!({ "profileId": work, "project": { "key": "SHOP", "name": "Shop",
+            "resources": { "repository": "shop.repository" } } }),
+    );
+    let shop_id = shop["id"].as_str().unwrap().to_owned();
+    let derived = deckpilot_core::RepositoryId::derived(shop_id.parse().unwrap());
+    let stored = || {
+        let state = h.window.state::<AppState>();
+        let store = state.store().unwrap();
+        crate::state::load_profile(&store, work.parse().unwrap()).unwrap()
+    };
+    // As migration 14 stores it.
+    {
+        let state = h.window.state::<AppState>();
+        let store = state.store().unwrap();
+        let mut profile = crate::state::load_profile(&store, work.parse().unwrap()).unwrap();
+        assert!(profile.projects[0].materialize_repositories());
+        deckpilot_storage::ConfigStore::save_profile(&*store, &profile).unwrap();
+    }
+    assert_eq!(stored().projects[0].repositories.len(), 1);
+
+    // Today's editor saves without repositories: a rename and a new role.
+    h.ok(
+        "update_project",
+        json!({ "profileId": work, "projectId": shop_id, "project": { "key": "SHOP",
+            "name": "Online Shop", "resources": { "repository": "shop.checkout" } } }),
+    );
+    let project = stored().projects[0].clone();
+    assert_eq!(project.repositories, []);
+    let main = project.default_repository().unwrap();
+    assert_eq!(main.id, derived);
+    assert_eq!(main.name, "Online Shop");
+    assert_eq!(main.resource.as_str(), "shop.checkout");
+    let view = h.ok("get_profile", json!({ "profileId": work }));
+    assert_eq!(
+        view["profile"]["projects"][0]["repositories"][0]["name"],
+        "Online Shop"
+    );
+    // It exports as before (payload 2), which 0.14 imports.
+    {
+        let state = h.window.state::<AppState>();
+        let store = state.store().unwrap();
+        let payload = deckpilot_portability::payload::export(
+            &store,
+            &state.modules(),
+            None,
+            deckpilot_portability::ExportOptions {
+                module_settings: false,
+                app_settings: false,
+            },
+            0,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(
+            payload.version,
+            deckpilot_portability::PAYLOAD_VERSION_WITHOUT_LIBRARY
+        );
+    }
+
+    // Removing the last repository while the role exists is refused...
+    let save = |project: Value| {
+        h.call_raw(
+            "update_project",
+            json!({ "profileId": work, "projectId": shop_id, "project": project }),
+        )
+    };
+    let refused = save(json!({ "key": "SHOP", "name": "Online Shop",
+        "resources": { "repository": "shop.checkout" }, "repositories": [] }))
+    .unwrap_err();
+    assert_eq!(refused["code"], "repository.lastWithRole", "{refused}");
+    // ...and allowed together with the role.
+    let removed = save(
+        json!({ "key": "SHOP", "name": "Online Shop", "resources": {},
+        "repositories": [] }),
+    )
+    .unwrap();
+    assert!(removed.get("repositories").is_none());
+    assert_eq!(stored().projects[0].effective_repositories().len(), 0);
+
+    // Repositories sent without `defaultRepository` keep the default.
+    let roles = json!({ "repository": "shop.checkout" });
+    let two = json!([
+        { "id": derived, "key": "main", "name": "Online Shop", "resource": "shop.checkout" },
+        { "key": "cms", "name": "CMS" },
+    ]);
+    save(
+        json!({ "key": "SHOP", "name": "Online Shop", "resources": roles,
+        "repositories": two, "defaultRepository": derived }),
+    )
+    .unwrap();
+    let kept = save(
+        json!({ "key": "SHOP", "name": "Online Shop", "resources": roles,
+        "repositories": [
+            { "id": derived, "key": "main", "name": "Main", "resource": "shop.checkout" },
+        ] }),
+    )
+    .unwrap();
+    assert_eq!(kept["defaultRepository"], json!(derived));
+    // `null` clears it.
+    let cleared = save(
+        json!({ "key": "SHOP", "name": "Online Shop", "resources": roles,
+        "repositories": [
+            { "id": derived, "key": "main", "name": "Main", "resource": "shop.checkout" },
+        ], "defaultRepository": null }),
+    )
+    .unwrap();
+    assert!(cleared.get("defaultRepository").is_none());
+}
+
 #[test]
 fn layouts_are_designed_offline_and_validated() {
     let h = Harness::new();

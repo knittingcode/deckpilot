@@ -457,9 +457,11 @@ fn repository_code(error: &deckpilot_core::RepositoryError) -> (String, Params) 
             "max",
             deckpilot_core::project::MAX_REMOTES_PER_REPOSITORY.into(),
         )]),
-        E::DuplicateId | E::UnknownDefault | E::SeveralPrimaryRemotes | E::NotFound => {
-            Params::new()
-        }
+        E::DuplicateId
+        | E::UnknownDefault
+        | E::SeveralPrimaryRemotes
+        | E::NotFound
+        | E::LastWithRole => Params::new(),
     };
     (format!("repository.{}", error.code()), values)
 }
