@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import type { LabelBox } from "@/lib/key-labels"
 
 import { LabelOutlines } from "./label-outlines"
-import { movedBy } from "./labels"
+import { expectedBox, movedBy } from "./labels"
 
 Element.prototype.setPointerCapture = () => undefined
 
@@ -107,8 +107,10 @@ describe("label outlines", () => {
       const boxes = [box("a")]
       const view = renderAt(144, boxes)
       drag(view.outline("a"), 36, 0)
-      // 18 units further right while the preview is drawn again.
-      expect(parseFloat(view.outline("a").style.left)).toBeCloseTo((38 / 72) * 100, 3)
+      // 18 units further right (snapped to the text area's edge) while the
+      // preview is drawn again: where the renderer is expected to draw it.
+      const dropped = expectedBox(box("a"), movedBy(box("a"), 18, 0, true))
+      expect(parseFloat(view.outline("a").style.left)).toBeCloseTo((dropped.x / 72) * 100, 3)
       // The renderer answers: its box is used.
       const moved = { ...box("a"), x: 38 }
       view.rerender(
@@ -126,6 +128,30 @@ describe("label outlines", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it("start a quick second drag from where the first put the label", () => {
+    const view = renderAt(144, [box("a")])
+    // 10 px on 144 px: 5 units across each time, no guide within reach
+    // (down, the text area's bottom edge is: centre 60).
+    drag(view.outline("a"), 10, 0)
+    drag(view.outline("a"), 10, 0)
+    expect(view.onMove.mock.calls.map((call) => call[1] as unknown)).toEqual([
+      { mode: "absolute", x: 569, y: 833 },
+      { mode: "absolute", x: 638, y: 833 },
+    ])
+  })
+
+  it("drag a label on a 144 × 72 canvas (a Stream Deck+ strip) in its own units", () => {
+    const wide = box("z", { width: 144, height: 72 })
+    // 200 px across: 50 px is 36 units across, -10 px is 7.2 units up.
+    const view = renderAt(200, [wide])
+    drag(view.outline("z"), 50, -10)
+    // Centre (72, 48.8): on the strip's centre line, in per mille of 144 and 72.
+    expect(view.onMove).toHaveBeenCalledWith("z", { mode: "absolute", x: 500, y: 678 })
+    expect(view.onMove.mock.calls[0]?.[1]).toEqual(movedBy(wide, 36, -7.2, true))
+    // Until the renderer answers, the outline is there.
+    expect(parseFloat(view.outline("z").style.left)).toBeCloseTo(((72 - 16) / 144) * 100, 3)
   })
 
   it("stop the pointer from reaching the key under them", () => {

@@ -1572,6 +1572,7 @@ export function LayoutEditor({
                       gestureDefaults={gestureContext.defaults}
                       issues={errors}
                       onChange={commands.change}
+                      onUpdate={commands.update}
                       onClear={commands.clear}
                       resolveDrop={resolveSlotDrop}
                       onEditWorkflow={setStepsOf}
