@@ -142,3 +142,38 @@ describe("catalog by context", () => {
     expect(group?.types.map((t) => t.id)).toEqual(["projects.repository"])
   })
 })
+
+describe("saved actions that read alike", () => {
+  it("say which are drafts without their required settings, and change nothing", () => {
+    const openApp: ActionType = {
+      ...repository,
+      id: "system.open-app",
+      name: "Open Application",
+      parameters: [
+        {
+          key: "application",
+          label: "Application",
+          kind: { type: "text", multiline: false },
+          required: true,
+        },
+      ],
+    }
+    const saved: ActionInstance[] = [
+      {
+        id: "o1",
+        name: "Open application",
+        actionType: "system.open-app",
+        parameters: { application: { type: "text", value: "Safari" } },
+      },
+      { id: "o2", name: "Open application 2", actionType: "system.open-app", parameters: {} },
+    ] as ActionInstance[]
+    const before = structuredClone(saved)
+    const [group] = moduleGroups([moduleInfo({ id: "system", actionTypes: [openApp] })], saved)
+    expect(group?.entries.map((e) => [e.title, e.description])).toEqual([
+      ["Open application", "Open Application"],
+      ["Open application 2", "Open Application · not set up yet"],
+    ])
+    // Both stay listed, and nothing of them is changed.
+    expect(saved).toEqual(before)
+  })
+})
