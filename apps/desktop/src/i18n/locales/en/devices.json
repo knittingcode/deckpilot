@@ -17,7 +17,7 @@
       "stopped": "Agent stopped",
       "incompatible": "Agent version mismatch"
     },
-    "checkLogInDiagnostics": "Check its log in Settings › Diagnostics",
+    "checkLogInDiagnostics": "Check its log in Settings › Logs & Diagnostics",
     "badge": {
       "checking": "Checking…",
       "running": "Running",

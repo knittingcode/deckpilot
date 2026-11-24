@@ -140,6 +140,13 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- Hints that send you elsewhere name places that exist: plugins are
+  turned on in Marketplace › Installed (there is no Settings › Plugins),
+  the agent is in Settings › Background Agent, logs in Settings › Logs &
+  Diagnostics, and a plugin's settings are also in Marketplace ›
+  Installed › Configure. The action editor says why a plugin's action
+  cannot run in the window's language (for example "Wtyczka jest
+  wyłączona (Hello Weather)") instead of the agent's English words.
 - Marketplace: an install or update that failed and was done later
   (another window, a retry elsewhere) no longer shows its old error and
   Retry again after the plugin is uninstalled.

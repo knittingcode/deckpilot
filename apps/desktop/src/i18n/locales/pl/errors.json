@@ -95,7 +95,7 @@
       "replaced": "klawisz {{key}} otwiera folder „{{folder}}”; wyczyść klawisz albo usuń folder zamiast go zastępować",
       "recovered": "odzyskane gesty można tylko zachować, przenieść na wolny klawisz albo odrzucić"
     },
-    "pluginFeatureOff": "wtyczka {{feature}} jest wyłączona: włącz ją w Ustawieniach › Wtyczki",
+    "pluginFeatureOff": "wtyczka {{feature}} jest wyłączona: włącz ją w Marketplace › Zainstalowane",
     "workflowInUse_one": "przepływ pracy jest nadal używany w {{count}} miejscu; potwierdź, aby go usunąć",
     "workflowInUse_few": "przepływ pracy jest nadal używany w {{count}} miejscach; potwierdź, aby go usunąć",
     "workflowInUse_many": "przepływ pracy jest nadal używany w {{count}} miejscach; potwierdź, aby go usunąć",

@@ -568,7 +568,7 @@
     "blocked": {
       "new": "Zapisz przepływ pracy, aby go uruchomić",
       "dirty": "Zapisz zmiany, aby uruchomić przepływ pracy",
-      "agent": "Agent nie działa. Uruchom go w Ustawieniach › Agent",
+      "agent": "Agent nie działa. Uruchom go w Ustawieniach › Agent w tle",
       "profile": "Przepływy pracy działają dla aktywnego profilu. Aktywuj profil „{{profile}}”, aby uruchomić ten przepływ"
     },
     "error": {

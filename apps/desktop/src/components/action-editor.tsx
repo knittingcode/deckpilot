@@ -26,6 +26,8 @@ import { api } from "@/lib/api"
 import { failureMessage, toastFailure } from "@/lib/failure"
 import { creatableTypes } from "@/lib/modules"
 import { pluginTypeUnavailable, typeAvailability } from "@/lib/plugin-actions"
+import { missingAction } from "@/lib/action-availability"
+import { missingSummary } from "@/components/missing-action-text"
 import { PROJECTS_PLUGIN, pluginFeatures } from "@/lib/plugin-features"
 import { NeedsConfiguration } from "@/components/needs-configuration"
 import { missingParameters } from "@/lib/action-completeness"
@@ -111,6 +113,15 @@ export function ActionEditor({
   const usable = modules.filter((m) => m.enabled && m.supported && offered(m).length > 0)
   const chosenType = action?.actionType ?? initialType
   const availability = chosenType ? typeAvailability(modules, chosenType) : undefined
+  // Why the plugin cannot run it, in the window's language where it is
+  // known (as the Inspector and the library say it); the agent's own
+  // words only when nothing better is known.
+  const lost = chosenType && availability?.reason ? missingAction(modules, chosenType) : null
+  const reason = lost
+    ? lost.ownerName
+      ? `${missingSummary(lost, t)} (${lost.ownerName})`
+      : missingSummary(lost, t)
+    : availability?.reason
   const owner = availability?.owner
   // A legacy type a plugin replaces (module migration): marked deprecated.
   const legacy = chosenType ? owner?.legacy?.[chosenType] : undefined
@@ -219,10 +230,10 @@ export function ActionEditor({
           <Ban />
           <AlertTitle>{t("actions:editor.unavailable.title")}</AlertTitle>
           <AlertDescription>
-            {availability?.reason
+            {reason
               ? action
-                ? t("actions:editor.unavailable.pluginKept", { reason: availability.reason })
-                : t("actions:editor.unavailable.pluginNew", { reason: availability.reason })
+                ? t("actions:editor.unavailable.pluginKept", { reason })
+                : t("actions:editor.unavailable.pluginNew", { reason })
               : owner
                 ? t("actions:editor.unavailable.moduleDisabled", { module: owner.name })
                 : t("actions:editor.unavailable.noModule", { type: action?.actionType ?? "" })}

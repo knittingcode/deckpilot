@@ -255,7 +255,7 @@
       "untilSaved": "Nothing changes on the device until you save the layout.",
       "confirm": "Switch to gestures"
     },
-    "readOnly": "Read-only: {{reason}}. Keys keep this workflow but do not run it while the plugin is off; once the plugin is on (Settings › Plugins) it runs again and can be chosen or changed."
+    "readOnly": "Read-only: {{reason}}. Keys keep this workflow but do not run it while the plugin is off; once the plugin is on (Marketplace › Installed) it runs again and can be chosen or changed."
   },
   "shell": {
     "switchPreset": {
@@ -326,7 +326,7 @@
     "region": "{{control}} settings",
     "regionMany_one": "Settings of {{count}} control",
     "regionMany_other": "Settings of {{count}} controls",
-    "readOnly": "Read-only: {{reason}}. Keys keep this workflow but do not run it while the plugin is off; once the plugin is on (Settings › Plugins) it runs again and can be chosen or changed."
+    "readOnly": "Read-only: {{reason}}. Keys keep this workflow but do not run it while the plugin is off; once the plugin is on (Marketplace › Installed) it runs again and can be chosen or changed."
   },
   "pageNav": {
     "untitled": "Untitled",

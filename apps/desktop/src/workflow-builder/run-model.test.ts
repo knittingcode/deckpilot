@@ -22,7 +22,7 @@ describe("runBlockedReason", () => {
       "Save your changes to run the workflow",
     )
     expect(runBlockedReason({ ...ready, agentRunning: false })).toBe(
-      "The agent is not running. Start it in Settings › Agent",
+      "The agent is not running. Start it in Settings › Background Agent",
     )
     expect(runBlockedReason({ ...ready, activeProfileId: "p2" })).toBe(
       "Workflows run for the active profile. Make “Work” active to run this one",

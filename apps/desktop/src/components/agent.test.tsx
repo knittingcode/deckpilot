@@ -138,7 +138,7 @@ describe("agent compatibility notice", () => {
     await user.click(screen.getByRole("button", { name: "Restart agent" }))
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith("The agent was not restarted", {
-        description: "Socket busy. Check its log in Settings › Diagnostics.",
+        description: "Socket busy. Check its log in Settings › Logs & Diagnostics.",
       })
     })
     expect(screen.getByRole("button", { name: "Restart agent" })).toBeEnabled()
