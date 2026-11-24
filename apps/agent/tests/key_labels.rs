@@ -409,10 +409,22 @@ async fn a_press_during_a_storm_of_changes_is_handled_at_once() {
         round
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
-    // The key really changes during the storm.
+    // The key really changes during the storm. Waited for, not compared
+    // once after a fixed pause: a loaded runner may not have drawn the
+    // next value yet (seen on Windows CI).
     let early = s.frame(key(0)).unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_ne!(s.frame(key(0)).unwrap(), early, "the storm is drawn");
+    let (mock, device) = (s.mock.clone(), s.device.clone());
+    let drawn = tokio::task::spawn_blocking(move || {
+        mock.wait_for(&device, TIMEOUT, |frames, _| {
+            frames.get(&key(0)).is_some_and(|frame| *frame != early)
+        })
+    })
+    .await
+    .unwrap();
+    assert!(
+        drawn,
+        "the storm is drawn: key 0 still shows its frame from before after {TIMEOUT:?}"
+    );
     let stormy = press_latency(&s, &next).await;
     // The redraw rate on the home page, during the storm.
     let before = s.agent.handle.variable_redraws();
