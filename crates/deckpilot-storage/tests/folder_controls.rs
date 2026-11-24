@@ -153,7 +153,7 @@ fn schema_11(path: &Path, encryption: &Encryption, f: &Fixture) {
     store.assign_layout(f.home.id, f.shared.id).unwrap();
     store
         .connection_for_tests()
-        .execute_batch("DELETE FROM migration_history; PRAGMA user_version = 11;")
+        .execute_batch("DELETE FROM migration_history; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 11;")
         .unwrap();
 }
 

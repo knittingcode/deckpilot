@@ -63,7 +63,7 @@ const V0_8_1: Fixture = Fixture {
 };
 const FIXTURES: [Fixture; 4] = [V0_5_0, V0_6_0, SCHEMA_8, V0_8_1];
 /// The schema this build upgrades to.
-const CURRENT: u32 = 14;
+const CURRENT: u32 = 15;
 /// The tables schema 10 adds (shared layouts). `device_layouts` starts
 /// empty; the others hold what the profile documents held.
 const SCHEMA_10_TABLES: [&str; 9] = [
@@ -306,14 +306,22 @@ fn every_row_is_kept(fixture: Fixture) {
     }
 
     let documents = profile_documents(&raw(&copy.database(), &copy.key));
+    let projects = project_columns(&raw(&copy.database(), &copy.key));
     let store = copy.open().unwrap();
     let upgraded = dump(store.connection_for_tests());
     assert_eq!(upgraded.version, CURRENT);
-    // T-L3: schema 14 adds the managed layouts, empty: no layout is
+    // Migration 14 adds two columns to `projects`; every value of the
+    // columns it had is kept.
+    assert_eq!(project_columns(store.connection_for_tests()), projects);
+    // T-L3: schema 15 adds the managed layouts, empty: no layout is
     // adopted.
     assert_eq!(upgraded.tables["managed_layouts"].1.len(), 0);
     for (table, (sql, rows)) in &original.tables {
         let (new_sql, new_rows) = &upgraded.tables[table];
+        if table == "projects" {
+            assert_eq!(new_rows.len(), rows.len());
+            continue;
+        }
         assert_eq!(new_sql, sql, "the definition of {table} changed");
         if table == "migration_history" {
             // One row more: this upgrade.
@@ -335,7 +343,7 @@ fn every_row_is_kept(fixture: Fixture) {
         .map(String::as_str)
         .collect();
     let mut expected = BTreeSet::from(SCHEMA_10_TABLES);
-    // Schema 14 (`managed_layouts.rs`).
+    // Schema 15 (`managed_layouts.rs`).
     expected.insert("managed_layouts");
     if fixture.version < 9 {
         expected.extend(SCHEMA_9_TABLES);
@@ -379,6 +387,22 @@ fn every_row_is_kept(fixture: Fixture) {
         );
     }
     assert_eq!(copy.backup_files().len(), 1);
+}
+
+/// Every value of the columns `projects` had before migration 14.
+fn project_columns(connection: &Connection) -> Vec<String> {
+    connection
+        .prepare("SELECT id, profile_id, key, name, position, resources FROM projects ORDER BY id")
+        .unwrap()
+        .query_map([], |row| {
+            (0..6)
+                .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map(|values| format!("{values:?}"))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
 }
 
 /// The profile documents of `connection` as stored: id, document version,
@@ -776,3 +800,6 @@ fn bindings_of_released_versions_stay_raw_and_unchanged() {
         assert!(presses >= 10, "{fixture:?}: {presses} presses");
     }
 }
+
+mod managed_layouts;
+mod repositories;
