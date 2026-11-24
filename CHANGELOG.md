@@ -15,6 +15,16 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Added
+
+- Device Editor: the key's title field has a picker of the variables a key
+  can show, which inserts `{{ reference }}` at the cursor, and shows under
+  the field what the key shows as the agent resolves it (cut to 32
+  characters as on the key, with each `-` that stands for a variable
+  marked and why it has no value). The title itself is not changed. The
+  Canvas summaries show the agent's answers instead of replacing
+  `{profile}`, `{project.key}` and `{project.name}` themselves.
+
 ### Changed
 
 - A key whose plugin is missing, disabled, incompatible, waiting for a
