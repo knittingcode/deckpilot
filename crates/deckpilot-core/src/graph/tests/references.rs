@@ -859,7 +859,8 @@ fn mappings_into_a_plugins_parameters_read_folder_paths_only_when_allowed() {
             assert_ne!(report.status, RunStatus::Succeeded);
             assert!(f.ran().is_empty(), "{:?}", f.ran());
             let text = serde_json::to_string(&report).unwrap();
-            assert!(!text.contains(&folder), "{text}");
+            let quoted = serde_json::to_string(&folder).unwrap();
+            assert!(!text.contains(&quoted[1..quoted.len() - 1]), "{text}");
         }
     }
 }

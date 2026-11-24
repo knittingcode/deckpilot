@@ -666,7 +666,8 @@ mod tests {
         let hidden = json(resolve(0, false));
         assert_eq!(hidden["cms"]["path"], serde_json::Value::Null);
         assert_eq!(hidden["cms"]["exists"], serde_json::json!(true));
-        assert!(!hidden.to_string().contains(&folder));
+        let quoted = serde_json::to_string(&folder).unwrap();
+        assert!(!hidden.to_string().contains(&quoted[1..quoted.len() - 1]));
         // Two repositories and no default: no value (OD-3).
         assert_eq!(
             resolve(1, true),

@@ -196,6 +196,13 @@ impl Fixture {
     }
 }
 
+/// `text` as it appears inside a JSON string (a Windows folder's `\` is
+/// escaped there).
+fn in_json(text: &str) -> String {
+    let quoted = serde_json::to_string(text).unwrap();
+    quoted[1..quoted.len() - 1].to_owned()
+}
+
 fn text(resolution: &Resolution) -> Option<&str> {
     match resolution {
         Resolution::Value {
@@ -515,7 +522,7 @@ fn a_reader_that_may_not_see_paths_reads_null() {
             panic!("{whole}");
         };
         let json = value.structured_json().unwrap().to_string();
-        assert!(!json.contains(&folder), "{whole}: {json}");
+        assert!(!json.contains(&in_json(&folder)), "{whole}: {json}");
         let Resolution::Value { value, .. } = f.resolve(&whole, "SHOP", true) else {
             panic!("{whole}");
         };
@@ -524,7 +531,7 @@ fn a_reader_that_may_not_see_paths_reads_null() {
                 .structured_json()
                 .unwrap()
                 .to_string()
-                .contains(&folder)
+                .contains(&in_json(&folder))
         );
     }
     // Even a source that gives paths regardless is cut down by the
@@ -566,7 +573,7 @@ fn a_reader_that_may_not_see_paths_reads_null() {
             .structured_json()
             .unwrap()
             .to_string()
-            .contains(&folder)
+            .contains(&in_json(&folder))
     );
 }
 
@@ -747,7 +754,10 @@ fn previews_summarise_structured_values() {
         }
     );
     let json = serde_json::to_string(&status).unwrap();
-    assert!(!json.contains(&f.machine.bindings[0].value), "{json}");
+    assert!(
+        !json.contains(&in_json(&f.machine.bindings[0].value)),
+        "{json}"
+    );
     assert_eq!(
         status.for_protocol(17),
         ReferenceStatus::Redacted {
