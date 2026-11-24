@@ -97,6 +97,25 @@ export function officialIds(
 export interface PluginFailure {
   operation: "install" | "update"
   error: PluginErrorText
+  /** The version an update tried to reach. */
+  version?: string
+}
+
+/**
+ * Whether a failure no longer applies because the agent has done it since
+ * (another window, a retry elsewhere): an install once the plugin is
+ * listed as installed, an update once the installed version reached the
+ * one tried.
+ */
+export function failureSettled(
+  failure: PluginFailure,
+  installed: Pick<PluginDetails, "summary"> | undefined,
+): boolean {
+  if (!installed) return false
+  if (failure.operation === "install") return true
+  return (
+    failure.version !== undefined && compareSemver(installed.summary.version, failure.version) >= 0
+  )
 }
 
 /** What the Marketplace may do with one catalog entry right now. */
@@ -147,7 +166,9 @@ export function shownVersion(plugin: AvailablePlugin): AvailableVersion | undefi
 
 export function entryState(plugin: AvailablePlugin, ctx: EntryContext): EntryState {
   const { installed } = ctx
-  if (ctx.failure) return { kind: "failed", failure: ctx.failure }
+  if (ctx.failure && !failureSettled(ctx.failure, installed)) {
+    return { kind: "failed", failure: ctx.failure }
+  }
   if (ctx.pending === "install") return { kind: "installing" }
   if (ctx.pending === "update") return { kind: "updating" }
   if (installed) {

@@ -41,6 +41,7 @@ export function fakeActions(): MarketplaceActions {
     configure: vi.fn(),
     showInstalled: vi.fn(),
     openDiagnostics: vi.fn(),
+    openPermissions: vi.fn(),
     blocked: null,
     canRun: true,
     client: {} as MarketplaceActions["client"],

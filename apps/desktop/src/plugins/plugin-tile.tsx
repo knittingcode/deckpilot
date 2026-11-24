@@ -317,7 +317,8 @@ export function StateControl({
           size={size}
           className={pill}
           variant="outline"
-          disabled={busy}
+          disabled={busy || actions.blocked !== null}
+          title={actions.blocked ?? undefined}
           aria-label={
             state.failure.operation === "update"
               ? t("marketplace:state.retryUpdateNamed", { name })

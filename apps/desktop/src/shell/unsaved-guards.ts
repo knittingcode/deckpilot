@@ -13,6 +13,7 @@ import { toast } from "sonner"
 import { DialogsContext } from "@/components/dialogs/use-dialogs"
 import { i18n } from "@/i18n"
 import { locationOf } from "@/lib/navigation"
+import { forgetFocusedPlugin } from "@/plugins/focus"
 
 import { unsavedWarning } from "./editor-selection-context"
 
@@ -75,6 +76,8 @@ export function useUnsavedGuards(
       }
       void confirm().then((ok) => {
         if (ok) navigate(page)
+        // A plugin the Marketplace was to open at is for this navigation only.
+        else forgetFocusedPlugin()
       })
     },
     [confirm, dirtyRef, location, navigate],

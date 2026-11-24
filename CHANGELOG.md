@@ -90,9 +90,10 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
-- Plugin permissions are reviewed in Settings › Permissions and plugin
-  diagnostics and module migrations are in Settings › Logs & Diagnostics;
-  the experimental Settings › Plugins page is gone.
+- Plugin permissions are granted and revoked in Settings › Permissions;
+  a plugin's page in the Marketplace shows them read-only, with a link
+  there. Plugin diagnostics and module migrations are in Settings › Logs &
+  Diagnostics; the experimental Settings › Plugins page is gone.
 - The Inspector shows the selected key's preview in a fixed column beside
   the settings, which scroll on their own; the actions of a key are
   gesture cards.
