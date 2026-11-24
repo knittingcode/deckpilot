@@ -243,6 +243,28 @@ export function useLayoutEditing(
       change(next)
       setSelection(selectOnly(control))
     },
+    /**
+     * `drop` of something decided after an asynchronous step (an action
+     * created for a dropped type): applied to the latest draft, so edits
+     * made meanwhile stay. A drop the latest draft no longer takes changes
+     * nothing (the drop was checked when it happened).
+     */
+    dropLater: (source: DragSource, over: ControlId) => {
+      setState((s) => {
+        const next = dropOnControl(
+          model,
+          s.present,
+          pageId,
+          source,
+          over,
+          accepts && source.type === "target"
+            ? (control, trigger) => accepts(control, source.target, trigger)
+            : undefined,
+        )
+        return next ? commit(s, next, null) : s
+      })
+      setSelection(selectOnly(over))
+    },
     drop: (source: DragSource, over: ControlId) => {
       if (source.type === "newFolder") {
         commands.newFolder(over)
