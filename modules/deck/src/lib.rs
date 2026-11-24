@@ -41,9 +41,10 @@ use std::collections::BTreeMap;
 use deckpilot_core::graph::{ActionEffect, NodeSpec, OutputSpec, ValueKind};
 use deckpilot_core::{
     ActionHandler, ActionParameters, ActionResult, ActionType, ActionTypeId, Capability,
-    DeckRequest, EditorNavigation, ExecutionContext, FeatureModule, HistoryMode, KeyFace, LayoutId,
-    LayoutNavigation, ModuleId, ModuleManifest, NavigationOperation, PageId, ParameterError,
-    ParameterKind, ParameterSpec, ParameterValue, Portability, ProfileId, ProfileTarget, Project,
+    DeckRequest, EditorNavigation, ExecutionContext, FeatureModule, GestureAssignment,
+    GesturePreset, GesturePresetId, HistoryMode, KeyFace, LayoutId, LayoutNavigation, ModuleId,
+    ModuleManifest, NavigationOperation, PageId, ParameterError, ParameterKind, ParameterSpec,
+    ParameterValue, Portability, PresetGesture, ProfileId, ProfileTarget, Project,
 };
 
 pub const MODULE_ID: &str = "deck";
@@ -59,6 +60,9 @@ pub const MULTI_SWITCH: &str = "deck.multi-switch";
 pub const SWITCH_LAYOUT: &str = "deck.switch-layout";
 /// *Back to previous layout*: shows the layout the device showed before.
 pub const PREVIOUS_LAYOUT: &str = "deck.previous-layout";
+/// The *Brightness Control* gesture preset: dimmer by 10 points on a
+/// single press, full brightness on a double press, half on a long press.
+pub const BRIGHTNESS_CONTROL: &str = "deck.brightness-control";
 
 /// Parameter of *Switch layout*: the layout's id (never its name).
 pub const LAYOUT: &str = "layout";
@@ -247,6 +251,56 @@ impl FeatureModule for DeckModule {
             Box::new(SwitchLayout::new()),
             Box::new(PreviousLayout::new()),
         ]
+    }
+
+    fn gesture_presets(&self) -> Vec<GesturePreset> {
+        vec![brightness_control()]
+    }
+}
+
+/// *Brightness Control* ([`BRIGHTNESS_CONTROL`]): three *Brightness*
+/// actions on one key. The release stays free. The texts are English; the
+/// app shows them in its language (`actions:gesturePresets.*`).
+///
+/// # Panics
+///
+/// Never: the identifier is a valid constant.
+pub fn brightness_control() -> GesturePreset {
+    let brightness = |gesture, label: &str, parameters: ActionParameters| GestureAssignment {
+        gesture,
+        action: brightness_id(),
+        parameters,
+        label: label.into(),
+    };
+    let set = |level| {
+        ActionParameters::new()
+            .with(CHANGE, ParameterValue::Choice(CHANGE_SET.into()))
+            .with(LEVEL, ParameterValue::Integer(level))
+    };
+    GesturePreset {
+        id: GesturePresetId::new(BRIGHTNESS_CONTROL).expect("the preset id is valid"),
+        name: "Brightness Control".into(),
+        description: "Single press: dimmer by 10%. Double press: full brightness. Long press: \
+                      half brightness."
+            .into(),
+        category: "Device".into(),
+        icon: Some("monitor".into()),
+        allow_partial: false,
+        gestures: vec![
+            brightness(
+                PresetGesture::Click,
+                "Decrease brightness by 10%",
+                ActionParameters::new()
+                    .with(CHANGE, ParameterValue::Choice(CHANGE_DIMMER.into()))
+                    .with(STEP, ParameterValue::Integer(10)),
+            ),
+            brightness(
+                PresetGesture::DoubleClick,
+                "Set brightness to 100%",
+                set(100),
+            ),
+            brightness(PresetGesture::LongPress, "Set brightness to 50%", set(50)),
+        ],
     }
 }
 
@@ -1193,6 +1247,52 @@ mod tests {
                 wrap_around: true,
             })
         );
+    }
+
+    /// *Brightness Control* is three ordinary *Brightness* actions: run
+    /// with the preset's parameters they ask for exactly its changes.
+    #[test]
+    fn brightness_control_runs_the_brightness_action() {
+        let preset = brightness_control();
+        let module = module_id();
+        let brightness = Brightness::new();
+        assert_eq!(
+            preset.check(&module, std::slice::from_ref(brightness.definition())),
+            Ok(())
+        );
+        let request = |gesture| {
+            let assignment = preset.assignment(gesture).expect("assigned");
+            assert_eq!(assignment.action, brightness_id());
+            let parameters = brightness
+                .definition()
+                .normalize(&assignment.parameters)
+                .unwrap();
+            run(&brightness, &parameters, &granted()).deck_request()
+        };
+        assert_eq!(
+            request(PresetGesture::Click),
+            Some(DeckRequest::Brightness {
+                set: None,
+                step: -10
+            })
+        );
+        assert_eq!(
+            request(PresetGesture::DoubleClick),
+            Some(DeckRequest::Brightness {
+                set: Some(100),
+                step: 0
+            })
+        );
+        assert_eq!(
+            request(PresetGesture::LongPress),
+            Some(DeckRequest::Brightness {
+                set: Some(50),
+                step: 0
+            })
+        );
+        assert!(preset.assignment(PresetGesture::Release).is_none());
+        assert_eq!(preset.id.as_str(), BRIGHTNESS_CONTROL);
+        assert!(!preset.allow_partial);
     }
 
     #[test]

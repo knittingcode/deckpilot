@@ -437,6 +437,42 @@ export type Trigger =
   | { type: "doubleClick" }
   | { type: "longPress" }
 
+/**
+ * A gesture a preset assigns (`deckpilot_core::PresetGesture`). A single
+ * press is a raw `press` on a key without double or long press, a `click`
+ * otherwise; `release` never goes next to a double or long press.
+ */
+export type PresetGesture =
+  "click" | "doubleClick" | "longPress" | "release" | "rotateClockwise" | "rotateCounterClockwise"
+
+/** What one gesture of a preset does: an action type with set parameters. */
+export interface GestureAssignment {
+  gesture: PresetGesture
+  /** An action type of the module (or plugin) that declares the preset. */
+  action: string
+  parameters: ActionParameters
+  /** What the gesture does in words: the name of the action it creates. */
+  label: string
+}
+
+/**
+ * A library item that puts several existing actions on the gestures of one
+ * control at once (`deckpilot_core::GesturePreset`,
+ * docs/gestures-and-work-session.md §3.4). Applying it makes ordinary
+ * actions and bindings; nothing of the preset is stored.
+ */
+export interface GesturePreset {
+  /** `<module>.<name>`, e.g. `deck.brightness-control`. */
+  id: string
+  name: string
+  description: string
+  category: string
+  icon?: string | null
+  /** Whether a control may take the gestures it supports and skip the others. */
+  allowPartial: boolean
+  gestures: GestureAssignment[]
+}
+
 export type BindingTarget =
   /** `overrides` replace some of the instance's parameters for this binding only. */
   | { type: "action"; action: string; overrides?: ActionParameters }
@@ -1097,6 +1133,12 @@ export interface ModuleInfo {
   actionTypes: ActionType[]
   /** Read-only variables the module declares, in its own namespace. */
   variables?: VariableDeclaration[]
+  /**
+   * Gesture presets of the module (`ModuleInfo::gesture_presets`), or of a
+   * plugin module (`PluginSummary.gesturePresets`, plugin API 1.10); absent
+   * when none.
+   */
+  gesturePresets?: GesturePreset[]
   /**
    * Set only on a module that stands for an installed plugin
    * (experimental builds with `VITE_DECKPILOT_PLUGINS=1`; see

@@ -354,6 +354,28 @@ describe("the catalog in the layout editor", { timeout: 20_000 }, () => {
     expect(createAction).toHaveBeenCalledTimes(2)
   })
 
+  it("puts the type on the latest draft: a drop made while its action was created stays", async () => {
+    const pending: (() => void)[] = []
+    let made = 0
+    createAction.mockImplementation(
+      (_profile: string, input: ActionInput) =>
+        new Promise((resolve) => {
+          pending.push(() => {
+            made += 1
+            resolve({ ...input, id: `slow-${made}` })
+          })
+        }),
+    )
+    renderEditor()
+    drop(catalogDragId("deck.next-page"), "key:0")
+    drop(catalogDragId("deck.page-indicator"), "key:2")
+    await waitFor(() => {
+      while (pending.length > 0) pending.shift()?.()
+      expect(describes("Key 1")).toBe("Key 1: Press: Next page")
+      expect(describes("Key 3")).toBe("Key 3: Press: Page indicator")
+    })
+  })
+
   it("reuses the profile's action and says when one cannot be created", async () => {
     renderEditor([instance({ id: "mine", name: "Forward" })])
     drop(catalogDragId("deck.next-page"), "key:4")
