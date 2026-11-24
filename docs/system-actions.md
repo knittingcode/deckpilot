@@ -201,7 +201,10 @@ process's identity checked and the signal sent through the pidfd
 pidfds are missing); on Windows a handle whose executable was checked is
 held while the windows are asked to close, and `TerminateProcess` uses
 such a handle; on macOS a bundle's instance is found by its process id and
-its bundle id checked again.
+its bundle id checked again. Wherever a process is checked again (before a
+signal, and while waiting for it to exit), its id, executable, owner and
+start time must all still match, so a later process the system gave the
+same id, even of the same program, is never taken for the matched one.
 
 DeckPilot's own processes are protected by name (the app, the agent, the
 plugin host) and, on macOS and Windows, by their installation folder (the
@@ -351,6 +354,14 @@ from inside them),
   alert) for an `AppUserModelID` or a bare name, which cannot be checked
   without starting it.
 - `describe_application(path)`: a picked file as its stable id.
+- `resource_status(key)`: whether what a picker bound under `key` is still
+  there (`ok`, `missing`, `unbound`, `unchecked`), checked as
+  `check_resources` checks it for Settings › Resources: a folder must be a
+  folder, a picked file (kind `other`, an absolute path) must exist, an
+  application is checked as Open Application resolves it (bundle id,
+  desktop-file id, App Paths name or path; an `AppUserModelID` or a bare
+  name is `unchecked`), and network paths are never looked at. It takes a
+  key, never a path.
 
 Website validation, the inspector panels (Save and Test, the long press of
 Open Application) and the localized names are as in #409. Dropping a file
