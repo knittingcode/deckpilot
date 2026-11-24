@@ -199,7 +199,10 @@ fn the_upgrade_keeps_folder_keys_opening_and_recovers_the_rest() {
     schema_11(&path, &encryption, &f);
 
     let store = SqliteStore::open(&path, &encryption).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        deckpilot_storage::SqliteStore::supported_schema_version()
+    );
     let history = store.migration_history().unwrap();
     assert_eq!(
         (
@@ -207,7 +210,11 @@ fn the_upgrade_keeps_folder_keys_opening_and_recovers_the_rest() {
             history[0].to_version,
             history[0].result.as_str()
         ),
-        (11, 13, "ok")
+        (
+            11,
+            deckpilot_storage::SqliteStore::supported_schema_version(),
+            "ok"
+        )
     );
     let backup = history[0].backup.clone().unwrap();
     assert!(backup.contains("deckpilot-schema11-"), "{backup}");

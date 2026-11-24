@@ -97,6 +97,9 @@ const MIGRATIONS: &[&str] = &[
     // title of its own that differed is kept in the recovered list
     // (`layouts::migrate_folder_labels`). Rewrites layout documents only.
     "",
+    // Managed layouts (the Calls plugin's, `managed_layouts.rs`): a new,
+    // empty table. Additive: no layout is adopted or rewritten.
+    crate::managed_layouts::SCHEMA,
 ];
 
 /// Runs `step` again while SQLite reports the database busy, for up to
@@ -2921,7 +2924,7 @@ mod tests {
                      DROP TABLE provenance;
                      DROP TABLE work_session_transitions; DROP TABLE work_session_reviews;
                      DROP TABLE work_session_intervals; DROP TABLE work_sessions;
-                     DROP TABLE work_session_settings;
+                     DROP TABLE work_session_settings; DROP TABLE managed_layouts;
                      PRAGMA user_version = 4;",
                 )
                 .unwrap();

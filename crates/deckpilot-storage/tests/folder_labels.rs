@@ -78,9 +78,18 @@ fn the_upgrade_makes_the_folder_name_the_key_title_and_keeps_differing_titles() 
     drop(store);
 
     let store = SqliteStore::open(&path, &encryption).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        deckpilot_storage::SqliteStore::supported_schema_version()
+    );
     let history = store.migration_history().unwrap();
-    assert_eq!((history[0].from_version, history[0].to_version), (12, 13));
+    assert_eq!(
+        (history[0].from_version, history[0].to_version),
+        (
+            12,
+            deckpilot_storage::SqliteStore::supported_schema_version()
+        )
+    );
     assert!(
         history[0]
             .backup

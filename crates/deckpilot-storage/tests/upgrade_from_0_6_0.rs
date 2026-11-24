@@ -73,9 +73,18 @@ fn copy() -> Copy {
 fn upgrading_keeps_every_kind_of_data() {
     let copy = copy();
     let store = copy.open().unwrap();
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        deckpilot_storage::SqliteStore::supported_schema_version()
+    );
     let upgrade = store.migration_history().unwrap().pop().unwrap();
-    assert_eq!((upgrade.from_version, upgrade.to_version), (7, 13));
+    assert_eq!(
+        (upgrade.from_version, upgrade.to_version),
+        (
+            7,
+            deckpilot_storage::SqliteStore::supported_schema_version()
+        )
+    );
     assert_eq!(upgrade.result, "ok");
 
     let mut profiles: Vec<_> = store
@@ -217,16 +226,18 @@ fn a_newer_database_is_refused_by_a_build_that_supports_less() {
     let store = copy.open().unwrap();
     store
         .connection_for_tests()
-        .pragma_update(None, "user_version", 14)
+        .pragma_update(
+            None,
+            "user_version",
+            deckpilot_storage::SqliteStore::supported_schema_version() + 1,
+        )
         .unwrap();
     drop(store);
     let before = std::fs::read(copy.database()).unwrap();
     assert!(matches!(
         copy.open(),
-        Err(StorageError::UnsupportedSchema {
-            found: 14,
-            supported: 13
-        })
+        Err(StorageError::UnsupportedSchema { found, supported })
+            if found == deckpilot_storage::SqliteStore::supported_schema_version() + 1 && supported == deckpilot_storage::SqliteStore::supported_schema_version()
     ));
     assert!(
         std::fs::read(copy.database()).unwrap() == before,
