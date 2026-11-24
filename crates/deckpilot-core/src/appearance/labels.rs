@@ -46,6 +46,9 @@ pub const DEFAULT_LABEL_PADDING: u8 = 2;
 pub const DEFAULT_LABEL_RADIUS: u8 = 2;
 /// The opacity of an automatic plate when none is set, in percent.
 pub const DEFAULT_PLATE_OPACITY: u8 = 60;
+/// The opacity of an automatic plate over the title or a mark when none is
+/// set: strong enough that what is under it does not show through.
+pub const DEFAULT_COVER_PLATE_OPACITY: u8 = 85;
 /// The opacity of a plate of the label's own colour when none is set.
 pub const DEFAULT_COLOR_PLATE_OPACITY: u8 = 100;
 /// Smallest and largest width or height, in percent of the canvas.
@@ -355,8 +358,8 @@ pub struct KeyLabelLook {
     pub color: Option<Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<LabelBackground>,
-    /// The plate's opacity in percent. Default 60 (automatic plate), 100
-    /// (a colour).
+    /// The plate's opacity in percent. Default 60 (automatic plate; 85 over
+    /// the title or a mark), 100 (a colour).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_opacity: Option<u8>,
     /// Units around the text. Default [`DEFAULT_LABEL_PADDING`].
@@ -462,11 +465,11 @@ impl KeyLabelLook {
         drop_default(&mut self.overflow, &LabelOverflow::Ellipsis);
         drop_default(&mut self.max_lines, &DEFAULT_LABEL_LINES);
         drop_default(&mut self.min_size, &DEFAULT_LABEL_MIN_POINTS);
-        let opacity = match self.background() {
-            LabelBackground::Color(_) => DEFAULT_COLOR_PLATE_OPACITY,
-            LabelBackground::Auto | LabelBackground::None => DEFAULT_PLATE_OPACITY,
-        };
-        drop_default(&mut self.background_opacity, &opacity);
+        // An automatic plate's opacity depends on what it covers (60 % or
+        // 85 %): a value set for it is kept as set.
+        if matches!(self.background(), LabelBackground::Color(_)) {
+            drop_default(&mut self.background_opacity, &DEFAULT_COLOR_PLATE_OPACITY);
+        }
         self
     }
 

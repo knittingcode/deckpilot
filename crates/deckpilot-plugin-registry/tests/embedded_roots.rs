@@ -16,7 +16,8 @@
 //! * a malformed value fails the build, and nothing is embedded.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::Mutex;
 
 use deckpilot_plugin_registry::publish::{Io, run};
 use tempfile::TempDir;
@@ -109,6 +110,33 @@ impl Site {
     }
 }
 
+/// Held while an executable copy is written and while a process is
+/// started. On Linux a process cannot be started from a file that any
+/// process still has open for writing (`ETXTBSY`, "Text file busy"). The
+/// tests run on parallel threads: a thread that forks to start cargo or an
+/// example while another thread is writing its copy hands that copy's
+/// writable descriptor to the child, which keeps it until its own `exec`
+/// (`O_CLOEXEC` closes it only then), so the other thread's start of its
+/// freshly closed copy can fail. Under this lock no fork overlaps a write.
+/// `spawn` returns once the child has run `exec`, so a running child (a
+/// build of minutes) does not hold it.
+static WRITE_OR_SPAWN: Mutex<()> = Mutex::new(());
+
+/// [`Command::output`], with the process started under [`WRITE_OR_SPAWN`].
+fn output(command: &mut Command) -> std::io::Result<Output> {
+    let child = {
+        let _guard = WRITE_OR_SPAWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    };
+    child.wait_with_output()
+}
+
 /// One target directory per test, so that the tests can run in parallel.
 fn target_dir(test: &str) -> PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("registry-roots-{test}"))
@@ -149,7 +177,7 @@ fn cargo_build(test: &str, release: bool, features: &[&str], embed: Option<&str>
     if let Some(value) = embed {
         command.env(BUILD_ENV, value);
     }
-    command.output().expect("cargo runs")
+    output(&mut command).expect("cargo runs")
 }
 
 /// Builds the example and returns a copy of it under `name`.
@@ -176,6 +204,10 @@ fn build(test: &str, release: bool, features: &[&str], embed: Option<&str>, name
 /// cached per inode, so it kills (SIGKILL, no output) the next process
 /// started from a file whose content was replaced in place.
 fn install(built: &Path, copy: &Path) {
+    // Until the copy is closed: see `WRITE_OR_SPAWN`.
+    let _guard = WRITE_OR_SPAWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match std::fs::remove_file(copy) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -198,7 +230,7 @@ fn verify(exe: &Path, site: &Site, configured: Option<&Path>) -> String {
     if let Some(file) = configured {
         command.env(RUNTIME_ENV, file);
     }
-    let output = command.output().expect("the example runs");
+    let output = output(&mut command).expect("the example runs");
     assert!(
         output.status.success(),
         "{} failed: {}\nstdout: {}\nstderr: {}",

@@ -60,6 +60,14 @@ const HANG: Duration = Duration::from_secs(120);
 /// Like the agent binary, a test agent waits briefly for the lock of one
 /// that is still stopping.
 const LOCK_WAIT: Duration = Duration::from_secs(2);
+/// Upper bound for [`wait_for`] to see a status. Starting the agent opens
+/// (and may first encrypt, migrate or unlock) the database, which takes
+/// several seconds on a loaded CI runner (`opening the database took long
+/// ... total_ms=7553` was seen) while other tests of this binary run, so
+/// [`TIMEOUT`] is too tight here. Still well below [`HANG`], so a wait that
+/// never ends fails with the last status rather than the watchdog's
+/// message; passing tests continue as soon as the condition holds.
+const STATUS_WAIT: Duration = Duration::from_secs(75);
 
 /// The agent task and the sender that stops it.
 type Running = (JoinHandle<Result<(), AgentError>>, oneshot::Sender<()>);
@@ -1472,7 +1480,7 @@ async fn agent_status(paths: &AgentPaths) -> Option<AgentStatus> {
 }
 
 async fn wait_for(paths: &AgentPaths, predicate: impl Fn(&AgentStatus) -> bool) -> AgentStatus {
-    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    let deadline = tokio::time::Instant::now() + STATUS_WAIT;
     let mut last = None;
     loop {
         // One status request that gets no answer must not keep the loop

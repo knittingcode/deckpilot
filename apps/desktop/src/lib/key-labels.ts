@@ -82,7 +82,7 @@ export interface KeyLabelLook {
   /** Default: the key's text colour (white or black where it does not read on the plate). */
   color?: string | null
   background?: LabelBackground | null
-  /** Percent; default 60 (auto), 100 (a colour). */
+  /** Percent; default 60 (auto; 85 over the title or a mark), 100 (a colour). */
   backgroundOpacity?: number | null
   /** Units 0..12; default 2. */
   padding?: number | null
@@ -173,6 +173,8 @@ export const LABEL_DEFAULTS = {
   padding: 2,
   radius: 2,
   plateOpacity: 60,
+  /** An automatic plate over the title or a mark. */
+  coverPlateOpacity: 85,
   colorPlateOpacity: 100,
   layer: "overIcon" as LabelLayer,
   overflow: "ellipsis" as LabelOverflow,
