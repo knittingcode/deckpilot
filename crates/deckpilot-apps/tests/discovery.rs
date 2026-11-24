@@ -70,9 +70,8 @@ fn browsers_and_the_default_are_found() {
     }
 }
 
-/// Google Chrome's desktop entry and icon, where the runner has them.
+/// Google Chrome's desktop entry, where the runner has it.
 const CHROME_DESKTOP: &str = "/usr/share/applications/google-chrome.desktop";
-const CHROME_ICON: &str = "/usr/share/icons/hicolor/48x48/apps/google-chrome.png";
 
 #[test]
 fn icons_are_drawn_by_the_system() {
@@ -93,14 +92,32 @@ fn icons_are_drawn_by_the_system() {
         let icon = icons::icon(first, &xdg).expect("the system draws an icon");
         assert!(icon.len() <= icons::MAX_ICON_BYTES);
         assert!(icon.starts_with(b"\x89PNG\r\n\x1a\n"));
-    } else if std::path::Path::new(CHROME_ICON).is_file() {
-        let chrome = apps
-            .iter()
-            .find(|a| a.id == "google-chrome.desktop")
-            .expect("Google Chrome's desktop entry");
-        let icon = icons::icon(chrome, &xdg).expect("its hicolor icon");
-        assert!(icon.starts_with(b"\x89PNG\r\n\x1a\n"));
     } else {
-        println!("no themed PNG icon on this runner: Linux icons are fixture-tested only");
+        // Every desktop entry whose icon the theme has as a PNG: each must
+        // be drawn. None at all: Linux icons are fixture-tested only here.
+        let themed: Vec<&InstalledApp> = apps
+            .iter()
+            .filter(|a| a.kind == IdKind::DesktopFile)
+            .filter(|a| {
+                a.path
+                    .as_deref()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .and_then(|text| deckpilot_apps::desktop_entry::DesktopEntry::parse(&text).ok())
+                    .and_then(|entry| entry.icon)
+                    .is_some_and(|name| icons::theme_icon(&name, &xdg).is_some())
+            })
+            .collect();
+        if themed.is_empty() {
+            println!(
+                "no desktop entry here has a themed PNG icon: Linux icons are fixture-tested only"
+            );
+        } else {
+            for app in &themed {
+                let icon = icons::icon(app, &xdg)
+                    .unwrap_or_else(|| panic!("{} has a themed icon that was not drawn", app.name));
+                assert!(icon.starts_with(b"\x89PNG\r\n\x1a\n"));
+            }
+            println!("drew the themed icons of {} desktop entries", themed.len());
+        }
     }
 }

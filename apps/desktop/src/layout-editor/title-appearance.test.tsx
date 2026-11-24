@@ -363,6 +363,13 @@ describe("the title appearance popover", { timeout: 20_000 }, () => {
 
   it("is operable with the keyboard", async () => {
     const user = renderEditor()
+    // As in `open`: until the renderer has drawn the key, its face is not
+    // known and the position it falls back to is "middle" (no icon yet),
+    // later "bottom". Pressing Space on Middle before that would toggle
+    // the already chosen item off, which changes nothing.
+    await waitFor(() => {
+      expect(control("Key 1").querySelector("img")).not.toBeNull()
+    })
     await user.click(control("Key 1"))
     const trigger = screen.getByRole("button", { name: "Title appearance" })
     trigger.focus()
@@ -375,6 +382,8 @@ describe("the title appearance popover", { timeout: 20_000 }, () => {
         document.activeElement as HTMLElement,
       )
     })
+    expect(rows.getByRole("radio", { name: "Bottom" })).toHaveAttribute("aria-checked", "true")
+    expect(rows.getByRole("radio", { name: "Middle" })).toHaveAttribute("aria-checked", "false")
     rows.getByRole("radio", { name: "Bottom" }).focus()
     await user.keyboard("{ArrowLeft}")
     expect(rows.getByRole("radio", { name: "Middle" })).toHaveFocus()

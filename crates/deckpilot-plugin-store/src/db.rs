@@ -322,7 +322,7 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, &e))?;
         }
-        let connection = Connection::open(path)?;
+        let connection = connect(path)?;
         // Before the key: checking the key reads the first page, which has
         // to wait for another process's lock like every later statement.
         connection.busy_timeout(busy_timeout)?;
@@ -360,14 +360,14 @@ impl Database {
     /// switched out of WAL for the rekey; the next [`Database::open`]
     /// switches it back.
     pub fn rekey(path: &Path, old: &StoreKey, new: &StoreKey) -> Result<()> {
-        let connection = Connection::open(path)?;
+        let connection = connect(path)?;
         apply_key(&connection, old)?;
         connection.pragma_update(None, "journal_mode", "DELETE")?;
         let literal = new.literal();
         connection.pragma_update(None, "rekey", literal.as_str())?;
         drop(connection);
         // The new key must open it.
-        let check = Connection::open(path)?;
+        let check = connect(path)?;
         apply_key(&check, new)
     }
 
@@ -521,7 +521,7 @@ impl Database {
 /// The backup opens with `key`, passes SQLite's quick check and is at
 /// `version`.
 fn verify_backup(path: &Path, key: &StoreKey, version: u32) -> Result<()> {
-    let check = Connection::open(path)?;
+    let check = connect(path)?;
     apply_key(&check, key)?;
     let ok: String = check.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
     if ok != "ok" {
@@ -575,6 +575,96 @@ fn prune_backups(dir: &Path) {
         let oldest = backups.remove(0);
         let _ = std::fs::remove_file(oldest);
     }
+}
+
+/// How often a connection that missed SQLCipher's initialization is opened
+/// again, and how long to wait in between (the window lasts microseconds).
+#[cfg(feature = "sqlcipher")]
+const REOPEN_ATTEMPTS: u32 = 50;
+#[cfg(feature = "sqlcipher")]
+const REOPEN_DELAY: Duration = Duration::from_millis(10);
+
+/// Opens a connection to `path` only once SQLCipher is initialized.
+///
+/// SQLCipher initializes itself (its mutexes, crypto provider and the
+/// `sqlcipher_export()` auto extension) from `SQLITE_EXTRA_INIT`, which
+/// SQLite runs at the end of the first `sqlite3_initialize()`, **after** it
+/// has marked the library initialized and released its init mutex. A
+/// second thread opening a connection in that window skips the
+/// initialization and gets a connection on which `PRAGMA key` fails
+/// (`sqlcipherCodecAttach: sqlcipher not initialized`) and that never gets
+/// `sqlcipher_export()`. `deckpilot-storage` guards its opens the same way.
+///
+/// So SQLite is initialized once per process behind a lock, and a
+/// connection opened during someone else's initialization (it lacks
+/// `sqlcipher_export()`, which SQLCipher registers last) is replaced.
+fn connect(path: &Path) -> Result<Connection> {
+    static INITIALIZED: std::sync::OnceLock<std::result::Result<(), String>> =
+        std::sync::OnceLock::new();
+    INITIALIZED
+        .get_or_init(|| {
+            // `sqlite3_open` runs `sqlite3_initialize`, which returns only
+            // after SQLCipher's extra initialization.
+            Connection::open_in_memory()
+                .map(drop)
+                .map_err(|error| error.to_string())
+        })
+        .clone()
+        .map_err(|message| {
+            if cfg!(feature = "sqlcipher") {
+                StoreError::SqlCipherIncomplete(message)
+            } else {
+                // A plain build cannot open the store whatever happened.
+                StoreError::EncryptionUnavailable
+            }
+        })?;
+    #[cfg(feature = "sqlcipher")]
+    {
+        let mut attempt = 1;
+        loop {
+            let connection = Connection::open(path)?;
+            // Plain SQLite has no export either: `apply_key` refuses it
+            // with [`StoreError::EncryptionUnavailable`].
+            if !has_cipher(&connection)? || has_export(&connection)? {
+                return Ok(connection);
+            }
+            if attempt >= REOPEN_ATTEMPTS {
+                return Err(StoreError::SqlCipherIncomplete(
+                    "sqlcipher_export() is not available on the connection".into(),
+                ));
+            }
+            drop(connection);
+            attempt += 1;
+            std::thread::sleep(REOPEN_DELAY);
+        }
+    }
+    #[cfg(not(feature = "sqlcipher"))]
+    Ok(Connection::open(path)?)
+}
+
+/// Whether the connection runs SQLCipher (not plain SQLite).
+#[cfg(feature = "sqlcipher")]
+fn has_cipher(connection: &Connection) -> Result<bool> {
+    use rusqlite::OptionalExtension as _;
+    Ok(connection
+        .query_row("PRAGMA cipher_version", [], |row| row.get::<_, String>(0))
+        .optional()?
+        .is_some_and(|version| !version.is_empty()))
+}
+
+/// Whether `sqlcipher_export()` can be called on this connection.
+#[cfg(feature = "sqlcipher")]
+fn has_export(connection: &Connection) -> Result<bool> {
+    // The pragma, not the `pragma_function_list` table: it does not read
+    // the schema, so it works before the key is set.
+    let mut statement = connection.prepare("PRAGMA function_list")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(0)? == "sqlcipher_export" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn user_version(connection: &Connection) -> Result<u32> {
@@ -778,9 +868,9 @@ mod tests {
                 && backups[0].extension().is_some_and(|e| e == "db"),
             "{name}"
         );
-        let backup = Connection::open(&backups[0]).unwrap();
+        let backup = connect(&backups[0]).unwrap();
         assert!(apply_key(&backup, &StoreKey::from_bytes([12; 32])).is_err());
-        let backup = Connection::open(&backups[0]).unwrap();
+        let backup = connect(&backups[0]).unwrap();
         apply_key(&backup, &key).unwrap();
         assert_eq!(user_version(&backup).unwrap(), 4);
         let rows: i64 = backup
@@ -853,7 +943,7 @@ mod tests {
         let key = StoreKey::from_bytes([9; 32]);
         {
             // What a build with only the first migration wrote.
-            let connection = Connection::open(&path).unwrap();
+            let connection = connect(&path).unwrap();
             apply_key(&connection, &key).unwrap();
             connection.execute_batch(MIGRATIONS[0]).unwrap();
             connection.pragma_update(None, "user_version", 1).unwrap();

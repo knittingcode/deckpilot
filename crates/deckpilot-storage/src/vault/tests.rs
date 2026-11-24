@@ -741,12 +741,33 @@ fn encrypting_a_legacy_database_that_is_still_open_never_hangs() {
     let keys = MemoryKeyStore::new();
     let profile = plaintext_database(&vault);
     let other = SqliteStore::open(vault.database(), &Encryption::None).unwrap();
-    let started = std::time::Instant::now();
-    let result = vault.encrypt_plaintext_system(&keys);
-    let took = started.elapsed();
+    // Two bounds. A hang (a retry loop that never ends) must fail the test
+    // rather than block the binary, so the encryption runs on its own thread
+    // and only `hang_limit` is waited for. And a retry loop that ends but
+    // runs far past `RETRY_FOR` must fail too: the time is measured on that
+    // thread, not including the wait for the result. That bound has to
+    // leave room for a loaded runner: the open-handle path retries about
+    // one rename for `RETRY_FOR`, yet took 19.8 s on Windows CI while the
+    // whole binary took 297 s, so it is `RETRY_FOR * 20` (60 s), not a few
+    // times `RETRY_FOR`.
+    let too_long = crate::files::RETRY_FOR * 20;
+    let hang_limit = too_long * 2;
+    let (done, finished) = std::sync::mpsc::channel();
+    {
+        let (vault, keys) = (vault.clone(), keys.clone());
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let result = vault.encrypt_plaintext_system(&keys);
+            let _ = done.send((result, started.elapsed()));
+        });
+    }
+    let (result, took) = finished.recv_timeout(hang_limit).unwrap_or_else(|error| {
+        panic!("the encryption hung (no result in {hang_limit:?}): {error}")
+    });
     assert!(
-        took < crate::files::RETRY_FOR + std::time::Duration::from_secs(15),
-        "took {took:?}"
+        took < too_long,
+        "the encryption took {took:?}, far past the retry bound ({:?})",
+        crate::files::RETRY_FOR
     );
     drop(other);
     // Only Windows refuses to rename a file that is open.

@@ -136,7 +136,6 @@ fn normalizing_drops_defaults_and_empty_labels() {
     label.look.size = Some(DEFAULT_LABEL_POINTS);
     label.look.layer = Some(LabelLayer::OverIcon);
     label.look.background = Some(LabelBackground::Auto);
-    label.look.background_opacity = Some(DEFAULT_PLATE_OPACITY);
     label.look.offset_x = Some(0);
     label.look.position = LabelPosition::Anchored {
         to: Spot::Top,
@@ -161,6 +160,14 @@ fn normalizing_drops_defaults_and_empty_labels() {
     colored.look.background_opacity = Some(100);
     assert_eq!(colored.normalized().unwrap().look.background_opacity, None);
     assert!(KeyLabel::new(id("z"), "  ").normalized().is_none());
+    // An automatic plate's opacity set to its usual default is kept: it
+    // also stands for the stronger plate over the title.
+    let mut auto = KeyLabel::new(id("w"), "Hi");
+    auto.look.background_opacity = Some(DEFAULT_PLATE_OPACITY);
+    assert_eq!(
+        auto.normalized().unwrap().look.background_opacity,
+        Some(DEFAULT_PLATE_OPACITY)
+    );
 
     let look = KeyAppearance {
         labels: vec![KeyLabel::new(id("a"), " "), KeyLabel::new(id("b"), "B")],

@@ -486,9 +486,11 @@ the title, the key's icon mark or a state mark (badge, toggle, progress,
 indicator), or when its colour has less than 4.5:1 contrast with the key's
 background. A label that sets no layer and meets the title is painted over
 the title, on its plate (under the title the plate could not make either
-readable); a layer the label sets is always kept. The plate is
-black at `backgroundOpacity` (default 60 %) behind light text, white behind
-dark text. `none` never draws one; `#rrggbb` draws that colour (default
+readable); a layer the label sets is always kept. Whether a label meets the
+title or a mark is decided in units, from the key laid out at 72 units, so
+it comes out the same at every size. The plate is
+black at `backgroundOpacity` (default 60 %; 85 % over the title or a mark,
+so it does not show through) behind light text, white behind dark text. `none` never draws one; `#rrggbb` draws that colour (default
 100 %). An unset colour is the key's text colour, or white or black where
 that does not read on the plate. Decided from the layers, not by sampling
 pixels, so it is the same at every size.
