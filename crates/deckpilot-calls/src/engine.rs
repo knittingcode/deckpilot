@@ -1079,31 +1079,43 @@ impl Engine {
         };
         let track = &self.tracks[index];
         let provider = self.providers.get(&track.provider);
-        CallSnapshot {
-            state: track.state.clone(),
+        let capabilities = provider.map_or_else(
+            || CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
+            |p| {
+                if p.consent.control {
+                    p.capabilities.clone()
+                } else {
+                    p.capabilities
+                        .without_control(UnsupportedReason::ConsentNotGiven)
+                }
+            },
+        );
+        let observation = CallObservation {
+            key: track.key.clone(),
             kind: track.kind,
+            phase: ObservedPhase::Unknown,
             direction: track.direction,
             mic_muted: track.mic,
             camera_on: track.camera,
-            capabilities: provider.map_or_else(
-                || CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
-                |p| {
-                    if p.consent.control {
-                        p.capabilities.clone()
-                    } else {
-                        p.capabilities
-                            .without_control(UnsupportedReason::ConsentNotGiven)
-                    }
-                },
-            ),
-            provider: Some(track.provider.clone()),
-            since: track.entered.as_millis(),
-            connected: provider.is_some_and(|p| p.session.is_some()),
-            pending: track.pending.as_ref().map(|p| p.action),
-            unconfirmed: track.unconfirmed_until.is_some(),
-            title: track.title.as_ref().map(|t| t.reveal().clone()),
-            generation: self.generation,
-        }
+            title: track.title.clone(),
+            source: track.evidence,
+            observed_at: track.observed_at,
+        };
+        // `since` is the state's entry on the engine clock; the agent maps
+        // it to wall time. The title goes through the opt-in once more.
+        let mut snapshot = CallSnapshot::from_observation(
+            track.state.clone(),
+            track.entered.as_millis(),
+            &observation,
+            capabilities,
+            track.provider.clone(),
+            provider.map(|p| p.consent).unwrap_or_default(),
+            self.generation,
+        );
+        snapshot.connected = provider.is_some_and(|p| p.session.is_some());
+        snapshot.pending = track.pending.as_ref().map(|p| p.action);
+        snapshot.unconfirmed = track.unconfirmed_until.is_some();
+        snapshot
     }
 
     /// Whether the focused call shows the overlay, and on which page.
