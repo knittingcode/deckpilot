@@ -153,7 +153,7 @@ fn schema_11(path: &Path, encryption: &Encryption, f: &Fixture) {
     store.assign_layout(f.home.id, f.shared.id).unwrap();
     store
         .connection_for_tests()
-        .execute_batch("DELETE FROM migration_history; PRAGMA user_version = 11;")
+        .execute_batch("DELETE FROM migration_history; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 11;")
         .unwrap();
 }
 
@@ -199,7 +199,7 @@ fn the_upgrade_keeps_folder_keys_opening_and_recovers_the_rest() {
     schema_11(&path, &encryption, &f);
 
     let store = SqliteStore::open(&path, &encryption).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(store.schema_version().unwrap(), 14);
     let history = store.migration_history().unwrap();
     assert_eq!(
         (
@@ -207,7 +207,7 @@ fn the_upgrade_keeps_folder_keys_opening_and_recovers_the_rest() {
             history[0].to_version,
             history[0].result.as_str()
         ),
-        (11, 13, "ok")
+        (11, 14, "ok")
     );
     let backup = history[0].backup.clone().unwrap();
     assert!(backup.contains("deckpilot-schema11-"), "{backup}");

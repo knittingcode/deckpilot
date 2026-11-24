@@ -35,6 +35,16 @@ released either. 0.6.0 is the first version intended for publication.
 - Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
   presets over its own actions, with localized texts and `allowPartial`.
   Presets grant nothing; each action keeps its permissions and checks.
+- Projects: a project can list several repositories, each with a key
+  (`cms`, unique in the project), a name, a description, the folder's
+  resource (bound on each computer, never exported) and a default. An
+  existing project with a `repository` role gets that one as its
+  repository `main` when the configuration is upgraded (schema 14); its
+  roles, resources and folder bindings are not changed. Marking a default
+  repository also points the `repository` role at it. Removing a
+  repository never removes its folder binding, and a missing folder is
+  shown, never removed. An export carries the repositories (format 5)
+  only when a project has more than that one. The editor for them follows.
 
 ## [0.15.0] - 2026-11-24
 
