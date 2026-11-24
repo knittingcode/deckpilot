@@ -15,8 +15,8 @@
 use std::collections::BTreeMap;
 
 use deckpilot_core::{
-    ActionHandler, ActionParameters, ActionRegistry, ActionResult, ActionType, ExecutionContext,
-    ModuleId,
+    ActionHandler, ActionParameters, ActionRegistry, ActionResult, ActionType, AliasHandler,
+    ExecutionContext, ModuleId,
 };
 use deckpilot_ipc::plugins::{PluginState, PluginSummary};
 
@@ -123,11 +123,7 @@ impl PluginActions {
             if !module.is_plugin() {
                 continue;
             }
-            let name = if plugin.name.is_empty() {
-                plugin.id.as_str()
-            } else {
-                plugin.name.as_str()
-            };
+            let name = display_name(plugin);
             for action in &plugin.actions {
                 let Some(definition) = &action.definition else {
                     continue;
@@ -159,6 +155,78 @@ impl PluginActions {
                 }
             }
         }
+        self.extend_legacy(registry);
+    }
+
+    /// Legacy built-in action types a reported first-party plugin now
+    /// serves ([`deckpilot_core::alias::ACTION_ALIASES`]), as the agent's
+    /// registry routes them: under the legacy id with the plugin's
+    /// definition, marked deprecated (an [`AliasHandler`] around the
+    /// plugin's type), so keys, actions and workflow steps stored with the
+    /// legacy id are drawn, validated and saved as their plugin action.
+    /// While the plugin's action cannot run, the legacy type is unavailable
+    /// with the plugin's reason. A legacy type whose built-in is still
+    /// compiled in keeps it here; a plugin that is not reported leaves the
+    /// core's reason (not installed) in place.
+    ///
+    /// Before this, the app knew the legacy types of the removed built-ins
+    /// (`projects`, `git`, …) only as "not installed", whatever the agent
+    /// ran, so their keys were previewed as unavailable after the plugin
+    /// took them over.
+    fn extend_legacy(&self, registry: &mut ActionRegistry) {
+        for alias in deckpilot_core::alias::ACTION_ALIASES {
+            let legacy = alias.legacy_id();
+            if registry.definition(&legacy).is_some() {
+                continue;
+            }
+            let Some(plugin) = self.plugins.get(alias.plugin) else {
+                continue;
+            };
+            let Some(action) = plugin
+                .actions
+                .iter()
+                .find(|action| action.action_type == alias.target)
+            else {
+                let name = display_name(plugin);
+                registry.mark_unavailable(
+                    [legacy],
+                    format!("{name} ({}) does not provide `{}`", plugin.id, alias.target),
+                );
+                continue;
+            };
+            match &action.definition {
+                Some(definition) if action.available && definition.id.as_str() == alias.target => {
+                    let handler = AliasHandler::new(
+                        alias,
+                        Box::new(AgentAction {
+                            definition: checked(definition),
+                        }),
+                        None,
+                        None,
+                    );
+                    let _ = registry.register_for_module(alias.plugin_id(), &[], Box::new(handler));
+                }
+                _ => {
+                    let why = action
+                        .unavailable_reason
+                        .as_deref()
+                        .unwrap_or("the plugin cannot run now");
+                    registry.mark_unavailable(
+                        [legacy],
+                        format!("{} ({}): {why}", display_name(plugin), plugin.id),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The plugin's name, else its id.
+fn display_name(plugin: &PluginSummary) -> &str {
+    if plugin.name.is_empty() {
+        plugin.id.as_str()
+    } else {
+        plugin.name.as_str()
     }
 }
 
@@ -355,6 +423,141 @@ mod tests {
         actions.upsert(&plugin("acme.hello-weather", true));
         actions.clear();
         assert!(actions.is_empty());
+    }
+
+    /// The first-party Projects plugin as the agent reports it, with its
+    /// `next` action available or not.
+    fn projects_plugin(available: bool, reason: Option<&str>) -> PluginSummary {
+        let mut summary = plugin("deckpilot.projects", available);
+        summary.name = "Projects".into();
+        summary.publisher = "deckpilot".into();
+        summary.origin = PluginOrigin::Bundled;
+        summary.actions[0].action = "next".into();
+        summary.actions[0].action_type = "deckpilot.projects.next".into();
+        summary.actions[0].name = "Next project".into();
+        summary.actions[0].unavailable_reason = reason.map(Into::into);
+        let mut definition = definition("deckpilot.projects.next");
+        definition.parameters.clear();
+        definition.name = "Next project".into();
+        summary.actions[0].definition = Some(definition);
+        summary
+    }
+
+    fn legacy_next() -> ActionTypeId {
+        ActionTypeId::new("projects.next").unwrap()
+    }
+
+    /// The live defect of 2026-11-21: keys stored with a legacy type of a
+    /// removed built-in (`projects.next`) were previewed as unavailable
+    /// after the Projects plugin took them over, as the app's registry
+    /// never routed the legacy type to the plugin the agent reported.
+    #[test]
+    fn legacy_types_follow_the_plugin_that_serves_them() {
+        // No plugin reported: the core's reason, as before.
+        let routed = registry(&PluginActions::default());
+        assert!(routed.definition(&legacy_next()).is_none());
+        assert!(
+            routed
+                .unavailable_reason(&legacy_next())
+                .is_some_and(|reason| reason.contains("not installed")),
+            "{:?}",
+            routed.unavailable_reason(&legacy_next())
+        );
+
+        // Enabled and consented: the legacy id runs as the plugin's action.
+        let mut actions = PluginActions::default();
+        actions.replace(&[projects_plugin(true, None)]);
+        let routed = registry(&actions);
+        let definition = routed.definition(&legacy_next()).expect("routed");
+        assert!(definition.deprecated, "not offered for new actions");
+        assert_eq!(definition.name, "Next project");
+        assert_eq!(
+            routed.module_of(&legacy_next()).map(ModuleId::as_str),
+            Some("deckpilot.projects")
+        );
+        assert!(routed.unavailable_reason(&legacy_next()).is_none());
+
+        // A permission not granted: unavailable with the plugin's reason.
+        let mut actions = PluginActions::default();
+        actions.replace(&[projects_plugin(
+            false,
+            Some("the permission `projectContext:select` is not granted"),
+        )]);
+        let routed = registry(&actions);
+        assert!(routed.definition(&legacy_next()).is_none());
+        assert_eq!(
+            routed.unavailable_reason(&legacy_next()),
+            Some(
+                "Projects (deckpilot.projects): the permission `projectContext:select` is not granted"
+            )
+        );
+
+        // Uninstalled, then installed again: back without any change to
+        // what is stored.
+        actions.remove("deckpilot.projects");
+        assert!(registry(&actions).definition(&legacy_next()).is_none());
+        actions.upsert(&projects_plugin(true, None));
+        assert!(registry(&actions).definition(&legacy_next()).is_some());
+    }
+
+    /// The editor's preview of a key bound to a legacy type: unavailable
+    /// (the compact missing-plugin face, its title kept) without the
+    /// plugin, its own face again once the plugin serves it.
+    #[test]
+    fn previews_of_legacy_keys_follow_the_plugin() {
+        use deckpilot_core::device_runtime::page_faces;
+        use deckpilot_core::{BindingTarget, ControlBinding, Profile, Trigger};
+        use deckpilot_device::ControlId;
+        let model = deckpilot_device::models::stream_deck_mk2();
+        let mut profile = Profile::new("Work");
+        let mut layout = deckpilot_core::DeviceLayout::new("Main", model.id.clone());
+        let instance = deckpilot_core::ActionInstance {
+            id: deckpilot_core::ActionInstanceId::new(),
+            name: "Next".into(),
+            action_type: legacy_next(),
+            parameters: ActionParameters::new(),
+            description: String::new(),
+            icon: None,
+            label: None,
+        };
+        let id = instance.id;
+        profile.actions.push(instance);
+        let home = layout.home_page;
+        layout
+            .page_mut(home)
+            .unwrap()
+            .bindings
+            .push(ControlBinding {
+                label: Some("Now".into()),
+                ..ControlBinding::new(
+                    ControlId::Key { index: 0 },
+                    Trigger::Press,
+                    BindingTarget::action(id),
+                )
+            });
+        let face = |actions: &PluginActions| {
+            page_faces(
+                &registry(actions),
+                &layout,
+                home,
+                &profile,
+                None,
+                &[ControlId::Key { index: 0 }],
+                Some(&model.capabilities),
+            )
+            .remove(0)
+            .1
+        };
+        let missing = face(&PluginActions::default());
+        assert!(missing.unavailable);
+        assert_eq!(missing.title, "Now");
+        assert_eq!(missing.detail, None, "no warning text on the key");
+        let mut actions = PluginActions::default();
+        actions.replace(&[projects_plugin(true, None)]);
+        let served = face(&actions);
+        assert!(!served.unavailable);
+        assert_eq!(served.style, deckpilot_core::FaceStyle::Action);
+        assert_eq!(served.title, "Now");
     }
 
     #[test]

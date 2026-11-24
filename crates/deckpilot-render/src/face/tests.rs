@@ -1014,3 +1014,59 @@ fn inherit_transparent_black_white_custom_and_assets_stay_distinct() {
         0
     );
 }
+
+/// The compact face of a key whose plugin is missing (`KeyFace::unavailable`):
+/// the `plug` icon in place of any icon, the user's title and colours, no
+/// warning text and nothing red, readable on a 72 px MK.2 key.
+#[test]
+fn keys_whose_plugin_is_missing_show_the_plug_and_keep_their_title_and_colours() {
+    let icons = Icons::default();
+    let missing = KeyFace::unavailable_action("Repo SHOP");
+    assert_eq!(missing.symbol.as_deref(), Some("plug"));
+    assert_eq!(missing.detail, None);
+    let frame = render_with(&missing, 72, 72, &icons);
+    // The plug is drawn above the title (as a known icon, not the
+    // fallback), the title below it.
+    let plain = render_with(
+        &KeyFace::new(FaceStyle::Action, "Repo SHOP"),
+        72,
+        72,
+        &icons,
+    );
+    assert!(lit(&frame, BLACK) > lit(&plain, BLACK) + 60);
+    let mut fallback = missing.clone();
+    fallback.symbol = Some(text::FALLBACK_ICON.into());
+    assert_ne!(frame.rgb(), render_with(&fallback, 72, 72, &icons).rgb());
+    let title = text_report(&missing, 72, 72, &icons).expect("titled");
+    assert!(!title.truncated, "{title:?}");
+    // Neutral: no pixel is reddish.
+    for y in 0..72 {
+        for x in 0..72 {
+            let [r, g, b] = frame.pixel(x, y).unwrap();
+            assert!(!(r > 120 && r > g.saturating_add(60) && r > b.saturating_add(60)));
+        }
+    }
+    // The title is drawn in the key's text colour.
+    assert_ne!(rows_with(&frame, WHITE), Vec::<u32>::new());
+
+    // The key's own icon is not drawn while the plugin is missing (the
+    // plug is, at the same place as on a key without one); its background
+    // stays. The look itself is untouched.
+    let mut own = with_assets(Some("deckpilot.house"), None);
+    own.appearance.as_mut().unwrap().background = Some(Color([20, 40, 90]).into());
+    let look = own.appearance.clone();
+    let mut own_missing = KeyFace::unavailable_action("Go");
+    own_missing.appearance = look.clone();
+    let drawn = render_with(&own_missing, 72, 72, &icons);
+    let mut no_icon = own_missing.clone();
+    no_icon.appearance.as_mut().unwrap().icon = None;
+    assert_eq!(drawn.rgb(), render_with(&no_icon, 72, 72, &icons).rgb());
+    assert_eq!(drawn.pixel(0, 0), Some([20, 40, 90]));
+    assert_eq!(own_missing.appearance, look);
+    // Once the action runs again, the same look draws its own icon.
+    let mut back = own_missing.clone();
+    back.unavailable = false;
+    back.style = FaceStyle::Action;
+    back.symbol = Some("cpu".into());
+    assert_ne!(render_with(&back, 72, 72, &icons).rgb(), drawn.rgb());
+}
