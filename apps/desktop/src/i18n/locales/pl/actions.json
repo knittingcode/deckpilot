@@ -381,7 +381,8 @@
       "defaultBrowserIs": "Domyślna przeglądarka ({{name}})",
       "browserGone": "Wybrana przeglądarka nie jest już zainstalowana; strony otwierają się w domyślnej przeglądarce.",
       "inside": "{{label}} (opcjonalnie)",
-      "applicationGone": "Ta aplikacja nie jest już zainstalowana na tym komputerze. Wybierz ją ponownie."
+      "applicationGone": "Ta aplikacja nie jest już zainstalowana na tym komputerze. Wybierz ją ponownie.",
+      "locationGone": "Tego pliku lub folderu nie ma już na tym komputerze (przeniesiono go lub usunięto). Wybierz go ponownie."
     },
     "panel": {
       "save": "Zapisz",
