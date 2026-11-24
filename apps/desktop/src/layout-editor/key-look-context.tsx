@@ -23,6 +23,8 @@ import type { IconState } from "./icon-library"
  * them is shown.
  */
 export interface KeyLook {
+  /** The profile whose layout is edited: titles resolve in it. */
+  profileId?: string
   draft: DeviceLayout
   pageId: string
   /** The device model's colours for keys that set none. */
