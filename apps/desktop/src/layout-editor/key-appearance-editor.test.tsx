@@ -283,7 +283,7 @@ describe("the key header", { timeout: 20_000 }, () => {
       )
     })
     // Drawn for the size the key is shown at: 72 CSS px less its border.
-    expect(api.previewLayout).toHaveBeenCalledWith("p", layout, "home", null, true, null, 64)
+    expect(api.previewLayout).toHaveBeenCalledWith("p", layout, "home", null, true, null, 64, null)
     await user.click(control("Key 1"))
     // The same image as the Canvas's: one renderer, one preview.
     expect(preview("Key 1").querySelector("img")).toHaveAttribute(

@@ -88,6 +88,36 @@ impl Jump {
     }
 }
 
+/// A monotonic clock that stands still until the test moves it
+/// ([`FakeInstant::advance`]): deadlines on it are reached exactly when the
+/// test says, never by waiting.
+#[derive(Clone)]
+pub struct FakeInstant {
+    base: std::time::Instant,
+    offset_ms: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Default for FakeInstant {
+    fn default() -> Self {
+        Self {
+            base: std::time::Instant::now(),
+            offset_ms: std::sync::Arc::default(),
+        }
+    }
+}
+
+impl FakeInstant {
+    pub fn now(&self) -> std::time::Instant {
+        self.base + Duration::from_millis(self.offset_ms.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    pub fn advance(&self, by: Duration) {
+        let ms = u64::try_from(by.as_millis()).unwrap();
+        self.offset_ms
+            .fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// A directory removed when dropped.
 #[derive(Debug)]
 pub struct TempDir(PathBuf);
@@ -203,6 +233,38 @@ impl TestAgent {
         clock: Option<Clock>,
         gestures: Option<std::sync::Arc<dyn deckpilot_agent::GestureHooks>>,
     ) -> Self {
+        Self::start_configured(paths, key, mock, backend, clock, gestures, |agent| agent)
+    }
+
+    /// [`TestAgent::start`] with folders' Auto Exit countdowns measured on
+    /// `folders`, a clock that moves only when the test moves it.
+    pub fn start_with_folder_clock(
+        paths: &AgentPaths,
+        key: &DatabaseKey,
+        mock: &MockBackend,
+        folders: &FakeInstant,
+    ) -> Self {
+        let folders = folders.clone();
+        Self::start_configured(
+            paths,
+            key,
+            mock,
+            Box::new(mock.clone()),
+            None,
+            None,
+            move |agent| agent.with_folder_clock(move || folders.now()),
+        )
+    }
+
+    fn start_configured(
+        paths: &AgentPaths,
+        key: &DatabaseKey,
+        mock: &MockBackend,
+        backend: Box<dyn deckpilot_device::DeviceBackend>,
+        clock: Option<Clock>,
+        gestures: Option<std::sync::Arc<dyn deckpilot_agent::GestureHooks>>,
+        configure: impl FnOnce(Agent) -> Agent,
+    ) -> Self {
         let lock = InstanceLock::acquire_waiting(&paths.lock_file, Duration::from_secs(2)).unwrap();
         let options = AgentOptions {
             paths: paths.clone(),
@@ -219,7 +281,7 @@ impl TestAgent {
             notifier: None,
             screen_lock: None,
         };
-        let mut agent = Agent::start(options, lock).unwrap();
+        let mut agent = configure(Agent::start(options, lock).unwrap());
         if let Some(gestures) = gestures {
             agent = agent.with_gesture_hooks(gestures);
         }

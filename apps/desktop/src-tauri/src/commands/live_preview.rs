@@ -653,6 +653,7 @@ mod tests {
             connected: true,
             in_scope: true,
             seq: 3,
+            folder_countdown: None,
         });
         assert!(outbox.next(1).unwrap().is_none());
         outbox.reconnected();
