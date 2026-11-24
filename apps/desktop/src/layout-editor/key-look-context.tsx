@@ -41,6 +41,13 @@ export interface KeyLook {
   reports?: Map<string, TextLayoutReport>
   /** Where the renderer put each key's labels (lib/key-labels.ts). */
   labelBoxes?: Map<string, LabelBox[]>
+  /**
+   * The selected label of a key (the Inspector's Labels section and the
+   * outlines on the device canvas share it); `selectLabel` changes it,
+   * `edit` asks for its text field.
+   */
+  labelSelection?: LabelSelection | null
+  selectLabel?: (key: string, id: string | null, edit?: boolean) => void
   /** The agent draws labels (capability `keyLabels`); without it they are kept, not shown. */
   keyLabels?: boolean
   icons: IconState
@@ -56,6 +63,27 @@ export interface KeyLook {
    */
   problem?: string | null
   setProblem?: (message: string | null) => void
+}
+
+/** A key's selected label. */
+export interface LabelSelection {
+  /** The control key (`key:0`). */
+  key: string
+  id: string | null
+  /** Non-zero, new for each request, when the label's text is to be edited. */
+  edit: number
+}
+
+let edits = 0
+
+/** The selection after choosing label `id` of `key` (to edit it, with `edit`). */
+export function nextSelection(
+  _current: LabelSelection | null,
+  key: string,
+  id: string | null,
+  edit = false,
+): LabelSelection {
+  return { key, id, edit: edit && id !== null ? ++edits : 0 }
 }
 
 export const KeyLookContext = createContext<KeyLook | null>(null)

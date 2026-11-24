@@ -11,6 +11,7 @@ import type { ControlBinding, DeviceLayout, KeyAppearance } from "@/lib/types"
 import { BUILTIN_APPEARANCE, type KeyLookChange } from "./appearance"
 import type { KeyLook } from "./key-look-context"
 import { LabelsOfSelection, LabelsSection } from "./labels-section"
+import { placedAt, updateLabel, withLabels } from "./labels"
 import { LookMoveDialog } from "./look-move-dialog"
 
 Element.prototype.hasPointerCapture = () => false
@@ -226,3 +227,88 @@ describe("moving a look with labels", () => {
     expect(onChoose).toHaveBeenLastCalledWith("keep")
   })
 })
+
+describe("editing a label from its outline", () => {
+  it("edits the text of a label double-clicked on the stage, opening the section", async () => {
+    Element.prototype.setPointerCapture = () => undefined
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    const outline = document.querySelector<HTMLElement>(
+      "[data-slot=key-label-stage] [data-label=b]",
+    )
+    if (!outline) throw new Error("no outline")
+    fireEvent.doubleClick(outline)
+    const text = await screen.findByRole("textbox", { name: "Text" })
+    expect(text).toHaveValue("Team")
+    expect(text).toHaveFocus()
+    await user.keyboard("O")
+    // The whole text was selected: typing replaces it.
+    expect(applied({ labels })?.labels?.[1]).toMatchObject({ id: "b", text: "O" })
+  })
+
+  it("follows the editor's shared selection (the device canvas' outlines)", async () => {
+    const selectLabel = vi.fn()
+    render(
+      <LabelsSection
+        look={lookOf(layoutWith([{ labels }]), {
+          labelSelection: { key: "key:0", id: "a", edit: 7 },
+          selectLabel,
+        })}
+        control={key0}
+      />,
+    )
+    // An edit request opens the section and focuses the label's text.
+    const text = await screen.findByRole("textbox", { name: "Text" })
+    expect(text).toHaveValue("{{ projects.current.key }}")
+    expect(text).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole("group", { name: /Labels on Key 1/ }), { key: "Escape" })
+    expect(selectLabel).toHaveBeenCalledWith("key:0", null, false)
+  })
+})
+
+describe("anchored labels", () => {
+  it("set their inset from the edge in units", async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem("deckpilot.editor.labelsOpen", "1")
+    render(<LabelsSection look={lookOf(layoutWith([{ labels }]))} control={key0} />)
+    // The row's own button (not its grip or menu).
+    const row = screen.getAllByRole("listitem")[0] as HTMLElement
+    // Label b shows "-" (its face is unresolved).
+    await user.click(within(row).getByText("-"))
+    const inset = screen.getByRole("spinbutton", { name: "Inset from the edge" })
+    expect(inset).toHaveValue(2)
+    await user.clear(inset)
+    await user.type(inset, "6{Enter}")
+    expect(applied({ labels })?.labels?.[1]).toMatchObject({
+      position: { mode: "anchored", to: "topRight", inset: 6 },
+    })
+  })
+})
+
+describe("labels from older and newer versions", () => {
+  it("keep fields this version does not know when moved, and leave no empty list", () => {
+    const newer = [
+      { id: "a", text: "A", futureField: { kept: true } } as unknown as KeyLabel,
+      { id: "b", text: "B" },
+    ]
+    const moved = applyLook(
+      { labels: newer },
+      withLabels(updateLabel(newer, "a", placedAt({ mode: "absolute", x: 100, y: 900 }))),
+    )
+    expect(moved.labels?.[0]).toEqual({
+      id: "a",
+      text: "A",
+      futureField: { kept: true },
+      position: { mode: "absolute", x: 100, y: 900 },
+    })
+    expect(moved.labels?.[1]).toBe(newer[1])
+    // A key without labels is stored as before: no `labels` field at all.
+    expect("labels" in applyLook({ background: "#000000", labels: newer }, withLabels([]))).toBe(
+      false,
+    )
+  })
+})
+
+const applyLook = (appearance: KeyAppearance, change: (a: KeyAppearance) => KeyAppearance) =>
+  change(appearance)

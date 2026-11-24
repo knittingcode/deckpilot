@@ -1129,6 +1129,7 @@
       "small": "Below 8 pt the text may be hard to read."
     },
     "place": "Where",
+    "inset": "Inset from the edge",
     "autoShort": "auto"
   }
 }

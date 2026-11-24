@@ -22,7 +22,7 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { ChevronDown, ChevronRight, GripVertical, MoreHorizontal, Plus } from "lucide-react"
-import { type KeyboardEvent, type PointerEvent, useId, useRef, useState } from "react"
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react"
 
 import { KeyImage } from "@/components/key-preview"
 import { Button } from "@/components/ui/button"
@@ -60,7 +60,7 @@ import { cn } from "@/lib/utils"
 
 import { keyColors, shownBinding } from "./appearance"
 import { ColorField } from "./color-field"
-import type { KeyLook } from "./key-look-context"
+import { type KeyLook, type LabelSelection, nextSelection } from "./key-look-context"
 import {
   LABEL_PRESETS,
   type LabelPreset,
@@ -72,7 +72,7 @@ import {
   labelReports,
   labelsOf,
   moveLabel,
-  movedBy,
+  nudge,
   placedAt,
   positionFromBox,
   positionKind,
@@ -81,6 +81,7 @@ import {
   updateLabel,
   withLabels,
 } from "./labels"
+import { LabelOutlines } from "./label-outlines"
 import { NumberField } from "./text-appearance"
 import { TitleVariablePicker } from "./title-variables"
 
@@ -156,12 +157,29 @@ const REPORTS: Record<LabelReport, TranslationKey> = {
 /** The labels of one key: list, settings and stage. */
 export function LabelsSection({ look, control }: { look: KeyLook; control: ControlId }) {
   const { t } = useTranslation()
-  const [open, setOpenState] = useState(rememberedOpen)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [openState, setOpenState] = useState(rememberedOpen)
+  // The selected label is the editor's (shared with the device canvas'
+  // outlines) when it provides one, else this section's own.
+  const [own, setOwn] = useState<LabelSelection | null>(null)
   const headingId = useId()
+  const key = controlKey(control)
+  const selection = look.selectLabel ? look.labelSelection : own
+  const mine = selection?.key === key ? selection : null
+  const selected = mine?.id ?? null
+  const editRequest = mine?.edit ?? 0
+  const choose = (id: string | null, edit = false) => {
+    if (look.selectLabel) look.selectLabel(key, id, edit)
+    else setOwn((current) => nextSelection(current, key, id, edit))
+  }
+  const setSelected = (id: string | null) => {
+    choose(id)
+  }
+  // A label edited from the canvas (a double click) opens the section
+  // until it is closed again.
+  const [closedAt, setClosedAt] = useState(0)
+  const open = openState || (editRequest !== 0 && editRequest !== closedAt)
   const binding = shownBinding(look.draft, look.pageId, control)
   if (!binding) return null
-  const key = controlKey(control)
   const labels = labelsOf(binding.appearance)
   const boxes = look.labelBoxes?.get(key) ?? []
   const shown = look.faces.get(key)?.labels ?? []
@@ -169,6 +187,7 @@ export function LabelsSection({ look, control }: { look: KeyLook; control: Contr
   const setOpen = (next: boolean) => {
     rememberOpen(next)
     setOpenState(next)
+    if (!next) setClosedAt(editRequest)
   }
   const commit = (next: KeyLabel[], group?: string) => {
     look.restyle(withLabels(next), group)
@@ -225,6 +244,9 @@ export function LabelsSection({ look, control }: { look: KeyLook; control: Contr
               boxes={boxes}
               selected={selected}
               onSelect={setSelected}
+              onEdit={(id) => {
+                choose(id, true)
+              }}
               onMove={(id, position) => {
                 commit(updateLabel(labels, id, placedAt(position)), `label-move:${key}:${id}`)
               }}
@@ -245,6 +267,7 @@ export function LabelsSection({ look, control }: { look: KeyLook; control: Contr
               key={current.id}
               look={look}
               label={current}
+              editRequest={editRequest}
               box={boxes.find((b) => b.id === current.id)}
               reports={labelReports(
                 current,
@@ -512,6 +535,7 @@ function LabelStage({
   boxes,
   selected,
   onSelect,
+  onEdit,
   onMove,
 }: {
   look: KeyLook
@@ -519,46 +543,13 @@ function LabelStage({
   boxes: LabelBox[]
   selected: string | null
   onSelect: (id: string | null) => void
+  onEdit: (id: string) => void
   onMove: (id: string, position: LabelPosition) => void
 }) {
   const { t } = useTranslation()
-  const stage = useRef<HTMLDivElement>(null)
-  const [drag, setDrag] = useState<{
-    id: string
-    x: number
-    y: number
-    dx: number
-    dy: number
-  } | null>(null)
   const key = controlKey(control)
   const image = look.images.get(key)
   const canvas = boxes[0]?.canvas ?? { width: LABEL_LIMITS.canvas, height: LABEL_LIMITS.canvas }
-  const units = (pixels: number) => {
-    const width = stage.current?.getBoundingClientRect().width ?? 0
-    return width > 0 ? (pixels / width) * canvas.width : 0
-  }
-  const onPointerDown = (box: LabelBox) => (event: PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation()
-    onSelect(box.id)
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setDrag({ id: box.id, x: event.clientX, y: event.clientY, dx: 0, dy: 0 })
-  }
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!drag) return
-    setDrag({
-      ...drag,
-      dx: units(event.clientX - drag.x),
-      dy: units(event.clientY - drag.y),
-    })
-  }
-  const onPointerUp = () => {
-    if (!drag) return
-    const box = boxes.find((b) => b.id === drag.id)
-    if (box && (Math.abs(drag.dx) >= 0.5 || Math.abs(drag.dy) >= 0.5)) {
-      onMove(drag.id, movedBy(box, drag.dx, drag.dy, true))
-    }
-    setDrag(null)
-  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       if (selected) {
@@ -567,24 +558,15 @@ function LabelStage({
       }
       return
     }
-    const box = boxes.find((b) => b.id === selected)
-    if (!box) return
-    const step = event.shiftKey ? 5 : 1
-    const moves: Record<string, [number, number]> = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step],
-      ArrowDown: [0, step],
+    if (event.key === "Enter" && selected) {
+      event.preventDefault()
+      onEdit(selected)
+      return
     }
-    const move = moves[event.key]
-    if (!move) return
-    event.preventDefault()
-    onMove(box.id, movedBy(box, move[0], move[1]))
+    nudge(event, boxes, selected, onMove)
   }
-  const percent = (value: number, of: number) => `${(value / of) * 100}%`
   return (
     <div
-      ref={stage}
       role="group"
       tabIndex={0}
       aria-label={t("editor:labels.stage", { control: controlLabel(control) })}
@@ -595,36 +577,19 @@ function LabelStage({
           ? { aspectRatio: `${canvas.width} / ${canvas.height}` }
           : undefined
       }
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
       onPointerDown={() => {
         onSelect(null)
       }}
       onKeyDown={onKeyDown}
     >
       {image && <KeyImage image={image} />}
-      {boxes.map((box) => {
-        const moving = drag?.id === box.id ? drag : null
-        return (
-          <div
-            key={box.id}
-            data-slot="key-label-box"
-            data-label={box.id}
-            aria-hidden
-            className={cn(
-              "absolute cursor-move rounded-sm outline-1 outline-white/60 outline-dashed",
-              selected === box.id && "outline-2 outline-sky-400 outline-solid",
-            )}
-            style={{
-              left: percent(box.x + (moving?.dx ?? 0), box.canvas.width),
-              top: percent(box.y + (moving?.dy ?? 0), box.canvas.height),
-              width: percent(box.width, box.canvas.width),
-              height: percent(box.height, box.canvas.height),
-            }}
-            onPointerDown={onPointerDown(box)}
-          />
-        )
-      })}
+      <LabelOutlines
+        boxes={boxes}
+        selected={selected}
+        onSelect={onSelect}
+        onEdit={onEdit}
+        onMove={onMove}
+      />
     </div>
   )
 }
@@ -641,12 +606,15 @@ type Patch = { [K in keyof KeyLabel]?: KeyLabel[K] | null }
 function LabelSettings({
   look,
   label,
+  editRequest,
   box,
   reports,
   onChange,
 }: {
   look: KeyLook
   label: KeyLabel
+  /** Non-zero, and new, when the label was double-clicked: its text field takes the focus. */
+  editRequest: number
   box: LabelBox | undefined
   reports: LabelReport[]
   onChange: (patch: Patch, group?: string) => void
@@ -655,6 +623,14 @@ function LabelSettings({
   const textId = useId()
   const input = useRef<HTMLInputElement>(null)
   const [more, setMore] = useState(false)
+  useEffect(() => {
+    if (editRequest === 0) return
+    const field = input.current
+    if (!field) return
+    field.scrollIntoView({ block: "nearest" })
+    field.focus()
+    field.select()
+  }, [editRequest])
   const position = label.position ?? LABEL_DEFAULTS.position
   const group = (field: string) => `label:${label.id}:${field}`
   const setMode = (mode: LabelPosition["mode"]) => {
@@ -774,6 +750,17 @@ function LabelSettings({
               )
             })}
           </div>
+        )}
+        {position.mode === "anchored" && (
+          <NumberField
+            label={t("editor:labels.inset")}
+            value={position.inset ?? undefined}
+            range={[0, LABEL_LIMITS.inset]}
+            placeholder="0"
+            onCommit={(value) => {
+              onChange({ position: { ...position, inset: value } })
+            }}
+          />
         )}
       </div>
 

@@ -5,6 +5,8 @@
 // it front first. The renderer alone lays labels out: positions here are only
 // computed from the boxes it reports (`LabelBox`), never measured in CSS.
 
+import type { KeyboardEvent } from "react"
+
 import {
   type KeyLabel,
   type KeyLabelLook,
@@ -16,6 +18,7 @@ import {
   type LabelSpot,
   newLabelId,
 } from "@/lib/key-labels"
+
 import type { ControlBinding, ControlId, DeviceLayout, KeyAppearance } from "@/lib/types"
 
 import { contrastRatio, shownBinding } from "./appearance"
@@ -409,4 +412,28 @@ export function defaultPlateOpacity(
   if (background === "none") return null
   if (background !== "auto") return LABEL_DEFAULTS.colorPlateOpacity
   return box?.overlapsTitle ? COVER_PLATE_OPACITY : "auto"
+}
+
+/** Nudges the selected label with the arrow keys; `true` when the key was used. */
+export function nudge(
+  event: KeyboardEvent,
+  boxes: LabelBox[],
+  selected: string | null,
+  onMove: (id: string, position: LabelPosition) => void,
+): boolean {
+  const box = boxes.find((b) => b.id === selected)
+  if (!box) return false
+  const step = event.shiftKey ? 5 : 1
+  const moves: Record<string, [number, number]> = {
+    ArrowLeft: [-step, 0],
+    ArrowRight: [step, 0],
+    ArrowUp: [0, -step],
+    ArrowDown: [0, step],
+  }
+  const move = moves[event.key]
+  if (!move) return false
+  event.preventDefault()
+  event.stopPropagation()
+  onMove(box.id, movedBy(box, move[0], move[1]))
+  return true
 }

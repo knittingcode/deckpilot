@@ -1175,6 +1175,7 @@
       "small": "Poniżej 8 pt tekst może być słabo czytelny."
     },
     "place": "Miejsce",
+    "inset": "Odstęp od krawędzi",
     "autoShort": "auto"
   }
 }
