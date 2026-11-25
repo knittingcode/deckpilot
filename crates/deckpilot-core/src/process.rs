@@ -144,12 +144,28 @@ pub fn minimal_environment(command: &mut Command, extra: &[&str]) {
 /// Runs `command` to completion, or stops it when `token` is cancelled.
 /// Stdin is closed; stdout and stderr are captured.
 pub fn run(
-    mut command: Command,
+    command: Command,
     token: Option<&CancellationToken>,
     limits: ProcessLimits,
 ) -> Result<ProcessOutput, ProcessError> {
+    run_with_input(command, token, limits, None)
+}
+
+/// [`run`] with `input` written to the program's stdin (then closed), on a
+/// thread of its own so a program that does not read never blocks the
+/// run; `None` closes stdin at once.
+pub fn run_with_input(
+    mut command: Command,
+    token: Option<&CancellationToken>,
+    limits: ProcessLimits,
+    input: Option<Vec<u8>>,
+) -> Result<ProcessOutput, ProcessError> {
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -158,6 +174,13 @@ pub fn run(
         command.process_group(0);
     }
     let mut child = spawn(&mut command).map_err(ProcessError::Spawn)?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write as _;
+            // A program that exits first closes the pipe: nothing to do.
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout = child.stdout.take().map(|s| reader(s, limits.max_output));
     let stderr = child.stderr.take().map(|s| reader(s, limits.max_output));
     let outcome = supervise(&mut child, token, limits.grace);

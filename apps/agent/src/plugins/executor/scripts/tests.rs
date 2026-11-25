@@ -487,10 +487,10 @@ fn every_op_is_refused_to_another_plugin_and_without_a_run() {
     );
     let plugin = deckpilot_plugin_broker::PluginId::new(PLUGIN).unwrap();
     assert_eq!(code(&bare.execute(&plugin, &allowed)), "unavailable");
-    // Processes are not offered by this version's executor.
+    // Without a shell grant there is no shell.
     assert_eq!(
-        code(&call(&mut e, &json!({"op":"shell.available","args":{}}))),
-        "unavailable"
+        ok(&call(&mut e, &json!({"op":"shell.available","args":{}}))),
+        json!({"shells": []})
     );
 }
 

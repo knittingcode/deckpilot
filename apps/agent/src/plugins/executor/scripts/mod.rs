@@ -43,6 +43,7 @@ use super::{Executor, PrivilegedRecord};
 
 mod confirm;
 pub(crate) mod fs;
+mod process;
 mod projects;
 mod run;
 #[cfg(test)]
@@ -442,12 +443,9 @@ impl Executor {
             }
             CapabilityRequest::ProjectList(_) => projects::list(&call),
             CapabilityRequest::ProjectRepositories(r) => projects::repositories(&call, r),
-            CapabilityRequest::ProcessRun(_)
-            | CapabilityRequest::ShellRun(_)
-            | CapabilityRequest::ShellAvailable(_) => Err(fault(
-                codes::UNAVAILABLE,
-                "processes are not available to scripts in this version",
-            )),
+            CapabilityRequest::ProcessRun(run) => self.script_process(plugin, &call, run, notes),
+            CapabilityRequest::ShellRun(run) => self.script_shell(plugin, &call, run, notes),
+            CapabilityRequest::ShellAvailable(_) => self.shells_available(&call),
             other
                 if other.script_scope() == Some(deckpilot_plugin_abi::scripts::ScriptScope::Fs) =>
             {

@@ -868,7 +868,7 @@ impl ToolHost {
 
     /// The absolute, non-empty entries of the agent's `PATH`: a relative
     /// one (`.`, an empty entry) would find programs in the repository.
-    fn path_entries(&self) -> Vec<PathBuf> {
+    pub(crate) fn path_entries(&self) -> Vec<PathBuf> {
         self.var("PATH")
             .map(|paths| {
                 std::env::split_paths(&paths)
@@ -882,7 +882,7 @@ impl ToolHost {
     /// `extra` from the agent's own. `PATH` keeps only absolute entries,
     /// and gets the folder of `program` (where docker's credential helpers
     /// and compose plugin live) when it is not on it.
-    fn environment(&self, extra: &[&str], program: &Path) -> Vec<(String, OsString)> {
+    pub(crate) fn environment(&self, extra: &[&str], program: &Path) -> Vec<(String, OsString)> {
         let mut env: Vec<(String, OsString)> = BASE_ENVIRONMENT
             .iter()
             .chain(extra)
@@ -923,6 +923,12 @@ fn runnable(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn runnable(_path: &Path) -> bool {
     true
+}
+
+/// The configuration the host sets on every git run, only to harden (the
+/// Scripts bridge prepends it too).
+pub(crate) fn git_hardening() -> &'static [&'static str] {
+    git::HARDENING
 }
 
 /// Exactly what the agent runs.
@@ -1056,6 +1062,18 @@ pub(crate) fn execute(
     deadline: Option<Instant>,
     stop: &(dyn Fn() -> Option<Stop> + Sync),
 ) -> Result<Finished, Denial> {
+    execute_with(plan, deadline, stop, None, MAX_STDERR)
+}
+
+/// [`execute`] with `stdin` written to the program and standard error kept
+/// up to `max_stderr` bytes (the Scripts bridge, plugin API 1.13).
+pub(crate) fn execute_with(
+    plan: &Plan,
+    deadline: Option<Instant>,
+    stop: &(dyn Fn() -> Option<Stop> + Sync),
+    stdin: Option<Vec<u8>>,
+    max_stderr: usize,
+) -> Result<Finished, Denial> {
     let started = Instant::now();
     let mut command = Command::new(&plan.program);
     command.args(&plan.args).current_dir(&plan.cwd).env_clear();
@@ -1089,14 +1107,14 @@ pub(crate) fn execute(
                 std::thread::sleep(WATCH);
             }
         });
-        let result = deckpilot_core::process::run(command, Some(&token), limits);
+        let result = deckpilot_core::process::run_with_input(command, Some(&token), limits, stdin);
         done.store(true, Ordering::SeqCst);
         result
     });
     let elapsed = started.elapsed();
     match result {
         Ok(mut output) => {
-            cap(&mut output.stderr, &mut output.stderr_truncated, MAX_STDERR);
+            cap(&mut output.stderr, &mut output.stderr_truncated, max_stderr);
             Ok(Finished { output, elapsed })
         }
         Err(ProcessError::TimedOut) => Err(Denial::new(

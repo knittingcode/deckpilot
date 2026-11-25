@@ -534,6 +534,12 @@ impl Broker {
         self.grants(plugin)?.tool(tool)
     }
 
+    /// The plugin's `scripts` ceiling now (plugin API 1.13), for a
+    /// running process's watcher: `None` once it is revoked.
+    pub fn scripts_grant(&self, plugin: &PluginId) -> Option<ScriptsGrant> {
+        self.grants(plugin)?.scripts
+    }
+
     /// A session for the plugin whose host process the caller spawned. The
     /// session is the plugin's identity for every later decision.
     pub fn session(&self, plugin: PluginId) -> Session {
