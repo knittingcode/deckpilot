@@ -327,17 +327,35 @@ runs of the plugin at once.
   `.com`, on Windows); an absolute grant must exist
   (`commandNotFound`). The file found is canonicalized and is never a
   batch file.
-- **Arguments** are an array; there is no shell, glob or expansion. For
-  `git`, unless the grant says `unrestrictedArgs` (OD-8): the global
-  options `-c`, `-C`, `--config-env`, `--exec-path`, `--git-dir`,
-  `--work-tree`, `--namespace`, `--super-prefix`; anywhere
-  `--upload-pack`, `--receive-pack`, `--exec`, `--template`,
-  `--separate-git-dir`, `--config`; `-u` of `clone`, `fetch`, `pull`,
-  `ls-remote` and `archive`; `-c` of `clone`; and the `ext::` and `fd::`
-  transports are refused. `tool.run`'s hardening (`core.fsmonitor=false`,
-  the allowed protocols, no prompts) is prepended, and
-  `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and an empty
-  `GIT_ASKPASS` are set.
+- **Arguments** are an array; there is no shell, glob or expansion.
+- **git** without `unrestrictedArgs` (OD-8) is limited to work in the
+  run's repository: the first argument is one of `add`, `blame`,
+  `branch`, `checkout`, `cherry-pick`, `clean`, `commit`, `describe`,
+  `diff`, `fetch`, `gc`, `grep`, `log`, `ls-files`, `ls-remote`, `merge`,
+  `mv`, `pull`, `push`, `rebase`, `remote`, `reset`, `restore`,
+  `rev-parse`, `revert`, `rm`, `shortlog`, `show`, `stash`, `status`,
+  `switch`, `tag` (no global option: the host sets its own). Never
+  `config` (aliases, `core.sshCommand`), `clone`, `init`, `worktree`,
+  `submodule`, `bisect`, `difftool`, `mergetool`, `filter-branch`,
+  `archive`, `format-patch`, `bundle` or `help`. The options that run a
+  program, read or write elsewhere or change the configuration
+  (`--upload-pack`, `--receive-pack`, `--exec`, `--output`, `--no-index`,
+  `--ext-diff`, `--textconv`, `--config`, `--template`, `--strategy`, …)
+  are refused, and so is every prefix of them git would accept
+  (`--upload-p`); so are `rebase -x`, merge strategies (`-s`, `-X`),
+  `-u` of the fetching subcommands, and the `ext::` and `fd::`
+  transports. `tool.run`'s hardening (`core.fsmonitor=false`, the allowed
+  protocols, no prompts) is prepended. The host's variables
+  (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, an empty
+  `GIT_ASKPASS`, `GIT_OPTIONAL_LOCKS=0`, `GIT_PROTOCOL_FROM_USER=0`, and
+  `GIT_CEILING_DIRECTORIES` at the folder above the scope, so git never
+  uses a repository above it) are set after the script's and win.
+  Restricted git still runs the repository's own hooks and filters (the
+  user's repository); with `unrestrictedArgs` a git grant runs any
+  program the user could, and is shown as such.
+- **docker** has no argument limits: a docker grant can start containers
+  with the host's folders mounted, so it is effectively full access to
+  the computer, and is shown as such.
 - **`cwd`** follows the grant's rule: `repositories` (a repository of the
   run's project), `fsScopes` (one of the script's scopes) or `any` (an
   existing folder, never one of DeckPilot's private folders). It is
@@ -354,7 +372,12 @@ runs of the plugin at once.
   user and temporary folders, Windows' system variables, `LC_ALL=C`; no
   secrets), `LANG` and `SSH_AUTH_SOCK`, plus the script's entries when
   the grant says `env: "allowed"`, each a valid name the denylist does not
-  refuse. `shell.run` takes the script's entries under the shell grant.
+  refuse, nor the agent's own additions (`GCM_*`, `GO*`, `COMPOSE_*`,
+  `SSLKEYLOGFILE`, compilers and their flags, `VIMINIT`, `EXINIT`,
+  `GLIBC_TUNABLES`, `CURL_*`, `WGETRC`, `HG*`, …). `shell.run` takes the
+  script's entries under the shell grant. Credentials in URLs
+  (`https://user:token@…`) are removed from the output, as with
+  `tool.run`.
 - **Time**: `min(timeoutMs or the script's timeout, the run's time
   left)`; a timeout is a result with `timedOut: true`. **Output**: the
   script's `maxOutputKiB` per stream, at most 512 KiB, then shortened
@@ -363,7 +386,18 @@ runs of the plugin at once.
 - **`shell.run`** needs the shell in the script's `shell` grant and a
   shell this computer has; the script is one argument (`-c`, `-Command`
   with `-NoProfile -NonInteractive`, or `/d /c`). `shell.available`
-  lists the granted shells that exist.
+  lists the granted shells that exist. On Windows `cmd` receives the
+  script with Rust's standard quoting, which `cmd.exe` parses its own
+  way: a script with quotes may need care.
+- **Known gaps** (documented, not closed here): a descendant that leaves
+  the process group (`setsid`, a daemon) survives the stop, and on Windows
+  `taskkill /T` misses orphans of a child that already exited (a job
+  object would close this); such a descendant also keeps the run's
+  output and stdin threads alive, and is not counted in the 4 concurrent
+  runs. The program is started by the path it was found at (so a program
+  that reads its own name sees the granted one); the file it is is
+  checked. Narrowing a grant while a program runs (its cwd rule, env,
+  `unrestrictedArgs`) stops it like a revocation.
 
 Tests (Unix, harmless stand-ins only: shell scripts for `git` and other
 tools in a temporary `bin`, `sh` for the shell; never docker compose,
