@@ -46,6 +46,11 @@ released either. 0.6.0 is the first version intended for publication.
   in the Inspector first, which asks; dropped on one
   gesture card only that gesture changes. Every gesture stays editable on
   its own; nothing of the preset is stored.
+- Plugin API 1.11: `contributes.actions[].contexts` lets a plugin declare
+  where each action makes sense (key, gesture, display, sequence,
+  workflow), with `Action::contexts` in the SDK. Advisory like the
+  built-ins' contexts: a use elsewhere is reported and still runs. Without
+  the field an action keeps all five.
 - Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
   presets over its own actions, with localized texts and `allowPartial`.
   Presets grant nothing; each action keeps its permissions and checks.

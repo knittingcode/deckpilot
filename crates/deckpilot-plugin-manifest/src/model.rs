@@ -1201,7 +1201,20 @@ pub struct Action {
     /// data only, the user's own title and look always win.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<ActionTitle>,
+    /// Where the action makes sense (plugin API 1.11): some of
+    /// [`ACTION_CONTEXTS`], each at most once (`docs/action-contexts.md`).
+    /// Absent: all five, as before. Advisory: the app offers the action
+    /// where it belongs, and a use elsewhere is reported, never refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<Vec<String>>,
 }
+
+/// The plugin API level that introduced `contributes.actions[].contexts`.
+pub const ACTION_CONTEXTS_API: ApiLevel = ApiLevel::new(1, 11);
+
+/// The contexts `contributes.actions[].contexts` may name (the core's
+/// `ActionContext`).
+pub const ACTION_CONTEXTS: [&str; 5] = ["key", "gesture", "display", "sequence", "workflow"];
 
 /// The plugin API level that introduced `contributes.actions[].title`.
 pub const TITLE_API: ApiLevel = ApiLevel::new(1, 8);
