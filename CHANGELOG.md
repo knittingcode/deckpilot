@@ -47,23 +47,40 @@ released either. 0.6.0 is the first version intended for publication.
   permission or an expiring token; no other plugin request gets them. A
   connection's refusals always start with their code (`redirect-refused:
   …`).
-- Plugins: connections (plugin API 1.14, host side). A plugin that declares
-  connection types (DeckPilot's own bundled plugins only) can be connected
-  to several servers, each with its own address, consent, token and status:
-  GitHub.com and GitLab.com at their own addresses, GitHub Enterprise Server
-  and self-managed GitLab at the address the user opens in the browser
-  (`https` only, with a port or a path). Tokens are kept in the encrypted
-  plugin database, protected like the configuration (its key derives from
-  the configuration's), are never sent back to the app, logged, exported or
-  handed to the plugin, and are injected by the agent only into requests to
-  their own server, and only to a connection the user chose for the action
-  (never one a workflow maps in); a redirect off that server ends the
-  request, certificates are checked against the system's trust store with no
-  way to skip it, and a server on a private network needs its own consent
-  (this computer and link-local addresses never). A plugin reaches only the
-  connections an action's parameters name. The app's requests to list,
-  create, test, rename, turn off and remove connections are IPC protocol 20;
-  the plugin store goes to schema 7. No plugin uses them yet.
+- Plugins: connections (plugin API 1.14, host side). A plugin that
+  declares connection types (DeckPilot's own bundled plugins only) can be
+  connected to several servers, each with its own address, consent, token
+  and status: GitHub.com and GitLab.com at their own addresses, GitHub
+  Enterprise Server and self-managed GitLab at the address the user opens
+  in the browser (`https` only, with a port or a path). Tokens are kept in
+  the encrypted plugin database, protected like the configuration (its key
+  derives from the configuration's), are never sent back to the app, logged, exported or handed to
+  the plugin, and are injected by the agent only into requests to their
+  own server, and only to a connection the user chose for the action (never
+  one a workflow maps in); a redirect off that server ends the request, certificates
+  are checked against the system's trust store with no way to skip it,
+  and a server on a private network needs its own consent (this computer
+  and link-local addresses never). A plugin reaches only the connections
+  an action's parameters name. The app's requests to list, create, test,
+  rename, turn off and remove connections are IPC protocol 20; the plugin
+  store goes to schema 7. No plugin uses them yet.
+- Calls (groundwork, nothing user-visible yet): the provider contract
+  with capability discovery, where every capability a provider does not
+  offer is explicitly unsupported with a reason; the sanitised call state;
+  the `call.state` and `call.control` operations and the gate a control
+  passes (no success without the call app's confirmation); and the plugin
+  manifest's `calls` permission, `callOverlay` and `layoutTemplates` for
+  plugin API 1.16, accepted only for the bundled Calls plugin. No
+  DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
+  detected, not controlled: Microsoft retired its device API on
+  2026-06-30 (`docs/calls.md`).
+- Calls (groundwork): the call state engine (incoming, outgoing,
+  connecting, active, ending, ended, failed, unknown) with a timeout on
+  every live state, missed, rejected and remote hang-up, provider and app
+  restarts, meeting-to-meeting moves and simultaneous calls; and the
+  "Back to work" return sessions (timer, real completion, or whichever
+  comes first, 60 s by default), one per device. Tested on a virtual clock;
+  nothing user-visible yet.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
@@ -129,6 +146,15 @@ released either. 0.6.0 is the first version intended for publication.
   editor (the agent still refuses while anything uses it). Nothing is
   deleted by itself, and there is no "delete all". Until now a saved
   action that no key, gesture or workflow used could not be opened.
+
+- Plugins (for the coming Scripts plugin, plugin API 1.13, not usable
+  yet): the plugin runtime knows the Scripts bridge's operations (files,
+  processes, the script's run) and refuses them to every plugin until
+  the agent's checks for them land. Files move in chunks within the
+  existing message size limits. The Scripts plugin alone can be given a
+  larger budget of calls per run, and its polling and logging never
+  extend its continuous CPU limit, so a busy script is still stopped
+  after 2 seconds.
 
 ### Changed
 

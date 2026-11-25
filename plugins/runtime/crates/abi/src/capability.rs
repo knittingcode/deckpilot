@@ -1,8 +1,11 @@
 //! Capability requests a guest makes through `host_call`, and their replies.
 //!
 //! The set of operations is closed: an operation that is not a variant of
-//! [`CapabilityRequest`] does not parse. There is deliberately no file
-//! system, process, clipboard or device-frame operation (design §5.2).
+//! [`CapabilityRequest`] does not parse. There is deliberately no general
+//! file system, process, clipboard or device-frame operation (design
+//! §5.2): the only file system and process operations are the Scripts
+//! bridge's ([`crate::scripts`], plugin API 1.13), which the broker answers
+//! for `deckpilot.scripts` alone, within a script's own grants.
 //! No request carries a plugin id; a `plugin` field anywhere is an unknown
 //! field and the request is rejected.
 
@@ -159,6 +162,57 @@ pub enum CapabilityRequest {
     /// X9). Every publisher.
     #[serde(rename = "profile.read")]
     ProfileRead(NoArgs),
+
+    // --- The Scripts host bridge (plugin API 1.13, `crate::scripts`):
+    // `deckpilot.scripts` only, decided by the broker against its
+    // `scripts` permission and by the agent against the script's own
+    // grants at every call. ---
+    #[serde(rename = "script.load")]
+    ScriptLoad(crate::scripts::ScriptLoad),
+    #[serde(rename = "script.poll")]
+    ScriptPoll(NoArgs),
+    #[serde(rename = "script.log")]
+    ScriptLog(crate::scripts::ScriptLog),
+    #[serde(rename = "script.sleep")]
+    ScriptSleep(crate::scripts::ScriptSleep),
+    #[serde(rename = "script.confirm")]
+    ScriptConfirm(crate::scripts::ScriptConfirm),
+    #[serde(rename = "project.repositories")]
+    ProjectRepositories(crate::scripts::ProjectRepositories),
+    #[serde(rename = "fs.exists")]
+    FsExists(crate::scripts::FsPath),
+    #[serde(rename = "fs.stat")]
+    FsStat(crate::scripts::FsPath),
+    #[serde(rename = "fs.list")]
+    FsList(crate::scripts::FsPath),
+    #[serde(rename = "fs.mkdir")]
+    FsMkdir(crate::scripts::FsMkdir),
+    #[serde(rename = "fs.readFile")]
+    FsReadFile(crate::scripts::FsReadFile),
+    #[serde(rename = "fs.writeFile")]
+    FsWriteFile(crate::scripts::FsWriteFile),
+    #[serde(rename = "fs.write.open")]
+    FsWriteOpen(crate::scripts::FsWriteOpen),
+    #[serde(rename = "fs.write.chunk")]
+    FsWriteChunk(crate::scripts::FsWriteChunk),
+    #[serde(rename = "fs.write.commit")]
+    FsWriteCommit(crate::scripts::FsWriteHandle),
+    #[serde(rename = "fs.write.abort")]
+    FsWriteAbort(crate::scripts::FsWriteHandle),
+    #[serde(rename = "fs.copy")]
+    FsCopy(crate::scripts::FsCopy),
+    #[serde(rename = "fs.move")]
+    FsMove(crate::scripts::FsMove),
+    #[serde(rename = "fs.remove")]
+    FsRemove(crate::scripts::FsRemove),
+    #[serde(rename = "fs.removeContents")]
+    FsRemoveContents(crate::scripts::FsRemoveContents),
+    #[serde(rename = "process.run")]
+    ProcessRun(crate::scripts::ProcessRun),
+    #[serde(rename = "shell.run")]
+    ShellRun(crate::scripts::ShellRun),
+    #[serde(rename = "shell.available")]
+    ShellAvailable(NoArgs),
     /// One connection the invocation is bound to, without its secret
     /// ([`ConnectionRef`](crate::connections::ConnectionRef),
     /// [`ConnectionInfo`](crate::connections::ConnectionInfo); plugin API
@@ -778,6 +832,29 @@ impl CapabilityRequest {
             Self::ProjectSelect(_) => "project.select",
             Self::ProjectCycle(_) => "project.cycle",
             Self::ProfileRead(_) => "profile.read",
+            Self::ScriptLoad(_) => "script.load",
+            Self::ScriptPoll(_) => "script.poll",
+            Self::ScriptLog(_) => "script.log",
+            Self::ScriptSleep(_) => "script.sleep",
+            Self::ScriptConfirm(_) => "script.confirm",
+            Self::ProjectRepositories(_) => "project.repositories",
+            Self::FsExists(_) => "fs.exists",
+            Self::FsStat(_) => "fs.stat",
+            Self::FsList(_) => "fs.list",
+            Self::FsMkdir(_) => "fs.mkdir",
+            Self::FsReadFile(_) => "fs.readFile",
+            Self::FsWriteFile(_) => "fs.writeFile",
+            Self::FsWriteOpen(_) => "fs.write.open",
+            Self::FsWriteChunk(_) => "fs.write.chunk",
+            Self::FsWriteCommit(_) => "fs.write.commit",
+            Self::FsWriteAbort(_) => "fs.write.abort",
+            Self::FsCopy(_) => "fs.copy",
+            Self::FsMove(_) => "fs.move",
+            Self::FsRemove(_) => "fs.remove",
+            Self::FsRemoveContents(_) => "fs.removeContents",
+            Self::ProcessRun(_) => "process.run",
+            Self::ShellRun(_) => "shell.run",
+            Self::ShellAvailable(_) => "shell.available",
             Self::ConnectionGet(_) => "connections.get",
             Self::ConnectionReportStatus(_) => "connections.reportStatus",
             Self::TimeSleep(_) => "time.sleep",
@@ -895,6 +972,29 @@ impl CapabilityRequest {
                 }
             }
             Self::DialogOpen(d) => d.validate().map_err(|e| RequestError::Invalid(e.0))?,
+            Self::ScriptLoad(_)
+            | Self::ScriptPoll(_)
+            | Self::ScriptLog(_)
+            | Self::ScriptSleep(_)
+            | Self::ScriptConfirm(_)
+            | Self::ProjectRepositories(_)
+            | Self::FsExists(_)
+            | Self::FsStat(_)
+            | Self::FsList(_)
+            | Self::FsMkdir(_)
+            | Self::FsReadFile(_)
+            | Self::FsWriteFile(_)
+            | Self::FsWriteOpen(_)
+            | Self::FsWriteChunk(_)
+            | Self::FsWriteCommit(_)
+            | Self::FsWriteAbort(_)
+            | Self::FsCopy(_)
+            | Self::FsMove(_)
+            | Self::FsRemove(_)
+            | Self::FsRemoveContents(_)
+            | Self::ProcessRun(_)
+            | Self::ShellRun(_)
+            | Self::ShellAvailable(_) => crate::scripts::validate(self)?,
             Self::ConnectionGet(c) => c.validate()?,
             Self::ConnectionReportStatus(r) => r.validate()?,
             Self::TimeSleep(t) => t.validate()?,
@@ -955,6 +1055,15 @@ pub struct CallError {
     /// anything else of the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<NetworkErrorKind>,
+    /// The script-level detail of a refused or failed Scripts bridge
+    /// operation ([`ScriptFault`](crate::scripts::ScriptFault), plugin API
+    /// 1.13; compatible addition within ABI 1). Only replies to the
+    /// bridge's own operations carry it
+    /// ([`carries_script_detail`](crate::scripts::carries_script_detail)):
+    /// the host removes it from every other reply ([`CallResult::for_op`]),
+    /// since other guests' `CallError` refuses unknown fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<Box<crate::scripts::ScriptFault>>,
 }
 
 /// Why a brokered `http.fetch` failed on the network, as the built-in
@@ -1059,6 +1168,7 @@ impl CallResult {
             code,
             message: message.into(),
             kind: None,
+            script: None,
         })
     }
 
@@ -1072,6 +1182,7 @@ impl CallResult {
             code,
             message: message.into(),
             kind,
+            script: None,
         })
     }
 
@@ -1095,6 +1206,10 @@ impl CallResult {
     /// also, a `notify` is answered `null` unless the guest reports
     /// [`NOTIFY_DELIVERY`](crate::guest::features::NOTIFY_DELIVERY), which
     /// is exactly what guests built before it received.
+    ///
+    /// And an error's script detail stays only on a reply to one of the
+    /// Scripts bridge's own operations
+    /// ([`carries_script_detail`](crate::scripts::carries_script_detail)).
     #[must_use]
     pub fn for_op(self, op: &str, features: u64) -> Self {
         match self.for_features(features) {
@@ -1103,8 +1218,23 @@ impl CallResult {
             {
                 Self::Ok(Value::Null)
             }
+            Self::Error(mut error) if !crate::scripts::carries_script_detail(op) => {
+                error.script = None;
+                Self::Error(error)
+            }
             other => other,
         }
+    }
+
+    /// A refusal or failure of a Scripts bridge operation with its script
+    /// detail.
+    pub fn script_error(code: CallErrorCode, fault: crate::scripts::ScriptFault) -> Self {
+        Self::Error(CallError {
+            code,
+            message: fault.message.clone().unwrap_or_else(|| fault.code.clone()),
+            kind: None,
+            script: Some(Box::new(fault)),
+        })
     }
 }
 

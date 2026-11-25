@@ -1,0 +1,104 @@
+{
+  "$schema": "https://knittingcode.github.io/deckpilot-plugins/v1/schemas/plugin-manifest.schema.json",
+  "manifestVersion": 1,
+  "id": "deckpilot.calls",
+  "name": "Calls",
+  "version": "0.1.0",
+  "publisher": { "id": "deckpilot", "name": "DeckPilot" },
+  "description": "Shows the state of your calls and meetings on your devices, and controls them where the call app allows it.",
+  "license": "Apache-2.0",
+  "categories": ["productivity"],
+  "engines": { "deckpilot": ">=0.16.0 <1.0.0", "pluginApi": "^1.16", "sdk": "1.0.0" },
+  "entry": "src/lib.rs",
+  "icons": { "128": "assets/icon-128.png" },
+  "permissions": [
+    {
+      "kind": "calls",
+      "control": true,
+      "justification": "Shows whether you are in a call and, where the call app allows it, answers, ends and mutes it."
+    }
+  ],
+  "contributes": {
+    "actions": [
+      {
+        "id": "answer",
+        "name": "Answer",
+        "description": "Answers the incoming call.",
+        "category": "Calls",
+        "parameters": [],
+        "requiresPermissions": ["calls:control"]
+      },
+      {
+        "id": "mic-toggle",
+        "name": "Microphone",
+        "description": "Mutes or unmutes your microphone in the call.",
+        "category": "Calls",
+        "parameters": [],
+        "requiresPermissions": ["calls:control"]
+      },
+      {
+        "id": "return-to-work",
+        "name": "Back to work",
+        "description": "Shows what the device showed before the call, and comes back to the call afterwards.",
+        "category": "Calls",
+        "parameters": [
+          {
+            "key": "mode",
+            "label": "Come back",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": ["timer", "completion", "completion-or-timeout"]
+            },
+            "default": { "type": "choice", "value": "completion-or-timeout" }
+          }
+        ]
+      }
+    ],
+    "callOverlay": { "pages": ["incoming", "active"] },
+    "layoutTemplates": [
+      {
+        "shape": "grid",
+        "version": 1,
+        "pages": [
+          {
+            "page": "incoming",
+            "controls": [{ "control": "key", "index": 0, "action": "answer" }]
+          },
+          {
+            "page": "active",
+            "controls": [
+              { "control": "key", "index": 0, "action": "mic-toggle" },
+              {
+                "control": "key",
+                "index": 10,
+                "action": "return-to-work",
+                "parameters": { "mode": { "type": "choice", "value": "timer" } }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "shape": "keys-dials",
+        "version": 1,
+        "pages": [
+          {
+            "page": "active",
+            "controls": [
+              { "control": "dial", "index": 0, "action": "mic-toggle" },
+              { "control": "key", "index": 4, "action": "return-to-work" }
+            ]
+          }
+        ]
+      }
+    ],
+    "errorCodes": {
+      "calls-not-in-call": "There is no call this action applies to.",
+      "calls-unsupported": "The call app does not allow this.",
+      "calls-unconfirmed": "The call app did not confirm it.",
+      "calls-provider-offline": "The call app is not connected.",
+      "calls-consent": "Controlling calls is not allowed for this plugin."
+    }
+  }
+}

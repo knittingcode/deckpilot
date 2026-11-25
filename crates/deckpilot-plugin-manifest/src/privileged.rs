@@ -1,7 +1,9 @@
 //! The privileged kinds of plugin API 1.9 (`docs/marketplace/module-migration.md`
 //! §7, X1 to X13): `tools`, `resources`, `projectContext` and `hostViews`,
 //! `openUrl.fromParams`, `resource` parameters, the view kinds `workflows`
-//! and `projects`, `contributes.statusItems` and `contributes.dashboardCards`.
+//! and `projects`, `contributes.statusItems` and `contributes.dashboardCards`;
+//! and those of plugin API 1.16 (`calls_rules.rs`): `calls`,
+//! `contributes.callOverlay` and `contributes.layoutTemplates`.
 //!
 //! [`check`] applies to every manifest: the shapes, the tool policy, the
 //! `^1.9` requirement and the cross-field rules. [`first_party_only`] is the
@@ -28,6 +30,7 @@ pub const OPTIONAL_PERMISSIONS: &[&str] = &[
     "resources:paths",
     "projectContext:select",
     "openUrl:from-params",
+    "calls:control",
 ];
 
 impl crate::Action {
@@ -77,6 +80,7 @@ fn declares_sub_grant(m: &Manifest, key: &str) -> bool {
                 *select == Some(true)
             }
             ("openUrl:from-params", _) => permission.opens_from_params(),
+            ("calls:control", _) => permission.calls_control(),
             _ => false,
         })
 }
@@ -328,6 +332,13 @@ pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
             "`dashboardCards`".into(),
         ));
     }
+    // Plugin API 1.16 (the `calls` permission is listed above, a privileged
+    // kind).
+    found.extend(
+        super::calls_rules::usages(m)
+            .into_iter()
+            .filter(|(path, _)| path.starts_with("contributes.")),
+    );
     found
 }
 

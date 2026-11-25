@@ -213,6 +213,33 @@ fn handle(ctx: &mut Context, action: &str, params: &Params) -> ActionOutcome {
             raw(raw_call(&big))
         }
         "raw_request" => raw(raw_call(string(params, "json").as_bytes())),
+        // The Scripts bridge's call budget and deadline (plugin API 1.13):
+        // sends `json` `n` times (0: until the host stops it), spinning
+        // `spin` iterations before each call.
+        "raw_loop" => {
+            let json = string(params, "json").as_bytes().to_vec();
+            let (n, spin) = (int(params, "n"), int(params, "spin"));
+            let (mut ok, mut err, mut i) = (0i64, 0i64, 0i64);
+            let mut last = String::new();
+            while n == 0 || i < n {
+                for j in 0..spin {
+                    black_box(j);
+                }
+                last = raw_call(&json);
+                if last.starts_with("{\"ok\"") {
+                    ok += 1;
+                } else {
+                    err += 1;
+                }
+                i += 1;
+            }
+            last.truncate(1024);
+            ActionOutcome::ok_with(Params::from([
+                ("ok".into(), ParamValue::Integer(ok)),
+                ("err".into(), ParamValue::Integer(err)),
+                ("last".into(), ParamValue::String(last)),
+            ]))
+        }
         // --- misbehaviour: results ---
         "big_output" => ActionOutcome::Ok {
             message: None,

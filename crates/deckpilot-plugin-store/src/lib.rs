@@ -121,9 +121,10 @@ pub use db::{
 pub use error::{Result, StoreError};
 pub use failpoint::{CrashOnce, Failpoint, Failpoints, NoFailpoints, Operation};
 pub use grants::{
-    Broadened, Consent, DeclaredGrant, GrantKey, GrantScope, GrantSet, GrantSource, GrantStatus,
-    OPEN_URL_CONNECTIONS_KEY, PRIVATE_NETWORK_KEY, PermissionDiff, StoredGrant, Tier, host_covers,
-    missing_grants, missing_optional_grants, privileged_constructs, variable_covers,
+    Broadened, CALLS_CONTROL_KEY, Consent, DeclaredGrant, GrantKey, GrantScope, GrantSet,
+    GrantSource, GrantStatus, OPEN_URL_CONNECTIONS_KEY, PRIVATE_NETWORK_KEY, PermissionDiff,
+    StoredGrant, Tier, host_covers, missing_grants, missing_optional_grants, privileged_constructs,
+    variable_covers,
 };
 pub use layout::{DATABASE_FILE, Layout, PLUGINS_DIR};
 pub use manager::{
