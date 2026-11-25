@@ -176,7 +176,7 @@ pub(crate) mod support {
             let mut roots = vec![self.home.clone()];
             #[cfg(unix)]
             roots.extend(["/", "/usr", "/etc", "/var", "/tmp"].map(PathBuf::from));
-            Arc::new(Protected::with_roots(roots))
+            Arc::new(Protected::with_roots(roots).with_private([self.root.join("appdata")]))
         }
 
         pub fn executor(&self, run: RunContext) -> Executor {

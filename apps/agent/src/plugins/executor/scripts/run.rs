@@ -120,6 +120,7 @@ pub(super) fn load(
     }
     call.alive()?;
     let stored = call.run.host.load(call.script)?;
+    let project = call.run.host.project(None)?.map(|p| p.id);
     let mut settings = stored.settings;
     settings.timeout_ms = settings
         .timeout_ms
@@ -128,6 +129,7 @@ pub(super) fn load(
         let mut state = call.run.state();
         state.deadline = Some(call.run.started + Duration::from_millis(settings.timeout_ms));
         state.loaded = Some(stored.clone());
+        state.project = project;
     }
     to_value(&ScriptLoaded {
         source: stored.source,

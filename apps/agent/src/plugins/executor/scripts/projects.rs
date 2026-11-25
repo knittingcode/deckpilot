@@ -43,7 +43,10 @@ pub(super) fn repositories(
 ) -> Result<Value, ScriptFault> {
     granted(call)?;
     let paths = call.grants.repositories_paths;
-    let project = call.run.host.project(request.project.as_deref())?;
+    let project = match request.project.as_deref() {
+        Some(id) => call.run.host.project(Some(id))?,
+        None => call.project()?,
+    };
     let Some(project) = project else {
         return to_value(&ProjectRepositoriesReply {
             project: None,

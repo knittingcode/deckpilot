@@ -899,7 +899,8 @@ fn scripts_fs_chunked_writes_are_bounded_and_end_with_the_run() {
 
 #[test]
 fn scripts_fs_copy_and_move_with_overwrite_rules() {
-    let f = setup(FsAccess::Write);
+    // Replacing a folder needs delete access.
+    let f = setup(FsAccess::Delete);
     tree(&f, "w/cms/src");
     let mut e = f.loaded();
     let copy = |overwrite: bool| {
@@ -1031,4 +1032,213 @@ fn scripts_fs_list_and_stat() {
         ok(&call(&mut e, &op("fs.exists", json!({"path": rp("nope")}))))["exists"],
         false
     );
+}
+
+// --- the security review of #469 ------------------------------------------
+
+#[test]
+fn scripts_fs_private_folders_are_never_read_or_written() {
+    let f = Fixture::new();
+    let data = f.path("appdata");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("agent.token"), "secret").unwrap();
+    f.grant(grants(vec![FsScope {
+        root: FsRoot::Directory {
+            path: f.root.clone(),
+            label: "tmp".into(),
+        },
+        access: FsAccess::Delete,
+        root_destructive: false,
+    }]));
+    let mut e = f.loaded();
+    let token = json!({"path": data.join("agent.token").to_string_lossy()});
+    let r = call(
+        &mut e,
+        &op("fs.readFile", json!({"path": token, "encoding": "utf8"})),
+    );
+    assert_eq!(code(&r), "protectedPath");
+    let r = call(
+        &mut e,
+        &op(
+            "fs.writeFile",
+            json!({"path": {"path": data.join("x").to_string_lossy()}, "content": "x", "encoding": "utf8", "createOnly": false}),
+        ),
+    );
+    assert_eq!(code(&r), "protectedPath");
+    let r = call(
+        &mut e,
+        &op("fs.list", json!({"path": {"path": data.to_string_lossy()}})),
+    );
+    assert_eq!(code(&r), "protectedPath");
+    #[cfg(unix)]
+    {
+        // Nor through a link inside the scope.
+        std::os::unix::fs::symlink("appdata", f.path("alias")).unwrap();
+        let r = call(
+            &mut e,
+            &op(
+                "fs.readFile",
+                json!({"path": {"path": f.path("alias/agent.token").to_string_lossy()}, "encoding": "utf8"}),
+            ),
+        );
+        assert_eq!(code(&r), "protectedPath");
+    }
+}
+
+#[test]
+fn scripts_fs_ask_refuses_every_removal_in_a_run_nobody_started() {
+    let f = setup(FsAccess::Delete);
+    f.grant(ScriptGrants {
+        destructive: Destructive::Ask,
+        ..grants(vec![repo_grant("cms", FsAccess::Delete, false)])
+    });
+    std::fs::write(f.path("w/cms/one.txt"), "1").unwrap();
+    let schedule = deckpilot_plugin_abi::capability::RunContext::workflow(
+        deckpilot_plugin_abi::capability::RunCause::Schedule,
+        None,
+    );
+    let mut e = f.loaded_in(schedule);
+    let r = call(
+        &mut e,
+        &op(
+            "fs.remove",
+            json!({"path": rp("one.txt"), "recursive": false, "dryRun": false}),
+        ),
+    );
+    assert_eq!(code(&r), "notUserInitiated");
+    assert!(exists(&f.path("w/cms/one.txt")));
+    // A dry run still works.
+    ok(&call(
+        &mut e,
+        &op(
+            "fs.remove",
+            json!({"path": rp("one.txt"), "recursive": false, "dryRun": true}),
+        ),
+    ));
+}
+
+#[test]
+fn scripts_fs_a_token_is_bound_to_the_entries_not_their_count() {
+    let f = setup(FsAccess::Delete);
+    f.grant(ScriptGrants {
+        destructive: Destructive::Ask,
+        ..grants(vec![repo_grant("cms", FsAccess::Delete, false)])
+    });
+    std::fs::create_dir_all(f.path("w/cms/build")).unwrap();
+    std::fs::write(f.path("w/cms/build/a.txt"), "aaaa").unwrap();
+    let mut e = f.loaded();
+    let remove = |t: Option<&str>| {
+        let mut args = json!({"path": rp("build"), "recursive": true, "dryRun": false});
+        if let Some(t) = t {
+            args["confirmation"] = json!(t);
+        }
+        op("fs.remove", args)
+    };
+    let t = token(&call(&mut e, &remove(None)));
+    Fixture::answer(&e, true);
+    ok(&call(&mut e, &op("script.confirm", json!({"token": t}))));
+    // Another file of the same size in its place.
+    std::fs::remove_file(f.path("w/cms/build/a.txt")).unwrap();
+    std::fs::write(f.path("w/cms/build/b.txt"), "bbbb").unwrap();
+    let r = call(&mut e, &remove(Some(&t)));
+    assert_eq!(code(&r), "needsConfirmation");
+    assert!(exists(&f.path("w/cms/build/b.txt")));
+}
+
+#[test]
+fn scripts_fs_keep_never_spares_a_nested_git() {
+    let f = setup(FsAccess::Delete);
+    std::fs::create_dir_all(f.path("w/cms/vendor/lib/.git")).unwrap();
+    std::fs::write(f.path("w/cms/vendor/lib/work.txt"), "uncommitted").unwrap();
+    let mut e = f.loaded();
+    let r = call(
+        &mut e,
+        &op(
+            "fs.removeContents",
+            json!({"path": rp("vendor/lib"), "dryRun": false, "keep": [".git"]}),
+        ),
+    );
+    assert_eq!(code(&r), "protectedPath");
+    assert!(exists(&f.path("w/cms/vendor/lib/work.txt")));
+}
+
+#[test]
+fn scripts_fs_replacing_a_folder_needs_delete() {
+    let f = setup(FsAccess::Write);
+    tree(&f, "w/cms/src");
+    tree(&f, "w/cms/dst");
+    let mut e = f.loaded();
+    let r = call(
+        &mut e,
+        &op(
+            "fs.copy",
+            json!({"src": rp("src"), "dst": rp("dst"), "recursive": true, "overwrite": true}),
+        ),
+    );
+    assert_eq!(code(&r), "notGranted");
+    assert!(exists(&f.path("w/cms/dst/a/b/z.txt")));
+}
+
+#[cfg(unix)]
+#[test]
+fn scripts_fs_copy_never_plants_a_link_that_leads_out() {
+    let f = setup(FsAccess::Write);
+    std::fs::create_dir_all(f.path("w/cms/src/bin")).unwrap();
+    std::os::unix::fs::symlink("../pkg/tool", f.path("w/cms/src/bin/tool")).unwrap();
+    std::os::unix::fs::symlink("/etc/passwd", f.path("w/cms/src/abs")).unwrap();
+    std::fs::create_dir_all(f.path("w/cms/deep")).unwrap();
+    let mut e = f.loaded();
+    // A relative link that stays inside, from its new place too.
+    ok(&call(
+        &mut e,
+        &op(
+            "fs.copy",
+            json!({"src": rp("src/bin"), "dst": rp("deep/bin"), "recursive": true, "overwrite": false}),
+        ),
+    ));
+    assert!(
+        f.path("w/cms/deep/bin/tool")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    // The same link copied to the root would lead above it.
+    let r = call(
+        &mut e,
+        &op(
+            "fs.copy",
+            json!({"src": rp("src/bin/tool"), "dst": rp("tool"), "recursive": false, "overwrite": false}),
+        ),
+    );
+    assert_eq!(code(&r), "symlinkEscape");
+    let r = call(
+        &mut e,
+        &op(
+            "fs.copy",
+            json!({"src": rp("src/abs"), "dst": rp("abs"), "recursive": false, "overwrite": false}),
+        ),
+    );
+    assert_eq!(code(&r), "symlinkEscape");
+    assert!(!exists(&f.path("w/cms/tool")) && !exists(&f.path("w/cms/abs")));
+}
+
+#[test]
+fn scripts_fs_the_run_keeps_the_project_it_started_with() {
+    let f = setup(FsAccess::Read);
+    std::fs::write(f.path("w/cms/a.txt"), "a").unwrap();
+    let mut e = f.loaded();
+    // The active project changes to one with another `cms`.
+    f.project(&[("cms", "w/other")]);
+    f.host.project.lock().unwrap().as_mut().unwrap().id = "p2".into();
+    let r = call(
+        &mut e,
+        &op(
+            "fs.readFile",
+            json!({"path": rp("a.txt"), "encoding": "utf8"}),
+        ),
+    );
+    // The pinned project is gone from the store: its repository with it,
+    // and never the new project's `cms`.
+    assert_eq!(code(&r), "notFound");
 }

@@ -4,8 +4,13 @@
 //!
 //! * **Reads** (`exists`, `stat`, `list`, `readFile`) may pass through a
 //!   relative link that stays inside the scope; `cap-std` refuses one that
-//!   leads out of it, and every absolute link (`symlinkEscape`). `stat`
-//!   and `list` never follow the final name.
+//!   leads out of it, and every absolute link (`symlinkEscape`). `exists`
+//!   and `stat` never follow the final name; `list` lists the folder a
+//!   relative link inside the scope leads to, and names entries without
+//!   following them.
+//! * **Private** folders of DeckPilot (its data, IPC token, logs,
+//!   configuration, caches, the app) are never read or changed, also
+//!   through a link ([`protected::Protected::forbids`]).
 //! * **Changes** (`mkdir`, `writeFile`, `fs.write.*`, `copy`, `move`,
 //!   `remove`, `removeContents`) never pass through a link at all: each
 //!   folder of the path is opened without following it, so the place
@@ -59,10 +64,12 @@ pub(crate) const MAX_LIST: usize = 10_000;
 pub(crate) const MAX_REMOVE: u64 = 100_000;
 /// Bytes `fs.copy` copies per run at most.
 pub(crate) const MAX_COPY_BYTES: u64 = 1 << 30;
+/// Room the entries of one `fs.list` reply may take.
+const LIST_REPLY_ROOM: usize = 900 << 10;
 /// Chunked writes one run may have open.
 pub(crate) const MAX_OPEN_WRITES: usize = 4;
 /// Folder depth of a tree the agent walks.
-const MAX_DEPTH: usize = 128;
+const MAX_DEPTH: usize = 48;
 /// Room the JSON of a read reply may take (the 1 MiB reply cap, less the
 /// envelope).
 const READ_REPLY_ROOM: usize = (1 << 20) - 4096;
@@ -93,7 +100,7 @@ fn modified_ms(meta: &cap_std::fs::Metadata) -> u64 {
 
 /// The run's project, as the scopes need it.
 fn project(call: &Call<'_>) -> Result<Option<RunProject>, ScriptFault> {
-    call.run.host.project(None)
+    call.project()
 }
 
 /// The fs operations.
@@ -190,6 +197,10 @@ struct Plan {
     directories: u64,
     bytes: u64,
     sample: Vec<String>,
+    /// One hash per entry (its path, kind, size, file id and time): the
+    /// confirmation is bound to exactly these entries, not only to their
+    /// counts (security review of #469, M3).
+    entries: Vec<[u8; 32]>,
 }
 
 impl Plan {
@@ -197,7 +208,20 @@ impl Plan {
         self.files + self.directories
     }
 
-    fn count(&mut self, path: String, dir: bool, bytes: u64) -> Result<(), ScriptFault> {
+    fn count(
+        &mut self,
+        path: String,
+        dir: bool,
+        bytes: u64,
+        identity: (u64, u64),
+    ) -> Result<(), ScriptFault> {
+        let mut hash = Sha256::new();
+        hash.update(path.as_bytes());
+        hash.update([0, u8::from(dir)]);
+        hash.update(bytes.to_le_bytes());
+        hash.update(identity.0.to_le_bytes());
+        hash.update(identity.1.to_le_bytes());
+        self.entries.push(hash.finalize().into());
         if dir {
             self.directories += 1;
         } else {
@@ -216,6 +240,17 @@ impl Plan {
         Ok(())
     }
 
+    /// What the confirmation is bound to: every entry, in a fixed order.
+    fn fingerprint(&self) -> [u8; 32] {
+        let mut entries = self.entries.clone();
+        entries.sort_unstable();
+        let mut hash = Sha256::new();
+        for e in &entries {
+            hash.update(e);
+        }
+        hash.finalize().into()
+    }
+
     fn removal(self, root: String, dry_run: bool, removed: bool) -> RemovalPlan {
         RemovalPlan {
             dry_run,
@@ -229,16 +264,28 @@ impl Plan {
     }
 }
 
+/// An entry's file id and modification time, as far as the system says.
+fn identity(meta: &cap_std::fs::Metadata) -> (u64, u64) {
+    #[cfg(unix)]
+    let id = cap_fs_ext::MetadataExt::ino(meta);
+    #[cfg(not(unix))]
+    let id = 0;
+    (id, modified_ms(meta))
+}
+
 fn name_of(name: &OsString) -> String {
     name.to_string_lossy().into_owned()
 }
 
 /// Walks the entries of `dir` (but `keep`), never following a link:
-/// counts them, and refuses a tree that holds a `.git` folder.
+/// counts them, and refuses a tree that holds a `.git` folder. `keep` may
+/// spare a `.git` only where `keep_git` says so (emptying a repository's
+/// own root with `rootDestructive`).
 fn plan_dir(
     dir: &Dir,
     prefix: &str,
     keep: &[String],
+    keep_git: bool,
     plan: &mut Plan,
     depth: usize,
 ) -> Result<(), ScriptFault> {
@@ -249,7 +296,7 @@ fn plan_dir(
     for entry in entries {
         let entry = entry.map_err(|e| failure(&e, prefix))?;
         let name = name_of(&entry.file_name());
-        if keep.contains(&name) {
+        if keep.contains(&name) && (keep_git || !is_git(&name)) {
             continue;
         }
         let path = if prefix.is_empty() {
@@ -264,15 +311,15 @@ fn plan_dir(
             ));
         }
         let ft = entry.file_type().map_err(|e| failure(&e, &path))?;
+        let meta = entry.metadata().map_err(|e| failure(&e, &path))?;
         if ft.is_dir() && !ft.is_symlink() {
-            plan.count(path.clone(), true, 0)?;
+            plan.count(path.clone(), true, 0, identity(&meta))?;
             let sub = dir
                 .open_dir_nofollow(entry.file_name())
                 .map_err(|e| failure(&e, &path))?;
-            plan_dir(&sub, &path, &[], plan, depth + 1)?;
+            plan_dir(&sub, &path, &[], false, plan, depth + 1)?;
         } else {
-            let bytes = entry.metadata().map_or(0, |m| m.len());
-            plan.count(path, false, bytes)?;
+            plan.count(path, false, meta.len(), identity(&meta))?;
         }
     }
     Ok(())
@@ -283,6 +330,7 @@ fn plan_dir(
 fn empty_dir(
     dir: &Dir,
     keep: &[String],
+    keep_git: bool,
     budget: &mut u64,
     depth: usize,
 ) -> Result<(), ScriptFault> {
@@ -300,7 +348,7 @@ fn empty_dir(
         let entry = entry.map_err(|e| failure(&e, "a folder"))?;
         let name = entry.file_name();
         let shown = name_of(&name);
-        if keep.contains(&shown) {
+        if keep.contains(&shown) && (keep_git || !is_git(&shown)) {
             continue;
         }
         if is_git(&shown) {
@@ -315,7 +363,7 @@ fn empty_dir(
             let sub = dir
                 .open_dir_nofollow(&name)
                 .map_err(|e| failure(&e, &shown))?;
-            empty_dir(&sub, &[], budget, depth + 1)?;
+            empty_dir(&sub, &[], false, budget, depth + 1)?;
             dir.remove_dir(&name).map_err(|e| failure(&e, &shown))?;
         } else {
             dir.remove_file_or_symlink(&name)
@@ -336,11 +384,12 @@ fn plan_entry(parent: &Dir, name: &str, shown: &str) -> Result<(Plan, bool), Scr
         let dir = parent
             .open_dir_nofollow(name)
             .map_err(|e| failure(&e, shown))?;
-        plan_dir(&dir, "", &[], &mut plan, 0)?;
-        plan.directories += 1;
+        plan_dir(&dir, "", &[], false, &mut plan, 0)?;
+        plan.count(String::new(), true, 0, identity(&meta))?;
+        plan.sample.retain(|s| !s.is_empty());
         Ok((plan, true))
     } else {
-        plan.count(name.to_owned(), false, meta.len())?;
+        plan.count(name.to_owned(), false, meta.len(), identity(&meta))?;
         Ok((plan, false))
     }
 }
@@ -351,7 +400,7 @@ fn remove_entry(parent: &Dir, name: &str, dir: bool, mut budget: u64) -> Result<
         let sub = parent
             .open_dir_nofollow(name)
             .map_err(|e| failure(&e, name))?;
-        empty_dir(&sub, &[], &mut budget, 0)?;
+        empty_dir(&sub, &[], false, &mut budget, 0)?;
         parent.remove_dir(name).map_err(|e| failure(&e, name))
     } else {
         parent
@@ -383,7 +432,13 @@ impl Fs<'_> {
         need: FsAccess,
         notes: &mut Notes,
     ) -> Result<Target, ScriptFault> {
-        let target = resolve(path, &self.call.grants, self.project, need)?;
+        let target = resolve(
+            path,
+            &self.call.grants,
+            self.project,
+            need,
+            &self.call.run.protected,
+        )?;
         notes.add("scope", target.scope.label.clone());
         Ok(target)
     }
@@ -445,24 +500,23 @@ impl Fs<'_> {
         &self,
         op: &'static str,
         digest: [u8; 32],
-        plan: &RemovalPlan,
+        plan: &Plan,
+        removal: &RemovalPlan,
         token: Option<&str>,
         action: &'static str,
     ) -> Result<(), ScriptFault> {
         if self.call.grants.destructive == Destructive::Allow {
             return Ok(());
         }
-        if !self.call.user_initiated {
-            return Err(fault(
-                codes::NOT_USER_INITIATED,
-                "this removes or replaces files: only in runs you start, or with destructive: allow",
-            ));
-        }
+        self.unattended()?;
+        let fingerprint = plan.fingerprint();
         let mut state = self.call.run.state();
         if let Some(token) = token {
-            let confirmed = state.tokens.take(token, op, &digest)?;
-            if grew(&confirmed, plan) {
-                let token = state.tokens.issue(op, digest, plan.clone(), action)?;
+            let (confirmed, bound) = state.tokens.take(token, op, &digest)?;
+            if grew(&confirmed, removal) || bound != fingerprint {
+                let token = state
+                    .tokens
+                    .issue(op, digest, removal.clone(), fingerprint, action)?;
                 return Err(needs_confirmation(
                     token,
                     "the files changed since the confirmation; confirm again",
@@ -470,14 +524,29 @@ impl Fs<'_> {
             }
             return Ok(());
         }
-        let token = state.tokens.issue(op, digest, plan.clone(), action)?;
+        let token = state
+            .tokens
+            .issue(op, digest, removal.clone(), fingerprint, action)?;
         Err(needs_confirmation(
             token,
             format!(
                 "{action} {} files and {} folders: confirm first",
-                plan.files, plan.directories
+                removal.files, removal.directories
             ),
         ))
+    }
+
+    /// With `destructive: "ask"`, nothing is removed or replaced in a run
+    /// nobody started, not even one file (OD-9; security review of #469,
+    /// M2).
+    fn unattended(&self) -> Result<(), ScriptFault> {
+        if self.call.grants.destructive == Destructive::Ask && !self.call.user_initiated {
+            return Err(fault(
+                codes::NOT_USER_INITIATED,
+                "this removes or replaces files: only in runs you start, or with destructive: allow",
+            ));
+        }
+        Ok(())
     }
 
     fn exists(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
@@ -518,19 +587,20 @@ impl Fs<'_> {
         }
         .map_err(|e| failure(&e, &t.shown()))?;
         let mut entries = Vec::new();
+        let mut bytes = 0usize;
         for entry in dir.entries().map_err(|e| failure(&e, &t.shown()))? {
             let entry = entry.map_err(|e| failure(&e, &t.shown()))?;
-            if entries.len() == MAX_LIST {
+            // The reply stays within its cap, however long the names.
+            if entries.len() == MAX_LIST || bytes > LIST_REPLY_ROOM {
                 return Err(fault(
                     codes::LIMIT,
                     format!("“{}” holds more than {MAX_LIST} entries", t.shown()),
                 ));
             }
             let kind = entry.file_type().map_or(EntryKind::Other, kind_of);
-            entries.push(FsEntry {
-                name: name_of(&entry.file_name()),
-                kind,
-            });
+            let name = name_of(&entry.file_name());
+            bytes += name.len() + 32;
+            entries.push(FsEntry { name, kind });
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         notes.add("entries", entries.len().to_string());
@@ -585,16 +655,7 @@ impl Fs<'_> {
         let shown = t.shown();
         let mut options = OpenOptions::new();
         options.read(true);
-        #[cfg(unix)]
-        {
-            // A FIFO or a device never blocks the run when it is opened.
-            use cap_std::fs::OpenOptionsExt as _;
-            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
-            const O_NONBLOCK: i32 = 0x0004;
-            #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
-            const O_NONBLOCK: i32 = 0o4000;
-            options.custom_flags(O_NONBLOCK);
-        }
+        nonblocking(&mut options);
         let mut file = t
             .root
             .open_with(t.rel_path(), &options)
@@ -828,10 +889,13 @@ impl Fs<'_> {
             self.confirm(
                 "fs.remove",
                 d,
+                &plan,
                 &removal,
                 r.confirmation.as_deref(),
                 "Delete",
             )?;
+        } else {
+            self.unattended()?;
         }
         remove_entry(&parent, &name, dir, plan.entries())?;
         to_value(&plan.removal(t.shown(), false, true))
@@ -853,8 +917,10 @@ impl Fs<'_> {
         let mut keep = r.keep.clone();
         keep.sort();
         keep.dedup();
+        // `keep` spares a `.git` only at a repository's own root.
+        let keep_git = t.rel.is_empty() && t.scope.repository;
         let mut plan = Plan::default();
-        plan_dir(&dir, "", &keep, &mut plan, 0)?;
+        plan_dir(&dir, "", &keep, keep_git, &mut plan, 0)?;
         notes.add("files", plan.files.to_string());
         notes.add("directories", plan.directories.to_string());
         let removal = plan.clone().removal(t.shown(), r.dry_run, false);
@@ -865,12 +931,13 @@ impl Fs<'_> {
         self.confirm(
             "fs.removeContents",
             d,
+            &plan,
             &removal,
             r.confirmation.as_deref(),
             "Delete",
         )?;
         let mut budget = plan.entries();
-        empty_dir(&dir, &keep, &mut budget, 0)?;
+        empty_dir(&dir, &keep, keep_git, &mut budget, 0)?;
         to_value(&plan.removal(t.shown(), false, true))
     }
 
@@ -923,9 +990,19 @@ impl Fs<'_> {
             });
         }
         self.may_destroy(d, false)?;
+        // Replacing a folder that is not empty removes what it holds.
+        if existing.1 && existing.0.entries() > 1 && d.scope.access < FsAccess::Delete {
+            return Err(fault(
+                codes::NOT_GRANTED,
+                format!(
+                    "replacing the folder “{}” deletes what it holds; that needs delete access",
+                    d.shown()
+                ),
+            ));
+        }
         let removal = existing.0.clone().removal(d.shown(), false, false);
         let dg = digest(op, &[&key_of(s), &key_of(d), "overwrite"]);
-        self.confirm(op, dg, &removal, token, "Overwrite")
+        self.confirm(op, dg, &existing.0, &removal, token, "Overwrite")
     }
 
     fn copy(&self, c: &FsCopy, notes: &mut Notes) -> Result<Value, ScriptFault> {
@@ -946,7 +1023,7 @@ impl Fs<'_> {
             let dir = sp
                 .open_dir_nofollow(&sn)
                 .map_err(|e| failure(&e, &s.shown()))?;
-            plan_dir(&dir, "", &[], &mut plan, 0)?;
+            plan_dir(&dir, "", &[], false, &mut plan, 0)?;
         } else {
             plan.bytes = meta.len();
         }
@@ -966,7 +1043,9 @@ impl Fs<'_> {
             remove_entry(&dp, &dn, existing.1, existing.0.entries())?;
         }
         let mut copied = 0u64;
-        let result = copy_entry(&sp, &sn, &dp, &dn, &mut copied, budget, 0);
+        let mut at: Vec<String> = d.rel.clone();
+        at.pop();
+        let result = copy_entry(&sp, &sn, &dp, &dn, &at, &mut copied, budget, 0);
         self.call.run.state().copied += copied;
         notes.add("bytes", copied.to_string());
         result.map(|()| json!({}))
@@ -1015,13 +1094,67 @@ type Pair = (
     Option<(Plan, bool)>,
 );
 
+/// Whether a link `target`, placed in the folder `at` (names below the
+/// scope's root), leads to a place inside the scope: relative, and never
+/// above the root.
+fn link_stays_inside(at: &[String], target: &std::path::Path) -> bool {
+    use std::path::Component;
+    let mut depth = at.len();
+    for component in target.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                None => return false,
+            },
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    true
+}
+
+/// Opens without blocking: a FIFO or a device never blocks the run.
+fn nonblocking(options: &mut OpenOptions) {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        ))]
+        const O_NONBLOCK: i32 = 0x0004;
+        #[cfg(all(target_os = "linux", any(target_arch = "mips", target_arch = "mips64")))]
+        const O_NONBLOCK: i32 = 0o200;
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly",
+            all(target_os = "linux", any(target_arch = "mips", target_arch = "mips64"))
+        )))]
+        const O_NONBLOCK: i32 = 0o4000;
+        options.custom_flags(O_NONBLOCK);
+    }
+    #[cfg(not(unix))]
+    let _ = options;
+}
+
 /// Copies `name` of `src` to `to` in `dst`, never following a link (a link
 /// is copied as a link on Unix), at most `budget` bytes.
+#[expect(clippy::too_many_arguments, reason = "one step of a recursive copy")]
 fn copy_entry(
     src: &Dir,
     name: &str,
     dst: &Dir,
     to: &str,
+    at: &[String],
     copied: &mut u64,
     budget: u64,
     depth: usize,
@@ -1043,6 +1176,16 @@ fn copy_entry(
             let target = src
                 .read_link_contents(name)
                 .map_err(|e| failure(&e, name))?;
+            // Only a relative link that still leads inside the target's
+            // scope from its new place (security review of #469, M1).
+            if !link_stays_inside(at, &target) {
+                return Err(fault(
+                    codes::SYMLINK_ESCAPE,
+                    format!(
+                        "“{name}” is a link that would lead outside its scope; it is not copied"
+                    ),
+                ));
+            }
             return dst
                 .symlink_contents(target, to)
                 .map_err(|e| failure(&e, to));
@@ -1057,10 +1200,21 @@ fn copy_entry(
         dst.create_dir(to).map_err(|e| failure(&e, to))?;
         let from = src.open_dir_nofollow(name).map_err(|e| failure(&e, name))?;
         let into = dst.open_dir_nofollow(to).map_err(|e| failure(&e, to))?;
+        let mut inside = at.to_vec();
+        inside.push(to.to_owned());
         for entry in from.entries().map_err(|e| failure(&e, name))? {
             let entry = entry.map_err(|e| failure(&e, name))?;
             let child = name_of(&entry.file_name());
-            copy_entry(&from, &child, &into, &child, copied, budget, depth + 1)?;
+            copy_entry(
+                &from,
+                &child,
+                &into,
+                &child,
+                &inside,
+                copied,
+                budget,
+                depth + 1,
+            )?;
         }
         return Ok(());
     }
@@ -1072,9 +1226,17 @@ fn copy_entry(
     }
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
+    nonblocking(&mut options);
     let mut input = src
         .open_with(name, &options)
         .map_err(|e| failure(&e, name))?;
+    // A FIFO swapped in since the check is never read.
+    if !input.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(fault(
+            codes::INVALID_ARGUMENT,
+            format!("“{name}” is not a file"),
+        ));
+    }
     let mut options = OpenOptions::new();
     options
         .write(true)
@@ -1201,7 +1363,13 @@ impl Pending {
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     Err(fault(codes::EXISTS, format!("“{}” exists", self.name)))
                 }
-                Err(e) => Err(failure(&e, &self.name)),
+                // A volume without hard links (FAT, some shares): checked,
+                // then renamed (a file made in between is replaced).
+                Err(_) if self.parent.symlink_metadata(&self.name).is_err() => self
+                    .parent
+                    .rename(&self.temp, &self.parent, &self.name)
+                    .map_err(|e| failure(&e, &self.name)),
+                Err(_) => Err(fault(codes::EXISTS, format!("“{}” exists", self.name))),
             }
         } else {
             self.parent
