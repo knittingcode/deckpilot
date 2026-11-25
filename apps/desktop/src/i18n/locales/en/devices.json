@@ -288,6 +288,14 @@
       "allDevices": "All devices",
       "allDevicesDescription": "Every device that shows the call goes back to work, not only the one pressed.",
       "failed": "The Back to work settings could not be saved"
+    },
+    "refusals": {
+      "previewInCall": "a call shows on the device, and a call always comes first",
+      "previewDesktopOnly": "only the configuration app can show a page on the device",
+      "unknownDevice": "the device is not connected",
+      "noLayout": "this device model has no Calls layout",
+      "notInstalled": "Calls is not installed",
+      "noBackToWork": "this Calls layout has no Back to work key"
     }
   }
 }

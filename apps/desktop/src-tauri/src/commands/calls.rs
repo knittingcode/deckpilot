@@ -97,30 +97,62 @@ pub async fn restore_calls_layout(
 /// on lock, on a real call and on the device's disconnect.
 #[derive(Debug, Default)]
 pub struct CallsPreview {
-    /// Ends the running preview: its task sends `endCallsPreview` and then
-    /// closes the connection.
-    running: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    inner: std::sync::Mutex<Holder>,
+}
+
+/// The running preview: which begin is the latest (`generation`, bumped
+/// by every begin and every stop), and how to end the one that runs.
+#[derive(Debug, Default)]
+struct Holder {
+    generation: u64,
+    end: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl CallsPreview {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<tokio::sync::oneshot::Sender<()>>> {
-        self.running
+    fn lock(&self) -> std::sync::MutexGuard<'_, Holder> {
+        self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Ends the running preview, if any: `endCallsPreview`, then its
-    /// connection closes (which ends it on the agent too, should the
-    /// request not get through, e.g. as the app quits).
+    /// Ends the running preview, if any (`endCallsPreview`, then its
+    /// connection closes, which ends it on the agent too should the request
+    /// not get through, e.g. as the app quits), and makes any begin still
+    /// waiting for the agent stale.
     pub fn stop(&self) {
-        if let Some(end) = self.lock().take() {
+        let mut holder = self.lock();
+        holder.generation += 1;
+        if let Some(end) = holder.end.take() {
             let _ = end.send(());
+        }
+    }
+
+    /// A begin starts: the running preview ends, and this begin is the
+    /// latest. Returns its ticket.
+    fn begin(&self) -> u64 {
+        self.stop();
+        self.lock().generation
+    }
+
+    /// The agent shows the preview of begin `ticket`: it is kept when that
+    /// begin is still the latest. Otherwise (a stop or another begin came
+    /// meanwhile) `end` is dropped, which ends it at once. Returns whether
+    /// it is kept.
+    fn settle(&self, ticket: u64, end: tokio::sync::oneshot::Sender<()>) -> bool {
+        let mut holder = self.lock();
+        if holder.generation == ticket {
+            holder.end = Some(end);
+            true
+        } else {
+            false
         }
     }
 }
 
 /// Shows `page` of `device`'s Calls layout on the device as the editor
-/// previews it (fixed content, no call). Replaces a running preview.
+/// previews it (fixed content, no call). Replaces a running preview; a
+/// begin overtaken by a stop or another begin while it waited ends its
+/// preview as soon as the agent answers.
 #[tauri::command]
 pub async fn calls_preview_begin(
     state: State<'_, AppState>,
@@ -128,7 +160,7 @@ pub async fn calls_preview_begin(
     device: DeviceId,
     page: deckpilot_ipc::calls::CallsPageKind,
 ) -> CommandResult<()> {
-    preview.stop();
+    let ticket = preview.begin();
     let mut client =
         deckpilot_ipc::AgentClient::connect(&state.paths, deckpilot_ipc::ClientKind::Desktop)
             .await
@@ -144,13 +176,14 @@ pub async fn calls_preview_begin(
         Response::Ok => {}
         other => return Err(unexpected(&other)),
     }
-    // The connection holds the preview until it is ended.
+    // The connection holds the preview until it is ended: by `stop`, by a
+    // later begin, or at once when this begin is already stale.
     let (end, ended) = tokio::sync::oneshot::channel::<()>();
     tauri::async_runtime::spawn(async move {
         let _ = ended.await;
         let _ = client.request(Request::EndCallsPreview { device }).await;
     });
-    *preview.lock() = Some(end);
+    preview.settle(ticket, end);
     Ok(())
 }
 
@@ -158,4 +191,65 @@ pub async fn calls_preview_begin(
 #[tauri::command]
 pub fn calls_preview_end(preview: State<'_, CallsPreview>) {
     preview.stop();
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::CallsPreview;
+
+    fn channel() -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
+        tokio::sync::oneshot::channel()
+    }
+
+    /// Ended: a stop sends the end; nothing is left to end afterwards.
+    #[test]
+    fn a_stop_ends_the_running_preview() {
+        let preview = CallsPreview::default();
+        let ticket = preview.begin();
+        let (end, mut ended) = channel();
+        assert!(preview.settle(ticket, end));
+        preview.stop();
+        assert_eq!(ended.try_recv(), Ok(()));
+        preview.stop();
+    }
+
+    /// A begin still waiting for the agent when the settings close (a stop)
+    /// never keeps its preview: it ends as soon as the agent answers.
+    #[test]
+    fn a_late_begin_after_a_stop_is_ended_at_once() {
+        let preview = CallsPreview::default();
+        let ticket = preview.begin();
+        preview.stop();
+        let (end, mut ended) = channel();
+        assert!(!preview.settle(ticket, end));
+        // The sender was dropped: the task ends the preview.
+        assert!(matches!(
+            ended.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+    }
+
+    /// Replaced: a later begin makes an earlier one stale, and ends the
+    /// preview that ran.
+    #[test]
+    fn a_later_begin_replaces_an_earlier_one() {
+        let preview = CallsPreview::default();
+        let first = preview.begin();
+        let (end, mut first_ended) = channel();
+        assert!(preview.settle(first, end));
+        let second = preview.begin();
+        assert_eq!(first_ended.try_recv(), Ok(()), "the running one ended");
+        // An overtaken begin answering late keeps nothing.
+        let stale = preview.begin();
+        let newest = preview.begin();
+        let (late, mut late_ended) = channel();
+        assert!(!preview.settle(stale, late));
+        assert!(late_ended.try_recv().is_err());
+        let (end, _keep) = channel();
+        assert!(preview.settle(newest, end));
+        assert!(!preview.settle(second, channel().0));
+    }
 }

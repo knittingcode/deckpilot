@@ -298,6 +298,14 @@
       "allDevices": "Wszystkie urządzenia",
       "allDevicesDescription": "Do pracy wraca każde urządzenie, które pokazuje rozmowę, nie tylko naciśnięte.",
       "failed": "Nie udało się zapisać ustawień powrotu do pracy"
+    },
+    "refusals": {
+      "previewInCall": "urządzenie pokazuje rozmowę, a rozmowa ma zawsze pierwszeństwo",
+      "previewDesktopOnly": "stronę na urządzeniu może pokazać tylko aplikacja konfiguracyjna",
+      "unknownDevice": "urządzenie nie jest podłączone",
+      "noLayout": "ten model urządzenia nie ma układu Rozmów",
+      "notInstalled": "Rozmowy nie są zainstalowane",
+      "noBackToWork": "ten układ Rozmów nie ma klawisza Wróć do pracy"
     }
   }
 }

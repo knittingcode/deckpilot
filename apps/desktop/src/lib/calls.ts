@@ -1,3 +1,6 @@
+import { i18n } from "@/i18n"
+import { isBackendError } from "@/lib/backend-error"
+
 // Calls (protocol 19, docs/calls.md): the backend event and helpers of the
 // Calls settings. Rust: deckpilot_ipc::calls, src-tauri commands/calls.rs.
 
@@ -73,3 +76,25 @@ export const CALL_REASONS = {
   "needs-os-permission": "devices:calls.reasons.needsOsPermission",
   "consent-not-given": "devices:calls.reasons.consentNotGiven",
 } as const
+
+/** Why the agent refused a Calls request, by its stable reason. */
+export const CALLS_REFUSALS = {
+  callsPreviewInCall: "devices:calls.refusals.previewInCall",
+  callsPreviewDesktopOnly: "devices:calls.refusals.previewDesktopOnly",
+  callsUnknownDevice: "devices:calls.refusals.unknownDevice",
+  callsNoLayout: "devices:calls.refusals.noLayout",
+  callsNotInstalled: "devices:calls.refusals.notInstalled",
+  callsNoBackToWork: "devices:calls.refusals.noBackToWork",
+} as const
+
+/**
+ * A Calls refusal with its reason in the window's language (the agent's
+ * own message is English): an `Error` of the translated text, or `error`
+ * itself when its reason is not a Calls one.
+ */
+export function callsRefusal(error: unknown): unknown {
+  const reason = isBackendError(error) ? error.params?.reason : undefined
+  const key =
+    typeof reason === "string" ? CALLS_REFUSALS[reason as keyof typeof CALLS_REFUSALS] : undefined
+  return key ? new Error(i18n.t(key)) : error
+}
