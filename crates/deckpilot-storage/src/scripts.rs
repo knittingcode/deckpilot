@@ -228,6 +228,12 @@ impl SqliteStore {
             .collect()
     }
 
+    /// The script's trust record as stored (`None`: it has none), for the
+    /// review: its dormant grants are shown before "Trust this script".
+    pub fn script_trust(&self, profile: ProfileId, id: ScriptId) -> Result<Option<ScriptTrust>> {
+        trust_of(self.connection(), profile, id)
+    }
+
     /// One script of `profile`.
     pub fn script(&self, profile: ProfileId, id: ScriptId) -> Result<Option<Script>> {
         Ok(self

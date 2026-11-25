@@ -5,3 +5,4 @@
 #![allow(clippy::needless_pass_by_value)]
 
 pub mod projects;
+pub mod scripts;
