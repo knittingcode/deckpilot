@@ -378,6 +378,17 @@ awk '/^# Complete or nothing:/ { print "rm -rf \"$bundled/deckpilot.legacy-fixtu
 grep -q '^rm -rf "$bundled/deckpilot.legacy-fixture"$' "$build" || bad "the missing-plugin case could not change the copy of build.sh"
 refused missing-plugin "the bundle is incomplete" \
   --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}"
+awk '/^# Complete or nothing:/ { print ": > \"$bundled/deckpilot.legacy-fixture/plugin.wasm\"" } { print }' \
+  "$work/build.sh.orig" > "$build"
+# shellcheck disable=SC2016 # the literal line the case adds
+grep -q '^: > "$bundled/deckpilot.legacy-fixture/plugin.wasm"$' "$build" || bad "the empty-module case could not change the copy of build.sh"
+refused empty-module "is pinned without its plugin.wasm" \
+  --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}"
+awk '/^# Complete or nothing:/ { print "jq \047.plugins |= .[1:]\047 \"$bundled/pins.json\" > \"$bundled/pins.tmp\" && mv \"$bundled/pins.tmp\" \"$bundled/pins.json\"" } { print }' \
+  "$work/build.sh.orig" > "$build"
+grep -q '^jq .\.plugins |= \.\[1:\]. ' "$build" || bad "the unpinned-plugin case could not change the copy of build.sh"
+refused unpinned-plugin "the bundle is incomplete" \
+  --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}"
 cp "$work/build.sh.orig" "$build"
 run complete-again --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}" \
   || { cat "$work/complete-again.log" >&2; bad "the restored build.sh refused the mixed build"; }

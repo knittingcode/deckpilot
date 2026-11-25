@@ -346,10 +346,11 @@ staged=$(cd "$bundled" && find . -mindepth 1 -maxdepth 1 -type d | sed 's|^\./||
   rm -f "$bundled/pins.json"
   fail "the bundle is incomplete: listed $(tr '\n' ' ' <<< "$want"); pinned $(tr '\n' ' ' <<< "$pinned"); staged $(tr '\n' ' ' <<< "$staged")"
 }
-for id in ${want}; do
+while IFS= read -r id; do
+  [ -n "$id" ] || continue
   [ -s "$bundled/$id/plugin.wasm" ] && [ -s "$bundled/$id/manifest.json" ] \
     || { rm -f "$bundled/pins.json"; fail "$id is pinned without its plugin.wasm and manifest.json"; }
-done
+done <<< "$want"
 echo "wrote $bundled/pins.json ($(jq '.plugins | length' "$bundled/pins.json") plugins)"
 if [ -n "$test_keys" ]; then
   # Verified with throwaway keys: never shippable (check-bundled-plugins.sh
