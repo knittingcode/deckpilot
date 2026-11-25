@@ -71,6 +71,8 @@ import type {
   WorkSessionSettings,
   WorkSessionSnapshot,
   WorkSessionSummary,
+  CallsStatus,
+  DeviceId,
 } from "./types"
 
 export interface ActionInput {
@@ -569,6 +571,15 @@ export const api = {
   /** Validates the workflows against their contracts before it writes. */
   saveWorkSessionSettings: (profileId: string, settings: WorkSessionSettings) =>
     invoke<WorkSessionSettings>("save_work_session_settings", { profileId, settings }),
+
+  // Calls (protocol 19, docs/calls.md). The agent owns Calls; with an agent
+  // below protocol 19 they reject with "callsAgentTooOld".
+  getCallsStatus: () => invoke<CallsStatus>("get_calls_status"),
+  setCallsOverlay: (device: DeviceId, on: boolean) =>
+    invoke<CallsStatus>("set_calls_overlay", { device, on }),
+  /** Keeps the user's version as `copyName` first; answers the copy's id. */
+  restoreCallsLayout: (model: string, copyName: string) =>
+    invoke<string | null>("restore_calls_layout", { model, copyName }),
 }
 
 /** Backend event carrying the latest {@link AgentConnection}. */

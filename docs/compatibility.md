@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 20 | 14 |
+| Current main | see `Cargo.toml` | 20 | 15 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -73,6 +73,26 @@ pre-migration backup: restore it in place of `deckpilot.db`, without its
 backup. Exports with repositories other than the one the role stands for
 are payload version 5, which 0.14.x refuses; other exports keep their
 version.
+
+IPC protocol 19 adds Calls (capability `calls`,
+`docs/calls.md`): `getCallsStatus`, `setCallsOverlay`,
+`restoreCallsLayout` and the `callsChanged` event. Older clients never send
+these requests: they are refused locally and by the agent. Older clients
+receive no `callsChanged` events, and an older agent leaves the app's Calls
+settings hidden. Only desktop clients receive `callsChanged`; that is
+hygiene, since the IPC token is the access boundary. Protocol 18, the
+step before it, is structured variables.
+
+Current main then moves it to schema 15: the managed layouts of the Calls
+plugin (`docs/calls.md`, "Managed layouts"). The migration is additive: one
+new, empty table (`managed_layouts`); no layout is adopted or rewritten and
+no other table changes. It runs after the same encrypted backup
+(`backups/deckpilot-schema14-*.db`, or `-schema13-` when 14 and 15 run in
+one upgrade). **0.15.x and older refuse a schema 15 database** with
+`UnsupportedSchema` (found 15, supported 13), and a build of schema 14 does
+too (supported 14); they change nothing. The way back is the pre-migration
+backup, as above: restore it in place of `deckpilot.db`, without its `-wal`
+and `-shm` files.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins
@@ -572,6 +592,7 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | protocol 13 app or agent with a protocol 14 peer (simulated presses) | IPC test `a_protocol_13_agent_is_never_asked_to_simulate_a_press`; agent test `a_protocol_13_app_cannot_simulate` (`tests/simulate_press.rs`); IPC test `simulated_presses_are_protocol_14`; desktop test `simulated_presses_answer_ran_confirmation_or_refused` | the client does not send `simulatePress` below protocol 14 and refuses it locally (the app answers `refused` with code `unsupported`); the agent refuses it from an older connection; nothing is pressed; everything else works as before |
 | protocol 15 app or agent with a protocol 16 peer (live preview) | IPC test `a_protocol_15_agent_is_never_asked_for_a_live_preview`; agent test `a_protocol_15_connection_cannot_preview` (`tests/live_preview.rs`); IPC test `live_preview_is_protocol_16`; frontend `use-live-preview.test.tsx` | the client does not send the live preview requests below protocol 16 and refuses them locally; the agent refuses them from an older connection; the editor says changes reach the device when saved; everything else works as before |
 | protocol 17 app or agent with a protocol 18 peer (structured variables) | IPC tests `structured_variables_need_protocol_18` (`protocol.rs`) and `a_protocol_17_agent_has_no_structured_variables` (`tests/peers.rs`) | an older app receives structured types as `json` without members or keys, no members-only entries, structured previews as `redacted` and the nearest older missing reasons; nothing it sends changes; a newer app with an older agent sees no repository variables |
+| protocol 18 app or agent with a protocol 19 peer (Calls) | IPC test `a_protocol_18_agent_is_never_asked_about_calls` (`tests/peers.rs`); agent test `a_protocol_18_connection_cannot_ask_about_calls` (`tests/calls.rs`); IPC test `calls_need_protocol_19_and_carry_no_private_text` | the client does not send `getCallsStatus`, `setCallsOverlay` or `restoreCallsLayout` below protocol 19 and refuses them locally; the agent refuses them from an older connection and sends it no `callsChanged`; the app's Calls settings stay hidden; everything else works as before |
 | protocol 18 app or agent with a protocol 20 peer (plugin connections) | IPC tests `a_protocol_18_agent_is_never_sent_a_connection_or_its_token` (`tests/peers.rs`) and `requests_are_checked_and_never_show_the_token` (`connections.rs`) | the client does not send the connection requests below protocol 20 and refuses them locally, so no token leaves the app; the agent refuses them from an older connection; an older app shows no Connections settings; everything else works as before |
 | protocol 16 app or agent with a protocol 17 peer (variables in key titles, key labels) | IPC test `a_protocol_16_agent_is_never_asked_to_resolve_display_templates` (`tests/peers.rs`) | the client does not send `listDisplayVariables` or `resolveDisplayTemplates` below protocol 17 and refuses them locally; the app shows titles resolved by the core alone; labels travel only as optional fields that an older peer ignores; everything else works as before |
 | agent temporarily unavailable | desktop tests (`stopped` state), connect timeouts (`deckpilot-ipc`) | stopped state; no request hangs |

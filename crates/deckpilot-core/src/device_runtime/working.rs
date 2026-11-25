@@ -92,18 +92,22 @@ impl Runtime {
         profile: ProfileId,
         layout: DeviceLayout,
     ) {
+        let before = self.shown_overlay_session(device);
         self.working
             .insert(device.clone(), WorkingLayout { profile, layout });
         self.refused.clear();
         self.targets.clear();
         self.repair_navigation(device);
         self.follow_folders(device, true);
+        // The live preview wins over an overlay.
+        self.after_presentation_change(device, before);
     }
 
     /// Drops the working layout of `device`: it shows the saved layout
     /// again, on its page or the nearest one that is still there. `false`
     /// when it had none.
     pub fn clear_working_layout(&mut self, device: &DeviceId) -> bool {
+        let before = self.shown_overlay_session(device);
         if self.working.remove(device).is_none() {
             return false;
         }
@@ -111,6 +115,7 @@ impl Runtime {
         self.targets.clear();
         self.repair_navigation(device);
         self.follow_folders(device, true);
+        self.after_presentation_change(device, before);
         true
     }
 

@@ -22,11 +22,15 @@
 //! adapters live in the agent.
 
 pub mod clock;
+pub mod driver;
 pub mod engine;
+pub mod layouts;
 pub mod ops;
 pub mod provider;
 pub mod ret;
 pub mod snapshot;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use clock::Instant;
 pub use ops::{CallControlRequest, CallControlResult, GateError, OP_CALL_CONTROL, OP_CALL_STATE};

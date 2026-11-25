@@ -116,7 +116,14 @@ impl Agent {
         }
         self.folder_runs.scope = self.runtime.folder_entry(device);
         self.folder_runs.ran = false;
+        let outer = self.calls_scope_is_free();
+        if outer {
+            self.calls_scope(Some(device));
+        }
         let handled = handle(self);
+        if outer {
+            self.calls_scope(None);
+        }
         let entry = self.folder_runs.scope.take();
         let ran = std::mem::take(&mut self.folder_runs.ran);
         if let Some(entry) = entry.filter(|_| ran) {

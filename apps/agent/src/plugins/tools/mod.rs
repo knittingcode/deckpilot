@@ -671,6 +671,8 @@ pub(crate) struct ToolHost {
     network_timeout: Duration,
     modify_timeout: Duration,
     environment: Environment,
+    /// Whose running processes count against the per-plugin limit.
+    slots: std::sync::Arc<RunSlots>,
 }
 
 /// git's local reads.
@@ -704,7 +706,17 @@ impl ToolHost {
     /// agent may have configured meanwhile ([`configure`]).
     #[cfg(test)]
     pub fn for_test() -> Self {
-        Self::unconfigured()
+        Self {
+            // Its own slots: tests running side by side never hold up
+            // each other's processes.
+            slots: std::sync::Arc::default(),
+            ..Self::unconfigured()
+        }
+    }
+
+    /// The running processes this host's runs count against.
+    pub fn slots(&self) -> &std::sync::Arc<RunSlots> {
+        &self.slots
     }
 
     fn unconfigured() -> Self {
@@ -715,6 +727,7 @@ impl ToolHost {
             network_timeout: Duration::from_secs(NETWORK_TIMEOUT.0),
             modify_timeout: Duration::from_secs(MODIFY_TIMEOUT.0),
             environment: Environment::Agent,
+            slots: RunSlots::shared(),
         }
     }
 
@@ -1247,24 +1260,47 @@ fn redact_params(text: &str) -> String {
     out
 }
 
+/// The running processes per plugin (all of them and the modifying ones)
+/// that [`RunSlot`]s count. The agent has one ([`RunSlots::shared`]); a
+/// test's [`ToolHost::for_test`] has its own, so tests running side by side
+/// never wait for each other's slots.
+#[derive(Debug, Default)]
+pub(crate) struct RunSlots {
+    running: Mutex<BTreeMap<String, (u32, u32)>>,
+    released: Condvar,
+}
+
+static SHARED_SLOTS: std::sync::LazyLock<std::sync::Arc<RunSlots>> =
+    std::sync::LazyLock::new(std::sync::Arc::default);
+
+impl RunSlots {
+    /// The agent's: every plugin's processes, whichever executor starts them.
+    pub fn shared() -> std::sync::Arc<Self> {
+        SHARED_SLOTS.clone()
+    }
+}
+
 /// One of a plugin's running `tool.run` processes: at most
 /// [`MAX_CONCURRENT`] per plugin, of which at most one modifies. Released
 /// on drop.
 #[derive(Debug)]
 pub(crate) struct RunSlot {
+    slots: std::sync::Arc<RunSlots>,
     plugin: String,
     modify: bool,
 }
 
-/// Running processes per plugin: all of them and the modifying ones.
-static RUNNING: Mutex<BTreeMap<String, (u32, u32)>> = Mutex::new(BTreeMap::new());
-static RELEASED: Condvar = Condvar::new();
-
 impl RunSlot {
-    /// Waits for a slot of `plugin` (a modifying one when `modify`) while
-    /// `give_up` says no; `None` when it said yes first.
-    pub fn acquire(plugin: &str, modify: bool, give_up: &dyn Fn() -> bool) -> Option<Self> {
-        let mut running = RUNNING
+    /// Waits for a slot of `plugin` in `slots` (a modifying one when
+    /// `modify`) while `give_up` says no; `None` when it said yes first.
+    pub fn acquire(
+        slots: &std::sync::Arc<RunSlots>,
+        plugin: &str,
+        modify: bool,
+        give_up: &dyn Fn() -> bool,
+    ) -> Option<Self> {
+        let mut running = slots
+            .running
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
@@ -1272,6 +1308,7 @@ impl RunSlot {
             if all < MAX_CONCURRENT && (!modify || modifying == 0) {
                 running.insert(plugin.to_owned(), (all + 1, modifying + u32::from(modify)));
                 return Some(Self {
+                    slots: slots.clone(),
                     plugin: plugin.to_owned(),
                     modify,
                 });
@@ -1279,7 +1316,8 @@ impl RunSlot {
             if give_up() {
                 return None;
             }
-            running = RELEASED
+            running = slots
+                .released
                 .wait_timeout(running, WATCH)
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
@@ -1289,7 +1327,9 @@ impl RunSlot {
 
 impl Drop for RunSlot {
     fn drop(&mut self) {
-        let mut running = RUNNING
+        let mut running = self
+            .slots
+            .running
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((all, modifying)) = running.get_mut(&self.plugin) {
@@ -1299,6 +1339,6 @@ impl Drop for RunSlot {
                 running.remove(&self.plugin);
             }
         }
-        RELEASED.notify_all();
+        self.slots.released.notify_all();
     }
 }

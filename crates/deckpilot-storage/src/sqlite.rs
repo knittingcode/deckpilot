@@ -101,6 +101,9 @@ const MIGRATIONS: &[&str] = &[
     // `repository` role stands for (`repositories::migrate`). Additive:
     // roles, resources and bindings are not rewritten.
     crate::repositories::SCHEMA,
+    // Schema 15. Managed layouts (the Calls plugin's, `managed_layouts.rs`): a new,
+    // empty table. Additive: no layout is adopted or rewritten.
+    crate::managed_layouts::SCHEMA,
 ];
 
 /// Runs `step` again while SQLite reports the database busy, for up to
@@ -2976,6 +2979,7 @@ mod tests {
                      DROP TABLE work_session_settings;
                      ALTER TABLE projects DROP COLUMN default_repository;
                      ALTER TABLE projects DROP COLUMN repositories;
+                     DROP TABLE managed_layouts;
                      PRAGMA user_version = 4;",
                 )
                 .unwrap();
