@@ -27,6 +27,13 @@ released either. 0.6.0 is the first version intended for publication.
   DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
   detected, not controlled: Microsoft retired its device API on
   2026-06-30 (`docs/calls.md`).
+- Calls (groundwork): the call state engine (incoming, outgoing,
+  connecting, active, ending, ended, failed, unknown) with a timeout on
+  every live state, missed, rejected and remote hang-up, provider and app
+  restarts, meeting-to-meeting moves and simultaneous calls; and the
+  "Back to work" return sessions (timer, real completion, or whichever
+  comes first, 60 s by default), one per device. Tested on a virtual clock;
+  nothing user-visible yet.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,

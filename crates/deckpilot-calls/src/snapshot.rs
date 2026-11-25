@@ -7,7 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::provider::{
-    CallKind, CallObservation, CapabilitySet, ConsentState, Direction, Private, ProviderId, Tri,
+    CallAction, CallKind, CallObservation, CapabilitySet, ConsentState, Direction, Private,
+    ProviderId, Tri,
 };
 
 /// How a call ended, as the engine records it.
@@ -132,9 +133,21 @@ pub struct CallSnapshot {
     pub camera_on: Tri,
     pub capabilities: CapabilitySet,
     pub provider: Option<ProviderId>,
-    /// When the call entered its state, in Unix milliseconds (the agent
-    /// maps the engine clock to wall time for this field only).
+    /// When the call entered its state. The engine fills it in with its
+    /// own clock; the agent maps it to Unix milliseconds before it leaves
+    /// the agent.
     pub since: u64,
+    /// Whether the call's provider is connected ("no connection to the
+    /// provider" on the faces when not).
+    #[serde(default)]
+    pub connected: bool,
+    /// A command sent and not confirmed yet: the key shows it as pending,
+    /// never as done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<CallAction>,
+    /// The last command was not confirmed in time: shown for a moment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unconfirmed: bool,
     /// Only with the user's opt-in for the provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -154,6 +167,9 @@ impl std::fmt::Debug for CallSnapshot {
             .field("capabilities", &self.capabilities)
             .field("provider", &self.provider)
             .field("since", &self.since)
+            .field("connected", &self.connected)
+            .field("pending", &self.pending)
+            .field("unconfirmed", &self.unconfirmed)
             .field("title", &self.title.as_ref().map(|_| "<redacted>"))
             .field("generation", &self.generation)
             .finish()
@@ -186,6 +202,9 @@ impl CallSnapshot {
             capabilities,
             provider: Some(provider),
             since: since_unix_ms,
+            connected: true,
+            pending: None,
+            unconfirmed: false,
             title: Self::title_with_consent(observation.title.as_ref(), consent),
             generation,
         }
@@ -214,6 +233,9 @@ impl CallSnapshot {
             capabilities,
             provider: None,
             since: 0,
+            connected: false,
+            pending: None,
+            unconfirmed: false,
             title: None,
             generation,
         }
