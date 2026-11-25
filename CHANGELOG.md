@@ -63,6 +63,9 @@ released either. 0.6.0 is the first version intended for publication.
   what a key started: a workflow, a plugin's action, or an action run in
   place. Agent tests cover this with the mock provider and a simulated
   Stream Deck.
+  A managed Calls layout that cannot be stored while the database is busy
+  is tried again after 1 s, then after waits doubling up to a minute;
+  other storage errors are not retried.
 - Calls (groundwork, off in every build): a detection-only Microsoft Teams
   provider. It infers that a call is probably active while Teams holds the
   microphone, recognizing Teams only by its executable name. Answer, end,
