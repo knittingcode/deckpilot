@@ -14,7 +14,7 @@ use deckpilot_plugin_abi::{
     ActionOutcome, CallErrorCode, CallResult, CapabilityRequest, ParamValue, Params,
 };
 use deckpilot_plugin_host::engine::{
-    ChannelError, EffectiveLimits, Fault, HostCallHandler, LoadedPlugin, PluginEngine,
+    ChannelError, EffectiveLimits, Fault, HostCallHandler, LoadedPlugin, OVERRUN, PluginEngine,
 };
 use deckpilot_plugin_test_fixtures::TEST_GUEST;
 use serde_json::json;
@@ -98,6 +98,17 @@ fn raw_loop(json: &str, n: i64, spin: i64) -> Params {
         ("n".into(), ParamValue::Integer(n)),
         ("spin".into(), ParamValue::Integer(spin)),
     ])
+}
+
+/// The last reply a `raw_loop` received.
+fn last(outcome: &ActionOutcome) -> String {
+    let ActionOutcome::Ok { data, .. } = outcome else {
+        panic!("{outcome:?}")
+    };
+    match data.get("last") {
+        Some(ParamValue::String(reply)) => reply.clone(),
+        other => panic!("{other:?}"),
+    }
 }
 
 fn counts(outcome: &ActionOutcome) -> (i64, i64) {
@@ -189,19 +200,35 @@ fn a_bridge_refusal_reaches_the_guest_with_its_detail() {
     );
 }
 
-/// Without the Scripts budget, a guest has the default 256 calls; with it,
-/// 4,096, and the 4,097th traps.
+/// Without the Scripts budget, a guest has the default 256 calls and the
+/// 257th traps; with it, 4,096, then `throttled` (with the script detail
+/// `limit`, so the script fails with a message and the host lives) for
+/// [`OVERRUN`] more, then the trap.
 #[test]
 fn the_call_budget_comes_from_the_limits() {
-    let (mut p, _, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
+    let (mut p, seen, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
     let r = p.invoke(1, "raw_loop", &raw_loop(TIME, 4096, 0)).unwrap();
     assert_eq!(counts(&r), (4096, 0));
+    assert_eq!(seen.borrow().len(), 4096);
+
+    let (mut p, seen, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
+    let n = 4096 + i64::from(OVERRUN);
+    let r = p.invoke(1, "raw_loop", &raw_loop(TIME, n, 0)).unwrap();
+    assert_eq!(counts(&r), (4096, i64::from(OVERRUN)));
+    assert_eq!(
+        seen.borrow().len(),
+        4096,
+        "nothing past the budget is relayed"
+    );
+    let reply: serde_json::Value = serde_json::from_str(&last(&r)).unwrap();
+    assert_eq!(reply["error"]["code"], "throttled");
+    assert_eq!(reply["error"]["script"]["code"], "limit");
 
     let (mut p, _, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
-    let r = p.invoke(1, "raw_loop", &raw_loop(TIME, 4097, 0));
+    let r = p.invoke(1, "raw_loop", &raw_loop(TIME, n + 1, 0));
     assert!(
         matches!(&r, Err(Fault::GuestAbi(m)) if m.contains("too many host calls")),
-        "{r:?}"
+        "the call after the overrun traps: {r:?}"
     );
 
     let (mut p, _, _e) = load(scripts_limits(None, None), Duration::ZERO);
@@ -237,15 +264,43 @@ fn polls_are_counted_apart() {
     assert_eq!(counts(&r), (50, 0));
 
     let (mut p, _, _e) = load(scripts_limits(Some(10), Some(50)), Duration::ZERO);
-    let r = p.invoke(1, "raw_loop", &raw_loop(POLL, 51, 0));
+    let r = p.invoke(1, "raw_loop", &raw_loop(POLL, 51, 0)).unwrap();
+    assert_eq!(counts(&r), (50, 1));
+    let r = p.invoke(2, "raw_loop", &raw_loop(POLL, 51 + i64::from(OVERRUN), 0));
     assert!(
         matches!(&r, Err(Fault::GuestAbi(m)) if m.contains("script.poll")),
         "{r:?}"
     );
 
     let (mut p, _, _e) = load(scripts_limits(Some(10), None), Duration::ZERO);
+    let r = p.invoke(1, "raw_loop", &raw_loop(POLL, 11, 0)).unwrap();
+    assert_eq!(
+        counts(&r),
+        (10, 1),
+        "a poll is an ordinary call without a poll budget"
+    );
+}
+
+/// A budgeted guest's oversized request is answered (`bad-request`, the
+/// script detail `tooLarge`) instead of ending its host; it is never read.
+#[test]
+fn an_oversized_request_of_a_budgeted_guest_is_refused_not_fatal() {
+    let (mut p, seen, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
+    let r = p.invoke(1, "host_call_oversized", &Params::new()).unwrap();
+    let ActionOutcome::Ok { data, .. } = r else {
+        panic!("{r:?}")
+    };
+    let Some(ParamValue::String(reply)) = data.get("reply") else {
+        panic!("{data:?}")
+    };
+    let reply: serde_json::Value = serde_json::from_str(reply).unwrap();
+    assert_eq!(reply["error"]["code"], "bad-request");
+    assert_eq!(reply["error"]["script"]["code"], "tooLarge");
+    assert!(seen.borrow().is_empty());
+    // Without a budget the same request still traps.
+    let (mut p, _, _e) = load(scripts_limits(None, None), Duration::ZERO);
     assert!(matches!(
-        p.invoke(1, "raw_loop", &raw_loop(POLL, 11, 0)),
+        p.invoke(1, "host_call_oversized", &Params::new()),
         Err(Fault::GuestAbi(_))
     ));
 }
@@ -263,11 +318,12 @@ fn the_budgets_are_clamped_to_the_hard_maxima() {
     assert_eq!(l.deadline_ticks, 1000, "10 s at most");
     let l = EffectiveLimits::clamp(&GuestLimits {
         host_calls: Some(0),
+        polls: Some(0),
         ..GuestLimits::default()
     });
-    assert_eq!(l.host_calls, 1);
+    assert_eq!((l.host_calls, l.polls), (1, Some(1)));
     let l = EffectiveLimits::clamp(&GuestLimits::default());
-    assert_eq!((l.host_calls, l.polls), (256, None));
+    assert_eq!((l.host_calls, l.polls, l.budgeted), (256, None, false));
 }
 
 /// Every other guest is unchanged: an ordinary call still resets the
