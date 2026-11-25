@@ -458,7 +458,10 @@
       "summary": "{{path}} ({{id}}) on {{connection}} will be linked.",
       "remoteName": "Git remote name",
       "primary": "The primary remote",
-      "replaces": "This replaces the remote “{{name}}” stored now."
+      "replaces": "This replaces the remote “{{name}}” stored now.",
+      "detected": "In the repository's folder",
+      "findOn": "Find {{remote}} on {{connection}}",
+      "notFoundOn": "{{remote}} was not found on {{connection}}. Search for it below."
     }
   }
 }

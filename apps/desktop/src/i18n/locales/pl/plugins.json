@@ -480,7 +480,10 @@
       "summary": "{{path}} ({{id}}) w połączeniu {{connection}} zostanie powiązane.",
       "remoteName": "Nazwa zdalnego repozytorium git",
       "primary": "Główne zdalne repozytorium",
-      "replaces": "To zastąpi zapisane repozytorium zdalne „{{name}}”."
+      "replaces": "To zastąpi zapisane repozytorium zdalne „{{name}}”.",
+      "detected": "W folderze repozytorium",
+      "findOn": "Znajdź {{remote}} w połączeniu {{connection}}",
+      "notFoundOn": "Nie znaleziono {{remote}} w połączeniu {{connection}}. Wyszukaj je poniżej."
     }
   }
 }

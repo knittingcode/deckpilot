@@ -209,6 +209,40 @@ pub async fn link_repository_remote(
     })
 }
 
+/// The git remotes of a project repository's folder on this computer, for
+/// Link remote's suggestions (Git Providers §9.2): the agent reads them
+/// with `git remote -v` (read-only, no network) in the folder the
+/// repository is bound to, and removes every URL's credentials. Only ids
+/// are sent, never a path. An agent without the `repositoryRemotes`
+/// feature is not asked: there is nothing to suggest.
+#[tauri::command]
+pub async fn list_repository_remotes(
+    state: State<'_, AppState>,
+    profile_id: ProfileId,
+    project_id: ProjectId,
+    repository_id: RepositoryId,
+) -> crate::commands::plugins::PluginResult<Vec<deckpilot_ipc::connections::DetectedRemote>> {
+    let runtime = super::plugins::plugin_request(&state, Request::GetPluginRuntime).await?;
+    let supported = matches!(&runtime, Response::PluginRuntime { status }
+        if status.has_feature(deckpilot_ipc::plugins::feature::REPOSITORY_REMOTES));
+    if !supported {
+        return Ok(Vec::new());
+    }
+    match super::plugins::plugin_request(
+        &state,
+        Request::ListRepositoryRemotes {
+            profile: profile_id,
+            project: project_id,
+            repository: repository_id,
+        },
+    )
+    .await?
+    {
+        Response::RepositoryRemotes { remotes } => Ok(remotes),
+        other => Err(crate::commands::plugins::PluginError::unexpected(&other)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use deckpilot_core::{Profile, Project, ProjectKey, ResourceKey};

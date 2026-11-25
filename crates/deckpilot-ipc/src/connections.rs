@@ -159,6 +159,27 @@ pub struct PluginConnections {
     pub connections: Vec<PluginConnection>,
 }
 
+/// Most remotes `listRepositoryRemotes` answers with.
+pub const MAX_DETECTED_REMOTES: usize = 16;
+
+/// A git remote of a repository's folder, as `git remote -v` lists it
+/// (`listRepositoryRemotes`). Its URLs carry no credentials: the agent
+/// removes the user name and password of an `https` URL, the password of
+/// an `ssh` one, and any query or fragment, and leaves out a URL that is
+/// still not a remote URL a project may store
+/// (`RepositoryRemote::check`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedRemote {
+    /// The git remote name (`origin`).
+    pub name: String,
+    /// Where it fetches from.
+    pub url: String,
+    /// Where it pushes to, when that is another URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_url: Option<String>,
+}
+
 /// What a test of a connection found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

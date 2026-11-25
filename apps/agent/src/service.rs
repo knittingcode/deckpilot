@@ -151,6 +151,9 @@ pub(crate) const PROJECTS_PLUGIN: &str = "deckpilot.projects";
 /// The reason ([`IpcError::reason`]) of a project request refused while no
 /// project context provider is active.
 pub(crate) const PROJECTS_OFF: &str = "projectsOff";
+/// `listRepositoryRemotes`: the repository's folder is not set on this
+/// computer.
+pub(crate) const NO_FOLDER: &str = "no-folder";
 
 #[derive(Debug)]
 pub(crate) enum Command {
@@ -1117,6 +1120,36 @@ impl Agent {
                 let _ = reply.send(());
                 Flow::Continue
             }
+            Command::Request {
+                request:
+                    Request::ListRepositoryRemotes {
+                        profile,
+                        project,
+                        repository,
+                    },
+                reply,
+            } => {
+                // Answered once `git remote -v` finished on its own thread.
+                match self
+                    .repository_folder(profile, project, repository)
+                    .and_then(|folder| self.plugins.repository_remotes(folder))
+                {
+                    Ok(detect) => {
+                        let spawned = std::thread::Builder::new()
+                            .name("repository-remotes".into())
+                            .spawn(move || {
+                                let _ = reply.send(detect());
+                            });
+                        if let Err(error) = spawned {
+                            warn!(%error, "cannot read a repository's remotes");
+                        }
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                    }
+                }
+                Flow::Continue
+            }
             Command::Request { request, reply } if crate::plugins::is_plugin_request(&request) => {
                 self.plugins
                     .handle(request, reply, self.security == SecurityState::Unlocked);
@@ -1439,6 +1472,9 @@ impl Agent {
             | Request::RemovePluginConnection { .. } => {
                 unreachable!("plugin requests are handled by handle_command")
             }
+            Request::ListRepositoryRemotes { .. } => {
+                unreachable!("listRepositoryRemotes is answered by handle_command")
+            }
             Request::Unlock { .. }
             | Request::Lock
             | Request::GetDatabaseKey
@@ -1581,6 +1617,50 @@ impl Agent {
         match &self.options.open_desktop {
             Some(open) => open(),
             None => Err("opening the configuration app is not supported".into()),
+        }
+    }
+
+    /// The folder of a project repository on this computer
+    /// (`listRepositoryRemotes`): its resource's directory binding. Only
+    /// while unlocked, with the Projects feature; a stored id never names
+    /// a path, so nothing the app sends reaches another folder.
+    fn repository_folder(
+        &self,
+        profile: ProfileId,
+        project: ProjectId,
+        repository: deckpilot_core::RepositoryId,
+    ) -> Result<std::path::PathBuf, IpcError> {
+        if self.security != SecurityState::Unlocked {
+            return Err(locked());
+        }
+        self.require_projects()?;
+        let not_found =
+            |what: &str| IpcError::new(ErrorCode::NotFound, format!("{what} does not exist"));
+        let profile = self
+            .store()?
+            .load_profile(profile)
+            .map_err(|e| storage_error(&e))?
+            .ok_or_else(|| not_found("profile"))?;
+        let project = profile
+            .projects
+            .iter()
+            .find(|p| p.id == project)
+            .ok_or_else(|| not_found("project"))?
+            .with_derived_repositories();
+        let repository = project
+            .repositories
+            .iter()
+            .find(|r| r.id == repository)
+            .ok_or_else(|| not_found("repository"))?;
+        match self.runtime.machine().binding(&repository.resource) {
+            Some(binding) if binding.kind == deckpilot_core::ResourceKind::Directory => {
+                Ok(std::path::PathBuf::from(&binding.value))
+            }
+            _ => Err(IpcError::new(
+                ErrorCode::Failed,
+                "the repository has no folder on this computer",
+            )
+            .with_reason(NO_FOLDER)),
         }
     }
 

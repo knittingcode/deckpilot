@@ -114,6 +114,8 @@ function connections(): ConnectionsClient {
         },
       ]),
     ),
+    listRepositoryRemotes: vi.fn(() => Promise.resolve([])),
+    resolveRemote: vi.fn(() => Promise.resolve([])),
     setRepositoryRemotes: vi.fn(() => Promise.resolve(null)),
     linkRepositoryRemote: vi.fn(
       (_p: string, _pr: string, _r: string, _plugin: string, remote: RepositoryRemote) =>

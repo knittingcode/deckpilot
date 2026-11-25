@@ -15,6 +15,9 @@ import {
   type ConnectionsClient,
   ConnectionsClientContext,
   type RepositoryRemote,
+  remoteHost,
+  remotePath,
+  servesRemote,
   withLink,
 } from "./api"
 import { LinkRemoteDialog } from "./link-remote-dialog"
@@ -78,6 +81,8 @@ function client(): ConnectionsClient {
         { id: "group/other", path: "group/other" },
       ]),
     ),
+    listRepositoryRemotes: vi.fn(() => Promise.resolve([])),
+    resolveRemote: vi.fn(() => Promise.resolve([])),
     setRepositoryRemotes: vi.fn(() => Promise.resolve(null)),
     linkRepositoryRemote: vi.fn(
       (_p: string, _pr: string, _r: string, _plugin: string, remote: RepositoryRemote) =>
@@ -86,8 +91,7 @@ function client(): ConnectionsClient {
   }
 }
 
-function setup(remotes: RepositoryRemote[] = []) {
-  const c = client()
+function setup(remotes: RepositoryRemote[] = [], c: ConnectionsClient = client()) {
   const onLinked = vi.fn()
   const onClose = vi.fn()
   render(
@@ -206,6 +210,103 @@ describe("linking a repository to a remote one", () => {
     expect(onClose).toHaveBeenCalled()
     expect(c.setRepositoryRemotes).not.toHaveBeenCalled()
     expect(c.linkRepositoryRemote).not.toHaveBeenCalled()
+  })
+})
+
+describe("the remotes of the repository's folder", () => {
+  const ORIGIN = "git@code.example.com:group/app.git"
+  function detecting(): ConnectionsClient {
+    const c = client()
+    vi.mocked(c.listRepositoryRemotes).mockResolvedValue([
+      { name: "origin", url: ORIGIN },
+      // No connection serves this server: not suggested.
+      { name: "mirror", url: "https://mirror.example.org/group/app.git" },
+    ])
+    return c
+  }
+
+  it("links the record the plugin matched to a folder remote, with the folder's URL", async () => {
+    const c = detecting()
+    vi.mocked(c.resolveRemote).mockResolvedValue([
+      {
+        id: "gl:4711",
+        path: "group/app",
+        defaultBranch: "main",
+        httpUrl: "https://code.example.com/group/app.git",
+      },
+    ])
+    const { onLinked, user } = setup([], c)
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Link App to a remote repository" }),
+    )
+    expect(c.listRepositoryRemotes).toHaveBeenCalledWith("p1", "pr1", "r1")
+    const find = await dialog.findByRole("button", { name: "Find origin on Work GitLab" })
+    expect(dialog.queryByText("mirror")).toBeNull()
+    await user.click(find)
+    await waitFor(() => {
+      expect(c.resolveRemote).toHaveBeenCalledWith(PLUGIN, CONNECTION, ORIGIN)
+    })
+    expect(await dialog.findByTestId("link-summary")).toHaveTextContent(
+      "group/app (gl:4711) on Work GitLab will be linked.",
+    )
+    expect(dialog.getByLabelText("Git remote name")).toHaveValue("origin")
+    // Nothing is linked before the user confirms.
+    expect(c.linkRepositoryRemote).not.toHaveBeenCalled()
+    await user.click(dialog.getByRole("button", { name: "Link" }))
+    const expected: RepositoryRemote = {
+      name: "origin",
+      primary: true,
+      connectionId: CONNECTION,
+      remoteRepositoryId: "gl:4711",
+      remoteUrl: ORIGIN,
+      defaultBranch: "main",
+    }
+    await waitFor(() => {
+      expect(c.linkRepositoryRemote).toHaveBeenCalledWith("p1", "pr1", "r1", PLUGIN, expected)
+    })
+    expect(onLinked).toHaveBeenCalledWith([expected])
+  })
+
+  it("searches by the remote's path when the plugin does not match it", async () => {
+    const c = detecting()
+    // A record without an immutable id is no match (K2).
+    vi.mocked(c.resolveRemote).mockResolvedValue([{ id: "group/app", path: "group/app" }])
+    const { user } = setup([], c)
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Link App to a remote repository" }),
+    )
+    await user.click(await dialog.findByRole("button", { name: "Find origin on Work GitLab" }))
+    expect(
+      await dialog.findByText("origin was not found on Work GitLab. Search for it below."),
+    ).toBeInTheDocument()
+    expect(dialog.getByLabelText("Find a repository")).toHaveValue("group/app")
+    expect(dialog.queryByTestId("link-summary")).toBeNull()
+    expect(c.linkRepositoryRemote).not.toHaveBeenCalled()
+  })
+
+  it("works without suggestions when the folder cannot be read", async () => {
+    const c = client()
+    vi.mocked(c.listRepositoryRemotes).mockRejectedValue(new Error("no-folder"))
+    const { user } = setup([], c)
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Link App to a remote repository" }),
+    )
+    await user.click(await dialog.findByRole("radio", { name: "Work GitLab (code.example.com)" }))
+    expect(dialog.queryByText("In the repository's folder")).toBeNull()
+    expect(dialog.queryByRole("alert")).toBeNull()
+  })
+
+  it("reads hosts and paths of git remote URLs", () => {
+    expect(remoteHost("https://Code.Example.com:8443/group/app.git")).toBe("code.example.com")
+    expect(remoteHost("ssh://git@code.example.com:2222/group/app.git")).toBe("code.example.com")
+    expect(remoteHost("git@code.example.com:group/app.git")).toBe("code.example.com")
+    expect(remoteHost("/srv/git/app.git")).toBeNull()
+    expect(remoteHost("file:///srv/git/app.git")).toBeNull()
+    expect(remotePath("git@code.example.com:group/sub/app.git")).toBe("group/sub/app")
+    expect(remotePath("https://code.example.com/group/app.git/")).toBe("group/app")
+    const gitlab = { webUrl: "https://code.example.com" }
+    expect(servesRemote(gitlab, "git@code.example.com:group/app.git")).toBe(true)
+    expect(servesRemote(gitlab, "https://code.example.com.evil.test/group/app.git")).toBe(false)
   })
 })
 

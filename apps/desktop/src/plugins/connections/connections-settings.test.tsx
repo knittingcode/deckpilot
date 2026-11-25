@@ -146,6 +146,8 @@ function setup(data: PluginConnections = connections()) {
     ),
     remove: vi.fn(() => Promise.resolve(connections({ connections: [] }))),
     listRepositories: vi.fn(() => Promise.resolve([])),
+    listRepositoryRemotes: vi.fn(() => Promise.resolve([])),
+    resolveRemote: vi.fn(() => Promise.resolve([])),
     setRepositoryRemotes: vi.fn(() => Promise.resolve(null)),
     linkRepositoryRemote: vi.fn(() => Promise.resolve({})),
   }

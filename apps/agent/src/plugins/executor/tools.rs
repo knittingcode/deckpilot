@@ -195,7 +195,7 @@ impl Executor {
             ),
         })?;
         if request.tool == Tool::Git {
-            work_tree_inside(&self.tools, &plan, deadline, &stop)?;
+            host::work_tree_inside(&self.tools, &plan, deadline, &stop)?;
         }
         if let Some(remote) = &plan.remote {
             configured_remote(&self.tools, &plan, remote, deadline, &stop)?;
@@ -332,86 +332,6 @@ fn must_stop(
             ToolAccess::Modify => g.modify,
         });
     (!granted).then_some(Stop::Revoked)
-}
-
-/// git works only on a repository that is the binding's own: its work
-/// tree is the binding or a folder inside it, and so is its git directory
-/// (real paths), so a `.git` file (`gitdir: ../secret/.git`) or a `.git`
-/// link to another repository is refused. `GIT_CEILING_DIRECTORIES`
-/// already keeps discovery from climbing above the binding.
-///
-/// The one exception is a genuine linked worktree (`git worktree add`):
-/// its git directory is `<common>/worktrees/<name>`, which has a
-/// `commondir`, and whose own `gitdir` file points back to this work
-/// tree's `.git`. A submodule's git directory (`.git/modules/…` of the
-/// superproject) is refused: submodules are not supported as bindings yet.
-fn work_tree_inside(
-    tools: &ToolHost,
-    plan: &Plan,
-    deadline: Option<Instant>,
-    stop: &(dyn Fn() -> Option<Stop> + Sync),
-) -> Result<(), Denial> {
-    let listing = host::execute(&host::toplevel_listing(tools, plan), deadline, stop)?;
-    let not_a_repository = || {
-        Denial::new(
-            codes::NOT_A_REPOSITORY,
-            "the bound folder is not a git work tree",
-        )
-    };
-    let outside = |what: &str| {
-        Denial::new(
-            codes::OUTSIDE_BINDING,
-            format!("the repository's {what} is not inside the bound folder"),
-        )
-    };
-    let binding = std::fs::canonicalize(&plan.cwd).map_err(|_| not_a_repository())?;
-    if !listing.output.success() {
-        return Err(not_a_repository());
-    }
-    let lines: Vec<&str> = listing.output.stdout.lines().collect();
-    let [top, git_dir] = lines.as_slice() else {
-        return Err(not_a_repository());
-    };
-    let real = |path: &str| {
-        (!path.is_empty())
-            .then(|| std::fs::canonicalize(path).ok())
-            .flatten()
-    };
-    let (Some(top), Some(git_dir)) = (real(top), real(git_dir)) else {
-        return Err(not_a_repository());
-    };
-    if !top.starts_with(&binding) {
-        return Err(outside("work tree"));
-    }
-    if git_dir.starts_with(&binding) || linked_worktree(&git_dir, &top) {
-        Ok(())
-    } else {
-        Err(outside("git directory"))
-    }
-}
-
-/// Whether `git_dir` is the git directory of the linked worktree at
-/// `top`: `<common>/worktrees/<name>` with a `commondir`, whose `gitdir`
-/// file names `top/.git`.
-fn linked_worktree(git_dir: &std::path::Path, top: &std::path::Path) -> bool {
-    let under_worktrees = git_dir
-        .parent()
-        .and_then(std::path::Path::file_name)
-        .is_some_and(|n| n == "worktrees");
-    let back = std::fs::read_to_string(git_dir.join("gitdir"))
-        .ok()
-        .map(|text| text.trim_end_matches(['\n', '\r']).to_owned())
-        .map(|path| {
-            let path = std::path::PathBuf::from(path);
-            if path.is_absolute() {
-                path
-            } else {
-                git_dir.join(path)
-            }
-        })
-        .and_then(|path| std::fs::canonicalize(path).ok());
-    let ours = std::fs::canonicalize(top.join(".git")).ok();
-    under_worktrees && git_dir.join("commondir").is_file() && back.is_some() && back == ours
 }
 
 /// `ls-remote` contacts only a remote the repository configures: `git

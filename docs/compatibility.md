@@ -266,6 +266,11 @@ writing anything and runs without plugins; going back means restoring the
 database, documents and exports do not change: connections and their
 tokens are machine-local and never exported. The agent's `PLUGIN_API`
 stays 1.11, so `^1.14` plugins are still reported `incompatible`.
+Also in protocol 20, with the plugin runtime feature `repositoryRemotes`:
+`listRepositoryRemotes {profile, project, repository}` answers the git
+remotes of that repository's bound folder (`repositoryRemotes`, at most 16,
+URLs without credentials), read by the agent with `git remote -v`; the app
+asks only an agent that lists the feature, and sends ids, never a path.
 
 IPC protocol 18 (unreleased): structured variables (capability
 `structuredVariables`). `CatalogEntry.valueType` may be `object` or `map`

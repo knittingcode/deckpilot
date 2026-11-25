@@ -5542,7 +5542,10 @@ impl StubAgent {
                                             platform: "macos".into(),
                                             reason: None,
                                             registry: None,
-                                            features: Vec::new(),
+                                            features: vec![
+                                                deckpilot_ipc::plugins::feature::REPOSITORY_REMOTES
+                                                    .into(),
+                                            ],
                                         }),
                                     }),
                                     Request::ListPluginConnections { .. } => {
@@ -5551,6 +5554,21 @@ impl StubAgent {
                                         })
                                     }
                                     Request::ReloadConfiguration => Some(Response::Ok),
+                                    Request::ListRepositoryRemotes { .. } => {
+                                        Some(Response::RepositoryRemotes {
+                                            remotes: vec![
+                                                deckpilot_ipc::connections::DetectedRemote {
+                                                    name: "origin".into(),
+                                                    url: "git@code.example.com:group/app.git"
+                                                        .into(),
+                                                    push_url: Some(
+                                                        "ssh://git@code.example.com/group/push.git"
+                                                            .into(),
+                                                    ),
+                                                },
+                                            ],
+                                        })
+                                    }
                                     _ => None,
                                 };
                                 match response {
@@ -5795,6 +5813,29 @@ fn a_remote_is_linked_only_to_a_usable_connection_of_its_provider() {
         .unwrap_err();
         assert_eq!(profile(), before);
     }
+    // The folder's remotes are the agent's answer, asked for by ids only
+    // (the agent resolves the folder; the app never sends a path).
+    let detected = h.ok(
+        "list_repository_remotes",
+        json!({ "profileId": work, "projectId": shop_id, "repositoryId": derived }),
+    );
+    assert_eq!(
+        detected,
+        json!([{ "name": "origin", "url": "git@code.example.com:group/app.git",
+            "pushUrl": "ssh://git@code.example.com/group/push.git" }])
+    );
+    let asked = agent.requests().pop();
+    assert_eq!(
+        asked,
+        Some(deckpilot_ipc::Request::ListRepositoryRemotes {
+            profile: work.parse().unwrap(),
+            project: shop_id.parse().unwrap(),
+            repository: derived.parse().unwrap(),
+        })
+    );
+    assert_eq!(profile(), before, "reading the remotes writes nothing");
+    agent.requests.lock().unwrap().pop();
+
     // Only connection lists were ever asked for, once per link that names
     // both a connection and an id: 3 links, 7 such refusals and the 2
     // unknown targets. No other request and no profile write through the

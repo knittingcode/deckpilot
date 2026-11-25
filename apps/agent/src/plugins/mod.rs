@@ -352,10 +352,14 @@ pub(crate) fn features() -> Vec<String> {
         deckpilot_ipc::plugins::feature::RESTORE_BUNDLED.to_owned(),
         deckpilot_ipc::plugins::feature::VISUAL_ASSETS.to_owned(),
         deckpilot_ipc::plugins::feature::STOREFRONT.to_owned(),
+        deckpilot_ipc::plugins::feature::REPOSITORY_REMOTES.to_owned(),
     ]
 }
 
 type Reply = oneshot::Sender<Result<Response, IpcError>>;
+
+/// What answers `listRepositoryRemotes`, run off the agent's thread.
+pub(crate) type RemotesJob = Box<dyn FnOnce() -> Result<Response, IpcError> + Send>;
 
 /// The agent's plugin runtime: settings, and with the `plugins` feature
 /// the worker that serves plugin requests.
@@ -430,6 +434,27 @@ impl PluginRuntime {
     /// registry: enabled when its actions can run, otherwise disabled with
     /// the reason. Empty without the `plugins` feature, with plugins off,
     /// and while locked.
+    /// `listRepositoryRemotes` for the bound folder `folder`: what to run
+    /// off the agent's thread (it runs `git`, up to its local read limit
+    /// twice), or why it does not run: plugins are off or not built
+    /// (Git Providers is a plugin).
+    pub(crate) fn repository_remotes(&self, folder: PathBuf) -> Result<RemotesJob, IpcError> {
+        #[cfg(feature = "plugins")]
+        if self.settings.enabled {
+            return Ok(Box::new(move || {
+                let host = tools::ToolHost::from_agent();
+                let deadline = std::time::Instant::now() + 2 * tools::GIT_READ_TIMEOUT;
+                tools::remotes::detect(&host, &folder, deadline)
+                    .map(|remotes| Response::RepositoryRemotes { remotes })
+                    .map_err(|denial| {
+                        IpcError::new(ErrorCode::Failed, denial.message).with_reason(denial.code)
+                    })
+            }));
+        }
+        let _ = folder;
+        Err(unavailable(&self.settings))
+    }
+
     pub(crate) fn modules(&self) -> Vec<Box<dyn deckpilot_core::FeatureModule>> {
         #[cfg(feature = "plugins")]
         if let Some(worker) = &self.worker {

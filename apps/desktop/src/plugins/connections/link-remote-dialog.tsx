@@ -5,6 +5,12 @@
 // from text typed here; only then does the app write the link
 // (`link_repository_remote`, which checks the connection and merges the
 // remote with the stored ones). A plugin never writes it.
+//
+// The remotes of the repository's folder (`git remote -v`, read by the
+// agent without credentials) are suggested: for a connection on the same
+// server, "Find on …" asks the plugin's `resolve-remote`, which answers
+// with the record only when one of its clone URLs is that remote. Nothing
+// is linked before the user confirms.
 
 import { useEffect, useId, useRef, useState } from "react"
 
@@ -18,12 +24,15 @@ import { useTranslation } from "@/i18n"
 
 import {
   type ConnectionPlugin,
+  type DetectedRemote,
   type RemoteRepositoryRecord,
   type RepositoryRemote,
   connectionHost,
   isRemoteRepositoryId,
   loadConnectionPlugins,
   remoteOf,
+  remotePath,
+  servesRemote,
   useConnectionsClient,
   withLink,
 } from "./api"
@@ -58,6 +67,12 @@ export function LinkRemoteDialog({
   const [primary, setPrimary] = useState(!remotes.some((r) => r.primary))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The remotes of the repository's folder; empty when there are none or
+  // the agent cannot read them (no folder here, not a repository, older).
+  const [detected, setDetected] = useState<DetectedRemote[]>([])
+  // The folder remote the picked record was matched to, if any.
+  const [matched, setMatched] = useState<DetectedRemote | null>(null)
+  const [notFound, setNotFound] = useState<string | null>(null)
   // Which search's answer may be shown: a late answer for another
   // connection is dropped, never attached to the one chosen now.
   const searchRef = useRef(0)
@@ -79,6 +94,20 @@ export function LinkRemoteDialog({
     }
   }, [client])
 
+  useEffect(() => {
+    let active = true
+    void client.listRepositoryRemotes(profileId, projectId, repositoryId).then(
+      (found) => {
+        if (active) setDetected(found)
+      },
+      // Suggestions only: without them the user searches.
+      () => {},
+    )
+    return () => {
+      active = false
+    }
+  }, [client, profileId, projectId, repositoryId])
+
   const options = (plugins ?? []).flatMap((p) =>
     p.connections.connections
       .filter((c) => c.enabled && c.hasSecret)
@@ -86,12 +115,55 @@ export function LinkRemoteDialog({
   )
   const chosen = options.find((o) => o.key === choice)
 
+  /** Asks the plugin for the repository the folder's `remote` is, on `option`. */
+  const findRemote = async (remote: DetectedRemote, option: (typeof options)[number]) => {
+    const ticket = ++searchRef.current
+    setChoice(option.key)
+    setBusy(true)
+    setError(null)
+    setPicked(null)
+    setMatched(null)
+    setNotFound(null)
+    try {
+      const found = (await client.resolveRemote(option.plugin, option.c.id, remote.url)).filter(
+        (r) => isRemoteRepositoryId(r.id),
+      )
+      if (ticket !== searchRef.current) return
+      const record = found[0]
+      if (found.length === 1 && record) {
+        setRecords(found)
+        setPicked(record)
+        setMatched(remote)
+        setName(remote.name)
+      } else {
+        // Not there (or not one answer): the user searches by its path.
+        setRecords(null)
+        setSearch(remotePath(remote.url))
+        setNotFound(
+          t("plugins:connections.link.notFoundOn", {
+            remote: remote.name,
+            connection: option.c.displayName,
+          }),
+        )
+      }
+    } catch (e) {
+      if (ticket === searchRef.current) setError(errorText(e))
+    } finally {
+      if (ticket === searchRef.current) setBusy(false)
+    }
+  }
+  const suggestions = detected
+    .map((remote) => ({ remote, on: options.filter((o) => servesRemote(o.c, remote.url)) }))
+    .filter((s) => s.on.length > 0)
+
   const find = async () => {
     if (!chosen) return
     const ticket = ++searchRef.current
     setBusy(true)
     setError(null)
     setPicked(null)
+    setMatched(null)
+    setNotFound(null)
     try {
       const found = await client.listRepositories(chosen.plugin, chosen.c.id, search)
       if (ticket !== searchRef.current) return
@@ -111,7 +183,8 @@ export function LinkRemoteDialog({
     try {
       // Only the one remote: the app's backend merges it with what is
       // stored now.
-      const remote = remoteOf(name.trim(), primary, chosen.c.id, picked)
+      // Matched to the folder's remote by the plugin: its own URL.
+      const remote = remoteOf(name.trim(), primary, chosen.c.id, picked, matched?.url)
       const saved = await client.linkRepositoryRemote(
         profileId,
         projectId,
@@ -151,6 +224,38 @@ export function LinkRemoteDialog({
             {t("plugins:connections.link.noConnections")}
           </p>
         )}
+        {suggestions.length > 0 && (
+          <div className="grid gap-2">
+            <Label id={`${id}-detected`}>{t("plugins:connections.link.detected")}</Label>
+            <ul className="grid gap-2" aria-labelledby={`${id}-detected`}>
+              {suggestions.map(({ remote, on }) => (
+                <li key={remote.name} className="grid gap-1">
+                  <span className="text-caption">
+                    <span className="font-mono font-medium">{remote.name}</span>{" "}
+                    <span className="font-mono break-all text-muted-foreground">{remote.url}</span>
+                  </span>
+                  <span className="flex flex-wrap gap-2">
+                    {on.map((option) => (
+                      <Button
+                        key={option.key}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => void findRemote(remote, option)}
+                      >
+                        {t("plugins:connections.link.findOn", {
+                          remote: remote.name,
+                          connection: option.c.displayName,
+                        })}
+                      </Button>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {options.length > 0 && (
           <div className="grid gap-2">
             <Label id={`${id}-connection`}>{t("plugins:connections.link.connection")}</Label>
@@ -165,6 +270,8 @@ export function LinkRemoteDialog({
                 setChoice(value)
                 setRecords(null)
                 setPicked(null)
+                setMatched(null)
+                setNotFound(null)
               }}
               className="flex-wrap"
             >
@@ -202,6 +309,11 @@ export function LinkRemoteDialog({
                 {t("plugins:connections.link.find")}
               </Button>
             </div>
+            {notFound && (
+              <p className="text-caption text-muted-foreground" role="status">
+                {notFound}
+              </p>
+            )}
             {records !== null &&
               (records.length === 0 ? (
                 <p className="text-caption text-muted-foreground">
@@ -218,6 +330,7 @@ export function LinkRemoteDialog({
                         className="w-full justify-start"
                         onClick={() => {
                           setPicked(r)
+                          setMatched(null)
                         }}
                       >
                         {r.path || r.name || r.id}
@@ -237,8 +350,10 @@ export function LinkRemoteDialog({
                 connection: chosen.c.displayName,
               })}
             </p>
-            {picked.httpUrl && (
-              <p className="font-mono text-caption break-all select-all">{picked.httpUrl}</p>
+            {(matched?.url ?? picked.httpUrl) && (
+              <p className="font-mono text-caption break-all select-all">
+                {matched?.url ?? picked.httpUrl}
+              </p>
             )}
             <div className="grid gap-2">
               <Label htmlFor={`${id}-name`}>{t("plugins:connections.link.remoteName")}</Label>

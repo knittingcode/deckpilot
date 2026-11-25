@@ -24,6 +24,12 @@ released either. 0.6.0 is the first version intended for publication.
   it, and only the app writes it. In the project editor, each saved
   repository lists its remotes and has a "Link remote…" button; the link is
   saved at once, not with the project form.
+- Link remote suggests the remotes of the repository's folder: DeckPilot
+  reads them with `git remote -v` (read-only; it never fetches, pulls or
+  writes, and leaves out any user name, password or token in a URL), and
+  for a connection on the same server "Find origin on …" asks the
+  provider for exactly that repository. You still confirm the link; when
+  the provider does not know it, you search by its path.
 - Settings › Connections (builds with plugins): the servers plugins connect
   to, per plugin that declares them, with their state (connected, token
   rejected, missing permission, can't reach the server, certificate not

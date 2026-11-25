@@ -106,6 +106,16 @@ export interface RepositoryRemote {
   defaultBranch?: string
 }
 
+/**
+ * A git remote of a repository's folder (`list_repository_remotes`): the
+ * agent read it with `git remote -v`, without credentials.
+ */
+export interface DetectedRemote {
+  name: string
+  url: string
+  pushUrl?: string
+}
+
 /** A repository the plugin lists on a connection (`list-repositories`). */
 export interface RemoteRepositoryRecord {
   id: string
@@ -156,6 +166,21 @@ export interface ConnectionsClient {
     plugin: string,
     remote: RepositoryRemote,
   ) => Promise<{ remotes?: RepositoryRemote[] }>
+  /** `list_repository_remotes`: the remotes of the repository's folder here. */
+  listRepositoryRemotes: (
+    profileId: string,
+    projectId: string,
+    repositoryId: string,
+  ) => Promise<DetectedRemote[]>
+  /**
+   * The plugin's internal `resolve-remote` on one connection: the record
+   * only when one of its clone URLs is `remoteUrl` (the plugin checks).
+   */
+  resolveRemote: (
+    plugin: string,
+    connection: string,
+    remoteUrl: string,
+  ) => Promise<RemoteRepositoryRecord[]>
   /** `set_repository_remotes`: the remotes as the user saved them (K3). */
   setRepositoryRemotes: (
     profileId: string,
@@ -183,6 +208,20 @@ async function call<T>(command: string, args: Record<string, unknown>): Promise<
   } catch (error) {
     throw toPluginError(error)
   }
+}
+
+/** The `items` records of one of the plugin's internal actions. */
+async function records(
+  plugin: string,
+  action: string,
+  params: Record<string, string>,
+): Promise<RemoteRepositoryRecord[]> {
+  const outcome = await call<ActionOutcome>("invoke_plugin_action", { plugin, action, params })
+  if (outcome.status !== "ok") {
+    throw new Error(outcome.message ?? outcome.code ?? "the repositories could not be listed")
+  }
+  const items = outcome.data?.items
+  return Array.isArray(items) ? (items as RemoteRepositoryRecord[]) : []
 }
 
 export function createTauriConnectionsClient(): ConnectionsClient {
@@ -216,17 +255,12 @@ export function createTauriConnectionsClient(): ConnectionsClient {
     listRepositories: async (plugin, connection, search) => {
       const params: Record<string, string> = { connection }
       if (search.trim()) params.search = search.trim()
-      const outcome = await call<ActionOutcome>("invoke_plugin_action", {
-        plugin,
-        action: "list-repositories",
-        params,
-      })
-      if (outcome.status !== "ok") {
-        throw new Error(outcome.message ?? outcome.code ?? "the repositories could not be listed")
-      }
-      const items = outcome.data?.items
-      return Array.isArray(items) ? (items as RemoteRepositoryRecord[]) : []
+      return records(plugin, "list-repositories", params)
     },
+    listRepositoryRemotes: (profileId, projectId, repositoryId) =>
+      call("list_repository_remotes", { profileId, projectId, repositoryId }),
+    resolveRemote: (plugin, connection, remoteUrl) =>
+      records(plugin, "resolve-remote", { connection, remoteUrl }),
     linkRepositoryRemote: (profileId, projectId, repositoryId, plugin, remote) =>
       call("link_repository_remote", { profileId, projectId, repositoryId, plugin, remote }),
     setRepositoryRemotes: (profileId, projectId, repositoryId, remotes) =>
@@ -316,14 +350,58 @@ export function remoteOf(
   primary: boolean,
   connectionId: string,
   record: RemoteRepositoryRecord,
+  /** The folder's own URL, when the plugin matched the record to it. */
+  remoteUrl?: string,
 ): RepositoryRemote {
+  const url = remoteUrl ?? record.httpUrl
   return {
     name,
     primary,
     connectionId,
     remoteRepositoryId: record.id,
-    ...(record.httpUrl ? { remoteUrl: record.httpUrl } : {}),
+    ...(url ? { remoteUrl: url } : {}),
     ...(record.defaultBranch ? { defaultBranch: record.defaultBranch } : {}),
+  }
+}
+
+/**
+ * The host of a git remote URL (`https://`, `ssh://`, or the scp form
+ * `git@host:path`), lower-case, without a port; `null` for anything else.
+ */
+export function remoteHost(url: string): string | null {
+  if (/^(https|ssh):\/\//.test(url)) {
+    try {
+      return new URL(url).hostname.toLowerCase() || null
+    } catch {
+      return null
+    }
+  }
+  const scp = /^[^@/:]+@([^:/]+):(?!\/)/.exec(url)
+  return scp?.[1]?.toLowerCase() ?? null
+}
+
+/** The repository path of a git remote URL (`group/app`), to search for it. */
+export function remotePath(url: string): string {
+  const path = /^(https|ssh):\/\//.test(url)
+    ? (() => {
+        try {
+          return new URL(url).pathname
+        } catch {
+          return ""
+        }
+      })()
+    : url.slice(url.indexOf(":") + 1)
+  return path.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "")
+}
+
+/** Whether `connection`'s server is the host of the remote `url`. */
+export function servesRemote(connection: Pick<PluginConnection, "webUrl">, url: string): boolean {
+  const host = remoteHost(url)
+  if (!host) return false
+  try {
+    return new URL(connection.webUrl).hostname.toLowerCase() === host
+  } catch {
+    return false
   }
 }
 

@@ -81,7 +81,7 @@ impl PluginError {
         )
     }
 
-    fn unexpected(response: &Response) -> Self {
+    pub(crate) fn unexpected(response: &Response) -> Self {
         Self::new(
             reason::COMMUNICATION,
             format!("unexpected agent response: {response:?}"),

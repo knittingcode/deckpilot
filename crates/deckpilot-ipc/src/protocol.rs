@@ -21,7 +21,7 @@ use deckpilot_core::work_session::WorkSessionSnapshot;
 use deckpilot_core::{
     ActionInstanceId, ActionResult, ActionStatus, ContextEffect, CycleDirection, ExecutionId,
     ExecutionRecord, ExecutionSummary, LayoutId, LayoutStatus, PageId, ProfileId, Project,
-    ProjectId, WorkSessionId, WorkflowId, WorkflowReport,
+    ProjectId, RepositoryId, WorkSessionId, WorkflowId, WorkflowReport,
 };
 use deckpilot_device::{ConnectionState, ControlId, ControlInput, DeviceDescriptor, DeviceId};
 
@@ -954,6 +954,17 @@ pub enum Request {
     ListPluginConnections {
         plugin: String,
     },
+    /// The git remotes of a project repository's folder on this computer,
+    /// read by the agent with `git remote -v` (read-only, no network), with
+    /// every URL's credentials removed: what "Link remote" suggests
+    /// ([`connections::DetectedRemote`]). Answers `repositoryRemotes`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`], with the
+    /// [`plugins::feature::REPOSITORY_REMOTES`] feature.
+    ListRepositoryRemotes {
+        profile: ProfileId,
+        project: ProjectId,
+        repository: RepositoryId,
+    },
     /// Creates a connection: the user's consent to exactly the server
     /// `url` names (the address they open in the browser; ignored for the
     /// cloud), and, only with `private_network`, to reach it on a private
@@ -1551,6 +1562,12 @@ pub enum Response {
     PluginConnections {
         connections: Box<connections::PluginConnections>,
     },
+    /// Answer to `listRepositoryRemotes`: at most
+    /// [`connections::MAX_DETECTED_REMOTES`], without credentials. Since
+    /// protocol [`CONNECTIONS_PROTOCOL`].
+    RepositoryRemotes {
+        remotes: Vec<connections::DetectedRemote>,
+    },
     /// Answer to `createPluginConnection`, `setPluginConnectionSecret` and
     /// `updatePluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
     PluginConnection {
@@ -1959,7 +1976,8 @@ impl Request {
             | Self::SetPluginConnectionSecret { .. }
             | Self::UpdatePluginConnection { .. }
             | Self::TestPluginConnection { .. }
-            | Self::RemovePluginConnection { .. } => CONNECTIONS_PROTOCOL,
+            | Self::RemovePluginConnection { .. }
+            | Self::ListRepositoryRemotes { .. } => CONNECTIONS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices
