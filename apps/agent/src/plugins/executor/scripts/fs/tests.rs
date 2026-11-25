@@ -721,7 +721,8 @@ fn scripts_fs_read_file_in_chunks() {
         &mut e,
         &op(
             "fs.readFile",
-            json!({"path": rp("big.txt"), "encoding": "utf8", "offset": n, "length": 524_288}),
+            json!({"path": rp("big.txt"), "encoding": "utf8", "offset": n, "length": 524_288,
+                   "ifVersion": first["version"]}),
         ),
     ));
     assert_eq!(second["eof"], true);
@@ -1571,4 +1572,48 @@ fn scripts_fs_a_link_that_climbs_within_the_scope_is_read() {
         matches!(refused.as_str(), "symlinkEscape" | "protectedPath"),
         "{refused}"
     );
+}
+
+// --- the Scripts guest review of plugins #100 -------------------------------
+
+fn chunk(rel: &str, offset: u64, version: Option<&Value>) -> Value {
+    let mut args = json!({"path": rp(rel), "encoding": "base64", "offset": offset, "length": 4});
+    if let Some(v) = version {
+        args["ifVersion"] = v.clone();
+    }
+    op("fs.readFile", args)
+}
+
+#[test]
+fn scripts_fs_a_chunked_read_never_joins_two_versions_of_a_file() {
+    let f = setup(FsAccess::Read);
+    std::fs::write(f.path("w/cms/a.bin"), b"AAAABBBB").unwrap();
+    let mut e = f.loaded();
+    // Unchanged: the later chunk comes from the same file.
+    let first = ok(&call(&mut e, &chunk("a.bin", 0, None)));
+    let second = ok(&call(&mut e, &chunk("a.bin", 4, Some(&first["version"]))));
+    assert_eq!(second["content"], "QkJCQg==");
+    assert_eq!(second["eof"], true);
+    // Rewritten in place at the same length between two chunks.
+    let first = ok(&call(&mut e, &chunk("a.bin", 0, None)));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(f.path("w/cms/a.bin"), b"CCCCDDDD").unwrap();
+    let r = call(&mut e, &chunk("a.bin", 4, Some(&first["version"])));
+    assert_eq!(code(&r), "fileChanged");
+    // Replaced by another file at the same path.
+    let first = ok(&call(&mut e, &chunk("a.bin", 0, None)));
+    std::fs::write(f.path("w/cms/b.bin"), b"EEEEFFFF").unwrap();
+    std::fs::rename(f.path("w/cms/b.bin"), f.path("w/cms/a.bin")).unwrap();
+    let r = call(&mut e, &chunk("a.bin", 4, Some(&first["version"])));
+    assert_eq!(code(&r), "fileChanged");
+    // A version is for one read of one file, and used up at its end.
+    let first = ok(&call(&mut e, &chunk("a.bin", 0, None)));
+    std::fs::write(f.path("w/cms/c.bin"), b"GGGGHHHH").unwrap();
+    let r = call(&mut e, &chunk("c.bin", 4, Some(&first["version"])));
+    assert_eq!(code(&r), "fileChanged");
+    let r = call(&mut e, &chunk("a.bin", 4, Some(&first["version"])));
+    assert_eq!(code(&r), "invalidArgument", "the refused one is gone");
+    // A later chunk without a version is refused before the agent.
+    let r = call(&mut e, &chunk("a.bin", 4, None));
+    assert_eq!(code(&r), "call:BadRequest");
 }

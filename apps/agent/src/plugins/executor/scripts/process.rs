@@ -54,8 +54,12 @@ use super::{Call, Notes, RunProject, fault, now_us, to_value};
 use crate::plugins::executor::Executor;
 use crate::plugins::tools::{self as runner, Denial, Plan, RunSlot, Stop, codes as runner_codes};
 
-/// Output kept per stream, at most.
-const MAX_STREAM: usize = 512 << 10;
+/// Output kept per stream, at most; both together are cut to
+/// [`MAX_OUTPUT_TOTAL`] (the Scripts guest review of plugins #100).
+const MAX_STREAM: usize = 1 << 20;
+/// Output kept of both streams together: under 1 MiB, with room for the
+/// rest of the reply.
+const MAX_OUTPUT_TOTAL: usize = 960 << 10;
 /// Room the JSON of a process result may take (the 1 MiB reply cap, less
 /// the envelope).
 const REPLY_ROOM: usize = (1 << 20) - 4096;
@@ -655,6 +659,7 @@ impl Executor {
         // script, as with tool.run.
         result.stdout = runner::redact_userinfo(&result.stdout);
         result.stderr = runner::redact_userinfo(&result.stderr);
+        cap_together(&mut result);
         fit(&mut result);
         notes.add(
             "exit",
@@ -686,16 +691,42 @@ fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Shortens the streams until the result's JSON fits its reply.
-fn fit(result: &mut ProcessResult) {
-    let size = |r: &ProcessResult| serde_json::to_vec(r).map_or(usize::MAX, |j| j.len());
-    while size(result) > REPLY_ROOM {
+/// Cuts the longer stream until both together are at most
+/// [`MAX_OUTPUT_TOTAL`] bytes.
+fn cap_together(result: &mut ProcessResult) {
+    while result.stdout.len() + result.stderr.len() > MAX_OUTPUT_TOTAL {
+        let over = result.stdout.len() + result.stderr.len() - MAX_OUTPUT_TOTAL;
         let longer = if result.stdout.len() >= result.stderr.len() {
             &mut result.stdout
         } else {
             &mut result.stderr
         };
-        let mut end = longer.len() / 2;
+        let mut end = longer.len().saturating_sub(over);
+        while !longer.is_char_boundary(end) {
+            end -= 1;
+        }
+        longer.truncate(end);
+        result.truncated = true;
+    }
+}
+
+/// Shortens the streams until the result's JSON fits its reply (text
+/// that JSON escapes heavily is cut further).
+fn fit(result: &mut ProcessResult) {
+    let size = |r: &ProcessResult| serde_json::to_vec(r).map_or(usize::MAX, |j| j.len());
+    loop {
+        let now = size(result);
+        if now <= REPLY_ROOM {
+            return;
+        }
+        let longer = if result.stdout.len() >= result.stderr.len() {
+            &mut result.stdout
+        } else {
+            &mut result.stderr
+        };
+        // At least the overflow, at most half, per round.
+        let cut = (now - REPLY_ROOM).max(1).min(longer.len().div_ceil(2));
+        let mut end = longer.len().saturating_sub(cut);
         while !longer.is_char_boundary(end) {
             end -= 1;
         }

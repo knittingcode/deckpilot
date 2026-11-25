@@ -38,6 +38,10 @@ fn bin(f: &Fixture) -> PathBuf {
     tool("showenv", r#"echo "CI=${CI:-} TOKEN=${SECRET_TOKEN:-}""#);
     tool("slow", "sleep 30");
     tool("flood", "yes aaaaaaaaaaaaaaa | head -c 2000000");
+    tool(
+        "both",
+        "yes oooooooooooooo | head -c 900000; yes eeeeeeeeeeeeeeee | head -c 900000 >&2",
+    );
     bin
 }
 
@@ -615,4 +619,32 @@ fn narrowing_the_grant_mid_run_stops_the_program() {
     narrower.join().unwrap();
     assert_eq!(code(&r), "notGranted");
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// Both streams together keep at most 1 MiB (the Scripts guest review of
+/// plugins #100).
+#[test]
+fn both_streams_together_keep_at_most_a_mebibyte() {
+    let (f, bin) = setup(vec![grant(
+        "both",
+        ProcessCwd::Repositories,
+        ProcessEnv::None,
+    )]);
+    f.grant(ScriptGrants {
+        limits: ScriptLimits {
+            max_output_kib: 4096,
+            ..ScriptLimits::default()
+        },
+        ..grants(vec![grant(
+            "both",
+            ProcessCwd::Repositories,
+            ProcessEnv::None,
+        )])
+    });
+    let mut e = loaded(&f, &bin);
+    let r = ok(&call(&mut e, &run("both", &[])));
+    let total = r["stdout"].as_str().unwrap().len() + r["stderr"].as_str().unwrap().len();
+    assert!(total <= 1 << 20, "{total}");
+    assert!(total > 900_000, "{total}");
+    assert_eq!(r["truncated"], true);
 }

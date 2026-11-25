@@ -315,6 +315,8 @@ fn a_run_loads_only_its_own_trusted_script_once() {
     assert_eq!(loaded["run"]["userInitiated"], true);
     assert_eq!(loaded["settings"]["memoryMib"], 64);
     assert!(loaded["nowUs"].as_u64().unwrap() > 0);
+    let left = loaded["remainingMs"].as_u64().unwrap();
+    assert!(left > 50_000 && left <= 60_000, "{left}");
     assert_eq!(
         code(&call(
             &mut e,

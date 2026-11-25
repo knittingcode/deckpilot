@@ -141,6 +141,7 @@ pub(super) fn load(
             origin: call.origin.to_owned(),
             user_initiated: call.user_initiated,
         },
+        remaining_ms: u64::try_from(call.remaining().as_millis()).unwrap_or(u64::MAX),
         now_us: now_us(),
     })
 }

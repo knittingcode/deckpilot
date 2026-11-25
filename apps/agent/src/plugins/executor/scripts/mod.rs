@@ -164,6 +164,8 @@ struct RunState {
     deadline: Option<Instant>,
     tokens: confirm::Tokens,
     writes: fs::Writes,
+    /// Reads in progress (their held files).
+    reads: fs::Reads,
     /// Bytes `fs.copy` copied in this run.
     copied: u64,
     log: run::LogBuffer,

@@ -848,17 +848,19 @@ impl Fs<'_> {
         // Every link of the way was followed by hand: the file itself is
         // opened without following one.
         options.follow(FollowSymlinks::No);
-        let mut file = parent
+        let opened = parent
             .open_with(&last, &options)
             .map_err(|e| failure(&e, &shown))?;
-        let meta = file.metadata().map_err(|e| failure(&e, &shown))?;
+        let meta = opened.metadata().map_err(|e| failure(&e, &shown))?;
         if !meta.is_file() {
             return Err(fault(
                 codes::INVALID_ARGUMENT,
                 format!("“{shown}” is not a file"),
             ));
         }
-        let size = meta.len();
+        let now = file_state(&meta);
+        let (mut file, version) = self.read_handle(r, &t, opened, now, &shown)?;
+        let size = now.size;
         let max = r.max_bytes.unwrap_or(MAX_SCRIPT_FILE).min(MAX_SCRIPT_FILE);
         if size > max {
             return Err(ScriptFault {
@@ -911,11 +913,72 @@ impl Fs<'_> {
             Encoding::Utf8 => content.len() as u64,
         };
         notes.add("bytes", read.to_string());
+        let eof = offset + read >= size;
+        if !eof {
+            self.call.run.state().reads.keep(
+                version.clone(),
+                OpenRead {
+                    file,
+                    key: key_of(&t),
+                    state: now,
+                },
+            );
+        }
         to_value(&FsRead {
             content,
             bytes: read,
             size,
-            eof: offset + read >= size,
+            eof,
+            version,
+        })
+    }
+
+    /// The handle a chunk is read from, and the read's version.
+    /// One read, one file in one state (the Scripts guest review of
+    /// plugins #100): the first chunk opens it and gives a version, the
+    /// later ones read the very handle it opened, and the file at the
+    /// path must still be that file, unchanged.
+    fn read_handle(
+        &self,
+        r: &FsReadFile,
+        t: &Target,
+        opened: File,
+        now: FileState,
+        shown: &str,
+    ) -> Result<(File, String), ScriptFault> {
+        Ok(match &r.if_version {
+            None => {
+                let version =
+                    random_hex(16).ok_or_else(|| fault(codes::HOST_ERROR, "no random source"))?;
+                (opened, version)
+            }
+            Some(version) => {
+                let mut state = self.call.run.state();
+                let held = state.reads.take(version).ok_or_else(|| {
+                    fault(
+                        codes::INVALID_ARGUMENT,
+                        "not a read this run started (or it ended); read again from offset 0",
+                    )
+                })?;
+                let unchanged = held.key == key_of(t)
+                    && held.state == now
+                    && held
+                        .file
+                        .metadata()
+                        .is_ok_and(|m| file_state(&m) == held.state);
+                if !unchanged {
+                    return Err(ScriptFault {
+                        path: Some(shown.to_owned()),
+                        ..fault(
+                            codes::FILE_CHANGED,
+                            format!(
+                                "“{shown}” changed between two parts of the read; read it again"
+                            ),
+                        )
+                    });
+                }
+                (held.file, version.clone())
+            }
         })
     }
 
@@ -1697,6 +1760,60 @@ impl Drop for Pending {
             self.file = None;
             let _ = self.parent.remove_file(&self.temp);
         }
+    }
+}
+
+/// A file's state, from its open handle's metadata.
+fn file_state(m: &cap_std::fs::Metadata) -> FileState {
+    FileState {
+        id: (
+            cap_fs_ext::MetadataExt::dev(m),
+            cap_fs_ext::MetadataExt::ino(m),
+        ),
+        size: m.len(),
+        modified: m
+            .modified()
+            .ok()
+            .and_then(|t| t.into_std().duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos()),
+    }
+}
+
+/// What identifies a file's state between the chunks of a read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileState {
+    id: (u64, u64),
+    size: u64,
+    modified: u128,
+}
+
+/// A read in progress: the file it opened, held between its chunks.
+pub(crate) struct OpenRead {
+    file: File,
+    key: String,
+    state: FileState,
+}
+
+/// Reads one run may have in progress; the oldest is dropped past it.
+const MAX_OPEN_READS: usize = 4;
+
+/// A run's reads in progress, by version.
+#[derive(Default)]
+pub(crate) struct Reads {
+    open: Vec<(String, OpenRead)>,
+}
+
+impl Reads {
+    fn take(&mut self, version: &str) -> Option<OpenRead> {
+        let at = self.open.iter().position(|(v, _)| v == version)?;
+        Some(self.open.remove(at).1)
+    }
+
+    fn keep(&mut self, version: String, read: OpenRead) {
+        if self.open.len() >= MAX_OPEN_READS {
+            self.open.remove(0);
+        }
+        self.open.push((version, read));
     }
 }
 
