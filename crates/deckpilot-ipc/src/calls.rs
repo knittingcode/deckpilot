@@ -81,6 +81,11 @@ pub struct CallsDevice {
     pub shown: bool,
     /// The device went "back to work" (its overlay is suspended).
     pub suspended: bool,
+    /// The call page the device shows as the editor's preview, if any.
+    /// Cleared when the agent ends the preview by itself (a lock, a real
+    /// call, a disconnect, a dismiss, a restart), so the app follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<CallsPageKind>,
 }
 
 /// One model's managed layout.
@@ -232,4 +237,6 @@ pub mod reason {
     pub const PREVIEW_DESKTOP_ONLY: &str = "callsPreviewDesktopOnly";
     /// No preview while a real call shows (it always wins).
     pub const PREVIEW_IN_CALL: &str = "callsPreviewInCall";
+    /// The device took no preview frame.
+    pub const PREVIEW_REFUSED: &str = "callsPreviewRefused";
 }

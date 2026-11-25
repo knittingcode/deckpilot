@@ -295,7 +295,8 @@
       "unknownDevice": "the device is not connected",
       "noLayout": "this device model has no Calls layout",
       "notInstalled": "Calls is not installed",
-      "noBackToWork": "this Calls layout has no Back to work key"
+      "noBackToWork": "this Calls layout has no Back to work key",
+      "previewRefused": "the device did not take the page"
     }
   }
 }

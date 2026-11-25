@@ -91,7 +91,11 @@ pub struct CallsDriver {
     watchdog_pops: usize,
     /// The editor's previews of a call page (no call, no provider): one
     /// per device, never at the same time as a real call's frame.
-    previews: BTreeMap<DeviceId, OverlaySession>,
+    previews: BTreeMap<DeviceId, (OverlaySession, Page)>,
+    /// Unit tests: the next preview's push fails as if the device took no
+    /// frame.
+    #[cfg(test)]
+    fail_next_preview: bool,
 }
 
 /// Why a page could not be previewed.
@@ -115,6 +119,8 @@ impl CallsDriver {
             enabled: BTreeMap::new(),
             dismissed: BTreeMap::new(),
             previews: BTreeMap::new(),
+            #[cfg(test)]
+            fail_next_preview: false,
             locale: Locale::default(),
             watchdog_pops: 0,
         }
@@ -304,11 +310,15 @@ impl CallsDriver {
         let faces = faces(generated, page_id, &snapshot, self.locale);
         // The new frame first: when the device takes none, the old preview
         // (if any) stays as it was, still known.
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_preview) {
+            return Err(PreviewError::Refused);
+        }
         let session = runtime
             .push_overlay(device, spec)
             .map_err(|_| PreviewError::Refused)?;
         runtime.set_overlay_faces(device, session, faces);
-        if let Some(old) = self.previews.insert(device.clone(), session) {
+        if let Some((old, _)) = self.previews.insert(device.clone(), (session, page)) {
             runtime.pop_overlay(device, old);
         }
         Ok(())
@@ -316,7 +326,7 @@ impl CallsDriver {
 
     /// Ends `device`'s preview, if it has one: its frame goes.
     pub fn end_preview(&mut self, runtime: &mut Runtime, device: &DeviceId) {
-        if let Some(session) = self.previews.remove(device) {
+        if let Some((session, _)) = self.previews.remove(device) {
             runtime.pop_overlay(device, session);
         }
     }
@@ -334,12 +344,17 @@ impl CallsDriver {
         self.previews.keys()
     }
 
+    /// The page `device` previews, if it has a preview.
+    pub fn preview_page(&self, device: &DeviceId) -> Option<Page> {
+        self.previews.get(device).map(|(_, page)| *page)
+    }
+
     /// The overlay was dismissed on `device`
     /// ([`deckpilot_core::RuntimeOutcome::OverlayDismissed`]): the runtime
     /// popped it; the device stays on its own presentation for this call.
     pub fn dismissed(&mut self, device: &DeviceId, session: OverlaySession) {
         // A preview dismissed on the device: the runtime popped its frame.
-        if self.previews.get(device) == Some(&session) {
+        if self.previews.get(device).map(|(s, _)| *s) == Some(session) {
             self.previews.remove(device);
         }
         if self
@@ -535,7 +550,7 @@ impl CallsDriver {
                     .frames
                     .get(&device)
                     .is_some_and(|f| f.session == view.session)
-                    || self.previews.get(&device) == Some(&view.session);
+                    || self.previews.get(&device).map(|(s, _)| *s) == Some(view.session);
                 if view.owner == OverlayOwner::Calls && !known {
                     runtime.pop_overlay(&device, view.session);
                     self.watchdog_pops += 1;

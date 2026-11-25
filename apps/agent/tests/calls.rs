@@ -1465,3 +1465,52 @@ async fn the_overlay_is_drawn_on_every_class_of_device() {
         deck.agent.shutdown().await;
     }
 }
+
+/// The app follows the agent's previews: `callsChanged` names the page a
+/// device previews, and drops it when the agent ends the preview by itself
+/// (here a real call).
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_changed_follows_the_preview() {
+    use deckpilot_ipc::AgentEvent;
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    let preview_of = |status: &deckpilot_ipc::calls::CallsStatus| {
+        status
+            .devices
+            .iter()
+            .find(|d| d.device == deck.device)
+            .and_then(|d| d.preview)
+    };
+    loop {
+        if let AgentEvent::CallsChanged { status } =
+            tokio::time::timeout(TIMEOUT, events.next_event())
+                .await
+                .unwrap()
+                .unwrap()
+            && preview_of(&status) == Some(CallsPageKind::Outgoing)
+        {
+            break;
+        }
+    }
+    deck.join().await;
+    loop {
+        if let AgentEvent::CallsChanged { status } =
+            tokio::time::timeout(TIMEOUT, events.next_event())
+                .await
+                .unwrap()
+                .unwrap()
+            && status.state == "active"
+            && preview_of(&status).is_none()
+        {
+            break;
+        }
+    }
+    deck.agent.shutdown().await;
+}

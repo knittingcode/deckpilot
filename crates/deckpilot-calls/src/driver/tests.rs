@@ -605,3 +605,33 @@ fn a_preview_shows_a_page_and_gives_way_to_a_real_call() {
     assert_eq!(w.driver.previews().count(), 0);
     assert_eq!(w.runtime.all_overlays().len(), 0);
 }
+
+/// A preview the device does not take keeps the one it replaces: the old
+/// frame stays, known, on its page (pushed first, popped only after).
+#[test]
+fn a_refused_preview_keeps_the_previous_one() {
+    let mut w = World::new();
+    let mk2 = w.mk2.clone();
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Incoming)
+        .unwrap();
+    w.driver.fail_next_preview = true;
+    assert_eq!(
+        w.driver.preview(&mut w.runtime, &mk2, Page::Active),
+        Err(PreviewError::Refused)
+    );
+    assert_eq!(w.driver.preview_page(&mk2), Some(Page::Incoming));
+    assert_eq!(w.page(&mk2), Some(Page::Incoming));
+    assert_eq!(
+        w.runtime
+            .all_overlays()
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum::<usize>(),
+        1
+    );
+    // Still the driver's: the watchdog leaves it alone.
+    w.at(5);
+    assert_eq!(w.driver.preview_page(&mk2), Some(Page::Incoming));
+    assert!(w.shows(&mk2));
+}

@@ -305,7 +305,8 @@
       "unknownDevice": "urządzenie nie jest podłączone",
       "noLayout": "ten model urządzenia nie ma układu Rozmów",
       "notInstalled": "Rozmowy nie są zainstalowane",
-      "noBackToWork": "ten układ Rozmów nie ma klawisza Wróć do pracy"
+      "noBackToWork": "ten układ Rozmów nie ma klawisza Wróć do pracy",
+      "previewRefused": "urządzenie nie przyjęło strony"
     }
   }
 }

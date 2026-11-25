@@ -543,9 +543,11 @@ impl Agent {
             }
             RuntimeOutcome::OverlayDismissed { session, .. } => {
                 service.driver.dismissed(device, *session);
-                // A dismissed preview is over.
-                if !service.driver.previews().any(|d| d == device) {
-                    self.calls.previews.remove(device);
+                // A dismissed preview is over, and the app is told.
+                if !service.driver.previews().any(|d| d == device)
+                    && self.calls.previews.remove(device).is_some()
+                {
+                    self.calls_publish();
                 }
                 true
             }
@@ -689,11 +691,13 @@ impl Agent {
                         PreviewError::NoLayout => no_layout(),
                         PreviewError::Refused => {
                             IpcError::new(ErrorCode::Failed, "the device took no preview")
+                                .with_reason(deckpilot_ipc::calls::reason::PREVIEW_REFUSED)
                         }
                     })?;
                 // One per device: a new one replaces the old, whoever asked.
                 self.calls.previews.insert(device.clone(), viewer);
                 self.render_all();
+                self.calls_publish();
                 Ok(Response::Ok)
             }
             Request::EndCallsPreview { device } => {
@@ -703,6 +707,7 @@ impl Agent {
                         service.driver.end_preview(&mut self.runtime, device);
                     }
                     self.render_all();
+                    self.calls_publish();
                 }
                 Ok(Response::Ok)
             }
@@ -730,6 +735,7 @@ impl Agent {
         }
         if !devices.is_empty() {
             self.render_all();
+            self.calls_publish();
         }
     }
 
@@ -739,6 +745,7 @@ impl Agent {
         if let Some(service) = self.calls.service.as_mut() {
             service.driver.end_previews(&mut self.runtime);
         }
+        self.calls_publish();
     }
 
     /// Forgets the previews the driver ended by itself (a real call came,
@@ -816,6 +823,17 @@ impl Agent {
                     overlay: service.driver.overlay_enabled(&self.runtime, device),
                     shown: views.iter().any(|v| v.visible),
                     suspended: views.iter().any(|v| v.suspended),
+                    preview: service.driver.preview_page(device).map(|page| match page {
+                        deckpilot_calls::layouts::Page::Incoming => {
+                            deckpilot_ipc::calls::CallsPageKind::Incoming
+                        }
+                        deckpilot_calls::layouts::Page::Outgoing => {
+                            deckpilot_ipc::calls::CallsPageKind::Outgoing
+                        }
+                        deckpilot_calls::layouts::Page::Active => {
+                            deckpilot_ipc::calls::CallsPageKind::Active
+                        }
+                    }),
                 }
             })
             .collect();

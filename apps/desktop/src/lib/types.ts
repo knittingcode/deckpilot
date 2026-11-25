@@ -1507,6 +1507,8 @@ export interface CallsDevice {
   overlay: boolean
   shown: boolean
   suspended: boolean
+  /** The page the device previews for the editor; absent once the agent ended it. */
+  preview?: CallsPageKind
 }
 
 export interface CallsLayout {

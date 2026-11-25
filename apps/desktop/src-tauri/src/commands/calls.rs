@@ -130,8 +130,13 @@ impl CallsPreview {
     /// A begin starts: the running preview ends, and this begin is the
     /// latest. Returns its ticket.
     fn begin(&self) -> u64 {
-        self.stop();
-        self.lock().generation
+        // One lock: two begins racing never share a ticket.
+        let mut holder = self.lock();
+        holder.generation += 1;
+        if let Some(end) = holder.end.take() {
+            let _ = end.send(());
+        }
+        holder.generation
     }
 
     /// The agent shows the preview of begin `ticket`: it is kept when that

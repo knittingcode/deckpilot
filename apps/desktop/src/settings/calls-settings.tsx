@@ -70,6 +70,28 @@ export function CallsSettings() {
     },
     [],
   )
+  // The agent ended the preview by itself (a lock, a call, a disconnect,
+  // a dismiss, a restart): once its status named the preview, it no longer
+  // does.
+  const previewModel = preview?.model
+  const previewPage = preview?.page
+  const shownByAgent =
+    status?.devices.some(
+      (entry) => entry.device.model === previewModel && entry.preview === previewPage,
+    ) === true
+  // Which preview the agent's status confirmed ("model/page"), followed
+  // while rendering.
+  const [confirmed, setConfirmed] = useState<string | null>(null)
+  const previewKey =
+    previewModel !== undefined && previewPage !== undefined
+      ? `${previewModel}/${previewPage}`
+      : null
+  if (previewKey !== null && shownByAgent && confirmed !== previewKey) {
+    setConfirmed(previewKey)
+  } else if (previewKey !== null && !shownByAgent && confirmed === previewKey) {
+    setConfirmed(null)
+    setPreview(null)
+  }
   const togglePreview = (model: string, device: DeviceId, page: CallsPageKind) => {
     request.current += 1
     const mine = request.current

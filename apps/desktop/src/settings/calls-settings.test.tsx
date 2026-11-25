@@ -381,4 +381,30 @@ describe("Settings › Devices › Calls", () => {
       await i18n.changeLanguage("en")
     }
   })
+
+  it("follows the agent when it ends the preview by itself", async () => {
+    const user = userEvent.setup()
+    const previewing = (page?: "active") =>
+      status({
+        devices: [
+          { device: device.id, overlay: true, shown: true, suspended: false, preview: page },
+        ],
+      })
+    api.getCallsStatus.mockResolvedValue(previewing())
+    api.callsPreviewBegin.mockResolvedValue(null)
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    act(() => {
+      emitBackend(CALLS_EVENT, previewing("active"))
+    })
+    expect(await screen.findByRole("button", { name: "End preview" })).toBeInTheDocument()
+    // A real call came: the agent ended it and says so.
+    act(() => {
+      emitBackend(CALLS_EVENT, previewing())
+    })
+    expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
 })

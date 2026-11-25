@@ -81,6 +81,7 @@ export const CALL_REASONS = {
 export const CALLS_REFUSALS = {
   callsPreviewInCall: "devices:calls.refusals.previewInCall",
   callsPreviewDesktopOnly: "devices:calls.refusals.previewDesktopOnly",
+  callsPreviewRefused: "devices:calls.refusals.previewRefused",
   callsUnknownDevice: "devices:calls.refusals.unknownDevice",
   callsNoLayout: "devices:calls.refusals.noLayout",
   callsNotInstalled: "devices:calls.refusals.notInstalled",
