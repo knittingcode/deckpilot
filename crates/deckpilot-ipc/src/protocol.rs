@@ -954,6 +954,18 @@ pub enum Request {
     ListPluginConnections {
         plugin: String,
     },
+    /// Makes the server of the old plugin `from` (`deckpilot.github`,
+    /// `deckpilot.gitlab`) a Git Providers connection, and with `token`
+    /// copies its saved token into it inside the agent (Git Providers
+    /// design §11.2): the user's opt-in, item by item. Importing again
+    /// changes nothing; the old plugin is never changed. Answers
+    /// `pluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`], with
+    /// the [`plugins::feature::LEGACY_IMPORT`] feature.
+    ImportPluginConnection {
+        from: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        token: bool,
+    },
     /// Creates a connection: the user's consent to exactly the server
     /// `url` names (the address they open in the browser; ignored for the
     /// cloud), and, only with `private_network`, to reach it on a private
@@ -1220,6 +1232,7 @@ impl Request {
             | Self::UpdatePluginConnection { .. }
             | Self::TestPluginConnection { .. }
             | Self::RemovePluginConnection { .. } => connections::check_request(self),
+            Self::ImportPluginConnection { from, .. } => plugins::check_text("from", from),
             Self::InstallPlugin { source, consent } => {
                 source.check()?;
                 plugins::check_consent(consent)
@@ -1959,7 +1972,8 @@ impl Request {
             | Self::SetPluginConnectionSecret { .. }
             | Self::UpdatePluginConnection { .. }
             | Self::TestPluginConnection { .. }
-            | Self::RemovePluginConnection { .. } => CONNECTIONS_PROTOCOL,
+            | Self::RemovePluginConnection { .. }
+            | Self::ImportPluginConnection { .. } => CONNECTIONS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices

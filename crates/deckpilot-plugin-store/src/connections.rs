@@ -819,6 +819,89 @@ pub(crate) fn set_secret(
     Ok(())
 }
 
+/// What importing an old plugin's server and token as a connection did
+/// (Git Providers design §11.2, PR-10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LegacyImport {
+    /// The connection was made. `with_secret`: the old plugin's token was
+    /// copied into it; without one it waits for a token (`needsReconnect`).
+    Created {
+        connection: String,
+        with_secret: bool,
+    },
+    /// The old plugin's settings are a connection already (its
+    /// `legacy_source`): nothing was written.
+    Existing { connection: String },
+}
+
+/// The oldest connection of `id` that `source`'s settings became.
+pub(crate) fn by_legacy_source(
+    conn: &Connection,
+    id: &PluginId,
+    source: &PluginId,
+) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT connection_id FROM plugin_connections
+             WHERE plugin_id = ?1 AND legacy_source = ?2
+             ORDER BY created_at, connection_id LIMIT 1",
+            params![id.as_str(), source.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Makes `new` the connection `source`'s settings become, in the caller's
+/// transaction: nothing when there is one already (idempotent), else the
+/// connection, read-only as the old plugin was, and, only with
+/// `secret_slot` (the user approved the copy, never derived), the old
+/// plugin's token copied into it. The old plugin's credential row is only
+/// read, never changed or deleted. Any failure leaves the transaction to
+/// be rolled back, so nothing of the import is kept.
+pub(crate) fn import_legacy(
+    conn: &Connection,
+    id: &PluginId,
+    source: &PluginId,
+    new: &NewConnection,
+    secret_slot: Option<&str>,
+    consent_by: &str,
+    now: i64,
+) -> Result<LegacyImport> {
+    if new.legacy_source.as_deref() != Some(source.as_str()) {
+        return invalid(
+            id,
+            format!("an import from {source} names it as its source"),
+        );
+    }
+    if new.methods != [HttpMethod::Get] {
+        return invalid(id, "an import reads only, as the old plugin did");
+    }
+    if let Some(connection) = by_legacy_source(conn, id, source)? {
+        return Ok(LegacyImport::Existing { connection });
+    }
+    insert(conn, id, new, consent_by, now)?;
+    let secret = match secret_slot {
+        Some(slot) => crate::data::credential_secret(conn, source, slot)?,
+        None => None,
+    };
+    if let Some(secret) = secret {
+        set_secret(conn, id, &new.id, secret.expose(), now)?;
+        return Ok(LegacyImport::Created {
+            connection: new.id.clone(),
+            with_secret: true,
+        });
+    }
+    conn.execute(
+        "UPDATE plugin_connections SET status = 'needsReconnect', updated_at = ?3
+         WHERE plugin_id = ?1 AND connection_id = ?2",
+        params![id.as_str(), new.id, now],
+    )?;
+    Ok(LegacyImport::Created {
+        connection: new.id.clone(),
+        with_secret: false,
+    })
+}
+
 /// The secret of `connection`, for injection into one request.
 pub(crate) fn secret(conn: &Connection, id: &PluginId, connection: &str) -> Result<Option<Secret>> {
     let secret: Option<Zeroizing<String>> = conn
@@ -1183,5 +1266,147 @@ mod tests {
         tx.commit().unwrap();
         assert_eq!(load(db.connection(), &p).unwrap().len(), 0);
         assert!(secret(db.connection(), &p, ID).unwrap().is_none());
+    }
+
+    fn legacy(id: &str) -> NewConnection {
+        let mut new = self_hosted(id);
+        new.legacy_source = Some("deckpilot.gitlab".into());
+        new
+    }
+
+    fn source() -> PluginId {
+        PluginId::parse("deckpilot.gitlab").unwrap()
+    }
+
+    /// The old plugin's token is copied into the new connection in the
+    /// same transaction, its own row kept; a second import changes
+    /// nothing; without the approved slot (or without a token there) the
+    /// connection waits for one.
+    #[test]
+    fn an_import_copies_the_token_once_and_keeps_the_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = open(&dir);
+        let p = plugin();
+        let tx = db.write().unwrap();
+        crate::data::set_credential(&tx, &source(), "token", "dp-test-legacy-token", 5).unwrap();
+        let first = import_legacy(
+            &tx,
+            &p,
+            &source(),
+            &legacy(ID),
+            Some("token"),
+            "user:migration",
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            first,
+            LegacyImport::Created {
+                connection: ID.into(),
+                with_secret: true
+            }
+        );
+        // Idempotent: the same or another new connection, nothing written.
+        for again in [legacy(ID), legacy(OTHER)] {
+            let outcome = import_legacy(
+                &tx,
+                &p,
+                &source(),
+                &again,
+                Some("token"),
+                "user:migration",
+                20,
+            )
+            .unwrap();
+            assert_eq!(
+                outcome,
+                LegacyImport::Existing {
+                    connection: ID.into()
+                }
+            );
+        }
+        tx.commit().unwrap();
+        let rows = load(db.connection(), &p).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].legacy_source.as_deref(), Some("deckpilot.gitlab"));
+        assert_eq!(rows[0].methods, vec![HttpMethod::Get]);
+        assert_eq!(rows[0].status, ConnectionStatus::Untested);
+        assert_eq!(
+            secret(db.connection(), &p, ID)
+                .unwrap()
+                .map(|s| s.expose().to_owned())
+                .as_deref(),
+            Some("dp-test-legacy-token")
+        );
+        // The old plugin's token stays where it was.
+        assert!(
+            crate::data::credential_secret(db.connection(), &source(), "token")
+                .unwrap()
+                .is_some()
+        );
+
+        // Not approved, or nothing stored: the connection waits for a token.
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = open(&dir);
+        let tx = db.write().unwrap();
+        crate::data::set_credential(&tx, &source(), "token", "dp-test-legacy-token", 5).unwrap();
+        let outcome =
+            import_legacy(&tx, &p, &source(), &legacy(ID), None, "user:migration", 10).unwrap();
+        assert_eq!(
+            outcome,
+            LegacyImport::Created {
+                connection: ID.into(),
+                with_secret: false
+            }
+        );
+        tx.commit().unwrap();
+        let rows = load(db.connection(), &p).unwrap();
+        assert_eq!(rows[0].status, ConnectionStatus::NeedsReconnect);
+        assert!(secret(db.connection(), &p, ID).unwrap().is_none());
+    }
+
+    /// A failure after the connection was written (a token that cannot
+    /// travel in a header) rolls the whole import back: no connection, no
+    /// secret, the old token untouched; a later import starts afresh.
+    #[test]
+    fn a_failed_import_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = open(&dir);
+        let p = plugin();
+        let tx = db.write().unwrap();
+        crate::data::set_credential(&tx, &source(), "token", "dp-test\tlegacy", 5).unwrap();
+        tx.commit().unwrap();
+        {
+            let tx = db.write().unwrap();
+            assert!(
+                import_legacy(
+                    &tx,
+                    &p,
+                    &source(),
+                    &legacy(ID),
+                    Some("token"),
+                    "user:migration",
+                    10
+                )
+                .is_err()
+            );
+            // Dropped without a commit: rolled back.
+        }
+        assert_eq!(load(db.connection(), &p).unwrap(), Vec::new());
+        assert!(secret(db.connection(), &p, ID).unwrap().is_none());
+        assert!(
+            crate::data::credential_secret(db.connection(), &source(), "token")
+                .unwrap()
+                .is_some()
+        );
+        // Wrong source, or anything but reading: refused before writing.
+        let tx = db.write().unwrap();
+        let mut other = legacy(ID);
+        other.legacy_source = Some("deckpilot.github".into());
+        assert!(import_legacy(&tx, &p, &source(), &other, None, "user:migration", 10).is_err());
+        let mut writes = legacy(ID);
+        writes.methods = vec![HttpMethod::Get, HttpMethod::Post];
+        assert!(import_legacy(&tx, &p, &source(), &writes, None, "user:migration", 10).is_err());
+        assert_eq!(load(&tx, &p).unwrap(), Vec::new());
     }
 }

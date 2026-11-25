@@ -293,6 +293,7 @@ pub(crate) fn is_plugin_request(request: &Request) -> bool {
             | Request::UpdatePluginConnection { .. }
             | Request::TestPluginConnection { .. }
             | Request::RemovePluginConnection { .. }
+            | Request::ImportPluginConnection { .. }
     )
 }
 
@@ -352,6 +353,7 @@ pub(crate) fn features() -> Vec<String> {
         deckpilot_ipc::plugins::feature::RESTORE_BUNDLED.to_owned(),
         deckpilot_ipc::plugins::feature::VISUAL_ASSETS.to_owned(),
         deckpilot_ipc::plugins::feature::STOREFRONT.to_owned(),
+        deckpilot_ipc::plugins::feature::LEGACY_IMPORT.to_owned(),
     ]
 }
 

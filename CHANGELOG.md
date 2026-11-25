@@ -17,6 +17,16 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Git Providers (builds with plugins, not bundled yet): the agent can make
+  the server of the GitHub or GitLab plugin a Git Providers connection when
+  you ask, and, only if you also choose so, use the token saved there. It
+  happens once (asking again changes nothing), all or nothing, read-only
+  like the old plugin, and the old plugin keeps its settings and token and
+  keeps running your keys. A GitHub Enterprise Cloud data-residency server
+  or a private-network server without its earlier consent is not imported
+  but reported. The old plugin's time limit is not carried over yet (open
+  decision); its 20 s stays.
+
 - Plugins: connections (plugin API 1.14, host side). A plugin that
   declares connection types (DeckPilot's own bundled plugins only) can be
   connected to several servers, each with its own address, consent, token

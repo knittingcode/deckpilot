@@ -704,7 +704,11 @@ impl PluginService {
             })
     }
 
-    fn connection_response(&self, id: &PluginId, connection: &str) -> Result<Response, IpcError> {
+    pub(super) fn connection_response(
+        &self,
+        id: &PluginId,
+        connection: &str,
+    ) -> Result<Response, IpcError> {
         Ok(Response::PluginConnection {
             plugin: id.to_string(),
             connection: Box::new(view(&self.connection_row(id, connection)?)),
