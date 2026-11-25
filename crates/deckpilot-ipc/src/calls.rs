@@ -2,8 +2,10 @@
 //! what the app shows about Calls and the settings it changes.
 //!
 //! - `getCallsStatus` answers [`CallsStatus`]; the agent pushes it again as
-//!   the `callsChanged` event whenever it changes (to desktop clients of
-//!   protocol 19 only).
+//!   the `callsChanged` event whenever it changes, to subscribed desktop
+//!   clients of protocol 19 only ([`crate::AgentEvent::desktop_only`]).
+//!   That is hygiene, not the boundary: the IPC token is, and any client
+//!   holding it may ask `getCallsStatus`.
 //! - `setCallsOverlay` turns the overlay on or off for one device.
 //! - `restoreCallsLayout` is *Restore defaults* of one model's managed
 //!   layout: the user's version is kept first as a layout of their own
@@ -18,6 +20,25 @@ use serde::{Deserialize, Serialize};
 
 /// Longest name of a kept copy (`restoreCallsLayout`).
 pub const MAX_COPY_NAME: usize = 80;
+
+/// Longest device serial `setCallsOverlay` accepts.
+pub const MAX_SERIAL: usize = 64;
+
+/// Whether `name` may name a kept copy: 1 to [`MAX_COPY_NAME`] characters
+/// once trimmed, with no control character and no bidirectional override
+/// or isolate (which could make the name read as another).
+pub fn valid_copy_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    !trimmed.is_empty()
+        && trimmed.chars().count() <= MAX_COPY_NAME
+        && !trimmed
+            .chars()
+            .any(|c| c.is_control() || is_bidi_control(c))
+}
+
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}')
+}
 
 /// The Calls state the app shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -69,4 +90,6 @@ pub mod reason {
     pub const NOT_INSTALLED: &str = "callsNotInstalled";
     /// The model has no managed layout.
     pub const NO_LAYOUT: &str = "callsNoLayout";
+    /// The device is not connected.
+    pub const UNKNOWN_DEVICE: &str = "callsUnknownDevice";
 }

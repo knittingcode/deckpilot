@@ -21,7 +21,7 @@ import { type TranslationKey, useTranslation } from "@/i18n"
 import { useFormat } from "@/i18n/format"
 import { api } from "@/lib/api"
 import { useAppContext } from "@/lib/app-context"
-import { CALLS_EVENT, type CallStateName, callStateName } from "@/lib/calls"
+import { CALLS_EVENT, type CallStateName, callStateName, OS_SIGNALS_PROVIDER } from "@/lib/calls"
 import { toastFailure } from "@/lib/failure"
 import type { CallsLayout, CallsStatus } from "@/lib/types"
 
@@ -46,6 +46,8 @@ export function CallsSettings() {
   const { t } = useTranslation()
   const { agent } = useAppContext()
   const supported = agent?.running === true && agent.capabilities?.includes("calls") === true
+  // A restarted agent is a new instance: its Calls are fetched again.
+  const instance = agent?.status ? `${agent.status.pid}:${agent.status.startedAt}` : null
   const [status, setStatus] = useState<CallsStatus | null>(null)
   const [restoring, setRestoring] = useState<CallsLayout | null>(null)
 
@@ -69,7 +71,7 @@ export function CallsSettings() {
         unlisten()
       })
     }
-  }, [supported])
+  }, [supported, instance])
 
   if (!supported || !status?.installed) return null
   const deviceName = (model: string, serial: string) => {
@@ -87,7 +89,11 @@ export function CallsSettings() {
         {!status.controls && (
           <SettingsRow
             label={t("devices:calls.controlsTitle")}
-            description={t("devices:calls.detectionOnly")}
+            description={
+              status.provider === OS_SIGNALS_PROVIDER
+                ? t("devices:calls.detectionOnly")
+                : t("devices:calls.noControls")
+            }
           >
             <Badge variant="secondary">{t("devices:calls.controlsNone")}</Badge>
           </SettingsRow>

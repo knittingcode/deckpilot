@@ -82,6 +82,30 @@ describe("Settings › Devices › Calls", () => {
     expect(screen.getByText("Shows the call now.")).toBeInTheDocument()
   })
 
+  it("names Teams only for the Teams adapter", async () => {
+    api.getCallsStatus.mockResolvedValue(status({ provider: "mock" }))
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    expect(await screen.findByText("In a call")).toBeInTheDocument()
+    expect(screen.getByText(/This call app can only be detected/)).toBeInTheDocument()
+    expect(screen.queryByText(/Microsoft Teams/)).not.toBeInTheDocument()
+  })
+
+  it("fetches Calls again from a restarted agent", async () => {
+    api.getCallsStatus.mockResolvedValue(status({ state: "idle" }))
+    const first = agent()
+    const view = renderWithApp(<CallsSettings />, { agent: first })
+    expect(await screen.findByText("No call")).toBeInTheDocument()
+    expect(api.getCallsStatus).toHaveBeenCalledTimes(1)
+    api.getCallsStatus.mockResolvedValue(status({ state: "active" }))
+    const restarted = agentConnection({
+      ...first,
+      status: agentStatus({ devices: [device], pid: 4321, startedAt: 99 }),
+    })
+    view.rerender(<CallsSettings />, { ...view.context, agent: restarted })
+    expect(await screen.findByText("In a call")).toBeInTheDocument()
+    expect(api.getCallsStatus).toHaveBeenCalledTimes(2)
+  })
+
   it("follows the agent's callsChanged events", async () => {
     api.getCallsStatus.mockResolvedValue(status({ state: "idle" }))
     renderWithApp(<CallsSettings />, { agent: agent() })

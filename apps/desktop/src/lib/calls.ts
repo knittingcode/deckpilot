@@ -4,6 +4,12 @@
 /** Backend event with the latest {@link CallsStatus}. */
 export const CALLS_EVENT = "agent-calls"
 
+/**
+ * The provider of the detection-only Teams adapter (operating-system
+ * signals): the only one whose missing controls are Teams'.
+ */
+export const OS_SIGNALS_PROVIDER = "os-signals"
+
 /** The call states the agent names, for their translations. */
 export const CALL_STATES = [
   "idle",

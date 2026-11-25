@@ -399,7 +399,11 @@ Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 ## In the app (IPC protocol 19)
 
 The agent answers `getCallsStatus` with a `CallsStatus` and pushes it again
-as `callsChanged` whenever it changes, to desktop clients of protocol 19.
+as `callsChanged` whenever it changes, to subscribed desktop clients of
+protocol 19 (hygiene: the IPC token is the access boundary, and any client
+holding it may ask `getCallsStatus`). The managed layouts in it are read
+from the store once and again only after seeding, *Restore defaults*, a
+configuration reload or a lock, never on the Calls tick.
 `CallsStatus` holds:
 
 - whether Calls is installed;
@@ -413,7 +417,8 @@ as `callsChanged` whenever it changes, to desktop clients of protocol 19.
 It never holds a meeting title, a participant or a process name.
 
 - `setCallsOverlay { device, on }` turns the overlay off or on for one
-  device. An overlay shown now goes at once.
+  connected device (another is refused with `callsUnknownDevice`). An
+  overlay shown now goes at once.
 - `restoreCallsLayout { model, copyName }` is *Restore defaults*. It answers
   the id of the kept copy of the user's version, or `null` for an unedited
   layout.

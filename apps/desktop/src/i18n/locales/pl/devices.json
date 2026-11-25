@@ -207,6 +207,7 @@
     "controlsTitle": "Sterowanie",
     "controlsNone": "Nieobsługiwane",
     "detectionOnly": "Microsoft Teams można tylko wykrywać: odbieranie, kończenie, wyciszanie i kamera nie są obsługiwane, bo Microsoft wycofał interfejs dla urządzeń zewnętrznych 30.06.2026.",
+    "noControls": "Tę aplikację do rozmów można tylko wykrywać: DeckPilot nie może w niej odbierać, kończyć, wyciszać ani włączać kamery.",
     "overlay": "Pokazuj rozmowy na tym urządzeniu",
     "overlayDescription": "Podczas rozmowy urządzenie pokazuje układ Rozmów; Twój układ zostaje bez zmian.",
     "shown": "Pokazuje teraz rozmowę.",

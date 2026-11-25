@@ -334,6 +334,7 @@ impl Agent {
         self.store = None;
         self.key = None;
         self.plugins.closed();
+        self.calls_layouts_changed();
         self.security =
             security_state(&self.options.paths.database).unwrap_or(SecurityState::Locked);
         self.lock_reason = (self.security == SecurityState::Locked).then_some(reason);

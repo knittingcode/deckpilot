@@ -294,8 +294,10 @@ async fn serve_connection<R, W>(
             event = next_event(&mut events) => match event {
                 // Clients of an older protocol do not know newer events
                 // (nor, before protocol 10, plugin variables).
+                // Calls only to desktop clients (`desktop_only`).
                 Ok(event) => {
                     if let Some(event) = event.for_protocol(protocol)
+                        && (client == ClientKind::Desktop || !event.desktop_only())
                         && !send(&mut writer, &ServerMessage::Event { event }).await
                     {
                         break;
@@ -352,7 +354,9 @@ async fn serve_connection<R, W>(
                 // Deliver the final notifications before closing.
                 if let Some(events) = events.as_mut() {
                     while let Ok(event) = events.try_recv() {
-                        if let Some(event) = event.for_protocol(protocol) {
+                        if let Some(event) = event.for_protocol(protocol)
+                            && (client == ClientKind::Desktop || !event.desktop_only())
+                        {
                             send(&mut writer, &ServerMessage::Event { event }).await;
                         }
                     }
@@ -570,6 +574,11 @@ mod tests {
 
     /// An authenticated connection subscribed to runtime events.
     async fn subscribed() -> Peer {
+        subscribed_as(ClientKind::Other).await
+    }
+
+    /// [`subscribed`] as a `client`.
+    async fn subscribed_as(client: ClientKind) -> Peer {
         let (handle, commands) = AgentHandle::detached();
         answer_all(commands);
         let (client_end, agent_end) = tokio::io::duplex(4 * MAX_MESSAGE_BYTES);
@@ -593,7 +602,7 @@ mod tests {
         let hello = ClientMessage::Hello {
             protocol: PROTOCOL_VERSION,
             token: TOKEN.into(),
-            client: ClientKind::Other,
+            client,
         };
         write_message(&mut peer.writer, &hello).await.unwrap();
         assert!(matches!(
@@ -689,6 +698,26 @@ mod tests {
             }
             other => panic!("expected an uncorrelated error, got {other:?}"),
         }
+    }
+
+    /// Whether the user is in a call goes to desktop clients only.
+    #[tokio::test]
+    async fn calls_events_reach_desktop_clients_only() {
+        let calls = || AgentEvent::CallsChanged {
+            status: Box::default(),
+        };
+        let mut other = subscribed().await;
+        other.handle.emit_for_test(calls());
+        other.event().await;
+        other.quiet().await;
+        let mut desktop = subscribed_as(ClientKind::Desktop).await;
+        desktop.handle.emit_for_test(calls());
+        assert!(matches!(
+            desktop.receive().await,
+            Some(ServerMessage::Event {
+                event: AgentEvent::CallsChanged { .. }
+            })
+        ));
     }
 
     #[tokio::test]

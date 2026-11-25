@@ -766,6 +766,54 @@ async fn a_protocol_15_agent_is_never_asked_for_a_live_preview() {
 /// before sending them, so the app shows titles resolved by the core alone;
 /// the rest works.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_protocol_18_agent_is_never_asked_about_calls() {
+    let peer = peer(18, "0.16.0");
+    let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
+        .await
+        .unwrap();
+    assert_eq!(*peer.hellos.lock().unwrap(), downgrades(18));
+    assert_eq!(client.protocol(), 18);
+    assert!(client.supports(Capability::KeyLabels));
+    assert!(!client.supports(Capability::Calls));
+    let model = deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2");
+    for request in [
+        Request::GetCallsStatus,
+        Request::SetCallsOverlay {
+            device: deckpilot_device::DeviceId {
+                model: model.clone(),
+                serial: "A".into(),
+            },
+            on: false,
+        },
+        Request::RestoreCallsLayout {
+            model,
+            copy_name: "Mine".into(),
+        },
+    ] {
+        let refused = client.request(request).await;
+        assert!(
+            matches!(
+                &refused,
+                Err(ClientError::Unsupported {
+                    needs: 19,
+                    protocol: 18,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        *peer.received.lock().unwrap(),
+        Vec::<serde_json::Value>::new()
+    );
+    assert!(matches!(
+        client.request(Request::GetStatus).await,
+        Ok(Response::Status { .. })
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_protocol_16_agent_is_never_asked_to_resolve_display_templates() {
     use deckpilot_core::variables::{CatalogFilter, ResolutionContext};
     let peer = peer(16, "0.13.0");

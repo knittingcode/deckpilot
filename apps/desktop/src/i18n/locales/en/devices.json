@@ -197,6 +197,7 @@
     "controlsTitle": "Controls",
     "controlsNone": "Not supported",
     "detectionOnly": "Microsoft Teams can only be detected: answering, ending, muting and the camera are not supported, because Microsoft retired its device API on 30 June 2026.",
+    "noControls": "This call app can only be detected: DeckPilot cannot answer, end, mute or turn the camera on or off for it.",
     "overlay": "Show calls on this device",
     "overlayDescription": "During a call the device shows the Calls layout; your own layout stays as it was.",
     "shown": "Shows the call now.",

@@ -1841,6 +1841,8 @@ impl Agent {
         stages.done("faces");
         stages.report();
         info!("configuration reloaded");
+        // A managed layout may have been edited in the app.
+        self.calls_layouts_changed();
         self.after_change();
         Ok(())
     }
@@ -2225,6 +2227,7 @@ impl Agent {
             device: device.clone(),
         });
         info!(%device, "device disconnected");
+        self.calls_device_disconnected();
         self.publish();
         self.publish_device_context(Some(device.clone()));
     }

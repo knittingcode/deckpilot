@@ -673,3 +673,108 @@ async fn the_app_reads_and_changes_calls_over_ipc() {
     assert!(status.layouts.iter().all(|l| !l.edited), "regenerated");
     deck.agent.shutdown().await;
 }
+
+/// A connection of protocol 18 is never asked, and never told, about
+/// Calls: the client refuses the requests before they leave.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_protocol_18_connection_cannot_ask_about_calls() {
+    use deckpilot_ipc::{AgentClient, ClientError, ClientKind, Request};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut old = AgentClient::connect_with_protocol(&deck.agent.paths, ClientKind::Desktop, 18)
+        .await
+        .unwrap();
+    for request in [
+        Request::GetCallsStatus,
+        Request::SetCallsOverlay {
+            device: deck.device.clone(),
+            on: false,
+        },
+        Request::RestoreCallsLayout {
+            model: deck.device.model.clone(),
+            copy_name: "Mine".into(),
+        },
+    ] {
+        let refused = old.request(request).await;
+        assert!(
+            matches!(refused, Err(ClientError::Unsupported { needs: 19, .. })),
+            "{refused:?}"
+        );
+    }
+    assert!(!deck.shows_overlay().await);
+    deck.agent.shutdown().await;
+}
+
+/// The managed layouts are read from the store once, not on every tick of
+/// a call; a configuration reload reads them again and tells the app that
+/// the user edited one; a device that is not connected is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_status_reads_layouts_once_and_follows_edits() {
+    use deckpilot_ipc::{AgentEvent, ClientError, ErrorCode, Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let Response::CallsStatus { status } =
+        deck.agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    let layout = status.layouts.first().expect("the MK.2's layout").clone();
+    deck.join().await;
+    let reads = deck.agent.handle.calls_view().await.unwrap().layouts_reads;
+    assert!(reads >= 1);
+    for _ in 0..20 {
+        deck.advance(1).await;
+    }
+    deck.agent.request(Request::GetCallsStatus).await.unwrap();
+    assert_eq!(
+        deck.agent.handle.calls_view().await.unwrap().layouts_reads,
+        reads,
+        "not read again on the tick"
+    );
+
+    // Edited in the app, then the configuration is reloaded.
+    deck.agent
+        .store()
+        .rename_shared_layout(layout.layout.parse().unwrap(), "Edited")
+        .unwrap();
+    deck.agent
+        .request(Request::ReloadConfiguration)
+        .await
+        .unwrap();
+    loop {
+        match tokio::time::timeout(TIMEOUT, events.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            AgentEvent::CallsChanged { status } if status.layouts.iter().any(|l| l.edited) => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // A device that is not connected.
+    let refused = deck
+        .agent
+        .request(Request::SetCallsOverlay {
+            device: deckpilot_device::DeviceId {
+                model: deck.device.model.clone(),
+                serial: "NOT-HERE".into(),
+            },
+            on: false,
+        })
+        .await;
+    match refused {
+        Err(ClientError::Agent(error)) => {
+            assert_eq!(error.code, ErrorCode::NotFound);
+            assert_eq!(
+                error.reason.as_deref(),
+                Some(deckpilot_ipc::calls::reason::UNKNOWN_DEVICE)
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    deck.agent.shutdown().await;
+}

@@ -178,7 +178,8 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// `getCallsStatus`, `setCallsOverlay`, `restoreCallsLayout` and the
 /// `callsChanged` event. A client of protocol 18 or older never sends them
 /// (refused locally, and by the agent from such a connection) and receives
-/// no `callsChanged` events. (Version 18, typed repository variables, is
+/// no `callsChanged` events, and only desktop clients receive them
+/// ([`AgentEvent::desktop_only`]). (Version 18, structured variables, is
 /// the step before it.)
 pub const PROTOCOL_VERSION: u32 = 19;
 
@@ -1102,16 +1103,20 @@ impl Request {
                 crate::display_templates::check_templates(templates)
             }
             Self::RestoreCallsLayout { copy_name, .. }
-                if copy_name.trim().is_empty()
-                    || copy_name.chars().count() > crate::calls::MAX_COPY_NAME =>
+                if !crate::calls::valid_copy_name(copy_name) =>
             {
                 Err(format!(
-                    "the copy's name is 1 to {} characters",
+                    "the copy's name is 1 to {} characters, without control characters",
                     crate::calls::MAX_COPY_NAME
                 ))
             }
-            Self::SetCallsOverlay { device, .. } if device.serial.is_empty() => {
-                Err("device serial must not be empty".into())
+            Self::SetCallsOverlay { device, .. }
+                if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
+            {
+                Err(format!(
+                    "device serial must be 1 to {} bytes",
+                    crate::calls::MAX_SERIAL
+                ))
             }
             Self::PreviewReferences { items, .. } if items.len() > MAX_PREVIEW_ITEMS => Err(
                 format!("at most {MAX_PREVIEW_ITEMS} references can be previewed at once"),
@@ -1868,6 +1873,12 @@ impl Request {
 }
 
 impl AgentEvent {
+    /// Whether only desktop clients receive the event (Calls: whether the
+    /// user is in a call is not for every client that subscribes).
+    pub fn desktop_only(&self) -> bool {
+        matches!(self, Self::CallsChanged { .. })
+    }
+
     /// The first protocol that has this event; clients that speak an older
     /// one do not receive it.
     pub fn since_protocol(&self) -> u32 {
@@ -2666,7 +2677,15 @@ mod tests {
         .unwrap();
         assert_eq!(json["type"], "restoreCallsLayout");
         assert_eq!(json["copyName"], "Mine");
-        for bad in ["", "   ", &"x".repeat(crate::calls::MAX_COPY_NAME + 1)] {
+        for bad in [
+            "",
+            "   ",
+            &"x".repeat(crate::calls::MAX_COPY_NAME + 1),
+            "a\nb",
+            "\u{202E}x",
+            "\0",
+            "a\u{2066}b",
+        ] {
             assert!(
                 Request::RestoreCallsLayout {
                     model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
@@ -2676,9 +2695,23 @@ mod tests {
                 .is_err()
             );
         }
+        assert!(
+            Request::SetCallsOverlay {
+                device: DeviceId {
+                    model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                    serial: "x".repeat(crate::calls::MAX_SERIAL + 1),
+                },
+                on: true,
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(crate::calls::valid_copy_name("  Rozmowy (moja wersja)  "));
         let event = AgentEvent::CallsChanged {
             status: Box::default(),
         };
+        assert!(event.desktop_only());
+        assert!(!AgentEvent::ShowWindow.desktop_only());
         assert!(event.clone().for_protocol(18).is_none());
         assert!(event.for_protocol(19).is_some());
         // The status names no title, participant or process.
