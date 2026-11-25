@@ -303,7 +303,12 @@ fn refusal(legacy: &LegacySource, why: &NotImportable) -> IpcError {
                  where you are asked to allow that",
             legacy.label
         ),
-        NotImportable::TokenConsent | NotImportable::AlreadyImported => format!(
+        NotImportable::AlreadyImported => format!(
+            "the {} server was imported without its token; add the token in Settings › \
+             Connections",
+            legacy.label
+        ),
+        NotImportable::TokenConsent => format!(
             "the {} plugin's token was never allowed for this server; import the \
                  server without it and add the token in Settings › Connections",
             legacy.label
@@ -391,16 +396,7 @@ impl PluginService {
                 has_secret,
             } => {
                 if token && !has_secret {
-                    let why = NotImportable::AlreadyImported;
-                    return Err(error(
-                        ErrorCode::Failed,
-                        why.code(),
-                        format!(
-                            "the {} server was imported without its token; add the token in \
-                             Settings › Connections",
-                            legacy.label
-                        ),
-                    ));
+                    return Err(refusal(legacy, &NotImportable::AlreadyImported));
                 }
                 connection.clone()
             }
