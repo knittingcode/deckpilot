@@ -27,6 +27,9 @@ released either. 0.6.0 is the first version intended for publication.
   repository never removes its folder binding, and a missing folder is
   shown, never removed. An export carries the repositories (format 5)
   only when a project has more than that one. The editor for them follows.
+- Calls (groundwork): a locked device never shows a call. Locking the
+  configuration takes the Calls overlay off every device, and it comes back
+  after unlocking if the call is still going on.
 - Calls (groundwork, tests): "Back to work" is followed to the end of a
   real plugin action through a spawned agent and the sandboxed plugin
   host. A test-only agent option installs the mock call provider; normal

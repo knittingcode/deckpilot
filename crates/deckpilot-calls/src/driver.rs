@@ -89,6 +89,9 @@ pub struct CallsDriver {
     locale: Locale,
     /// The frames the watchdog popped (for the log, once each).
     watchdog_pops: usize,
+    /// No device shows a call (the configuration is locked): every frame
+    /// is popped and none is pushed. The engine keeps following the calls.
+    hidden: bool,
 }
 
 impl CallsDriver {
@@ -100,6 +103,7 @@ impl CallsDriver {
             frames: BTreeMap::new(),
             enabled: BTreeMap::new(),
             dismissed: BTreeMap::new(),
+            hidden: false,
             locale: Locale::default(),
             watchdog_pops: 0,
         }
@@ -329,8 +333,39 @@ impl CallsDriver {
 
     // ---------------------------------------------------------------- sync
 
+    /// Hides every call from every device (`true`: the configuration is
+    /// locked, so a locked device shows "Locked" and never a call), or
+    /// shows them again. Hiding ends the return sessions (nothing resumes
+    /// behind the lock) and pops every Calls frame; showing again syncs, so
+    /// a call still going on is back at once.
+    pub fn set_hidden(&mut self, runtime: &mut Runtime, hidden: bool, now: Instant) {
+        self.hidden = hidden;
+        if hidden {
+            self.returns.clear();
+            let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
+            for device in devices {
+                self.pop(runtime, &device);
+            }
+            runtime.pop_overlays_of(OverlayOwner::Calls);
+        } else {
+            self.sync(runtime, now);
+        }
+    }
+
+    /// Whether every call is hidden ([`CallsDriver::set_hidden`]).
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
+    }
+
     /// Brings every device's frame in line with the engine.
     pub fn sync(&mut self, runtime: &mut Runtime, _now: Instant) {
+        if self.hidden {
+            let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
+            for device in devices {
+                self.pop(runtime, &device);
+            }
+            return;
+        }
         let intent = self.engine.overlay();
         let OverlayIntent::Shown { session, page, .. } = intent else {
             // No call: every session ends without resuming, every frame

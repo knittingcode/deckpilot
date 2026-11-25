@@ -348,6 +348,13 @@ owner's list on the mock, the driver and a real core runtime:
 
 ## In the agent (`apps/agent/src/service/calls.rs`)
 
+**A locked device never shows a call.** Locking the configuration pops
+every Calls frame at once, so the device draws "Locked", and none is pushed
+while it stays locked, whatever the call does. Return sessions end, because
+nothing resumes behind the lock. The engine keeps following the call, and
+after unlocking a call still going on is shown again at once. Calls
+installed while locked shows nothing until the configuration is unlocked.
+
 A call already going on when its managed layout is seeded (Calls installed
 mid-call, or while the configuration was locked) shows its overlay as soon
 as the layout is stored, not at the call's next change. A layout that

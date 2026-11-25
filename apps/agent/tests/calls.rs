@@ -704,3 +704,34 @@ async fn a_busy_seed_is_tried_again_with_a_growing_wait_and_stored_once() {
     assert_eq!(view.layouts, std::slice::from_ref(&first.layout.name));
     deck.agent.shutdown().await;
 }
+
+/// A locked device never shows call content: the overlay on screen goes
+/// when the configuration is locked (no Calls frame at all, so the device
+/// draws "Locked"), nothing comes back while locked whatever the call does,
+/// and after unlocking the call still going on is shown again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_locked_device_never_shows_the_call() {
+    use deckpilot_ipc::Request;
+    let f = fixture();
+    let deck = start(&f).await;
+    deck.join().await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    deck.wait_overlay(false).await;
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert!(view.devices.is_empty(), "no Calls frame: {view:?}");
+    assert_eq!(view.state, CallState::Active, "the call is still followed");
+    // The call changes and time passes: still nothing on the device.
+    deck.agent
+        .handle
+        .calls_mock(|mock, now| mock.ring(now, "second"))
+        .await;
+    for _ in 0..3 {
+        deck.advance(30).await;
+        assert!(!deck.shows_overlay().await, "shown while locked");
+        let view = deck.agent.handle.calls_view().await.unwrap();
+        assert_eq!(view.devices.len(), 0, "no Calls frame: {view:?}");
+    }
+    deck.agent.unlock().await;
+    deck.wait_overlay(true).await;
+    deck.agent.shutdown().await;
+}

@@ -322,6 +322,8 @@ impl Agent {
             elapsed_ms = started.elapsed().as_millis(),
             "the unlocked configuration is loaded"
         );
+        self.calls_set_locked(false);
+        self.render_all();
         Ok(())
     }
 
@@ -334,6 +336,8 @@ impl Agent {
         self.store = None;
         self.key = None;
         self.plugins.closed();
+        // A locked device never shows a call.
+        self.calls_set_locked(true);
         self.security =
             security_state(&self.options.paths.database).unwrap_or(SecurityState::Locked);
         self.lock_reason = (self.security == SecurityState::Locked).then_some(reason);

@@ -165,7 +165,11 @@ impl Agent {
         let id = provider.id();
         let mut engine = Engine::default();
         engine.add_provider(id.clone(), consent, discovery.capabilities);
-        let driver = CallsDriver::new(engine);
+        let mut driver = CallsDriver::new(engine);
+        // Installed while locked: nothing is shown until unlocked.
+        if self.store.is_none() {
+            driver.set_hidden(&mut self.runtime, true, Instant::ZERO);
+        }
         if let Err(error) = provider.connect(&ProviderCx {
             consent,
             session: ProviderSession(1),
@@ -382,6 +386,24 @@ impl Agent {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// The configuration locked (`true`) or unlocked: a locked device shows
+    /// "Locked" and never a call (nor anything of it: state, faces, the
+    /// call pages). The engine keeps following the call; unlocked, a call
+    /// still going on is shown again at once.
+    pub(super) fn calls_set_locked(&mut self, locked: bool) {
+        let Some(now) = self.calls_now() else {
+            return;
+        };
+        if let Some(service) = self.calls.service.as_mut()
+            && service.driver.is_hidden() != locked
+        {
+            service.driver.set_hidden(&mut self.runtime, locked, now);
+            if locked {
+                info!("calls: hidden while the configuration is locked");
+            }
         }
     }
 
