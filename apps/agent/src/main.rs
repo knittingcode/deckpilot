@@ -373,7 +373,8 @@ fn main() -> ExitCode {
                     info!("Calls installed with the mock provider (test hooks)");
                 });
             }
-            agent.run(deckpilot_agent::service::shutdown_signal()).await
+            // Boxed: with Calls the loop's future is large.
+            Box::pin(agent.run(deckpilot_agent::service::shutdown_signal())).await
         });
         if let Err(error) = result {
             error!(%error, "agent stopped with an error");
