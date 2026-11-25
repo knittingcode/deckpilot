@@ -74,7 +74,7 @@ backup. Exports with repositories other than the one the role stands for
 are payload version 5, which 0.14.x refuses; other exports keep their
 version.
 
-Current main speaks IPC protocol 19, which adds Calls (capability `calls`,
+IPC protocol 19 adds Calls (capability `calls`,
 `docs/calls.md`): `getCallsStatus`, `setCallsOverlay`,
 `restoreCallsLayout` and the `callsChanged` event. Older clients never send
 these requests: they are refused locally and by the agent. Older clients
