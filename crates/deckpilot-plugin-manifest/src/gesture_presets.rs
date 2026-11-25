@@ -9,8 +9,10 @@
 //! the plugin's own actions, gives only parameters that action declares,
 //! with values that fit them, and every required parameter without a
 //! default, and is a gesture the action can run from (its `controls`, else
-//! keys with every key input). A preset never names a permission: it
-//! grants nothing.
+//! keys with every key input) and, when the action declares `contexts`
+//! (plugin API 1.11), one whose context it declares (`gesture` for a
+//! double or long press, `key` otherwise). A preset never names a
+//! permission: it grants nothing.
 
 use deckpilot_device::{ControlKind, InputCapability};
 
@@ -185,6 +187,27 @@ fn assignment(c: &mut Checker, m: &Manifest, path: &str, assignment: &PresetAssi
             IssueCode::Conflict,
             format!(
                 "the action `{}` cannot run from `{}` (its controls)",
+                action.id, assignment.gesture
+            ),
+        );
+    }
+    // Plugin API 1.11: an action that declares contexts must declare the
+    // one its gesture binds it in (`GesturePreset::check` in the core).
+    let context = if matches!(assignment.gesture.as_str(), "doubleClick" | "longPress") {
+        "gesture"
+    } else {
+        "key"
+    };
+    if PRESET_GESTURES.contains(&assignment.gesture.as_str())
+        && let Some(contexts) = &action.contexts
+        && !contexts.iter().any(|declared| declared == context)
+    {
+        c.error(
+            format!("{path}.gesture"),
+            IssueCode::Conflict,
+            format!(
+                "the action `{}` does not declare the `{context}` context `{}` binds it in \
+                 (its contexts)",
                 action.id, assignment.gesture
             ),
         );
