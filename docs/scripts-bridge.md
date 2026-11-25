@@ -13,10 +13,11 @@ Status:
 
 - in place: the ABI and the host engine; the `scripts` permission in the
   broker; the agent's executor for the run's own operations, the
-  projects, the file system and processes;
-- next: the manifest kinds (no manifest can declare `scripts` yet, so
-  nothing is granted in practice), and the script store (P7; until then
-  the agent keeps no scripts and every run ends with `scriptMissing`).
+  projects, the file system and processes; the manifest's kinds at
+  plugin API 1.13 (validator, store grant, supervisor limits);
+- next: the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8), and
+  the script store and Scripts page (P7; until then the agent keeps no
+  scripts and every run ends with `scriptMissing`).
 
 ## Operations
 
@@ -423,3 +424,23 @@ Tests (Unix, harmless stand-ins only: shell scripts for `git` and other
 tools in a temporary `bin`, `sh` for the shell; never docker compose,
 never git pull, never a real repository):
 `apps/agent/src/plugins/executor/scripts/process/tests.rs`.
+
+## The manifest (plugin API 1.13)
+
+`crates/deckpilot-plugin-manifest/src/scripts.rs` and both schema copies:
+
+| Construct | Shape | Rules |
+| --- | --- | --- |
+| permission `scripts` | `{kind, fs?, process?, shell?, justification}` | `deckpilot.scripts` only, privileged, high tier, at least one of the three; no `network`, `credentials` or `openUrl` beside it |
+| parameter kind `script` | `{type: "script"}` | privileged, needs the `scripts` permission; never a setting |
+| `code` language `javascript` | `{type: "code", language: "javascript"}` | `^1.13`, open to every plugin |
+| view kind `scripts` | `{kind: "scripts"}` | a host view (`hostViews`), privileged |
+| `runtime.limits.continuousMs` | 250 to 10,000 | `deckpilot.scripts` only, privileged |
+| `runtime.hostCalls` | 1 to 4,096 | `deckpilot.scripts` only, privileged |
+
+Each needs `^1.13`. The store records the permission as the grant
+`scripts` (`GrantScope::Scripts`, high tier, consented once), which the
+agent passes to the broker as `ApprovedPermission::Scripts`. The
+supervisor gives `deckpilot.scripts` its `continuousMs` as `deadline_ms`
+and its `hostCalls` together with the 8,192 polls (`guest_limits`); every
+other plugin gets the defaults whatever its manifest says.

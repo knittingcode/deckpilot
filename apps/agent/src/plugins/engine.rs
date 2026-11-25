@@ -1028,6 +1028,24 @@ mod tests {
 
     /// Plugin API 1.11: `contexts` become the action type's (advisory, as
     /// for the built-ins); without them the legacy default, all five.
+    /// Plugin API 1.13: the core has no `script` kind and no `javascript`
+    /// language yet (P7), so such an action is refused as an action type,
+    /// never offered with a wrong kind.
+    #[test]
+    fn script_kinds_wait_for_the_core() {
+        let manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/scripts-manifest.json"
+        ))
+        .unwrap();
+        for action in manifest.contributes.actions() {
+            assert!(
+                action_type("deckpilot.scripts", action).is_err(),
+                "{}",
+                action.id
+            );
+        }
+    }
+
     #[test]
     fn contexts_become_the_action_types() {
         use deckpilot_core::{ActionContext, ActionContexts};

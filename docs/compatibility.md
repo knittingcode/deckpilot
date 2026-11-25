@@ -297,6 +297,24 @@ Part 3 adds the agent's executor for processes (`process.run`,
 the runner gains stdin and a stream cap per call, which `tool.run` does
 not use. No IPC protocol, schema, document or export change.
 
+Part 4, the manifest at plugin API 1.13: the validator knows the
+`scripts` permission (`fs`, `process`, `shell`; high tier), the `script`
+parameter kind, the `javascript` language of a `code` parameter, the
+`scripts` view (a host view, with `hostViews`), and the runtime
+constructs `runtime.limits.continuousMs` (250 to 10,000 ms) and
+`runtime.hostCalls` (1 to 4,096). Each needs `^1.13`; all but the
+language are privileged (first-party bundled plugins only), and the
+permission and the runtime constructs are for `deckpilot.scripts` only,
+which cannot also declare `network`, `credentials` or `openUrl`. The
+plugin store records the `scripts` grant and the agent passes it to the
+broker; the supervisor gives `deckpilot.scripts` its deadline and call
+budget (with the poll budget always beside it) and no other plugin a
+budget. Both schema copies change alike. The agent's `PLUGIN_API` stays
+1.11 (P8 moves it to 1.13), so a `^1.13` plugin is `incompatible` until
+then; a `script` or `javascript` parameter has no core kind yet (P7) and
+refuses to load as an action type. No IPC protocol, database, document or
+export change.
+
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
 `host_settings` table, after the usual encrypted backup in

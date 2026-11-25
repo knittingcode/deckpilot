@@ -16,14 +16,8 @@
     "directory": "official/scripts"
   },
   "license": "Apache-2.0 AND MIT",
-  "keywords": [
-    "scripts",
-    "javascript",
-    "automation"
-  ],
-  "categories": [
-    "productivity"
-  ],
+  "keywords": ["scripts", "javascript", "automation"],
+  "categories": ["productivity"],
   "engines": {
     "deckpilot": ">=0.16.0 <1.0.0",
     "pluginApi": "^1.13",
@@ -42,10 +36,7 @@
     "128": "assets/icon-128.png"
   },
   "defaultLocale": "en",
-  "locales": [
-    "en",
-    "pl"
-  ],
+  "locales": ["en", "pl"],
   "permissions": [
     {
       "kind": "scripts",
@@ -66,12 +57,7 @@
         "name": "t:actions.run.name",
         "description": "t:actions.run.description",
         "category": "t:category",
-        "contexts": [
-          "key",
-          "gesture",
-          "sequence",
-          "workflow"
-        ],
+        "contexts": ["key", "gesture", "sequence", "workflow"],
         "parameters": [
           {
             "key": "script",
@@ -117,16 +103,8 @@
           "effect": "modifies"
         },
         "controls": {
-          "key": [
-            "click",
-            "double-click",
-            "long-press",
-            "press"
-          ],
-          "encoder": [
-            "click",
-            "press"
-          ]
+          "key": ["click", "double-click", "long-press", "press"],
+          "encoder": ["click", "press"]
         }
       },
       {
