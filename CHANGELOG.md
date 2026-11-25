@@ -27,6 +27,10 @@ released either. 0.6.0 is the first version intended for publication.
   repository never removes its folder binding, and a missing folder is
   shown, never removed. An export carries the repositories (format 5)
   only when a project has more than that one. The editor for them follows.
+- Calls (groundwork, tests): "Back to work" is followed to the end of a
+  real plugin action through a spawned agent and the sandboxed plugin
+  host. A test-only agent option installs the mock call provider; normal
+  builds do not have it, which a test checks.
 - Calls (groundwork, nothing user-visible yet): the provider contract
   with capability discovery, where every capability a provider does not
   offer is explicitly unsupported with a reason; the sanitised call state;

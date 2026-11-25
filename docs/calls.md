@@ -396,6 +396,27 @@ Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 - the stored layout seeded, a user edit shown, and an agent restart
   without a stale suspension (T-R6).
 
+### A real plugin action, end to end (`tests/calls_plugin_action.rs`)
+
+A spawned agent, the real sandboxed plugin host and the bundled test
+fixture `example-default` built to wasm. Calls runs with the mock
+provider, in a meeting from the start, through the test-only option
+`--test-calls-mock <completion|default>` (the "Back to work" mode).
+
+- **A test-hooks build only.** Only a `test-hooks` build has the option,
+  and it needs `--headless`. A normal build has neither the option nor the
+  mock: `plugins_feature.rs` checks that neither the default build nor
+  `--features plugins` enables `test-hooks` or `deckpilot-calls/testing`.
+- **The test, in mode B** (so no timer can bring the call back):
+  1. "Back to work" shows the user's own key;
+  2. 1.5 s later the device is still back at work;
+  3. the user's key starts the plugin's `greet` action, which runs detached
+     in the host;
+  4. its `DetachedFinished` (Succeeded) brings the overlay back.
+- **Log lines.** The agent logs both steps at `info` ("the device went
+  back to work", "back on the call after a run ended"). They carry the
+  device and the run's end, never a title.
+
 Still to come: a provider in a build (C5); the plugin (C7), whose
 enabling with consent installs Calls; and the IPC event for the editor
 (C6, a release blocker).

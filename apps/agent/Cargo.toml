@@ -160,6 +160,13 @@ required-features = ["plugins"]
 name = "plugins_bundled"
 required-features = ["plugins"]
 
+# Calls' "Back to work" followed to the end of a real plugin action, through
+# a spawned agent with the mock call provider (`--test-calls-mock`, which
+# only `test-hooks` builds have) and the bundled test fixture (C9).
+[[test]]
+name = "calls_plugin_action"
+required-features = ["plugins"]
+
 # Module migration: the fixture legacy module moved to its migration-class
 # bundled plugin, through a real agent process and the real plugin host.
 [[test]]

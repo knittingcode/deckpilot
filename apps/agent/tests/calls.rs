@@ -566,3 +566,74 @@ async fn the_stored_managed_layout_is_seeded_and_survives_a_restart() {
     assert_eq!(view.layouts, ["Moje Rozmowy"], "the user's edit is shown");
     deck.agent.shutdown().await;
 }
+
+/// T-R7 at agent level, with two MK.2s in the meeting: one going back to
+/// work leaves the other on the call; with `returnAllDevices` both go.
+#[tokio::test(flavor = "multi_thread")]
+async fn other_devices_stay_on_the_call_unless_all_devices_is_set() {
+    for all in [false, true] {
+        let f = fixture();
+        let back = ActionParameters::new().with("returnAllDevices", ParameterValue::Boolean(all));
+        let deck = start_with(&f, back).await;
+        let second = deck.mock.plug(&models::stream_deck_mk2(), "CALLS-2");
+        deck.join().await;
+        let shows = async |device: &DeviceId| {
+            let view = deck.agent.handle.calls_view().await.unwrap();
+            view.devices
+                .iter()
+                .any(|(d, shown, _)| d == device && *shown)
+        };
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while !shows(&second).await {
+            assert!(
+                tokio::time::Instant::now() <= deadline,
+                "the second device shows the call"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        deck.back_to_work().await;
+        assert!(!shows(&deck.device).await);
+        assert_eq!(
+            shows(&second).await,
+            !all,
+            "returnAllDevices {all}: the other device"
+        );
+        deck.agent.shutdown().await;
+    }
+}
+
+/// Calls installed while the configuration is locked, with a meeting
+/// already going on: the managed layout can be seeded only once unlocked,
+/// and the overlay is shown then, not at the call's next change.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_going_on_before_the_layout_is_seeded_shows_the_overlay_once_it_is() {
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-locked");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let device = mock.plug(&models::stream_deck_mk2(), "CALLS-1");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    let mut provider = MockProvider::new();
+    provider.join(deckpilot_calls::clock::Instant::ZERO, "meeting");
+    agent
+        .handle
+        .install_calls_mock(provider, ActionParameters::new())
+        .await;
+    let deck = Deck {
+        agent,
+        mock,
+        device,
+        clock,
+        _dir: dir,
+    };
+    deck.advance(1).await;
+    assert_eq!(
+        deck.agent.handle.calls_view().await.unwrap().state,
+        CallState::Active
+    );
+    assert!(!deck.shows_overlay().await, "locked: no layout yet");
+    deck.agent.unlock().await;
+    deck.wait_overlay(true).await;
+    deck.agent.shutdown().await;
+}

@@ -157,6 +157,8 @@ impl Agent {
     /// driver, so the user's edits are what the overlay shows. While the
     /// configuration is locked nothing is seeded; it is tried again.
     fn calls_seed_connected(&mut self) {
+        let now = self.calls_now();
+        let mut loaded = false;
         let Some(service) = self.calls.service.as_mut() else {
             return;
         };
@@ -200,6 +202,7 @@ impl Agent {
                     service.seeded.insert(model_id.clone());
                     let used = generated.with_stored(stored.layout, stored.actions);
                     service.driver.set_layout(model.id.clone(), used);
+                    loaded = true;
                 }
                 Ok(None) => {}
                 // Not stored: tried again at the next look.
@@ -207,6 +210,13 @@ impl Agent {
                     warn!(model = %model.id, %error, "the Calls layout could not be stored");
                 }
             }
+        }
+        // A call already going on (Calls installed mid-call, or while the
+        // configuration was locked) gets its overlay now that the layout is
+        // there, not at its next change.
+        if loaded && let Some(now) = now {
+            service.driver.sync(&mut self.runtime, now);
+            self.render_all();
         }
     }
 
@@ -255,6 +265,7 @@ impl Agent {
                 parameters,
                 ..
             } => {
+                let was_back = service.driver.returns().is_suspended(device);
                 let handled = service.driver.overlay_key(
                     &mut self.runtime,
                     device,
@@ -275,6 +286,9 @@ impl Agent {
                     _ => {}
                 }
                 service.driver.sync(&mut self.runtime, now);
+                if !was_back && service.driver.returns().is_suspended(device) {
+                    info!(%device, "calls: the device went back to work");
+                }
                 true
             }
             RuntimeOutcome::OverlayDismissed { session, .. } => {
@@ -328,9 +342,13 @@ impl Agent {
             return;
         };
         if let Some(service) = self.calls.service.as_mut() {
+            let was_back = service.driver.returns().is_suspended(&run.device);
             service
                 .driver
                 .run_finished(&mut self.runtime, &run.device, run.run, end, now);
+            if was_back && !service.driver.returns().is_suspended(&run.device) {
+                info!(device = %run.device, ?end, "calls: back on the call after a run ended");
+            }
         }
         self.render_all();
     }
