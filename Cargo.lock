@@ -1309,6 +1309,7 @@ dependencies = [
  "deckpilot-module-system",
  "deckpilot-module-work-session",
  "deckpilot-plugin-manifest",
+ "deckpilot-render",
  "serde_json",
 ]
 

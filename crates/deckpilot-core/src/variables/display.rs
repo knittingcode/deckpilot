@@ -28,7 +28,10 @@
 //!   text value, whose value depends on the machine, the profile or the
 //!   project only (never a device, a workflow, a run or the work session),
 //!   while their module or plugin is enabled and registered;
-//! - shared variables (`shared.<key>`) that are not sensitive.
+//! - shared variables (`shared.<key>`) that are not sensitive;
+//! - the display-safe scalar members of a structured variable
+//!   (`projects.current.repository.name`, [`super::Member::display_safe`]),
+//!   never the whole object or map, an id or a folder path (OD-4).
 //!
 //! Everything else is refused before anything is resolved where the
 //! declaration says so, and otherwise as soon as the resolution reveals it:
@@ -273,13 +276,9 @@ pub fn display_safe(
             Err(UnresolvedReason::NotDisplayable)
         }
         VariableRef::Module(id) => {
-            let declaration = registry.get(id).or_else(|| {
-                let alias = module_variable_alias(id)?;
-                registry.get(&super::VariableId::new(alias.canonical).ok()?)
-            });
             // Not registered: its owner is not here, which the resolution
             // reports; no value can come of it.
-            let Some(registered) = declaration else {
+            let Some((registered, member)) = registry.declaration_of(id) else {
                 return Ok(());
             };
             let declaration = registered.declaration;
@@ -293,6 +292,22 @@ pub fn display_safe(
                 .all(|requirement| *requirement == Requirement::Project);
             if declaration.sensitive || declaration.identifier || !scope_ok || !requires_ok {
                 return Err(UnresolvedReason::NotDisplayable);
+            }
+            // Structured values never render; of their members only those
+            // the shape marks display-safe do (never an id or a path).
+            if declaration.value_type.is_structured() {
+                let Some(member) = member else {
+                    return Err(UnresolvedReason::NotDisplayable);
+                };
+                return match super::member_target(declaration.value_type, &member) {
+                    super::MemberTarget::Scalar(member) if member.display_safe => Ok(()),
+                    super::MemberTarget::Scalar(_) | super::MemberTarget::Object(_) => {
+                        Err(UnresolvedReason::NotDisplayable)
+                    }
+                    super::MemberTarget::Unknown => Err(UnresolvedReason::Missing {
+                        missing: MissingReason::UnknownMember,
+                    }),
+                };
             }
             if !is_text_type(declaration.value_type) {
                 return Err(if declaration.value_type == VariableType::SecretRef {
@@ -316,6 +331,67 @@ pub fn display_listed(entry: &super::CatalogEntry, registry: &VariableRegistry) 
         && is_text_type(entry.value_type)
         && entry.availability != super::ReferenceAvailability::RuntimeOnly
         && display_safe(&entry.reference, registry).is_ok()
+}
+
+/// What the picker of a key title lists of a structured variable `entry`
+/// (with its shape, [`super::with_members`]): the variable for its members
+/// only ([`super::CatalogEntry::members_only`]), with the members that are
+/// [`display_listed`] (names and keys, never a path, a URL or an id);
+/// `None` when none is, or the variable is not structured.
+pub fn display_members(
+    entry: super::CatalogEntry,
+    registry: &VariableRegistry,
+) -> Option<super::CatalogEntry> {
+    if !entry.value_type.is_structured()
+        || entry.sensitive
+        || entry.availability == super::ReferenceAvailability::RuntimeOnly
+    {
+        return None;
+    }
+    let members: Vec<super::CatalogMember> = entry
+        .members
+        .iter()
+        .filter(|member| {
+            let one = super::CatalogEntry {
+                members: vec![(*member).clone()],
+                ..entry.clone()
+            };
+            let composed = one.member_entries();
+            !composed.is_empty() && composed.iter().all(|m| display_listed(m, registry))
+        })
+        .cloned()
+        .collect();
+    if members.is_empty() {
+        return None;
+    }
+    Some(super::CatalogEntry {
+        members,
+        members_only: true,
+        ..entry
+    })
+}
+
+/// What `listDisplayVariables` answers: of `entries` ([`super::with_members`]
+/// of `project`), the [`display_listed`] ones and the structured variables
+/// for their display-safe members ([`display_members`]), that match
+/// `filter`.
+pub fn display_listing(
+    entries: Vec<super::CatalogEntry>,
+    project: Option<&crate::Project>,
+    registry: &VariableRegistry,
+    filter: &super::CatalogFilter,
+) -> Vec<super::CatalogEntry> {
+    super::with_members(entries, project)
+        .into_iter()
+        .filter_map(|entry| {
+            if entry.value_type.is_structured() {
+                display_members(entry, registry)
+            } else {
+                display_listed(&entry, registry).then_some(entry)
+            }
+        })
+        .filter(|entry| filter.matches_listed(entry))
+        .collect()
 }
 
 /// Variables that hold an id, refused on keys by name too: the project id
@@ -374,6 +450,9 @@ fn display_value(
             ..
         }
         | Resolution::PermissionDenied => Err(UnresolvedReason::NotDisplayable),
+        Resolution::Value { value, .. } if value.value_type().is_structured() => {
+            Err(UnresolvedReason::NotDisplayable)
+        }
         Resolution::Value { value, .. } => {
             if !is_text_type(value.value_type()) {
                 return Err(UnresolvedReason::NotText {

@@ -41,6 +41,7 @@ fn fetch(method: HttpMethod, url: &str, credential: Option<&str>) -> CapabilityR
             credential: c.into(),
             scheme: AuthScheme::Bearer,
         }),
+        connection: None,
     })
 }
 

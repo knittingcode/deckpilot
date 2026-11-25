@@ -46,6 +46,8 @@ import { PROJECTS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
 import { setLayoutProfileFilter } from "@/lib/layout-filter"
 import type { ProfileSummary, ProfileView } from "@/lib/types"
 
+import { ProfileSavedActions } from "./profile-saved-actions"
+
 type DialogState =
   | { mode: "create" }
   | { mode: "rename"; profile: ProfileSummary; description: string }
@@ -479,6 +481,7 @@ function ProfileDetails({
           <SquarePen /> {t("workspace:profiles.detail.openInEditor")}
         </Button>
       </div>
+      {view && <ProfileSavedActions profileId={profile.id} view={view} />}
     </section>
   )
 }
