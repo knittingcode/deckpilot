@@ -101,10 +101,12 @@ pub(crate) type Refusal = ScriptFault;
 /// Where scripts, their trust and their grants come from (the agent's
 /// script store; tests use their own).
 pub(crate) trait ScriptHost: Send + Sync + std::fmt::Debug {
-    /// The script's machine-local grants **now**: `None` when it does not
-    /// exist, is not trusted (its source does not match the reviewed
-    /// hash) or has none. Read at every call.
-    fn grants(&self, script: &str) -> Option<ScriptGrants>;
+    /// The script's machine-local grants **now**, for the source the run
+    /// loaded (`loaded`, its SHA-256): `None` when the script does not
+    /// exist, or `loaded` is not the source the user trusted (any more):
+    /// grants approved for another source never apply to this run. Read at
+    /// every call.
+    fn grants(&self, script: &str, loaded: &str) -> Option<ScriptGrants>;
     /// The script of the active profile, trusted: `scriptMissing` or
     /// `scriptNeedsReview` otherwise.
     fn load(&self, script: &str) -> Result<StoredScript, Refusal>;
@@ -121,7 +123,7 @@ pub(crate) trait ScriptHost: Send + Sync + std::fmt::Debug {
 pub(crate) struct NoScripts;
 
 impl ScriptHost for NoScripts {
-    fn grants(&self, _script: &str) -> Option<ScriptGrants> {
+    fn grants(&self, _script: &str, _loaded: &str) -> Option<ScriptGrants> {
         None
     }
 
@@ -169,6 +171,9 @@ impl std::fmt::Debug for ScriptRun {
 #[derive(Default)]
 struct RunState {
     loaded: Option<StoredScript>,
+    /// The SHA-256 of the loaded source: the grants asked for are this
+    /// source's.
+    loaded_hash: Option<String>,
     /// The run's project, pinned by `script.load`: switching the active
     /// project during the run changes nothing for it (security review of
     /// #469, L5).
@@ -447,12 +452,28 @@ impl Executor {
         let Some(script) = run.script.as_deref() else {
             return Err(fault(codes::SCRIPT_MISSING, "the action names no script"));
         };
-        // Read now: a revoked or no longer trusted script has none.
-        let grants = run
-            .host
-            .grants(script)
-            .filter(|g| g.validate().is_ok())
-            .unwrap_or_default();
+        // Read now, for the source the run loaded: a revoked or no longer
+        // trusted script (or one trusted again for another source) has
+        // none, and its run ends (no further operation).
+        let loaded = run.state().loaded_hash.clone();
+        let grants = match &loaded {
+            Some(hash) => match run.host.grants(script, hash) {
+                Some(grants) => grants,
+                None => {
+                    return Err(fault(
+                        codes::SCRIPT_NEEDS_REVIEW,
+                        "the script is no longer trusted (or DeckPilot is locked): the run ends",
+                    ));
+                }
+            },
+            // Before `script.load`: nothing but the load itself.
+            None => ScriptGrants::default(),
+        };
+        let grants = if grants.validate().is_ok() {
+            grants
+        } else {
+            ScriptGrants::default()
+        };
         let call = Call {
             run,
             script,
