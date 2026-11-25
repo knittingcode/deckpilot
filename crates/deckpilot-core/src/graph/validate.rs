@@ -599,6 +599,15 @@ impl<'a> Checker<'a> {
             }
             Mapping::Template { .. } => None,
         };
+        if matches!(kind, ParameterKind::Script) {
+            self.issues.push(GraphIssue::error(
+                Some(node),
+                format!(
+                    "parameter `{key}` names a script: only a script chosen here can fill it, never a node output or template"
+                ),
+            ));
+            return sensitive;
+        }
         if let Some(reference) = step {
             if matches!(kind, ParameterKind::Resource { .. }) {
                 self.issues.push(GraphIssue::warning(

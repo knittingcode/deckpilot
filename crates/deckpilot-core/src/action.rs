@@ -584,7 +584,8 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
         (ParameterKind::Script, ParameterValue::Text(text)) => check_name(
             spec,
             text,
-            |t| t.parse::<crate::ScriptId>().is_ok(),
+            // Exactly an id (what the plugin receives), no spaces around.
+            |t| t == text && t.parse::<crate::ScriptId>().is_ok(),
             "a script",
         ),
         (ParameterKind::Resource { .. }, ParameterValue::Resource(reference)) => match reference {
@@ -1080,6 +1081,11 @@ mod structured_text_tests {
         assert!(check(ParameterKind::Script, &crate::ScriptId::new().to_string()).is_ok());
         assert!(check(ParameterKind::Script, "").is_ok());
         assert!(check(ParameterKind::Script, "deckpilot.log(1)").is_err());
+        let spaced = format!(" {}\n", crate::ScriptId::new());
+        assert!(
+            check(ParameterKind::Script, &spaced).is_err(),
+            "exactly an id"
+        );
         assert_eq!(
             serde_json::to_value(ParameterKind::Script).unwrap(),
             serde_json::json!({"type": "script"})

@@ -604,12 +604,10 @@
       "intro": "Co ten skrypt może robić na tym komputerze. Nic z tego nie opuszcza komputera: eksport tego nie zawiera, a skrypt zaimportowany lub zmieniony nie dostaje niczego, dopóki go nie sprawdzisz.",
       "projects": "Projekty",
       "files": "Pliki",
-      "access": "Dostęp",
       "read": "Odczyt",
       "write": "Odczyt i zmiana",
       "delete": "Odczyt, zmiana i usuwanie",
       "rootDestructive": "Może usunąć, opróżnić lub zastąpić sam folder",
-      "removeScope": "Usuń ten folder",
       "repositoryKey": "Klucz repozytorium",
       "addRepository": "Dodaj repozytorium",
       "addEveryRepository": "Dodaj każde repozytorium",
@@ -633,7 +631,12 @@
       "revokeDescription": "Skrypt pozostaje zaufany i działa bez uprawnień, dopóki znów ich nie nadasz.",
       "save": "Zapisz uprawnienia",
       "saved": "Zapisano uprawnienia „{{name}}”",
-      "saveFailed": "Nie udało się zapisać uprawnień „{{name}}”"
+      "saveFailed": "Nie udało się zapisać uprawnień „{{name}}”",
+      "accessOf": "Dostęp do folderu {{index}}",
+      "removeScopeOf": "Usuń folder {{index}}",
+      "rootDestructiveOf": "Sam folder {{index}} może być usunięty, opróżniony lub zastąpiony",
+      "envOf": "{{command}} może ustawiać zmienne środowiskowe",
+      "unrestrictedOf": "{{command}} z dowolnymi argumentami"
     }
   }
 }

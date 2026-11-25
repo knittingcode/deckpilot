@@ -274,6 +274,16 @@ impl FeatureModule for PluginModule {
 /// they convert through JSON; anything that does not convert is refused.
 pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, String> {
     let id = ActionTypeId::new(format!("{plugin}.{}", action.id)).map_err(|e| e.to_string())?;
+    // The `script` kind is the Scripts plugin's only (the manifest
+    // validator refuses it elsewhere; refused here again).
+    if plugin != deckpilot_plugin_broker::SCRIPTS_PLUGIN
+        && action
+            .parameters
+            .iter()
+            .any(|p| matches!(p.kind, deckpilot_plugin_manifest::ParameterKind::Script {}))
+    {
+        return Err("only DeckPilot's Scripts plugin has script parameters".into());
+    }
     let parameters = action
         .parameters
         .iter()

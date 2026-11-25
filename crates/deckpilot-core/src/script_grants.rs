@@ -387,7 +387,16 @@ impl ScriptGrants {
                     }
                 }
                 FsRoot::Directory { path, label } => {
-                    if !path.is_absolute() || path.as_os_str().is_empty() {
+                    // Absolute and canonical in form: no `.` or `..`.
+                    if !path.is_absolute()
+                        || path.as_os_str().is_empty()
+                        || path.components().any(|c| {
+                            matches!(
+                                c,
+                                std::path::Component::ParentDir | std::path::Component::CurDir
+                            )
+                        })
+                    {
                         return Err(GrantsError::DirectoryPath);
                     }
                     if label.trim().is_empty()
@@ -426,6 +435,15 @@ impl ScriptGrants {
             if !bare && !std::path::Path::new(c).is_absolute() {
                 return Err(GrantsError::Command);
             }
+            // `unrestrictedArgs` lifts git's limits, so it is for git only.
+            if grant.unrestricted_args && program_name(c) != "git" {
+                return Err(GrantsError::Command);
+            }
+        }
+        let mut commands: Vec<&str> = self.process.iter().map(|g| g.command.as_str()).collect();
+        commands.sort_unstable();
+        if commands.windows(2).any(|w| w[0] == w[1]) {
+            return Err(GrantsError::Command);
         }
         if let Some(shell) = &self.shell
             && shell.shells.iter().any(|s| !SHELLS.contains(&s.as_str()))
@@ -620,6 +638,26 @@ mod tests {
         );
         assert_eq!(refused("doc\u{212A}er"), Err(GrantsError::ContainerRuntime));
         assert_eq!(refused("g\u{00EF}t"), Err(GrantsError::Command));
+        // git's unrestricted arguments are git's only; a command once.
+        let with = |command: &str, unrestricted: bool| ProcessGrant {
+            command: command.into(),
+            cwd: ProcessCwd::Repositories,
+            env: ProcessEnv::None,
+            unrestricted_args: unrestricted,
+        };
+        let set = |process: Vec<ProcessGrant>| {
+            ScriptGrants {
+                process,
+                ..ScriptGrants::default()
+            }
+            .validate()
+        };
+        assert_eq!(set(vec![with("/usr/bin/git", true)]), Ok(()));
+        assert_eq!(set(vec![with("make", true)]), Err(GrantsError::Command));
+        assert_eq!(
+            set(vec![with("make", false), with("make", false)]),
+            Err(GrantsError::Command)
+        );
     }
 
     #[test]

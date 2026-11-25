@@ -454,8 +454,10 @@ export function ScriptField({
       setScripts([])
     })
   }, [profileId])
-  const chosen = scripts?.find((s) => s.script.id === value)
-  const known = scripts === null || chosen !== undefined
+  // Without a profile nothing is known, so a set id shows as missing.
+  const listed = profileId ? scripts : []
+  const chosen = listed?.find((s) => s.script.id === value)
+  const known = listed === null || chosen !== undefined
   return (
     <div className="grid gap-1.5">
       <Select
@@ -473,7 +475,7 @@ export function ScriptField({
           {value !== "" && !known && (
             <SelectItem value={value}>{t("actions:fields.script.missingItem")}</SelectItem>
           )}
-          {(scripts ?? []).map((s) => (
+          {(listed ?? []).map((s) => (
             <SelectItem key={s.script.id} value={s.script.id}>
               {s.trust === "trusted"
                 ? s.script.name
@@ -482,7 +484,7 @@ export function ScriptField({
           ))}
         </SelectContent>
       </Select>
-      {scripts !== null && scripts.length === 0 && (
+      {listed !== null && listed.length === 0 && (
         <p className="text-xs text-muted-foreground">{t("actions:fields.script.noneStored")}</p>
       )}
       {value !== "" && !known && (

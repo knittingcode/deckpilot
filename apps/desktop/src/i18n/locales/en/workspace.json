@@ -590,12 +590,10 @@
       "intro": "What this script may do on this computer. Nothing here leaves this computer: an export never holds it, and an imported or changed script gets none of it until you review it.",
       "projects": "Projects",
       "files": "Files",
-      "access": "Access",
       "read": "Read",
       "write": "Read and change",
       "delete": "Read, change and delete",
       "rootDestructive": "May remove, empty or replace the folder itself",
-      "removeScope": "Remove this folder",
       "repositoryKey": "Repository key",
       "addRepository": "Add repository",
       "addEveryRepository": "Add every repository",
@@ -619,7 +617,12 @@
       "revokeDescription": "The script stays trusted and runs with no permissions until you give it some again.",
       "save": "Save permissions",
       "saved": "Permissions of “{{name}}” saved",
-      "saveFailed": "The permissions of “{{name}}” could not be saved"
+      "saveFailed": "The permissions of “{{name}}” could not be saved",
+      "accessOf": "Access of folder {{index}}",
+      "removeScopeOf": "Remove folder {{index}}",
+      "rootDestructiveOf": "Folder {{index}} itself may be removed, emptied or replaced",
+      "envOf": "{{command}} may set environment variables",
+      "unrestrictedOf": "{{command}} with any arguments"
     }
   }
 }

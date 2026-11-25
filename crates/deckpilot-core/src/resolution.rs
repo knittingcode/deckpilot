@@ -691,14 +691,14 @@ fn convert_output(kind: &ParameterKind, text: &str, profile: &Profile) -> Option
                 .find(|p| p.key.as_str() == text.trim())?
                 .id,
         ),
-        ParameterKind::Resource { .. } => return None,
+        // A script is chosen by the user, never by a reference's value.
+        ParameterKind::Resource { .. } | ParameterKind::Script => return None,
         ParameterKind::Choice { .. } => ParameterValue::Choice(text.to_owned()),
         ParameterKind::Text { .. }
         | ParameterKind::Lines { .. }
         | ParameterKind::Pairs { .. }
         | ParameterKind::Code { .. }
-        | ParameterKind::Credential
-        | ParameterKind::Script => ParameterValue::Text(text.to_owned()),
+        | ParameterKind::Credential => ParameterValue::Text(text.to_owned()),
     })
 }
 

@@ -220,7 +220,34 @@ pub fn trust_script<R: Runtime>(
         .trust_script(profile_id, script_id, &source_sha256, &grants)?)
 }
 
-/// The Permissions tab's save.
+/// A folder scope's path as granted: canonical (links and junctions
+/// resolved now, so a link pointed elsewhere later does not move the
+/// grant), an existing folder, in the plain form on Windows.
+fn canonical_folder(path: &std::path::Path) -> CommandResult<std::path::PathBuf> {
+    let real = std::fs::canonicalize(path)
+        .ok()
+        .filter(|p| p.is_dir())
+        .ok_or_else(|| {
+            CommandError::invalid_with(
+                "scriptFolderMissing",
+                format!("{} is not a folder on this computer", path.display()),
+                [],
+            )
+        })?;
+    #[cfg(windows)]
+    {
+        let text = real.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return Ok(std::path::PathBuf::from(format!(r"\\{rest}")));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return Ok(std::path::PathBuf::from(rest));
+        }
+    }
+    Ok(real)
+}
+
+/// The Permissions tab's save. Folder scopes are stored canonical.
 #[tauri::command]
 pub fn set_script_grants<R: Runtime>(
     window: WebviewWindow<R>,
@@ -230,6 +257,12 @@ pub fn set_script_grants<R: Runtime>(
     grants: ScriptGrants,
 ) -> CommandResult<()> {
     main_only(&window)?;
+    let mut grants = grants;
+    for scope in &mut grants.fs {
+        if let deckpilot_core::script_grants::FsRoot::Directory { path, .. } = &mut scope.root {
+            *path = canonical_folder(path)?;
+        }
+    }
     Ok(state
         .store()?
         .set_script_grants(profile_id, script_id, &grants)?)

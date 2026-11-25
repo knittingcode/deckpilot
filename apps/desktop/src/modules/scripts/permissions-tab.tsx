@@ -6,7 +6,7 @@
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog"
 import { FolderOpen, Plus, ShieldOff, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/dialogs"
@@ -42,6 +42,20 @@ function baseName(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
+/** A folder's label: its name, cut to the core's 64 characters. */
+function folderLabel(path: string): string {
+  return Array.from(baseName(path)).slice(0, 64).join("")
+}
+
+/** Whether a command is git (a bare name or a picked path). */
+function isGit(command: string): boolean {
+  return (
+    baseName(command)
+      .toLowerCase()
+      .replace(/\.exe$/, "") === "git"
+  )
+}
+
 export function PermissionsTab({
   profileId,
   stored,
@@ -65,14 +79,33 @@ export function PermissionsTab({
   const fs = grants.fs ?? []
   const processes = grants.process ?? []
   const shells = grants.shell?.shells ?? []
+  // Every program's class, saved ones included, so a launcher is flagged
+  // whenever the tab opens.
+  const unclassified = processes.map((p) => p.command).filter((c) => !(c in classes))
+  const unclassifiedKey = unclassified.join("\n")
+  useEffect(() => {
+    for (const command of unclassifiedKey === "" ? [] : unclassifiedKey.split("\n")) {
+      api.scriptCommandClass(command).then(
+        (kind) => {
+          setClasses((c) => ({ ...c, [command]: kind }))
+        },
+        () => undefined,
+      )
+    }
+  }, [unclassifiedKey])
+  // One program added at a time (a second click waits for the first).
+  const adding = useRef(false)
 
   const addScope = (scope: ScriptFsScope) => {
     set({ fs: [...fs, scope] })
   }
   const addCommand = async (name: string) => {
     const trimmed = name.trim()
-    if (trimmed === "" || processes.some((p) => p.command === trimmed)) return
-    const kind = await api.scriptCommandClass(trimmed)
+    if (trimmed === "" || adding.current) return
+    adding.current = true
+    const kind = await api.scriptCommandClass(trimmed).finally(() => {
+      adding.current = false
+    })
     if (kind === "containerRuntime") {
       setRefusal(t("workspace:scripts.permissions.containerRuntime"))
       return
@@ -87,7 +120,14 @@ export function PermissionsTab({
     }
     setRefusal(null)
     setClasses((c) => ({ ...c, [trimmed]: kind }))
-    set({ process: [...processes, { command: trimmed, cwd: "repositories", env: "none" }] })
+    setGrants((g) => {
+      const current = g.process ?? []
+      if (current.some((p) => p.command === trimmed)) return g
+      return {
+        ...g,
+        process: [...current, { command: trimmed, cwd: "repositories", env: "none" }],
+      }
+    })
     setCommand("")
   }
   const updateProcess = (index: number, patch: Partial<ScriptProcessGrant>) => {
@@ -169,7 +209,7 @@ export function PermissionsTab({
               >
                 <SelectTrigger
                   className="w-40"
-                  aria-label={t("workspace:scripts.permissions.access")}
+                  aria-label={t("workspace:scripts.permissions.accessOf", { index: index + 1 })}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -183,6 +223,9 @@ export function PermissionsTab({
               </Select>
               <label className="flex items-center gap-1.5">
                 <Checkbox
+                  aria-label={t("workspace:scripts.permissions.rootDestructiveOf", {
+                    index: index + 1,
+                  })}
                   checked={scope.rootDestructive ?? false}
                   onCheckedChange={(checked) => {
                     set({
@@ -197,7 +240,7 @@ export function PermissionsTab({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={t("workspace:scripts.permissions.removeScope")}
+                aria-label={t("workspace:scripts.permissions.removeScopeOf", { index: index + 1 })}
                 onClick={() => {
                   set({ fs: fs.filter((_, i) => i !== index) })
                 }}
@@ -243,7 +286,7 @@ export function PermissionsTab({
               void openDialog({ directory: true, multiple: false }).then((picked) => {
                 if (typeof picked !== "string") return
                 addScope({
-                  root: { directory: { path: picked, label: baseName(picked) } },
+                  root: { directory: { path: picked, label: folderLabel(picked) } },
                   access: "read",
                 })
               })
@@ -308,6 +351,9 @@ export function PermissionsTab({
                 </Select>
                 <label className="flex items-center gap-1.5">
                   <Checkbox
+                    aria-label={t("workspace:scripts.permissions.envOf", {
+                      command: process.command,
+                    })}
                     checked={process.env === "allowed"}
                     onCheckedChange={(checked) => {
                       updateProcess(index, { env: checked === true ? "allowed" : "none" })
@@ -315,9 +361,12 @@ export function PermissionsTab({
                   />
                   {t("workspace:scripts.grants.envAllowed")}
                 </label>
-                {process.command === "git" && (
+                {isGit(process.command) && (
                   <label className="flex items-center gap-1.5">
                     <Checkbox
+                      aria-label={t("workspace:scripts.permissions.unrestrictedOf", {
+                        command: process.command,
+                      })}
                       checked={process.unrestrictedArgs ?? false}
                       onCheckedChange={(checked) => {
                         updateProcess(index, { unrestrictedArgs: checked === true })
@@ -334,6 +383,8 @@ export function PermissionsTab({
           <Input
             className="w-48"
             aria-label={t("workspace:scripts.permissions.programName")}
+            aria-invalid={refusal !== null}
+            aria-describedby={refusal !== null ? "program-refusal" : undefined}
             placeholder={t("workspace:scripts.permissions.programName")}
             value={command}
             onChange={(e) => {
@@ -364,7 +415,7 @@ export function PermissionsTab({
           </Button>
         </div>
         {refusal && (
-          <p className="text-sm text-destructive" role="alert">
+          <p id="program-refusal" className="text-sm text-destructive" role="alert">
             {refusal}
           </p>
         )}
