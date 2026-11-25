@@ -98,6 +98,36 @@ describe("what the title picker offers", () => {
     expect(offeredOnKey(entry("shared.paid"))).toBe(true)
   })
 
+  it("never offers structured values, nor a repository's folder, URL or id", () => {
+    const repositories = "plugins.deckpilot.projects.current.repositories"
+    const member = (path: string) =>
+      entry(`${repositories}.cms.${path}`, { group: "module", memberOf: repositories })
+    // Whatever an agent lists: the whole map or object never.
+    expect(
+      offeredOnKey(entry(repositories, { valueType: { type: "map", of: "repository" } })),
+    ).toBe(false)
+    expect(
+      offeredOnKey(
+        entry("plugins.deckpilot.projects.current.repository", {
+          valueType: { type: "object", shape: "repository" },
+        }),
+      ),
+    ).toBe(false)
+    expect(offeredOnKey(member("path"))).toBe(false)
+    expect(offeredOnKey(member("remote.url"))).toBe(false)
+    expect(offeredOnKey(member("id"))).toBe(false)
+    // Its names and keys are text for people.
+    expect(offeredOnKey(member("name"))).toBe(true)
+    expect(offeredOnKey(member("remote.defaultBranch"))).toBe(true)
+    expect(
+      pickerEntries([
+        entry(repositories, { valueType: { type: "map", of: "repository" } }),
+        member("name"),
+        member("path"),
+      ]).map((e) => e.reference),
+    ).toEqual([`${repositories}.cms.name`])
+  })
+
   it("lists each reference once, a legacy alias under its canonical id", () => {
     const listed = pickerEntries([
       entry("plugins.deckpilot.projects.current.key", {

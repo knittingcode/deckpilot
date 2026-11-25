@@ -394,6 +394,14 @@ pub trait FeatureModule: Send + Sync {
     fn gesture_presets(&self) -> Vec<crate::gesture_preset::GesturePreset> {
         Vec::new()
     }
+
+    /// Whether the module's actions may receive this computer's folder
+    /// paths through their parameters (a repository's `path`). Asked only
+    /// of plugins (`resources:paths`, [`ActionRegistry::reads_paths`]):
+    /// DeckPilot's own modules always may.
+    fn reads_paths(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -1160,6 +1168,9 @@ impl ModuleRegistry {
                 );
                 continue;
             }
+            if entry.module.reads_paths() {
+                registry.allow_paths(id.clone());
+            }
             for handler in entry.module.action_handlers(&entry.config) {
                 if skipped(&handler.definition().id) {
                     continue;
@@ -1173,6 +1184,13 @@ impl ModuleRegistry {
             let reason = match outcome {
                 AliasOutcome::Plugin => match self.alias_handler(alias) {
                     Some((plugin, capabilities, handler)) => {
+                        if self
+                            .modules
+                            .get(&plugin)
+                            .is_some_and(|entry| entry.module.reads_paths())
+                        {
+                            registry.allow_paths(plugin.clone());
+                        }
                         if registry
                             .register_for_module(plugin, capabilities, Box::new(handler))
                             .is_ok()
@@ -1583,6 +1601,8 @@ mod tests {
             profile: &profile,
             os: Os::Linux,
             live: &NoLiveState,
+            machine: None,
+            private_paths: true,
         };
         let answer_id = VariableId::new("test.answer").unwrap();
         let resolve =

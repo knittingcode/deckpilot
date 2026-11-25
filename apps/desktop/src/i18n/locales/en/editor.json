@@ -597,6 +597,8 @@
       "resource": "resource",
       "json": "JSON",
       "secretRef": "credential name",
+      "object": "structured value",
+      "map": "structured values by key",
       "resourceOfKind": "resource ({{kind}})"
     },
     "scope": {
@@ -660,12 +662,18 @@
       "noWorkflow": "No workflow is in the context.",
       "noExecution": "No run is in the context.",
       "noOutput": "The step has not produced it.",
-      "otherProfile": "The value belongs to another profile."
+      "otherProfile": "The value belongs to another profile.",
+      "unknownMember": "It has no such member.",
+      "repositoryNotInProject": "The project has no repository with that key.",
+      "noDefaultRepository": "The project has several repositories and none is the default."
     },
     "status": {
       "resolved": "Resolved",
       "redacted": "Redacted",
       "redactedDetail": "The value is sensitive and never shown.",
+      "structured_one": "{{count}} object",
+      "structured_other": "{{count}} objects",
+      "structuredDetail": "A structured value: read one of its members to see a value.",
       "runtime": "Available when it runs",
       "runtimeDetail": "The value exists only while the workflow runs.",
       "missing": "Missing",

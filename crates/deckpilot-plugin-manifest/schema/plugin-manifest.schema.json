@@ -1032,7 +1032,34 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type"],
-          "properties": { "type": { "enum": ["string", "integer", "boolean", "json"] } }
+          "properties": {
+            "type": { "enum": ["string", "integer", "boolean", "json", "object", "map"] },
+            "shape": {
+              "enum": ["repository"],
+              "description": "Plugin API 1.12: the shape of an object."
+            },
+            "of": {
+              "enum": ["repository"],
+              "description": "Plugin API 1.12: the shape of a map's objects."
+            }
+          },
+          "description": "object and map (plugin API 1.12) are structured values only DeckPilot provides, through a host source: an object names its shape, a map names of.",
+          "oneOf": [
+            {
+              "properties": { "type": { "const": "object" } },
+              "required": ["shape"],
+              "not": { "required": ["of"] }
+            },
+            {
+              "properties": { "type": { "const": "map" } },
+              "required": ["of"],
+              "not": { "required": ["shape"] }
+            },
+            {
+              "properties": { "type": { "enum": ["string", "integer", "boolean", "json"] } },
+              "allOf": [{ "not": { "required": ["shape"] } }, { "not": { "required": ["of"] } }]
+            }
+          ]
         },
         "scope": { "enum": ["machine", "profile", "project"] },
         "requires": {
@@ -1043,8 +1070,14 @@
         "sensitive": { "type": "boolean", "default": false },
         "deprecated": { "type": "boolean", "default": false },
         "source": {
-          "enum": ["host:project.id", "host:project.key", "host:project.name"],
-          "description": "Plugin API 1.9, first-party bundled plugins with the projectContext permission only: DeckPilot computes and publishes the value (the id, key or name of the project in the context; scope project, a string). The plugin never publishes it."
+          "enum": [
+            "host:project.id",
+            "host:project.key",
+            "host:project.name",
+            "host:project.repositories",
+            "host:project.repository"
+          ],
+          "description": "Plugin API 1.9, first-party bundled plugins with the projectContext permission only: DeckPilot computes and publishes the value (the id, key or name of the project in the context; scope project, a string). The plugin never publishes it. Plugin API 1.12 adds the project's repositories (host:project.repositories, a map of repository) and its default repository (host:project.repository, an object of repository); a repository's folder path reaches only readers that may see paths."
         }
       }
     },
