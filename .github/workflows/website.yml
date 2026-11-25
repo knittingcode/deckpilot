@@ -67,7 +67,9 @@ concurrency:
 jobs:
   # Merge queue groups only (skipped for every other event): whether the
   # group changes a path of on.pull_request.paths
-  # (tools/ci/merge-group-paths.sh).
+  # (tools/ci/merge-group-paths.sh). The jobs below run unless this job
+  # succeeded and found no such path: skipped (any other event) or failed
+  # (when in doubt), they run.
   merge-group-paths:
     name: Changed paths (merge group)
     if: github.event_name == 'merge_group'
@@ -90,7 +92,7 @@ jobs:
   build:
     name: Build and test website
     needs: merge-group-paths
-    if: ${{ !cancelled() && github.event_name != 'release' && (github.event_name != 'merge_group' || needs.merge-group-paths.outputs.run == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'release' && (needs.merge-group-paths.result != 'success' || needs.merge-group-paths.outputs.run == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -182,7 +184,10 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # build depends on the skipped merge-group-paths job, and the implicit
+    # success() would carry that skip down to this job: test build's own
+    # result instead.
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

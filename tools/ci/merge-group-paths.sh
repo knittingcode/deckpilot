@@ -69,9 +69,14 @@ done <<< "$patterns"
 echo "paths of $workflow: $regex" >&2
 echo "changed files:" >&2
 while IFS= read -r file; do echo "  $file"; done <<< "$changed" >&2
-if grep -q -E "$regex" <<< "$changed"; then
-  echo "run=true" >> "$out"
-else
-  echo "no changed file matches; the workflow's jobs report as skipped" >&2
-  echo "run=false" >> "$out"
-fi
+# grep: 0 a match, 1 none, anything else an error (run).
+status=0
+grep -q -E "$regex" <<< "$changed" || status=$?
+case "$status" in
+  0) echo "run=true" >> "$out" ;;
+  1)
+    echo "no changed file matches; the workflow's jobs report as skipped" >&2
+    echo "run=false" >> "$out"
+    ;;
+  *) run "the paths could not be matched (grep exit $status)" ;;
+esac

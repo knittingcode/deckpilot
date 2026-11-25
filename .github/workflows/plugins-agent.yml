@@ -65,7 +65,9 @@ env:
 jobs:
   # Merge queue groups only (skipped for every other event): whether the
   # group changes a path of on.pull_request.paths
-  # (tools/ci/merge-group-paths.sh).
+  # (tools/ci/merge-group-paths.sh). The jobs below run unless this job
+  # succeeded and found no such path: skipped (any other event) or failed
+  # (when in doubt), they run.
   merge-group-paths:
     name: Changed paths (merge group)
     if: github.event_name == 'merge_group'
@@ -88,7 +90,7 @@ jobs:
   e2e:
     name: Plugins in the agent (${{ matrix.os }})
     needs: merge-group-paths
-    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.merge-group-paths.outputs.run == 'true') }}
+    if: ${{ !cancelled() && (needs.merge-group-paths.result != 'success' || needs.merge-group-paths.outputs.run == 'true') }}
     strategy:
       fail-fast: false
       matrix:
