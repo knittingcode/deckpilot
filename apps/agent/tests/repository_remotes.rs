@@ -178,13 +178,19 @@ async fn a_project_repositorys_remotes_are_read_from_its_folder_only() {
     let Some(git) = real_git() else { return };
     let dir = support::TempDir::new("repository-remotes-fixture");
     let f = fixture(&git, dir.path());
-    let env = Env::new(
+    let mut env = Env::new(
         "repository-remotes",
         PLUGIN,
         BundleClass::Default,
         Some((&f.profile, Some(f.shop))),
         Some(&f.machine),
     );
+    // git reads no configuration of the developer's (`~/.gitconfig`).
+    let home = dir.path().join("agent-home");
+    std::fs::create_dir_all(home.join(".config")).unwrap();
+    env.extra_env.push(("HOME".into(), home.clone().into()));
+    env.extra_env
+        .push(("XDG_CONFIG_HOME".into(), home.join(".config").into()));
     let agent = env.start().await;
     let derived = RepositoryId::derived;
 

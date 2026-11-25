@@ -430,10 +430,6 @@ impl PluginRuntime {
         }
     }
 
-    /// One feature module per installed plugin, for the agent's module
-    /// registry: enabled when its actions can run, otherwise disabled with
-    /// the reason. Empty without the `plugins` feature, with plugins off,
-    /// and while locked.
     /// `listRepositoryRemotes` for the bound folder `folder`: what to run
     /// off the agent's thread (it runs `git`, up to its local read limit
     /// twice), or why it does not run: plugins are off or not built
@@ -441,7 +437,25 @@ impl PluginRuntime {
     pub(crate) fn repository_remotes(&self, folder: PathBuf) -> Result<RemotesJob, IpcError> {
         #[cfg(feature = "plugins")]
         if self.settings.enabled {
+            // One at a time: a client cannot pile up git processes.
+            static RUNNING: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            struct Running;
+            impl Drop for Running {
+                fn drop(&mut self) {
+                    RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Err(IpcError::new(
+                    ErrorCode::Failed,
+                    "the remotes of another repository are being read; try again",
+                )
+                .with_reason("busy"));
+            }
+            let running = Running;
             return Ok(Box::new(move || {
+                let _running = running;
                 let host = tools::ToolHost::from_agent();
                 let deadline = std::time::Instant::now() + 2 * tools::GIT_READ_TIMEOUT;
                 tools::remotes::detect(&host, &folder, deadline)
@@ -455,6 +469,10 @@ impl PluginRuntime {
         Err(unavailable(&self.settings))
     }
 
+    /// One feature module per installed plugin, for the agent's module
+    /// registry: enabled when its actions can run, otherwise disabled with
+    /// the reason. Empty without the `plugins` feature, with plugins off,
+    /// and while locked.
     pub(crate) fn modules(&self) -> Vec<Box<dyn deckpilot_core::FeatureModule>> {
         #[cfg(feature = "plugins")]
         if let Some(worker) = &self.worker {

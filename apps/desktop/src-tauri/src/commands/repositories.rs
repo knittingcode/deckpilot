@@ -101,6 +101,26 @@ fn provider_type(remote_repository_id: &str) -> Option<&'static str> {
     }
 }
 
+/// The lower-case host of a remote URL (`https://`, `ssh://`, the scp form
+/// `user@host:path`) or of a connection's `https://host[:port]`.
+fn remote_host(url: &str) -> Option<String> {
+    let authority = match url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("ssh://"))
+    {
+        Some(rest) => rest.split('/').next()?,
+        None => url.split_once(':')?.0,
+    };
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next()?,
+        None => host.split(':').next()?,
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 /// Whether every remote that names a link (a connection or a provider id)
 /// is exactly a link stored under that name now: the editor may keep, drop
 /// or reorder links and edit plain remotes, but a new or changed link goes
@@ -199,6 +219,17 @@ pub async fn link_repository_remote(
         Some(c) if provider_type(id) != Some(c.type_id.as_str()) => {
             return Err(refused(
                 "the repository is not of the connection's provider",
+            ));
+        }
+        // The URL is the record's or the folder's own remote, both on the
+        // connection's server: never one of another server.
+        Some(c)
+            if remote.remote_url.as_deref().is_some_and(|url| {
+                remote_host(url).is_none() || remote_host(url) != remote_host(&c.web_url)
+            }) =>
+        {
+            return Err(refused(
+                "the remote's URL is not on the connection's server",
             ));
         }
         Some(_) => {}
@@ -379,5 +410,21 @@ mod tests {
         assert_eq!(provider_type("gl:4711"), Some("gitlab"));
         assert_eq!(provider_type("gh:1"), Some("github"));
         assert_eq!(provider_type("group/app"), None);
+        for (url, host) in [
+            (
+                "https://Code.Example.com:8443/g/a.git",
+                Some("code.example.com"),
+            ),
+            (
+                "ssh://git@code.example.com:2222/g/a.git",
+                Some("code.example.com"),
+            ),
+            ("git@code.example.com:g/a.git", Some("code.example.com")),
+            ("https://code.example.com", Some("code.example.com")),
+            ("https://[::1]:8443/g", Some("::1")),
+            ("/srv/git/a.git", None),
+        ] {
+            assert_eq!(remote_host(url).as_deref(), host, "{url}");
+        }
     }
 }

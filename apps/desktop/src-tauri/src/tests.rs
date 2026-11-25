@@ -5775,6 +5775,13 @@ fn a_remote_is_linked_only_to_a_usable_connection_of_its_provider() {
                 "remoteUrl": "https://user:pw@code.example.com/group/app.git" }),
             "not valid (remoteUrl)",
         ),
+        // A URL of another server than the connection's.
+        (
+            "a URL of another server",
+            json!({ "name": "fork", "connectionId": GITLAB, "remoteRepositoryId": "gl:1",
+                "remoteUrl": "https://evil.example/group/app.git" }),
+            "not on the connection's server",
+        ),
         // A link names both its connection and the provider's id; without
         // both the agent is not asked.
         (
@@ -5837,11 +5844,11 @@ fn a_remote_is_linked_only_to_a_usable_connection_of_its_provider() {
     agent.requests.lock().unwrap().pop();
 
     // Only connection lists were ever asked for, once per link that names
-    // both a connection and an id: 3 links, 7 such refusals and the 2
+    // both a connection and an id: 3 links, 8 such refusals and the 2
     // unknown targets. No other request and no profile write through the
     // agent (K3: the app writes the link).
     let requests = agent.requests();
-    assert_eq!(requests.len(), 3 + 7 + 2, "{requests:?}");
+    assert_eq!(requests.len(), 3 + 8 + 2, "{requests:?}");
     assert!(
         requests.iter().all(|r| matches!(
             r,

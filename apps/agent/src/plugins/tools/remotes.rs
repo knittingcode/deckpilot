@@ -9,11 +9,15 @@
 //!   environment, the local read time limit. It never fetches, pulls or
 //!   writes, and nothing here contacts a server.
 //! * **Only the bound folder's own repository**, as for a plugin's run:
-//!   the work tree and the git directory must be the folder or inside it
-//!   ([`super::work_tree_inside`]), and discovery stops at the folder.
+//!   the folder is resolved (links followed) and must be a directory, the
+//!   work tree and the git directory must be it or inside it
+//!   ([`super::work_tree_inside`]), and discovery stops at it.
 //! * **No credentials leave.** An `https` URL loses its user name and
-//!   password, an `ssh` one its password, both any query or fragment; a
-//!   URL that is still not one a project may store
+//!   password, an `ssh` one its password, both any query or fragment, and
+//!   an SSH user name is kept only when it reads like an account (`git`),
+//!   never like a token; a URL git does not hold in its canonical form is
+//!   left out rather than rewritten; a URL that is still not one a project
+//!   may store
 //!   ([`RepositoryRemote::check`]: `http`, `file`, a path, `ext::`, a
 //!   leftover password in the scp form) is left out, and so is a remote
 //!   whose name is not a remote name. At most
@@ -35,14 +39,21 @@ pub(crate) fn detect(
     folder: &Path,
     deadline: Instant,
 ) -> Result<Vec<DetectedRemote>, Denial> {
-    if !folder.is_absolute() || !folder.is_dir() {
-        return Err(Denial::new(
+    let gone = || {
+        Denial::new(
             codes::INVALID_CWD,
             "the repository's folder does not exist on this computer",
-        ));
-    }
+        )
+    };
+    // As a plugin's handle: the real folder, links followed.
+    let folder = folder
+        .is_absolute()
+        .then(|| std::fs::canonicalize(folder).ok())
+        .flatten()
+        .filter(|f| f.is_dir())
+        .ok_or_else(gone)?;
     let program = host.executable(Tool::Git)?;
-    let plan = git::remote_urls(host, folder, program);
+    let plan = git::remote_urls(host, &folder, program);
     let never = || None;
     work_tree_inside(host, &plan, Some(deadline), &never)?;
     let listed = execute(&plan, Some(deadline), &never)?;
@@ -111,7 +122,12 @@ fn without_credentials(url: &str) -> Option<String> {
     }
     if url.starts_with("https://") || url.starts_with("ssh://") {
         let mut parsed = url::Url::parse(url).ok()?;
-        if parsed.scheme() == "https" {
+        if parsed.as_str() != url {
+            // Not canonical (case, `\`, an IDN, a default port): a
+            // suggestion is git's own URL or nothing.
+            return None;
+        }
+        if parsed.scheme() == "https" || !account(parsed.username()) {
             parsed.set_username("").ok()?;
         }
         parsed.set_password(None).ok()?;
@@ -122,7 +138,22 @@ fn without_credentials(url: &str) -> Option<String> {
     if url.contains("://") {
         return None;
     }
-    Some(url.to_owned())
+    // The scp form needs its user: one that reads like a token is no
+    // suggestion at all.
+    let user = url.split_once('@').map_or("", |(user, _)| user);
+    account(user).then(|| url.to_owned())
+}
+
+/// An SSH user name that names an account (`git`, `deploy`), not a token:
+/// short, lower-case, and nothing shaped like a secret.
+fn account(user: &str) -> bool {
+    user.is_empty()
+        || (user.len() <= 32
+            && user.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+            && user
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
+            && !deckpilot_plugin_store::looks_like_secret(user))
 }
 
 #[cfg(test)]
@@ -204,6 +235,31 @@ mod tests {
             out,
             vec![remote("ok", "git@gitlab.com:shop/main.git", None)]
         );
+    }
+
+    /// An SSH user that reads like a token never leaves: dropped from an
+    /// `ssh://` URL, and an scp-form remote with one is no suggestion; a
+    /// URL git does not hold canonically is left out, never rewritten.
+    #[test]
+    fn token_shaped_ssh_users_and_rewritten_urls_never_leave() {
+        let token = format!("{}{}", "gl", "pat-abcdefghijklmnopqrst");
+        let out = parse(&format!(
+            "a\tssh://{token}@code.example.com/shop/a.git (fetch)\n\
+             b\t{token}@code.example.com:shop/b.git (fetch)\n\
+             c\tssh://Deploy@code.example.com/shop/c.git (fetch)\n\
+             d\thttps://Code.Example.com/shop/d.git (fetch)\n\
+             e\thttps://code.example.com:443/shop/e.git (fetch)\n\
+             f\tdeploy@code.example.com:shop/f.git (fetch)\n"
+        ));
+        assert_eq!(
+            out,
+            vec![
+                remote("a", "ssh://code.example.com/shop/a.git", None),
+                remote("c", "ssh://code.example.com/shop/c.git", None),
+                remote("f", "deploy@code.example.com:shop/f.git", None),
+            ]
+        );
+        assert!(!format!("{out:?}").contains(&token));
     }
 
     #[test]
@@ -349,7 +405,7 @@ mod tests {
     /// repository in the home folder), shows nothing of that one; a
     /// missing folder is refused before git runs.
     #[test]
-    fn only_the_folders_own_repository_is_read() {
+    fn only_the_folders_own_repository_is_read_and_links_are_followed() {
         let Some(git) = real_git() else { return };
         let dir = tempfile::tempdir().unwrap();
         let home = std::fs::canonicalize(dir.path()).unwrap();
@@ -373,6 +429,42 @@ mod tests {
         assert_eq!(refused.code, codes::INVALID_CWD);
         let refused = detect(&host(&git, &home), Path::new("relative"), soon()).unwrap_err();
         assert_eq!(refused.code, codes::INVALID_CWD);
+        // A file is no folder.
+        std::fs::write(home.join("file"), "x").unwrap();
+        let refused = detect(&host(&git, &home), &home.join("file"), soon()).unwrap_err();
+        assert_eq!(refused.code, codes::INVALID_CWD);
+
+        // A link to a repository is read as that repository.
+        let repo = home.join("src/shop");
+        std::fs::create_dir_all(&repo).unwrap();
+        setup(&git, &home, &repo, &["init", "-q"]);
+        setup(
+            &git,
+            &home,
+            &repo,
+            &["remote", "add", "origin", "git@gitlab.com:shop/main.git"],
+        );
+        std::os::unix::fs::symlink(&repo, home.join("shop-link")).unwrap();
+        let out = detect(&host(&git, &home), &home.join("shop-link"), soon()).unwrap();
+        assert_eq!(
+            out,
+            vec![remote("origin", "git@gitlab.com:shop/main.git", None)]
+        );
+
+        // A `.git` file pointing at another repository's git directory is
+        // refused before the listing.
+        let other = home.join("elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+        setup(&git, &home, &other, &["init", "-q"]);
+        let pointer = home.join("src/pointer");
+        std::fs::create_dir_all(&pointer).unwrap();
+        std::fs::write(
+            pointer.join(".git"),
+            format!("gitdir: {}\n", other.join(".git").display()),
+        )
+        .unwrap();
+        let refused = detect(&host(&git, &home), &pointer, soon()).unwrap_err();
+        assert_eq!(refused.code, codes::OUTSIDE_BINDING);
     }
 
     /// Exactly what runs: the containment check, then `remote -v` with the
