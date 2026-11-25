@@ -93,8 +93,9 @@ released either. 0.6.0 is the first version intended for publication.
   runs out of time or loses its grant. Plugin manifests know the
   Scripts plugin's permission, its script parameter, its page and its
   limits (plugin API 1.13), for DeckPilot's own Scripts plugin only. A
-  file a script reads in parts comes from one snapshot of the file: when
-  it changes between the parts, the read fails instead of mixing them.
+  file a script reads in parts comes from one snapshot of the file, so
+  its parts never mix two versions; a file replaced or changed between
+  them fails the read.
 
 ### Changed
 

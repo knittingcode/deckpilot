@@ -1798,6 +1798,13 @@ fn encode_chunk(
                 )
             })?;
             let text = fit_json(text).to_owned();
+            // A chunk too short for one whole character would never move on.
+            if text.is_empty() && !bytes.is_empty() {
+                return Err(fault(
+                    codes::INVALID_ARGUMENT,
+                    "the chunk is shorter than one character; read a longer one",
+                ));
+            }
             let read = text.len() as u64;
             (text, read)
         }
