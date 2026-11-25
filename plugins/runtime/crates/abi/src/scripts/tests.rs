@@ -305,6 +305,29 @@ fn the_env_denylist_matches_the_design() {
         "NODE_OPTIONS",
         "PYTHONPATH",
         "ComSpec",
+        "PATH",
+        "Path",
+        "PATHEXT",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "GIT_PROXY_COMMAND",
+        "GIT_ASKPASS",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "SSH_ASKPASS",
+        "BASH_ENV",
+        "ENV",
+        "ZDOTDIR",
+        "PERL5OPT",
+        "RUBYOPT",
+        "NODE_PATH",
+        "JAVA_TOOL_OPTIONS",
+        "RUSTC_WRAPPER",
+        "PSModulePath",
+        "HTTPS_PROXY",
+        "SSL_CERT_FILE",
+        "DOCKER_CONFIG",
     ] {
         assert!(env_denied(name), "{name}");
     }
@@ -312,9 +335,46 @@ fn the_env_denylist_matches_the_design() {
         "CI",
         "NODE_ENV",
         "GIT_AUTHOR_NAME",
+        "GIT_COMMITTER_EMAIL",
         "PATH_EXTRA",
         "DOCKER_BUILDKIT",
+        "COMPOSE_PROJECT_NAME",
+        "RUST_LOG",
     ] {
         assert!(!env_denied(name), "{name}");
+    }
+}
+
+#[test]
+fn commands_are_names_or_plain_absolute_paths() {
+    for ok in [
+        "git",
+        "docker",
+        "make",
+        "g++",
+        "python3.12",
+        "/usr/bin/git",
+        "C:\\Program Files\\Git\\bin\\git.exe",
+    ] {
+        assert!(validate_command(ok).is_ok(), "{ok}");
+    }
+    for bad in [
+        "",
+        "git pull",
+        "./x",
+        "-c",
+        "..",
+        "C:foo",
+        "x.bat",
+        "X.CMD",
+        "x.cmd.",
+        "git;rm",
+        "$(x)",
+        "\\\\host\\share\\x.exe",
+        "/usr/bin/../bin/sh",
+        "/usr/bin/git\u{1b}",
+        "C:\\tools\\run.bat",
+    ] {
+        assert!(validate_command(bad).is_err(), "{bad:?}");
     }
 }

@@ -228,42 +228,96 @@ impl PathArg {
         }
     }
 
-    /// The form and bounds only: exactly one of an absolute path and a
-    /// repository, no NUL, a repository key, and a relative part that is
-    /// not absolute and has no drive, stream or device syntax. Whether it
-    /// stays inside a scope is the agent's to decide.
+    /// The canonical forms only, as the guest sends them: exactly one of
+    /// an absolute path and a repository; an absolute path that is fully
+    /// qualified ([`is_absolute_path`]); a repository key; and a relative
+    /// part of `/`-separated names, never absolute, never `.`, `..` or
+    /// empty, without `\\` or `:`. No part holds NUL, another control
+    /// character or a bidirectional override. Anything else is a hostile
+    /// guest. Whether a path stays inside a scope is the agent's to decide.
     pub fn validate(&self) -> Result<(), RequestError> {
         match (&self.path, &self.repository) {
             (Some(path), None) => {
                 if self.relative.is_some() {
                     return Err(RequestError::Invalid("path"));
                 }
-                plain_path(path)
+                if path.len() > MAX_PATH {
+                    return Err(RequestError::TooLarge("path"));
+                }
+                if is_absolute_path(path) {
+                    Ok(())
+                } else {
+                    Err(RequestError::Invalid("path"))
+                }
             }
             (None, Some(key)) => {
                 if !is_repository_key(key) {
                     return Err(RequestError::Invalid("repository"));
                 }
                 let relative = self.relative.as_deref().unwrap_or("");
-                plain_path(relative)?;
-                if relative.starts_with(['/', '\\']) || relative.contains(':') {
-                    return Err(RequestError::Invalid("relative"));
+                if relative.len() > MAX_PATH {
+                    return Err(RequestError::TooLarge("relative"));
                 }
-                Ok(())
+                if relative.is_empty() || is_relative_part(relative) {
+                    Ok(())
+                } else {
+                    Err(RequestError::Invalid("relative"))
+                }
             }
             _ => Err(RequestError::Invalid("path")),
         }
     }
 }
 
-fn plain_path(path: &str) -> Result<(), RequestError> {
-    if path.len() > MAX_PATH {
-        return Err(RequestError::TooLarge("path"));
+/// A character no path or command may hold: a control character or a
+/// bidirectional formatting character (which could make a path in a
+/// confirmation read as another).
+fn is_hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// One name of a path: not empty, `.` or `..`, no hidden character.
+fn is_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.chars().any(is_hidden_char)
+}
+
+/// A repository-relative part as the guest normalizes it: `a/b/c`.
+fn is_relative_part(relative: &str) -> bool {
+    !relative.contains(['\\', ':']) && relative.split('/').all(is_name)
+}
+
+/// A fully qualified path in a canonical form: `/a/b` (Unix), `C:\\a\\b`
+/// or `C:/a/b` (a drive), or `\\\\server\\share\\a` (UNC, which the agent
+/// accepts only inside a UNC scope); never a verbatim (`\\\\?\\`) or device
+/// (`\\\\.\\`) path, a `.` or `..` name, an empty name (but a trailing
+/// separator), a stream (`:` after the drive) or a hidden character.
+pub fn is_absolute_path(path: &str) -> bool {
+    let b = path.as_bytes();
+    let rest = if let Some(rest) = path.strip_prefix('/') {
+        rest
+    } else if b.len() >= 3
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && matches!(b[2], b'\\' | b'/')
+    {
+        &path[3..]
+    } else if let Some(unc) = path.strip_prefix("\\\\") {
+        if unc.starts_with(['?', '.']) {
+            return false;
+        }
+        unc
+    } else {
+        return false;
+    };
+    if rest.contains(':') {
+        return false;
     }
-    if path.chars().any(|c| c == '\0') {
-        return Err(RequestError::Invalid("path"));
-    }
-    Ok(())
+    let rest = rest.strip_suffix(['/', '\\']).unwrap_or(rest);
+    rest.is_empty() || rest.split(['/', '\\']).all(is_name)
 }
 
 /// The repository key grammar of the core (`^[a-z][a-z0-9_]{0,31}$`).
@@ -500,18 +554,97 @@ pub struct ShellRun {
 }
 
 /// Environment names a script may never set, whatever its grant (design
-/// §5.3, OD-7), compared without case. The agent applies the same list.
+/// §5.3, OD-7, widened by the security review), compared without case. The
+/// agent applies the same list. Denied: what changes which program runs or
+/// where it finds its configuration (`PATH`, `HOME`, `XDG_*`, every
+/// `GIT_*` but the author and committer, `DOCKER_*` but BuildKit), what
+/// loads code into a program (`LD_*`, `DYLD_*`, interpreter options and
+/// paths, shell start-up files), what redirects the network or its trust
+/// (proxies, certificate bundles, `SSH_*`), and DeckPilot's own.
 pub fn env_denied(name: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "LD_",
         "DYLD_",
         "DECKPILOT_",
-        "GIT_CONFIG",
-        "GIT_SSH",
+        "GIT_",
+        "SSH_",
+        "XDG_",
+        "DOCKER_",
         "PYTHON",
+        "PERL",
+        "RUBY",
+        "NPM_CONFIG_",
+        "JAVA_",
+        "_JAVA_",
+        "JDK_JAVA_",
+        "RUSTC",
+        "RUSTDOC",
+        "CARGO_",
+        "SSL_CERT_",
+        "LUA_",
+        "TCL",
     ];
-    const EXACT: &[&str] = &["GIT_EXEC_PATH", "DOCKER_HOST", "NODE_OPTIONS", "COMSPEC"];
+    const EXACT: &[&str] = &[
+        "PATH",
+        "PATHEXT",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PSMODULEPATH",
+        "SHELL",
+        "BASH_ENV",
+        "ENV",
+        "ZDOTDIR",
+        "IFS",
+        "PS4",
+        "PROMPT_COMMAND",
+        "CDPATH",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "EDITOR",
+        "VISUAL",
+        "PAGER",
+        "BROWSER",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "FTP_PROXY",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "NODE_EXTRA_CA_CERTS",
+        "NODE_TLS_REJECT_UNAUTHORIZED",
+        "NODE_REPL_EXTERNAL_MODULE",
+        "GCONV_PATH",
+        "LOCPATH",
+        "NLSPATH",
+        "MALLOC_CONF",
+        "HOSTALIASES",
+        "RES_OPTIONS",
+        "LOCALDOMAIN",
+    ];
+    /// `GIT_*` names that only label a commit.
+    const GIT_ALLOWED: &[&str] = &[
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "GIT_COMMITTER_DATE",
+    ];
     let upper = name.to_ascii_uppercase();
+    if GIT_ALLOWED.contains(&upper.as_str()) || upper == "DOCKER_BUILDKIT" {
+        return false;
+    }
     PREFIXES.iter().any(|p| upper.starts_with(p)) || EXACT.contains(&upper.as_str())
 }
 
@@ -578,32 +711,40 @@ fn validate_chunk(content: &str, encoding: Encoding) -> Result<(), RequestError>
     }
 }
 
-/// A process's command: a bare name (no separator, whitespace, control
-/// character or leading `-`) or an absolute path. Which one it may be is
-/// the grant's to say.
+/// A process's command: a bare name ([`is_command_name`]) or an absolute
+/// path of a drive or the Unix root, never UNC ([`is_absolute_path`]).
+/// Which one it may be is the grant's to say.
 fn validate_command(command: &str) -> Result<(), RequestError> {
-    if command.is_empty() || command.contains('\0') {
-        return Err(RequestError::Invalid("command"));
-    }
     if command.len() > MAX_COMMAND {
         return Err(RequestError::TooLarge("command"));
     }
-    let absolute = command.starts_with('/')
-        || command.starts_with("\\\\")
-        || (command.len() > 2
-            && command.as_bytes()[0].is_ascii_alphabetic()
-            && command.as_bytes()[1] == b':'
-            && matches!(command.as_bytes()[2], b'\\' | b'/'));
-    if absolute {
-        return Ok(());
-    }
-    if command.contains(['/', '\\'])
-        || command.chars().any(|c| c.is_whitespace() || c.is_control())
-        || command.starts_with('-')
+    if is_command_name(command)
+        || (is_absolute_path(command) && !command.starts_with("\\\\") && !is_batch(command))
     {
-        return Err(RequestError::Invalid("command"));
+        Ok(())
+    } else {
+        Err(RequestError::Invalid("command"))
     }
-    Ok(())
+}
+
+/// A bare command name: `^[A-Za-z0-9][A-Za-z0-9._+-]*$`, at most 255
+/// bytes, not ending in `.`, and never a batch file (`.bat`, `.cmd`), which
+/// only `shell.run` with `cmd` may start.
+pub fn is_command_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= 255
+        && b[0].is_ascii_alphanumeric()
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'+' | b'-'))
+        && !name.ends_with('.')
+        && !is_batch(name)
+}
+
+/// A Windows batch file, by its extension (CVE-2024-24576).
+pub fn is_batch(command: &str) -> bool {
+    let lower = command.trim_end_matches([' ', '.']).to_ascii_lowercase();
+    lower.ends_with(".bat") || lower.ends_with(".cmd")
 }
 
 impl ScriptLoad {
@@ -662,6 +803,10 @@ impl FsReadFile {
         }
         if self.offset.is_some_and(|o| o > MAX_SCRIPT_FILE) {
             return Err(RequestError::TooLarge("offset"));
+        }
+        // A chunked read names both; `offset` alone is ambiguous.
+        if self.offset.is_some() && self.length.is_none() {
+            return Err(RequestError::Invalid("length"));
         }
         if self.length.is_some_and(|l| l == 0 || l > MAX_READ_CHUNK) {
             return Err(RequestError::TooLarge("length"));

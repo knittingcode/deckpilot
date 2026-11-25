@@ -67,6 +67,8 @@ pub struct EffectiveLimits {
     /// `script.poll` calls per invocation, counted on their own, at most
     /// [`MAX_SCRIPT_POLLS`]; `None`: a poll is an ordinary call.
     pub polls: Option<u32>,
+    /// Whether the supervisor gave a call budget.
+    pub budgeted: bool,
 }
 
 impl EffectiveLimits {
@@ -81,7 +83,8 @@ impl EffectiveLimits {
             host_calls: l.host_calls.map_or(MAX_HOST_CALLS_PER_INVOCATION, |n| {
                 n.clamp(1, MAX_SCRIPT_HOST_CALLS)
             }),
-            polls: l.polls.map(|n| n.min(MAX_SCRIPT_POLLS)),
+            polls: l.polls.map(|n| n.clamp(1, MAX_SCRIPT_POLLS)),
+            budgeted: l.host_calls.is_some(),
         }
     }
 }
@@ -190,6 +193,11 @@ struct HostState {
     /// `script.poll`s allowed per invocation, counted on their own
     /// ([`EffectiveLimits::polls`]).
     max_polls: Option<u32>,
+    /// Whether the supervisor gave a call budget (`deckpilot.scripts`):
+    /// then a spent budget or an oversized request is answered with an
+    /// error the guest can report, and only a guest that keeps calling
+    /// [`OVERRUN`] times after that traps.
+    budgeted: bool,
     invocation_id: u64,
     calls_this_invocation: u32,
     polls_this_invocation: u32,
@@ -273,6 +281,7 @@ impl PluginEngine {
             epoch: self.ticker.epoch.clone(),
             max_calls: limits.host_calls,
             max_polls: limits.polls,
+            budgeted: limits.budgeted,
             invocation_id: 0,
             calls_this_invocation: 0,
             polls_this_invocation: 0,
@@ -719,40 +728,88 @@ fn abi_error(msg: &str) -> wasmtime::Error {
     wasmtime::Error::new(GuestAbiError(msg.to_owned()))
 }
 
+/// Calls a budgeted guest may still make after its budget is spent (each
+/// answered `throttled`) before it traps.
+pub const OVERRUN: u32 = 64;
+
+/// The local answer to a budgeted guest's call over a budget or a bound:
+/// `code` with the script detail.
+fn budget_reply(code: CallErrorCode, script_code: &str, message: &str) -> CallResult {
+    CallResult::script_error(
+        code,
+        deckpilot_plugin_abi::scripts::ScriptFault::new(script_code, message),
+    )
+}
+
 /// `deckpilot_v1.host_call(ptr, len) -> i64`.
 fn host_call(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> wasmtime::Result<i64> {
     let (ptr, len) = (ptr as u32 as usize, len as u32 as usize);
-    if len > MAX_HOST_CALL_REQUEST {
-        return Err(abi_error("host_call request too large"));
-    }
+    let budgeted = caller.data().budgeted;
     let memory = caller
         .get_export(EXPORT_MEMORY)
         .and_then(|e| e.into_memory())
         .ok_or_else(|| abi_error("no memory export"))?;
-    // Bounds-checked copy; never trust ptr/len.
-    let request = ptr
-        .checked_add(len)
-        .and_then(|end| memory.data(&caller).get(ptr..end))
-        .ok_or_else(|| abi_error("host_call request out of bounds"))?
-        .to_vec();
-    let parsed = parse_request(&request);
+    // A local answer to a budgeted guest that carries the script detail.
+    let mut budget_answer = false;
+    let parsed = if len > MAX_HOST_CALL_REQUEST {
+        // A budgeted guest (`deckpilot.scripts`) is told, so its script
+        // fails with a message instead of its host; any other guest traps.
+        if !budgeted {
+            return Err(abi_error("host_call request too large"));
+        }
+        budget_answer = true;
+        Err(budget_reply(
+            CallErrorCode::BadRequest,
+            deckpilot_plugin_abi::scripts::codes::TOO_LARGE,
+            "the request is larger than 64 KiB",
+        ))
+    } else {
+        // Bounds-checked copy; never trust ptr/len.
+        let request = ptr
+            .checked_add(len)
+            .and_then(|end| memory.data(&caller).get(ptr..end))
+            .ok_or_else(|| abi_error("host_call request out of bounds"))?
+            .to_vec();
+        parse_request(&request)
+    };
+    // A `script.poll` counts against its own budget when the guest has one
+    // (`deckpilot.scripts`, D2); every other call, malformed ones included,
+    // against the call budget. A budgeted guest past a budget gets
+    // `throttled` for [`OVERRUN`] more calls, then traps; any other guest
+    // traps at once.
+    let mut over_budget = None;
     {
-        // A `script.poll` counts against its own budget when the guest has
-        // one (`deckpilot.scripts`, D2); every other call, malformed ones
-        // included, against the call budget.
         let s = caller.data_mut();
-        if s.max_polls.is_some() && matches!(parsed, Ok(CapabilityRequest::ScriptPoll(_))) {
-            s.polls_this_invocation += 1;
-            if s.max_polls.is_some_and(|max| s.polls_this_invocation > max) {
-                return Err(abi_error("too many script.poll calls in one invocation"));
+        let (count, max, what) =
+            if s.max_polls.is_some() && matches!(parsed, Ok(CapabilityRequest::ScriptPoll(_))) {
+                s.polls_this_invocation += 1;
+                (
+                    s.polls_this_invocation,
+                    s.max_polls.unwrap_or(0),
+                    "script.poll calls",
+                )
+            } else {
+                s.calls_this_invocation += 1;
+                (s.calls_this_invocation, s.max_calls, "host calls")
+            };
+        if count > max {
+            if !s.budgeted || count - max > OVERRUN {
+                return Err(abi_error(&format!("too many {what} in one invocation")));
             }
-        } else {
-            s.calls_this_invocation += 1;
-            if s.calls_this_invocation > s.max_calls {
-                return Err(abi_error("too many host calls in one invocation"));
-            }
+            over_budget = Some(what);
         }
     }
+    let parsed = match over_budget {
+        Some(what) => Err({
+            budget_answer = true;
+            budget_reply(
+                CallErrorCode::Throttled,
+                deckpilot_plugin_abi::scripts::codes::LIMIT,
+                &format!("the run made the most {what} one run may make"),
+            )
+        }),
+        None => parsed,
+    };
     // A state call gets few capability calls; the rest are refused here.
     let state_budget_spent = {
         let s = caller.data();
@@ -794,7 +851,11 @@ fn host_call(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> wasmtime:
         Err(reply) => reply,
     };
     // A guest built before an addition refuses it as an unknown field.
-    let reply = reply.for_op(op, caller.data().features);
+    let reply = if budget_answer {
+        reply.for_features(caller.data().features)
+    } else {
+        reply.for_op(op, caller.data().features)
+    };
     let mut bytes = serde_json::to_vec(&reply).unwrap_or_default();
     if bytes.len() > MAX_HOST_CALL_REPLY {
         bytes = serde_json::to_vec(&CallResult::error(CallErrorCode::Failed, "reply too large"))
@@ -810,8 +871,10 @@ fn host_call(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> wasmtime:
     // (the call never left it).
     if !op.is_empty() && resets_deadline(op) {
         begin_segment(&mut caller);
-    } else {
-        resume_segment(&mut caller);
+    } else if !resume_segment(&mut caller) {
+        // Nothing was left of the segment: the guest's time is up now, not
+        // one tick later.
+        return Err(wasmtime::Error::new(Trap::Interrupt));
     }
     let alloc = caller
         .get_export(EXPORT_ALLOC)
@@ -861,13 +924,17 @@ fn begin_segment(mut ctx: impl AsContextMut<Data = HostState>) {
 }
 
 /// Continues the current segment: the guest gets back only the epochs that
-/// were left of it (at least one, so it re-enters and traps there if none
-/// were).
-fn resume_segment(mut ctx: impl AsContextMut<Data = HostState>) {
+/// were left of it. `false` when none were: the caller ends the guest's
+/// execution with the deadline's trap.
+fn resume_segment(mut ctx: impl AsContextMut<Data = HostState>) -> bool {
     let mut ctx = ctx.as_context_mut();
     let now = ctx.data().epoch.load(Ordering::Relaxed);
-    let left = ctx.data().segment_end.saturating_sub(now).max(1);
+    let left = ctx.data().segment_end.saturating_sub(now);
+    if left == 0 {
+        return false;
+    }
     ctx.set_epoch_deadline(left);
+    true
 }
 
 /// Increments the engine epoch every [`EPOCH_TICK`] on a background thread,
