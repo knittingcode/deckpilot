@@ -347,11 +347,25 @@ Library, or with the focus nowhere), never from another view of the window
    the field and what was typed stays: it is already in the draft, as its
    own undo step. A field that handles Escape itself keeps doing so
    (renaming a page or folder cancels the rename). The next press deselects.
-4. Otherwise the selection (a multi-selection too) is cleared and the
+4. On a Canvas key with one of its labels picked, the label is let go of;
+   the key stays selected (see "Labels on the Canvas").
+5. Otherwise the selection (a multi-selection too) is cleared and the
    Inspector shows its empty state.
 
 Deselecting is not an edit: the draft, Undo/Redo, Save/Revert, the page,
 the Canvas's zoom and pan and the live preview session stay as they are.
+
+## Labels on the Canvas
+
+The one selected key outlines its labels on the Canvas
+(`layout-editor/label-outlines.tsx`). A click on an outline picks that
+label, a drag moves it and a double click edits its text. While a label is
+picked, the focus is on its key and the arrows nudge the label by 1 unit
+(Shift: 5 units) instead of moving between keys; each nudge starts where
+the last one put the label, also before the renderer has drawn it
+(`use-expected-boxes.ts`). Escape or a click on the key itself lets go of
+the label, and the arrows move between keys again. The Inspector's label
+stage nudges the same way.
 
 ## Compatibility
 

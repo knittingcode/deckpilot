@@ -46,6 +46,11 @@ released either. 0.6.0 is the first version intended for publication.
   in the Inspector first, which asks; dropped on one
   gesture card only that gesture changes. Every gesture stays editable on
   its own; nothing of the preset is stored.
+- Plugin API 1.11: `contributes.actions[].contexts` lets a plugin declare
+  where each action makes sense (key, gesture, display, sequence,
+  workflow), with `Action::contexts` in the SDK. Advisory like the
+  built-ins' contexts: a use elsewhere is reported and still runs. Without
+  the field an action keeps all five.
 - Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
   presets over its own actions, with localized texts and `allowPartial`.
   Presets grant nothing; each action keeps its permissions and checks.
@@ -57,6 +62,10 @@ released either. 0.6.0 is the first version intended for publication.
   offered for new keys, actions or workflow nodes. Saved Open folder
   actions, keys, gestures and workflow steps keep running unchanged with
   their folder icon; nothing is rewritten.
+- Device Editor: a label picked on the Canvas is nudged with the arrow
+  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
+  nudge starts from the last one. Escape or a click on the key lets go of
+  the label, and the arrows move between keys again.
 
 ## [0.15.0] - 2026-11-24
 

@@ -86,7 +86,7 @@
 //! | --- | --- | --- |
 //! | [`SDK_VERSION`] | this crate's semver | breaking Rust API changes bump the major (the minor while 0.x) |
 //! | [`API_LEVEL`] | 1.0 | plugin API level (design §6.5) a plugin needs by default |
-//! | [`LATEST_API_LEVEL`] | 1.10 | highest plugin API level this SDK implements |
+//! | [`LATEST_API_LEVEL`] | 1.11 | highest plugin API level this SDK implements |
 //! | [`ABI_VERSION`] | 1 | guest ABI; checked at compile time |
 #![deny(unsafe_code)]
 
@@ -105,7 +105,9 @@ pub use context::{
     StorageUsage, TranslateArg,
 };
 pub use controls::{Control, Controls, Input, MAX_INPUTS_PER_CONTROL};
-pub use definition::{Action, DefinitionError, Handler, Param, Plugin, StateHandler};
+pub use definition::{
+    Action, ActionContext, DefinitionError, Handler, Param, Plugin, StateHandler,
+};
 pub use output::{ActionResult, IntoValue, Output, PluginError, codes};
 
 pub use deckpilot_plugin_abi::capability::{AuthScheme, Header, LogLevel, NotifySeverity};
@@ -169,10 +171,19 @@ pub const API_LEVEL: ApiLevel = ApiLevel { major: 1, minor: 0 };
 /// guest (manifest-only), 1.9 the operations of DeckPilot's own bundled
 /// plugins ([`Context::run_tool`], [`Context::resource_param`],
 /// [`Context::current_project`]…) and [`Context::profile`], 1.10 nothing
-/// for the guest (the manifest's `contributes.gesturePresets`).
+/// for the guest (the manifest's `contributes.gesturePresets`), 1.11 the
+/// contexts an action declares ([`Action::contexts`]).
 pub const LATEST_API_LEVEL: ApiLevel = ApiLevel {
     major: 1,
-    minor: 10,
+    minor: 11,
+};
+
+/// The plugin API level that introduced [`Action::contexts`] (the
+/// manifest's `contributes.actions[].contexts`): a plugin declaring
+/// contexts needs it.
+pub const ACTION_CONTEXTS_API_LEVEL: ApiLevel = ApiLevel {
+    major: 1,
+    minor: 11,
 };
 
 /// The plugin API level that introduced the manifest's
