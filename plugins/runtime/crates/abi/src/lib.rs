@@ -26,6 +26,7 @@ pub mod limits;
 pub mod locale;
 pub mod privileged;
 pub mod protocol;
+pub mod scripts;
 pub mod state;
 pub mod value;
 
@@ -63,8 +64,11 @@ pub use value::{ActionOutcome, ParamValue, Params, ValidationError};
 /// API 1.9 ([`privileged`]: `resource.resolve`, `resource.open`,
 /// `tool.run`, `url.openParam`, `project.current`, `project.list`,
 /// `project.select`, `project.cycle` and `profile.read`), which only a
-/// guest that uses them sends; and the capability operations of plugin
-/// API 1.14 ([`connections`]: `connections.get`,
+/// guest that uses them sends; and the Scripts bridge's operations of
+/// plugin API 1.13 ([`scripts`]), with the optional `script` detail of a
+/// [`CallError`] on their replies only, and the optional `hostCalls` and
+/// `polls` of [`protocol::GuestLimits`]; and the capability operations of
+/// plugin API 1.14 ([`connections`]: `connections.get`,
 /// `connections.reportStatus`, `time.sleep`) and the `connection` member
 /// of `http.fetch`, which only a guest that uses them sends.
 pub const ABI_VERSION: u32 = 1;

@@ -100,6 +100,15 @@ released either. 0.6.0 is the first version intended for publication.
   deleted by itself, and there is no "delete all". Until now a saved
   action that no key, gesture or workflow used could not be opened.
 
+- Plugins (for the coming Scripts plugin, plugin API 1.13, not usable
+  yet): the plugin runtime knows the Scripts bridge's operations (files,
+  processes, the script's run) and refuses them to every plugin until
+  the agent's checks for them land. Files move in chunks within the
+  existing message size limits. The Scripts plugin alone can be given a
+  larger budget of calls per run, and its polling and logging never
+  extend its continuous CPU limit, so a busy script is still stopped
+  after 2 seconds.
+
 ### Changed
 
 - System actions: the Action Library offers one Open for files and

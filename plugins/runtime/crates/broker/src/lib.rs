@@ -964,6 +964,34 @@ impl Session {
             | CapabilityRequest::ProfileRead(_) => {
                 (self.decide_privileged(&grants, request, context), None)
             }
+            // The Scripts bridge (plugin API 1.13): no plugin is granted it
+            // yet; the `scripts` permission that will decide it comes with
+            // the agent's executor.
+            CapabilityRequest::ScriptLoad(_)
+            | CapabilityRequest::ScriptPoll(_)
+            | CapabilityRequest::ScriptLog(_)
+            | CapabilityRequest::ScriptSleep(_)
+            | CapabilityRequest::ScriptConfirm(_)
+            | CapabilityRequest::ProjectRepositories(_)
+            | CapabilityRequest::FsExists(_)
+            | CapabilityRequest::FsStat(_)
+            | CapabilityRequest::FsList(_)
+            | CapabilityRequest::FsMkdir(_)
+            | CapabilityRequest::FsReadFile(_)
+            | CapabilityRequest::FsWriteFile(_)
+            | CapabilityRequest::FsWriteOpen(_)
+            | CapabilityRequest::FsWriteChunk(_)
+            | CapabilityRequest::FsWriteCommit(_)
+            | CapabilityRequest::FsWriteAbort(_)
+            | CapabilityRequest::FsCopy(_)
+            | CapabilityRequest::FsMove(_)
+            | CapabilityRequest::FsRemove(_)
+            | CapabilityRequest::FsRemoveContents(_)
+            | CapabilityRequest::ProcessRun(_)
+            | CapabilityRequest::ShellRun(_)
+            | CapabilityRequest::ShellAvailable(_) => {
+                (Decision::Deny(DenyReason::NotGranted), None)
+            }
             // Own variables (design §5.2): always granted, rate limited.
             CapabilityRequest::VariablesPublish(_) | CapabilityRequest::VariablesClear(_) => {
                 if !b.take(&self.plugin, RateClass::Variables) {

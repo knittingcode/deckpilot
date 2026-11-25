@@ -142,6 +142,21 @@ pub struct GuestLimits {
     pub memory_bytes: u64,
     /// Table elements across the guest's tables.
     pub table_elements: u64,
+    /// `host_call`s per invocation, in place of
+    /// [`MAX_HOST_CALLS_PER_INVOCATION`](crate::limits::MAX_HOST_CALLS_PER_INVOCATION)
+    /// (plugin API 1.13, the privileged `runtime.hostCalls` of
+    /// `deckpilot.scripts`), at most
+    /// [`MAX_SCRIPT_HOST_CALLS`](crate::limits::MAX_SCRIPT_HOST_CALLS).
+    /// Absent (every other plugin): the default. A compatible addition
+    /// within ABI 1; the host and the supervisor ship together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_calls: Option<u32>,
+    /// `script.poll` calls per invocation, counted apart from
+    /// [`GuestLimits::host_calls`], at most
+    /// [`MAX_SCRIPT_POLLS`](crate::limits::MAX_SCRIPT_POLLS). Absent: a
+    /// poll counts as any other call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polls: Option<u32>,
 }
 
 impl Default for GuestLimits {
@@ -152,6 +167,8 @@ impl Default for GuestLimits {
             fuel_per_invocation: 5_000_000_000,
             memory_bytes: 64 << 20,
             table_elements: 20_000,
+            host_calls: None,
+            polls: None,
         }
     }
 }
@@ -264,6 +281,24 @@ mod tests {
                 r#"{"type":"loaded","abiVersion":1,"descriptor":{"sdk":"s","apiLevel":"1.0","actions":[],"pluginId":"x"}}"#
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn the_call_budget_is_an_optional_addition() {
+        let plain = serde_json::to_value(GuestLimits::default()).unwrap();
+        assert!(plain.get("hostCalls").is_none() && plain.get("polls").is_none());
+        let scripts = GuestLimits {
+            host_calls: Some(4096),
+            polls: Some(8192),
+            ..GuestLimits::default()
+        };
+        let json = serde_json::to_value(&scripts).unwrap();
+        assert_eq!(json["hostCalls"], 4096);
+        assert_eq!(json["polls"], 8192);
+        assert_eq!(
+            serde_json::from_value::<GuestLimits>(json).unwrap(),
+            scripts
         );
     }
 

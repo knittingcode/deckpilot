@@ -26,6 +26,15 @@ pub const MAX_HOST_CALL_REQUEST: usize = 64 << 10;
 pub const MAX_HOST_CALL_REPLY: usize = 1 << 20;
 /// `host_call`s one invocation may make. More is a guest fault (trap).
 pub const MAX_HOST_CALLS_PER_INVOCATION: u32 = 256;
+/// The most `host_call`s one invocation may be given through
+/// [`GuestLimits::host_calls`](crate::protocol::GuestLimits::host_calls):
+/// the Scripts plugin's per-run budget (`runtime.hostCalls`, plugin API
+/// 1.13). Every other plugin keeps [`MAX_HOST_CALLS_PER_INVOCATION`].
+pub const MAX_SCRIPT_HOST_CALLS: u32 = 4096;
+/// The most `script.poll` calls one invocation may be given through
+/// [`GuestLimits::polls`](crate::protocol::GuestLimits::polls), counted
+/// apart from the other calls (decision D2).
+pub const MAX_SCRIPT_POLLS: u32 = 8192;
 
 /// Action names and parameter keys.
 pub const MAX_NAME_LEN: usize = 64;
