@@ -62,6 +62,10 @@ released either. 0.6.0 is the first version intended for publication.
   offered for new keys, actions or workflow nodes. Saved Open folder
   actions, keys, gestures and workflow steps keep running unchanged with
   their folder icon; nothing is rewritten.
+- Device Editor: a label picked on the Canvas is nudged with the arrow
+  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
+  nudge starts from the last one. Escape or a click on the key lets go of
+  the label, and the arrows move between keys again.
 
 ## [0.15.0] - 2026-11-24
 
