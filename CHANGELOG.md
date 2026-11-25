@@ -17,6 +17,16 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Calls (groundwork, nothing user-visible yet): the provider contract
+  with capability discovery, where every capability a provider does not
+  offer is explicitly unsupported with a reason; the sanitised call state;
+  the `call.state` and `call.control` operations and the gate a control
+  passes (no success without the call app's confirmation); and the plugin
+  manifest's `calls` permission, `callOverlay` and `layoutTemplates` for
+  plugin API 1.16, accepted only for the bundled Calls plugin. No
+  DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
+  detected, not controlled: Microsoft retired its device API on
+  2026-06-30 (`docs/calls.md`).
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
