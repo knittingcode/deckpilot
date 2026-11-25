@@ -415,7 +415,11 @@ configuration reload or a lock, never on the Calls tick.
   preview (`preview`: `incoming`, `outgoing` or `active`; left out when
   there is none, so an older agent's status reads as no preview);
 - per model: the managed layout's id, name, edited flag and template
-  version.
+  version;
+- its `revision`, which counts up whenever anything else in it changes
+  (the same content keeps its number) within one run of the agent. An
+  answer and a `callsChanged` may reach the app in either order: the app
+  keeps the higher revision, so an older status never replaces a newer one.
 
 It never holds a meeting title, a participant or a process name.
 
@@ -539,12 +543,16 @@ snapshot instead (decided 2026-11-25):
 - **The app follows the agent:** the settings hold one preview (the device,
   the page, and whether the agent confirmed it). A new preview starts
   unconfirmed. Once `begin` answers, the app asks `getCallsStatus`; the
-  agent answers in order, so that status is the one after the begin. If it
-  shows the preview on that device, it is confirmed; if not, the agent
-  ended it already and the app shows it ended. A confirmed preview that a
-  later `callsChanged` no longer names (a lock, a call, a dismiss, a
-  disconnect, a restart) is shown ended too. A status that names the page
-  on another device of the same model is not this preview.
+  agent answers in order, so that status is the one after the begin, and
+  from its revision on the status decides: a status that shows the preview
+  on that device confirms it, one that does not means the agent ended it
+  (a lock, a call, a dismiss, a disconnect), confirmed or not. An older
+  status decides nothing, and the answer itself goes through the revision
+  check, so it never rolls back a newer `callsChanged`. If that answer
+  fails, the preview is ended. A restarted agent has no preview. A status
+  that names the page on another device of the same model is not this
+  preview, and the page buttons are pressed only for the device that
+  shows it.
 
 The IPC event for the app and the editor (C6, a release blocker) is
 `callsChanged`, above. It carries the managed layouts too, and is sent

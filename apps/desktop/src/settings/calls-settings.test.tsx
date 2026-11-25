@@ -62,14 +62,16 @@ function status(overrides: Partial<CallsStatus> = {}): CallsStatus {
         },
       },
     ],
+    revision: 1,
     ...overrides,
   }
 }
 
 /** The status with `page` previewed on `on` (none without a page). */
-function previewing(page?: "active", on = device.id): CallsStatus {
+function previewing(page?: "active", revision = 1, on = device.id): CallsStatus {
   return status({
     devices: [{ device: on, overlay: true, shown: true, suspended: false, preview: page }],
+    revision,
   })
 }
 
@@ -401,7 +403,7 @@ describe("Settings › Devices › Calls", () => {
     expect(await screen.findByRole("button", { name: "End preview" })).toBeInTheDocument()
     // A real call came: the agent ended it and says so.
     act(() => {
-      emitBackend(CALLS_EVENT, previewing())
+      emitBackend(CALLS_EVENT, previewing(undefined, 2))
     })
     expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
       "aria-pressed",
@@ -410,7 +412,9 @@ describe("Settings › Devices › Calls", () => {
   })
   it("never takes an earlier preview's confirmation for a new one of the same page", async () => {
     const user = userEvent.setup()
-    api.getCallsStatus.mockResolvedValueOnce(previewing()).mockResolvedValue(previewing("active"))
+    api.getCallsStatus
+      .mockResolvedValueOnce(previewing(undefined, 1))
+      .mockResolvedValueOnce(previewing("active", 2))
     api.callsPreviewBegin.mockResolvedValue(null)
     api.callsPreviewEnd.mockResolvedValue(null)
     renderWithApp(<CallsSettings />, { agent: agent() })
@@ -418,14 +422,15 @@ describe("Settings › Devices › Calls", () => {
     // Confirmed by the agent's status, then ended by the user.
     const end = await screen.findByRole("button", { name: "End preview" })
     act(() => {
-      emitBackend(CALLS_EVENT, previewing("active"))
+      emitBackend(CALLS_EVENT, previewing("active", 2))
     })
     await user.click(end)
     act(() => {
-      emitBackend(CALLS_EVENT, previewing())
+      emitBackend(CALLS_EVENT, previewing(undefined, 3))
     })
     // The same page again: its begin resolves before the agent's next
-    // callsChanged. The status after the begin shows it, so it stays.
+    // callsChanged. Until the status after the begin answers, nothing
+    // decides: the old status (no preview) does not end it.
     let answer: (value: null) => void = () => undefined
     api.callsPreviewBegin.mockReturnValue(
       new Promise<null>((resolve) => {
@@ -442,15 +447,50 @@ describe("Settings › Devices › Calls", () => {
     act(() => {
       answer(null)
     })
-    // Unconfirmed: the old status (no preview) does not clear it.
     expect(await screen.findByRole("button", { name: "End preview" })).toBeInTheDocument()
     act(() => {
-      reply(previewing("active"))
+      reply(previewing("active", 4))
     })
     act(() => {
-      emitBackend(CALLS_EVENT, previewing("active"))
+      emitBackend(CALLS_EVENT, previewing("active", 4))
     })
     expect(await screen.findByRole("button", { name: "End preview" })).toBeInTheDocument()
+  })
+
+  it("never lets an older status roll back a newer one", async () => {
+    const user = userEvent.setup()
+    api.getCallsStatus.mockResolvedValueOnce(previewing(undefined, 1))
+    let reply: (value: CallsStatus) => void = () => undefined
+    api.getCallsStatus.mockReturnValue(
+      new Promise<CallsStatus>((resolve) => {
+        reply = resolve
+      }),
+    )
+    api.callsPreviewBegin.mockResolvedValue(null)
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    // The agent showed it (2) and ended it at once (3, a lock); the answer
+    // asked for after the begin comes last, with the older revision 2.
+    act(() => {
+      emitBackend(CALLS_EVENT, previewing("active", 2))
+      emitBackend(CALLS_EVENT, previewing(undefined, 3))
+    })
+    act(() => {
+      reply(previewing("active", 2))
+    })
+    // The newer status stands: the preview is over, nothing stays pressed.
+    expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+    // And an older event after it changes nothing either.
+    act(() => {
+      emitBackend(CALLS_EVENT, previewing("active", 2))
+    })
+    expect(screen.getByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
   })
 
   it("follows the agent when it ended the preview before the app saw it", async () => {
@@ -483,7 +523,40 @@ describe("Settings › Devices › Calls", () => {
     // Another device of the same model shows the page: not this preview,
     // which the agent ended.
     act(() => {
-      emitBackend(CALLS_EVENT, previewing("active", other))
+      emitBackend(CALLS_EVENT, previewing("active", 2, other))
+    })
+    expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
+  it("presses a page button only for the device that shows the preview", async () => {
+    const user = userEvent.setup()
+    const other = { ...device.id, serial: `${device.id.serial}-other` }
+    const entry = (on: typeof device.id, page?: "active") => ({
+      device: on,
+      overlay: true,
+      shown: true,
+      suspended: false,
+      preview: page,
+    })
+    api.getCallsStatus
+      .mockResolvedValueOnce(status({ devices: [entry(device.id), entry(other)] }))
+      .mockResolvedValue(status({ devices: [entry(device.id, "active"), entry(other)] }))
+    api.callsPreviewBegin.mockResolvedValue(null)
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    expect(await screen.findByRole("button", { name: "End preview" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+    // The other device of the model comes first now: its button would
+    // preview there, so it is not pressed, while the preview stays.
+    act(() => {
+      emitBackend(
+        CALLS_EVENT,
+        status({ devices: [entry(other), entry(device.id, "active")], revision: 2 }),
+      )
     })
     expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
       "aria-pressed",

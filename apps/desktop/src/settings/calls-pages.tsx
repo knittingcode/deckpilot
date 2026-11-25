@@ -71,14 +71,20 @@ export function CallsPagesSection({
   modelName: string
   /** The connected devices of the layout's model, to preview a page on. */
   devices: DeviceId[]
-  /** The page of this layout shown as a preview now, if any. */
-  previewing: CallsPageKind | null
+  /** The preview the app holds on a device of this layout's model, if any. */
+  previewing: { device: DeviceId; page: CallsPageKind } | null
   /** A preview is being begun (every preview button waits). */
   pending: boolean
   onTogglePreview: (device: DeviceId, page: CallsPageKind) => void
 }) {
   const { t } = useTranslation()
   const [device] = devices
+  // Pressed only for the preview on this device, never another of the model.
+  const pressed = (page: CallsPageKind) =>
+    device !== undefined &&
+    previewing?.page === page &&
+    previewing.device.model === device.model &&
+    previewing.device.serial === device.serial
   if (layout.pages.length === 0) return null
   const actionName = (action: string) => {
     const key = CALL_ACTIONS[action as keyof typeof CALL_ACTIONS] as TranslationKey | undefined
@@ -107,13 +113,13 @@ export function CallsPagesSection({
               <Button
                 variant="outline"
                 size="sm"
-                aria-pressed={previewing === page.page}
+                aria-pressed={pressed(page.page)}
                 disabled={pending}
                 onClick={() => {
                   onTogglePreview(device, page.page)
                 }}
               >
-                {previewing === page.page
+                {pressed(page.page)
                   ? t("devices:calls.previewEnd")
                   : t("devices:calls.previewShow")}
               </Button>

@@ -1604,3 +1604,42 @@ async fn calls_changed_follows_the_preview() {
     .await;
     deck.agent.shutdown().await;
 }
+
+/// The status's revision: the same content keeps its number in every
+/// answer and event, a change counts it up, and `callsChanged` carries
+/// the number a later `getCallsStatus` repeats.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_calls_status_counts_its_revisions() {
+    use deckpilot_ipc::{AgentEvent, Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let status = || async {
+        let Response::CallsStatus { status } =
+            deck.agent.request(Request::GetCallsStatus).await.unwrap()
+        else {
+            panic!("calls status")
+        };
+        status
+    };
+    let first = status().await;
+    assert!(first.revision >= 1);
+    assert_eq!(status().await.revision, first.revision, "nothing changed");
+    deck.join().await;
+    let changed = loop {
+        if let AgentEvent::CallsChanged { status } =
+            tokio::time::timeout(TIMEOUT, events.next_event())
+                .await
+                .unwrap()
+                .unwrap()
+            && status.state == "active"
+        {
+            break status;
+        }
+    };
+    assert!(changed.revision > first.revision, "a change counts up");
+    let again = status().await;
+    assert_eq!(again.state, "active");
+    assert!(again.revision >= changed.revision, "never behind the event");
+    deck.agent.shutdown().await;
+}

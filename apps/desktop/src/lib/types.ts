@@ -1500,6 +1500,11 @@ export interface CallsStatus {
   controls: boolean
   devices: CallsDevice[]
   layouts: CallsLayout[]
+  /**
+   * Counts up whenever the rest changes, within one run of the agent. An
+   * answer and an event may arrive in either order: the higher one wins.
+   */
+  revision: number
 }
 
 export interface CallsDevice {
