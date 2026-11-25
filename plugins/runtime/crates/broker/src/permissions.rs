@@ -166,6 +166,30 @@ pub enum ApprovedPermission {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         header_name: Option<String>,
     },
+    /// Plugin API 1.13: the Scripts host bridge (`deckpilot.scripts`
+    /// only, `docs/scripts-bridge.md`). It is the **ceiling**: `fs`,
+    /// `process` and `shell` say which of the bridge's operations the
+    /// plugin may relay at all; what one script may do is the agent's to
+    /// decide from that script's own grants, at every call.
+    Scripts {
+        #[serde(default)]
+        fs: bool,
+        #[serde(default)]
+        process: bool,
+        #[serde(default)]
+        shell: bool,
+    },
+}
+
+/// The `scripts` ceiling (plugin API 1.13).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScriptsGrant {
+    /// The `fs.*` operations.
+    pub fs: bool,
+    /// `process.run`.
+    pub process: bool,
+    /// `shell.run` and `shell.available`.
+    pub shell: bool,
 }
 
 /// What `profile.read` may return.
@@ -272,6 +296,8 @@ pub struct Grants {
     pub(crate) project_context: Option<bool>,
     /// `profile.read` scopes.
     pub(crate) profile: BTreeSet<ProfileScope>,
+    /// Plugin API 1.13: the Scripts bridge's ceiling.
+    pub(crate) scripts: Option<ScriptsGrant>,
     /// Credential origins withheld because they have no network grant
     /// (revoked after consent), by slot key. A slot left with no origin is
     /// not in [`Grants::credentials`] at all: it is unusable until the
@@ -504,6 +530,16 @@ impl Grants {
                         return Err(GrantError::Malformed);
                     }
                     g.profile.clone_from(read);
+                }
+                ApprovedPermission::Scripts { fs, process, shell } => {
+                    let grant = ScriptsGrant {
+                        fs: *fs,
+                        process: *process,
+                        shell: *shell,
+                    };
+                    if g.scripts.replace(grant).is_some() {
+                        return Err(GrantError::Duplicate);
+                    }
                 }
                 ApprovedPermission::Connection {
                     id,

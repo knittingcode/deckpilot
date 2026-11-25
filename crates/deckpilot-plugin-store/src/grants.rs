@@ -45,7 +45,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 16] = [
+const KINDS: [PermissionKind; 17] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -60,6 +60,7 @@ const KINDS: [PermissionKind; 16] = [
     PermissionKind::Resources,
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
+    PermissionKind::Scripts,
     PermissionKind::Connections,
     PermissionKind::Calls,
 ];
@@ -213,6 +214,13 @@ pub enum GrantScope {
     ProjectSelect,
     /// `hostViews`: the app's own views, status items and cards (X8).
     HostViews,
+    /// `scripts` (plugin API 1.13): the Scripts bridge's ceiling; what one
+    /// script may do is that script's own grant.
+    Scripts {
+        fs: bool,
+        process: bool,
+        shell: bool,
+    },
     /// `connections` (plugin API 1.14, first-party bundled plugins only):
     /// the plugin may be offered connections of these types, each one
     /// created and consented to by the user in the app, sending at most
@@ -259,6 +267,7 @@ impl GrantScope {
             | Self::ToolModify
             | Self::ResourceOpen
             | Self::ProjectSelect
+            | Self::Scripts { .. }
             // Plugin API 1.14: every connection is a server and a secret.
             | Self::Connections { .. }
             // Plugin API 1.16: controlling the user's calls is always
@@ -346,6 +355,21 @@ impl GrantScope {
                 })
             }
             (Self::Storage { quota_kb: old }, Self::Storage { quota_kb: new }) => new <= old,
+            // The Scripts bridge's ceiling covers a narrower one.
+            (
+                Self::Scripts {
+                    fs: old_fs,
+                    process: old_process,
+                    shell: old_shell,
+                },
+                Self::Scripts {
+                    fs: new_fs,
+                    process: new_process,
+                    shell: new_shell,
+                },
+            ) => {
+                (!new_fs || *old_fs) && (!new_process || *old_process) && (!new_shell || *old_shell)
+            }
             (
                 Self::Background {
                     min_interval_seconds: old,
@@ -591,6 +615,7 @@ impl GrantSet {
                 | Permission::Resources { .. }
                 | Permission::ProjectContext { .. }
                 | Permission::HostViews { .. }
+                | Permission::Scripts { .. }
                 | Permission::Calls { .. } => set.insert_privileged(permission),
                 // Plugin API 1.14: one grant for being offered connections;
                 // each connection is then the user's own consent to its
@@ -683,6 +708,16 @@ impl GrantSet {
             Permission::HostViews { .. } => self.insert(
                 GrantKey::new(PermissionKind::HostViews, ""),
                 GrantScope::HostViews,
+            ),
+            Permission::Scripts {
+                fs, process, shell, ..
+            } => self.insert(
+                GrantKey::new(PermissionKind::Scripts, ""),
+                GrantScope::Scripts {
+                    fs: *fs == Some(true),
+                    process: *process == Some(true),
+                    shell: *shell == Some(true),
+                },
             ),
             Permission::Calls { control, .. } => {
                 self.insert(
@@ -1310,6 +1345,16 @@ mod tests {
     /// per tool and sub-grant, the tiers of the security reviews, and all
     /// of them first-party only.
     #[test]
+    fn a_scripts_ceiling_covers_a_narrower_one_only() {
+        let scope = |fs, process, shell| GrantScope::Scripts { fs, process, shell };
+        assert!(scope(true, true, false).covers(&scope(true, false, false)));
+        assert!(scope(true, true, false).covers(&scope(true, true, false)));
+        assert!(!scope(true, true, false).covers(&scope(true, true, true)));
+        assert!(!scope(false, true, false).covers(&scope(true, false, false)));
+        assert_eq!(scope(false, false, true).tier(), Tier::High);
+    }
+
+    #[test]
     fn the_privileged_kinds_of_1_9_have_the_reviewed_keys_and_tiers() {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/example-manifest.json")).unwrap();
@@ -1331,6 +1376,8 @@ mod tests {
             serde_json::json!({"kind": "hostViews", "justification": "Shows the Projects screen."}),
             serde_json::json!({"kind": "openUrl", "hosts": [], "fromParams": true,
                 "justification": "Opens the links you typed."}),
+            serde_json::json!({"kind": "scripts", "fs": true, "process": true,
+                "justification": "Runs your scripts on this computer."}),
         ]);
         let manifest = Manifest::from_json(&value.to_string()).unwrap();
         let set = GrantSet::from_manifest(&manifest);
@@ -1351,6 +1398,7 @@ mod tests {
             ("projectContext:select", Tier::High),
             ("hostViews", Tier::Low),
             ("openUrl:from-params", Tier::Medium),
+            ("scripts", Tier::High),
         ]
         .into_iter()
         .map(|(k, t)| (k.to_owned(), t))
