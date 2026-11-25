@@ -95,7 +95,11 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
         } = permission
         {
             if !scripts_plugin {
-                only_scripts(c, format!("permissions[{index}]"), "the `scripts` permission");
+                only_scripts(
+                    c,
+                    format!("permissions[{index}]"),
+                    "the `scripts` permission",
+                );
             }
             if ![fs, process, shell].iter().any(|v| **v == Some(true)) {
                 c.error(
@@ -106,34 +110,7 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
             }
         }
     }
-    if let Some(runtime) = &m.runtime {
-        if let Some(limits) = &runtime.limits {
-            if !scripts_plugin {
-                only_scripts(c, "runtime.limits".into(), "`runtime.limits`");
-            }
-            if !(MIN_CONTINUOUS_MS..=MAX_CONTINUOUS_MS).contains(&limits.continuous_ms) {
-                c.error(
-                    "runtime.limits.continuousMs",
-                    IssueCode::InvalidValue,
-                    format!(
-                        "continuousMs is {MIN_CONTINUOUS_MS} to {MAX_CONTINUOUS_MS} milliseconds"
-                    ),
-                );
-            }
-        }
-        if let Some(calls) = runtime.host_calls {
-            if !scripts_plugin {
-                only_scripts(c, "runtime.hostCalls".into(), "`runtime.hostCalls`");
-            }
-            if !(1..=MAX_RUNTIME_HOST_CALLS).contains(&calls) {
-                c.error(
-                    "runtime.hostCalls",
-                    IssueCode::InvalidValue,
-                    format!("hostCalls is 1 to {MAX_RUNTIME_HOST_CALLS}"),
-                );
-            }
-        }
-    }
+    runtime(c, m, scripts_plugin);
     // A `script` parameter names a script the `scripts` permission runs.
     let declared = m.permission(PermissionKind::Scripts).is_some();
     for (a, action) in m.contributes.actions().iter().enumerate() {
@@ -172,6 +149,46 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
                         "a plugin with `scripts` cannot also declare `{}`",
                         kind.as_str()
                     ),
+                );
+            }
+        }
+    }
+}
+
+/// `runtime.limits` and `runtime.hostCalls`: `deckpilot.scripts` only,
+/// within their bounds.
+fn runtime(c: &mut Checker, m: &Manifest, scripts_plugin: bool) {
+    let only_scripts = |c: &mut Checker, path: &str, what: &str| {
+        c.error(
+            path,
+            IssueCode::InvalidValue,
+            format!("{what} is only for DeckPilot's Scripts plugin (`{SCRIPTS_PLUGIN}`)"),
+        );
+    };
+    if let Some(runtime) = &m.runtime {
+        if let Some(limits) = &runtime.limits {
+            if !scripts_plugin {
+                only_scripts(c, "runtime.limits", "`runtime.limits`");
+            }
+            if !(MIN_CONTINUOUS_MS..=MAX_CONTINUOUS_MS).contains(&limits.continuous_ms) {
+                c.error(
+                    "runtime.limits.continuousMs",
+                    IssueCode::InvalidValue,
+                    format!(
+                        "continuousMs is {MIN_CONTINUOUS_MS} to {MAX_CONTINUOUS_MS} milliseconds"
+                    ),
+                );
+            }
+        }
+        if let Some(calls) = runtime.host_calls {
+            if !scripts_plugin {
+                only_scripts(c, "runtime.hostCalls", "`runtime.hostCalls`");
+            }
+            if !(1..=MAX_RUNTIME_HOST_CALLS).contains(&calls) {
+                c.error(
+                    "runtime.hostCalls",
+                    IssueCode::InvalidValue,
+                    format!("hostCalls is 1 to {MAX_RUNTIME_HOST_CALLS}"),
                 );
             }
         }

@@ -107,7 +107,22 @@
       "required": ["kind", "abi"],
       "properties": {
         "kind": { "const": "wasm" },
-        "abi": { "const": 1 }
+        "abi": { "const": 1 },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["continuousMs"],
+          "properties": {
+            "continuousMs": { "type": "integer", "minimum": 250, "maximum": 10000 }
+          },
+          "description": "Plugin API 1.13 (engines.pluginApi ^1.13), deckpilot.scripts only: the continuous-CPU deadline between two host calls that wait on the agent, in milliseconds (default 250)."
+        },
+        "hostCalls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096,
+          "description": "Plugin API 1.13 (engines.pluginApi ^1.13), deckpilot.scripts only: host calls per invocation, script.poll counted apart (default 256)."
+        }
       },
       "description": "Executable artifact contract (docs/marketplace/artifact-contract.md): a WebAssembly module implementing plugin ABI 1, shipped as plugin.wasm. Omitted means the #191 JavaScript contract (plugin.js), which DeckPilot does not install."
     },
@@ -489,7 +504,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/navigationId" },
         "kind": {
-          "enum": ["variables", "actions", "settings", "workflows", "projects"],
+          "enum": ["variables", "actions", "settings", "workflows", "projects", "scripts"],
           "description": "variables: the plugin's variables, live; actions: the Action Library filtered to the plugin; settings: the plugin's configuration page; workflows and projects (plugin API 1.9, first-party bundled plugins with the hostViews permission only): the app's own Workflows and Projects screens, which the plugin activates."
         },
         "context": {
@@ -709,6 +724,17 @@
             "justification": { "$ref": "#/$defs/justification" }
           },
           "additionalProperties": false
+        },
+        {
+          "description": "Plugin API 1.13 (engines.pluginApi ^1.13), deckpilot.scripts only. The Scripts host bridge's ceiling: fs the file system operations, process process.run, shell shell.run; what one script may do is that script's own grant. High tier.",
+          "properties": {
+            "kind": { "const": "scripts" },
+            "fs": { "type": "boolean" },
+            "process": { "type": "boolean" },
+            "shell": { "type": "boolean" },
+            "justification": { "$ref": "#/$defs/justification" }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -794,6 +820,11 @@
         },
         { "properties": { "type": { "const": "project" } }, "additionalProperties": false },
         {
+          "description": "Plugin API 1.13 (engines.pluginApi ^1.13), deckpilot.scripts only: a script of the active profile, by id. Not for settings.",
+          "properties": { "type": { "const": "script" } },
+          "additionalProperties": false
+        },
+        {
           "description": "Plugin API 1.9 (engines.pluginApi ^1.9), first-party bundled plugins only. A machine resource of one of the kinds, fixed or a role of the active project; the plugin receives an opaque handle with the binding's label, never the path. Not for settings.",
           "properties": {
             "type": { "const": "resource" },
@@ -833,7 +864,10 @@
         {
           "properties": {
             "type": { "const": "code" },
-            "language": { "enum": ["json", "text", "yaml", "markdown"] },
+            "language": {
+              "enum": ["json", "text", "yaml", "markdown", "javascript"],
+              "description": "javascript needs plugin API 1.13."
+            },
             "maxLength": { "type": "integer", "minimum": 1, "maximum": 100000 }
           },
           "required": ["language"],

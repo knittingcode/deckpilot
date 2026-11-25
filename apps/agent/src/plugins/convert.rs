@@ -924,7 +924,8 @@ pub fn approved_with(
                 PermissionKind::Tools
                 | PermissionKind::Resources
                 | PermissionKind::ProjectContext
-                | PermissionKind::Profile,
+                | PermissionKind::Profile
+                | PermissionKind::Scripts,
                 _,
             )
             | (PermissionKind::OpenUrl, GrantScope::OpenUrlFromParams) => {}
@@ -1011,6 +1012,16 @@ fn privileged(effective: &[(GrantKey, GrantScope)]) -> Vec<ApprovedPermission> {
     }
     if has(&GrantScope::OpenUrlFromParams) {
         out.push(ApprovedPermission::OpenUrlFromParams {});
+    }
+    // Plugin API 1.13: the Scripts bridge's ceiling.
+    for (_, scope) in effective {
+        if let GrantScope::Scripts { fs, process, shell } = scope {
+            out.push(ApprovedPermission::Scripts {
+                fs: *fs,
+                process: *process,
+                shell: *shell,
+            });
+        }
     }
     if has(&GrantScope::ProjectRead) {
         out.push(ApprovedPermission::ProjectContext {

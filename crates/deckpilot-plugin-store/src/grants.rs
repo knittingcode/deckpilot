@@ -38,7 +38,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 14] = [
+const KINDS: [PermissionKind; 15] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -53,6 +53,7 @@ const KINDS: [PermissionKind; 14] = [
     PermissionKind::Resources,
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
+    PermissionKind::Scripts,
 ];
 
 pub(crate) fn parse_kind(text: &str) -> Option<PermissionKind> {
@@ -203,6 +204,13 @@ pub enum GrantScope {
     ProjectSelect,
     /// `hostViews`: the app's own views, status items and cards (X8).
     HostViews,
+    /// `scripts` (plugin API 1.13): the Scripts bridge's ceiling; what one
+    /// script may do is that script's own grant.
+    Scripts {
+        fs: bool,
+        process: bool,
+        shell: bool,
+    },
 }
 
 /// The consent tier of a grant (architecture section 5.2).
@@ -230,7 +238,8 @@ impl GrantScope {
             | Self::ToolNetwork
             | Self::ToolModify
             | Self::ResourceOpen
-            | Self::ProjectSelect => Tier::High,
+            | Self::ProjectSelect
+            | Self::Scripts { .. } => Tier::High,
             Self::Notifications
             | Self::Storage { .. }
             | Self::DeviceState
@@ -530,7 +539,8 @@ impl GrantSet {
                 Permission::Tools { .. }
                 | Permission::Resources { .. }
                 | Permission::ProjectContext { .. }
-                | Permission::HostViews { .. } => set.insert_privileged(permission),
+                | Permission::HostViews { .. }
+                | Permission::Scripts { .. } => set.insert_privileged(permission),
                 Permission::Device { state, icons, .. } => set.insert_device(*state, *icons),
             }
         }
@@ -597,6 +607,16 @@ impl GrantSet {
             Permission::HostViews { .. } => self.insert(
                 GrantKey::new(PermissionKind::HostViews, ""),
                 GrantScope::HostViews,
+            ),
+            Permission::Scripts {
+                fs, process, shell, ..
+            } => self.insert(
+                GrantKey::new(PermissionKind::Scripts, ""),
+                GrantScope::Scripts {
+                    fs: *fs == Some(true),
+                    process: *process == Some(true),
+                    shell: *shell == Some(true),
+                },
             ),
             Permission::OpenUrl {
                 from_params: Some(true),

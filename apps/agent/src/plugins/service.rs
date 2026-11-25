@@ -2319,7 +2319,8 @@ impl PluginService {
             .actions()
             .iter()
             .map(|a| a.id.clone());
-        let config = host_config(&self.host, Arc::from(module.as_slice()), actions);
+        let mut config = host_config(&self.host, Arc::from(module.as_slice()), actions);
+        config.limits = guest_limits(verified.manifest());
         let mut supervisor = Supervisor::new(
             config,
             self.broker.clone(),
@@ -2655,7 +2656,8 @@ impl PluginService {
                 .actions()
                 .iter()
                 .map(|a| a.id.clone());
-            let config = host_config(&self.host, Arc::from(module), actions);
+            let mut config = host_config(&self.host, Arc::from(module), actions);
+            config.limits = guest_limits(&active.manifest);
             let broker_id = deckpilot_plugin_broker::PluginId::new(record.id.as_str())
                 .map_err(|_| invalid("the plugin id is not valid for the broker"))?;
             let supervisor = Supervisor::new(
@@ -3326,6 +3328,39 @@ fn host_config(
     config
 }
 
+/// The guest limits of a plugin's host: the defaults, but for
+/// `deckpilot.scripts` (plugin API 1.13), whose privileged
+/// `runtime.limits.continuousMs` and `runtime.hostCalls` set the
+/// continuous deadline and the call budget, with the poll budget always
+/// beside it (the host answers a spent budget itself only for a budgeted
+/// guest, whose replies carry the script detail). No other plugin ever
+/// gets a budget, whatever its manifest says (the validator refuses it
+/// too).
+pub(crate) fn guest_limits(
+    manifest: &deckpilot_plugin_manifest::Manifest,
+) -> deckpilot_plugin_abi::protocol::GuestLimits {
+    use deckpilot_plugin_abi::limits::MAX_SCRIPT_POLLS;
+    use deckpilot_plugin_abi::protocol::GuestLimits;
+    let mut limits = GuestLimits::default();
+    if manifest.id.as_str() != deckpilot_plugin_broker::SCRIPTS_PLUGIN {
+        return limits;
+    }
+    let Some(runtime) = &manifest.runtime else {
+        return limits;
+    };
+    if let Some(l) = runtime.limits {
+        limits.deadline_ms = l.continuous_ms.clamp(
+            deckpilot_plugin_manifest::MIN_CONTINUOUS_MS,
+            deckpilot_plugin_manifest::MAX_CONTINUOUS_MS,
+        );
+    }
+    if let Some(calls) = runtime.host_calls {
+        limits.host_calls = Some(calls.clamp(1, deckpilot_plugin_manifest::MAX_RUNTIME_HOST_CALLS));
+        limits.polls = Some(MAX_SCRIPT_POLLS);
+    }
+    limits
+}
+
 /// Why a host with a weaker sandbox than full was refused, for the user.
 fn sandbox_refusal(report: &SandboxReport) -> String {
     let mechanism = if report.mechanism.is_empty() {
@@ -3505,6 +3540,23 @@ mod tests {
         assert_eq!(
             package_error(&js).reason.as_deref(),
             Some(reason::UNSUPPORTED_RUNTIME)
+        );
+    }
+
+    #[test]
+    fn only_the_scripts_plugin_gets_a_call_budget() {
+        let mut manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/scripts-manifest.json"
+        ))
+        .unwrap();
+        let limits = guest_limits(&manifest);
+        assert_eq!(limits.deadline_ms, 2000);
+        assert_eq!(limits.host_calls, Some(4096));
+        assert_eq!(limits.polls, Some(8192), "always together");
+        manifest.id = deckpilot_plugin_manifest::PluginId::parse("deckpilot.other").unwrap();
+        assert_eq!(
+            guest_limits(&manifest),
+            deckpilot_plugin_abi::protocol::GuestLimits::default()
         );
     }
 
