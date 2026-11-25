@@ -131,16 +131,39 @@ const GIT_DENIED_LONG: &[&str] = &[
     "--strategy-option",
     "--gpg-sign",
     "--signoff-command",
+    "--open-files-in-pager",
+    "--contents",
+    "--file",
+    "--pathspec-from-file",
+    "--exclude-from",
+    "--exclude-per-directory",
 ];
 
-/// Short options that run a program or write a file, by subcommand
-/// (`rebase -x`, `diff -o`, `fetch -u`, ...).
-fn git_denied_short(sub: &str, arg: &str) -> bool {
-    let short = |c: &str| arg.starts_with(c) && !arg.starts_with("--");
+/// Short options, by subcommand, that run a program or read or write a
+/// file outside the repository (`rebase -x`, `grep -O`, `commit -F`, ...).
+fn git_denied_letters(sub: &str) -> &'static [u8] {
     match sub {
-        "rebase" => short("-x") || short("-s") || short("-X"),
-        "fetch" | "pull" | "ls-remote" => short("-u"),
-        "merge" | "cherry-pick" | "revert" => short("-s") || short("-X"),
+        "rebase" => b"xsX",
+        "fetch" | "ls-remote" => b"u",
+        "pull" => b"usX",
+        "merge" => b"sXF",
+        "cherry-pick" | "revert" => b"sX",
+        "grep" => b"Of",
+        "commit" => b"Ft",
+        "tag" => b"F",
+        "blame" => b"S",
+        "ls-files" => b"X",
+        _ => b"",
+    }
+}
+
+/// Whether a single-dash argument holds a denied letter anywhere in its
+/// cluster (`-qx` is `-q -x`); over-refusing a value is fine.
+fn git_denied_short(sub: &str, arg: &str) -> bool {
+    match arg.strip_prefix('-') {
+        Some(cluster) if !cluster.starts_with('-') => cluster
+            .bytes()
+            .any(|b| git_denied_letters(sub).contains(&b)),
         _ => false,
     }
 }
@@ -167,8 +190,9 @@ fn git_denied(args: &[String]) -> bool {
         }
         if let Some(long) = lower.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or("");
-            // git accepts any unique prefix of a long option.
-            return name.len() >= 2
+            // git accepts any unique prefix of a long option, down to one
+            // letter.
+            return !name.is_empty()
                 && GIT_DENIED_LONG
                     .iter()
                     .any(|denied| denied[2..].starts_with(name) || name.starts_with(&denied[2..]));
@@ -758,8 +782,8 @@ fn cwd(
                         "the working folder is not a folder",
                     ));
                 }
-                let ceiling = real.parent().map(Path::to_path_buf);
-                return Ok((real.clone(), Some(real), ceiling));
+                // No scope to stop at: git finds the folder's repository.
+                return Ok((real.clone(), Some(real), None));
             }
             None => resolve(
                 path,

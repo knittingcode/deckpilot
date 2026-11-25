@@ -340,16 +340,20 @@ runs of the plugin at once.
   `archive`, `format-patch`, `bundle` or `help`. The options that run a
   program, read or write elsewhere or change the configuration
   (`--upload-pack`, `--receive-pack`, `--exec`, `--output`, `--no-index`,
-  `--ext-diff`, `--textconv`, `--config`, `--template`, `--strategy`, …)
-  are refused, and so is every prefix of them git would accept
-  (`--upload-p`); so are `rebase -x`, merge strategies (`-s`, `-X`),
-  `-u` of the fetching subcommands, and the `ext::` and `fd::`
+  `--ext-diff`, `--textconv`, `--config`, `--template`, `--strategy`,
+  `--open-files-in-pager`, and those that read a file from anywhere:
+  `--contents`, `--file`, `--pathspec-from-file`, `--exclude-from`, …)
+  are refused, and so is every prefix of them git would accept, down to
+  one letter (`--u=`); so are, by subcommand and anywhere in a cluster of
+  short options (`-qx`), `rebase -x/-s/-X`, `pull -u/-s/-X`, `fetch` and
+  `ls-remote -u`, `merge -s/-X/-F`, `grep -O/-f`, `commit -F/-t`,
+  `tag -F`, `blame -S`, `ls-files -X`, and the `ext::` and `fd::`
   transports. `tool.run`'s hardening (`core.fsmonitor=false`, the allowed
   protocols, no prompts) is prepended. The host's variables
   (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, an empty
   `GIT_ASKPASS`, `GIT_OPTIONAL_LOCKS=0`, `GIT_PROTOCOL_FROM_USER=0`, and
   `GIT_CEILING_DIRECTORIES` at the folder above the scope, so git never
-  uses a repository above it) are set after the script's and win.
+  uses a repository above it; not with `cwd: any`, which has no scope) are set after the script's and win.
   Restricted git still runs the repository's own hooks and filters (the
   user's repository); with `unrestrictedArgs` a git grant runs any
   program the user could, and is shown as such.
