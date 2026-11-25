@@ -171,9 +171,10 @@ impl Protected {
         }
         #[cfg(windows)]
         if let Some(drive) = std::env::var_os("SystemDrive") {
-            let drive = PathBuf::from(drive);
-            roots.push(drive.join("\\$Recycle.Bin"));
-            roots.push(drive.join("\\System Volume Information"));
+            // `C:` is a drive, not its root: name the root's folders whole.
+            let drive = drive.to_string_lossy();
+            roots.push(PathBuf::from(format!(r"{drive}\$Recycle.Bin")));
+            roots.push(PathBuf::from(format!(r"{drive}\System Volume Information")));
         }
         let home = std::env::home_dir();
         roots.extend(home.clone());
