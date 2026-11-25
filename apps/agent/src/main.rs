@@ -322,7 +322,8 @@ fn main() -> ExitCode {
         let plugins = args.plugins;
         let result = runtime.block_on(async {
             let agent = Agent::start(options, lock)?.with_plugins(plugins);
-            agent.run(deckpilot_agent::service::shutdown_signal()).await
+            // Boxed: with Calls the loop's future is large.
+            Box::pin(agent.run(deckpilot_agent::service::shutdown_signal())).await
         });
         if let Err(error) = result {
             error!(%error, "agent stopped with an error");

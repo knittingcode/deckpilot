@@ -144,7 +144,9 @@ fn spawn_agent(
                     }
                 }
             });
-            if let Err(error) = agent.run(crate::service::shutdown_signal()).await {
+            // Boxed: with Calls the loop's future is large (clippy
+            // `large_futures`).
+            if let Err(error) = Box::pin(agent.run(crate::service::shutdown_signal())).await {
                 error!(%error, "agent stopped with an error");
             }
         });
