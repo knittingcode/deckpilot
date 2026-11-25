@@ -228,6 +228,34 @@ impl SqliteStore {
             .collect()
     }
 
+    /// The grants of a run that loaded the source with hash `loaded`:
+    /// `None` unless that is the source the user trusted (now), without
+    /// reading or hashing the source again. A trusted record that does not
+    /// parse grants nothing (`Some` of none).
+    pub fn grants_for_loaded(
+        &self,
+        profile: ProfileId,
+        id: ScriptId,
+        loaded: &str,
+    ) -> Result<Option<ScriptGrants>> {
+        let row: Option<String> = self
+            .connection()
+            .query_row(
+                "SELECT t.grants FROM script_trust t
+                 JOIN scripts s ON s.profile_id = t.profile_id AND s.id = t.script_id
+                 WHERE t.profile_id = ?1 AND t.script_id = ?2 AND t.source_sha256 = ?3",
+                params![profile.to_string(), id.to_string(), loaded],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(row.map(|grants| {
+            serde_json::from_str::<ScriptGrants>(&grants)
+                .ok()
+                .filter(|g| g.validate().is_ok())
+                .unwrap_or_default()
+        }))
+    }
+
     /// One script of `profile`.
     pub fn script(&self, profile: ProfileId, id: ScriptId) -> Result<Option<Script>> {
         Ok(self

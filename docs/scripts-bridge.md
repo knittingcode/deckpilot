@@ -225,11 +225,17 @@ path, a file's content or an environment value.
   Both ids are in script objects only, never in text variables. `remote`
   (the primary's `url` and `defaultBranch`) stays for older guests.
 - The agent's script store answers a run (`service/plugin_scripts.rs`):
-  the run's script of the **active profile** (the profile whose key or
-  workflow runs it), only while it is trusted (otherwise
+  the run's script, always of the **active profile** (never the profile
+  or layout a binding belongs to), only while it is trusted (otherwise
   `scriptNeedsReview`, and no grants; a script the profile does not have
-  is `scriptMissing`), its grants read again at every call, and nothing
-  while DeckPilot is locked. A repository's folder is its machine
+  is `scriptMissing`), and nothing while DeckPilot is locked. Its grants
+  are read again at every call **for the source the run loaded** (its
+  SHA-256, against the trusted hash, without reading the source again):
+  when that is no longer the trusted source (trust revoked, imported
+  over, edited and trusted again for a new source) or DeckPilot is
+  locked, the run's next operation is refused (`scriptNeedsReview`) and
+  the run ends. A program it already started is stopped by its own
+  grant check (every 20 ms) as before. A repository's folder is its machine
   binding's, canonical, and only when it is an existing folder.
 
 ## The file system

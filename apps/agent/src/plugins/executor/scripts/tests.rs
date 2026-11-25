@@ -43,10 +43,10 @@ pub(crate) mod support {
     }
 
     impl ScriptHost for FakeHost {
-        fn grants(&self, script: &str) -> Option<ScriptGrants> {
+        fn grants(&self, script: &str, _loaded: &str) -> Option<ScriptGrants> {
+            // Trusted with none (revoked): no grants, the run goes on.
             (script == SCRIPT && *self.trusted.lock().unwrap())
-                .then(|| self.grants.lock().unwrap().clone())
-                .flatten()
+                .then(|| self.grants.lock().unwrap().clone().unwrap_or_default())
         }
 
         fn load(&self, script: &str) -> Result<StoredScript, Refusal> {
@@ -326,7 +326,19 @@ fn a_run_loads_only_its_own_trusted_script_once() {
         "invalidArgument"
     );
 
+    // Trust revoked mid-run: the run's next operation, a confirmation
+    // included, is refused and the run ends.
     *f.host.trusted.lock().unwrap() = false;
+    for request in [
+        json!({"op":"script.log","args":{"level":"info","message":"x"}}),
+        json!({"op":"fs.exists","args":{"path":{"repository":"cms","relative":""}}}),
+    ] {
+        assert_eq!(
+            code(&call(&mut e, &request)),
+            "scriptNeedsReview",
+            "{request}"
+        );
+    }
     let mut e = f.executor(RunContext::direct(RunTrigger::Key));
     assert_eq!(
         code(&call(

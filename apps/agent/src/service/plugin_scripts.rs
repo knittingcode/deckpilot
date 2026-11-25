@@ -7,13 +7,16 @@
 //! the store (`deckpilot_storage::scripts`) and the runtime's active
 //! profile:
 //!
-//! * Only the **active profile**'s scripts and projects, never another
-//!   profile's; nothing while DeckPilot is locked.
+//! * Always the **active profile**'s scripts and projects (never the
+//!   profile or layout a binding belongs to, never another profile's);
+//!   nothing while DeckPilot is locked.
 //! * A script runs only while it is **trusted** (its source is the one the
 //!   user trusted): otherwise `scriptNeedsReview`, and no grants. A script
 //!   the profile does not have is `scriptMissing`.
-//! * The grants are read again at every call, so a change on the
-//!   Permissions tab (or a revoked trust) applies to the next call.
+//! * The grants are read again at every call, for the source the run
+//!   loaded: a change on the Permissions tab applies to the next call, and
+//!   a run whose source is no longer the trusted one (revoked, imported
+//!   over, edited and trusted again) gets none, and its run ends.
 //! * Repositories carry their folder only as the executor needs it (never
 //!   handed to a script without `repositories.paths`) and their remotes
 //!   with the link to a connection and the provider's repository id (K4:
@@ -48,7 +51,8 @@ const ANSWER_WAIT: Duration = Duration::from_secs(2);
 /// What a run asks the store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ScriptQuery {
-    Grants(String),
+    /// The grants of script `.0` for the source with SHA-256 `.1`.
+    Grants(String, String),
     Load(String),
     Projects,
     Project(Option<String>),
@@ -85,8 +89,8 @@ fn unavailable() -> Refusal {
 }
 
 impl ScriptHost for AgentScripts {
-    fn grants(&self, script: &str) -> Option<ScriptGrants> {
-        match self.ask(ScriptQuery::Grants(script.to_owned()))? {
+    fn grants(&self, script: &str, loaded: &str) -> Option<ScriptGrants> {
+        match self.ask(ScriptQuery::Grants(script.to_owned(), loaded.to_owned()))? {
             ScriptAnswer::Grants(grants) => grants,
             _ => None,
         }
@@ -126,11 +130,21 @@ impl Agent {
     /// thread.
     pub(super) fn plugin_script(&mut self, query: ScriptQuery) -> ScriptAnswer {
         match query {
-            ScriptQuery::Grants(id) => ScriptAnswer::Grants(grants_of(self.run_view(&id))),
+            ScriptQuery::Grants(id, loaded) => ScriptAnswer::Grants(self.run_grants(&id, &loaded)),
             ScriptQuery::Load(id) => ScriptAnswer::Load(load_of(self.run_view(&id))),
             ScriptQuery::Projects => ScriptAnswer::Projects(self.run_projects()),
             ScriptQuery::Project(id) => ScriptAnswer::Project(self.run_project(id.as_deref())),
         }
+    }
+
+    /// The grants of the active profile's script `id` for the source the
+    /// run loaded (one indexed read, no hashing on this thread).
+    fn run_grants(&self, id: &str, loaded: &str) -> Option<ScriptGrants> {
+        if self.security != SecurityState::Unlocked {
+            return None;
+        }
+        let profile = self.runtime.profile()?.id;
+        grants_in(self.store().ok()?, profile, id, loaded)
     }
 
     /// The active profile's script `id`, as a run may see it.
@@ -237,12 +251,15 @@ fn view_in(store: &SqliteStore, profile: ProfileId, id: &str) -> Result<ScriptFo
         .ok_or_else(missing)
 }
 
-/// The grants of a run: only a trusted script's.
-fn grants_of(view: Result<ScriptForRun, Refusal>) -> Option<ScriptGrants> {
-    match view {
-        Ok(ScriptForRun::Runnable { grants, .. }) => Some(*grants),
-        _ => None,
-    }
+/// The grants of script `id` of `profile` for the loaded source `loaded`.
+fn grants_in(
+    store: &SqliteStore,
+    profile: ProfileId,
+    id: &str,
+    loaded: &str,
+) -> Option<ScriptGrants> {
+    let id: ScriptId = id.parse().ok()?;
+    store.grants_for_loaded(profile, id, loaded).ok().flatten()
 }
 
 /// What `script.load` gets: a trusted script's source and settings, or

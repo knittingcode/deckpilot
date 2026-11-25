@@ -7,7 +7,10 @@ use deckpilot_core::{
 use deckpilot_plugin_abi::scripts::codes;
 use deckpilot_storage::{ConfigStore, SqliteStore};
 
-use super::{grants_of, load_of, run_project_of, view_in};
+use deckpilot_core::script::source_sha256;
+
+use super::{AgentScripts, grants_in, load_of, run_project_of, view_in};
+use crate::plugins::script_host::ScriptHost;
 
 fn store() -> (SqliteStore, Profile) {
     let store = SqliteStore::open_in_memory().unwrap();
@@ -34,12 +37,21 @@ fn only_a_trusted_script_of_the_profile_loads_and_gets_grants() {
     assert_eq!(loaded.source, "deckpilot.log(1)");
     assert_eq!(loaded.settings.timeout_ms, 60_000);
     assert_eq!(loaded.settings.memory_mib, 64);
-    assert_eq!(grants_of(view_in(&store, profile.id, &id)), Some(granted));
+    let hash = source_sha256("deckpilot.log(1)");
+    assert_eq!(
+        grants_in(&store, profile.id, &id, &hash),
+        Some(granted.clone())
+    );
+    // Grants are the loaded source's only: another source gets none.
+    assert_eq!(
+        grants_in(&store, profile.id, &id, &source_sha256("x")),
+        None
+    );
     // Imported over: it must not run and gets nothing.
     store.put_untrusted_script(profile.id, &script).unwrap();
     let refused = load_of(view_in(&store, profile.id, &id)).unwrap_err();
     assert_eq!(refused.code, codes::SCRIPT_NEEDS_REVIEW);
-    assert_eq!(grants_of(view_in(&store, profile.id, &id)), None);
+    assert_eq!(grants_in(&store, profile.id, &id, &hash), None);
     // Another profile's, an unknown id and a malformed one are missing.
     let other = Profile::new("Other");
     store.save_profile(&other).unwrap();
@@ -50,7 +62,7 @@ fn only_a_trusted_script_of_the_profile_loads_and_gets_grants() {
     ] {
         let refused = load_of(view_in(&store, profile, id)).unwrap_err();
         assert_eq!(refused.code, codes::SCRIPT_MISSING, "{id}");
-        assert_eq!(grants_of(view_in(&store, profile, id)), None);
+        assert_eq!(grants_in(&store, profile, id, &hash), None);
     }
 }
 
@@ -85,11 +97,17 @@ fn a_repository_has_its_folder_here_and_all_its_remotes_with_their_ids() {
         kind: ResourceKind::Directory,
         value: folder.path().display().to_string(),
     });
-    // A file is not a repository's folder, nor is a missing one.
+    // A missing folder is not a repository's folder, nor is a file.
     machine.set_binding(MachineResourceBinding {
         key: ResourceKey::new("shop.api").unwrap(),
         kind: ResourceKind::Directory,
         value: folder.path().join("missing").display().to_string(),
+    });
+    std::fs::write(folder.path().join("a-file"), b"x").unwrap();
+    machine.set_binding(MachineResourceBinding {
+        key: ResourceKey::new("shop.ops").unwrap(),
+        kind: ResourceKind::Directory,
+        value: folder.path().join("a-file").display().to_string(),
     });
     let run = run_project_of(&project, &machine);
     assert_eq!(run.key, "SHOP");
@@ -117,4 +135,18 @@ fn a_repository_has_its_folder_here_and_all_its_remotes_with_their_ids() {
         web.remote.as_ref().and_then(|r| r.url.as_deref()),
         Some("https://example.com/origin.git")
     );
+}
+
+/// A lane thread's question nobody answers (the agent is gone or busy past
+/// the wait): no grants, and the load and the projects are refused.
+#[test]
+fn an_unanswered_question_fails_closed() {
+    let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let host = AgentScripts::new(commands);
+    // Nobody receives: every question goes unanswered.
+    drop(receiver);
+    assert_eq!(host.grants("s", "h"), None);
+    assert_eq!(host.load("s").unwrap_err().code, codes::UNAVAILABLE);
+    assert_eq!(host.projects().unwrap_err().code, codes::UNAVAILABLE);
+    assert_eq!(host.project(None).unwrap_err().code, codes::UNAVAILABLE);
 }
