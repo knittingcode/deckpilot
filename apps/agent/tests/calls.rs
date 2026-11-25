@@ -769,6 +769,7 @@ async fn a_locked_device_never_shows_the_call() {
     deck.agent.unlock().await;
     deck.wait_overlay(true).await;
     let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!(view.frames, 1, "exactly one Calls frame: {view:?}");
     assert_eq!(view.devices.len(), 1, "{view:?}");
     assert_eq!(view.devices[0].0, deck.device);
     assert_eq!(view.devices[0].2.as_deref(), Some("Incoming call"));

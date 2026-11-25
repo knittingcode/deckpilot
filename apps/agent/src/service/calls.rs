@@ -535,6 +535,8 @@ pub struct CallsView {
     /// The name of the overlay layout each device shows (the stored
     /// managed layout's).
     pub layouts: Vec<String>,
+    /// How many Calls overlay frames are stacked, on every device.
+    pub frames: usize,
     pub scheduled_returns: usize,
     /// How often a managed layout was stored or tried.
     pub seed_attempts: u64,
@@ -586,10 +588,18 @@ impl Agent {
                     .map(|(l, _)| l.name.clone())
             })
             .collect();
+        let frames = self
+            .runtime
+            .all_overlays()
+            .into_iter()
+            .flat_map(|(_, views)| views)
+            .filter(|view| view.owner == deckpilot_core::OverlayOwner::Calls)
+            .count();
         CallsView {
             state,
             devices,
             layouts,
+            frames,
             scheduled_returns: self.calls_driver().map_or(0, |d| d.returns().scheduled()),
             seed_attempts: self.calls.seed_attempts,
         }

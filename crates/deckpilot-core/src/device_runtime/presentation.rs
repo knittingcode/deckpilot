@@ -427,7 +427,7 @@ impl Runtime {
         self.shown_session(device)
     }
 
-    fn shown_session(&self, device: &DeviceId) -> Option<(OverlaySession, PageId)> {
+    pub(super) fn shown_session(&self, device: &DeviceId) -> Option<(OverlaySession, PageId)> {
         let index = self.visible_frame(device)?;
         let frame = &self.presentation.frames[device][index];
         Some((frame.session, frame.page()))
