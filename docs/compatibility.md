@@ -311,8 +311,9 @@ broker; the supervisor gives `deckpilot.scripts` its deadline and call
 budget (with the poll budget always beside it) and no other plugin a
 budget. Both schema copies change alike. The agent's `PLUGIN_API` stays
 1.11 (P8 moves it to 1.13), so a `^1.13` plugin is `incompatible` until
-then; a `script` or `javascript` parameter has no core kind yet (P7) and
-refuses to load as an action type. No IPC protocol, database, document or
+then; a `script` parameter has no core kind yet (P7) and its action
+refuses to load as an action type (`javascript` code is the core's text
+`code` kind). No IPC protocol, database, document or
 export change.
 
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
