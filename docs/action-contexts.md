@@ -50,8 +50,9 @@ decide whether the use makes sense. A binding is checked against both.
 ### Without a declaration
 
 A type that declares no contexts gets all five, exactly as before contexts
-existed. This applies to every plugin action, to stored definitions and to
-types from older agents. The field is optional on the wire: it is left out
+existed. This applies to every plugin action that does not declare them
+([Plugin actions](#plugin-actions)), to stored definitions and to types
+from older agents. The field is optional on the wire: it is left out
 when absent, and older apps and agents ignore it.
 
 ## Built-in declarations
@@ -183,17 +184,40 @@ reload. That is accepted for now: it only adds log lines.
 A deck action in a workflow still fails exactly as before, with
 `not-from-a-key`.
 
-## Planned
+## Plugin actions
 
-- **Plugin manifest field.** The planned field is
-  `contributes.actions[].contexts`: an optional list of the five
-  identifiers, with the same rules as above. Without it a plugin keeps all
-  five. The field **needs plugin API 1.11 or later**, and 1.11 can ship
-  only **after 1.10**, which is reserved for gesture presets. Shipping 1.11
-  first would let a 1.11 agent accept a `^1.10` manifest whose
-  `gesturePresets` it does not know. Until then no manifest declares
-  contexts, the agent's plugin API stays where it is, and every plugin
-  action has all five.
+A plugin declares an action's contexts with
+`contributes.actions[].contexts` (plugin API 1.11,
+[manifest.md](marketplace/sdk/manifest.md#contributesactions)): an optional list of
+the five identifiers. Without it the action keeps all five, exactly as
+before, so no existing plugin changes. The manifest validator
+(`deckpilot-plugin-manifest`, `action_contexts.rs`) refuses:
+
+- the field below `"pluginApi": "^1.11"` (an older agent refuses it as
+  an unknown field anyway);
+- an empty list, an unknown identifier, or one named twice;
+- `gesture` without a double click or long press among the action's
+  `controls` (without `controls` an action has keys with every key
+  input, so both fit);
+- `key` without a press, release, click, rotation or touch among them;
+- `display` without a live face, which for a plugin action is its key
+  `state`.
+
+A gesture preset of the same manifest may only put an action on a
+gesture whose context it declares (`gesture` for a double click or long
+press, `key` otherwise), as the core's `GesturePreset::check` does for
+every module.
+
+These rules check the declaration only. The agent copies the declaration
+into the core's `ActionType.contexts` (`engine::action_type`), and from
+there it is advisory exactly as for the built-ins: saving reports a use
+outside it, running it logs a warning and still runs, and nothing stored
+changes. In the SDK it is `Action::contexts` with
+`ACTION_CONTEXTS_API_LEVEL`, and `manifest_mismatches` compares it with
+the manifest. Plugin API 1.11 came after 1.10 (gesture presets): an
+agent that provides 1.11 knows both.
+
+## Planned
 - **Refusing new incompatible uses.** A later release may refuse a *new*
   use outside the contexts while keeping stored ones, using the `stored`
   classification above. Such a policy needs an approved decision first.

@@ -6,8 +6,12 @@
 //
 // The application shell of 0.8.0 and later: main window (toolbar) ›
 // Marketplace › Discover › Memory (deckpilot.memory) › Install with consent
-// › Settings › Extensions › Plugins lists it › back in the main window:
-// Installed › Enable with consent › Uninstall. Up to 0.8.1 the settings are
+// › Settings › Extensions › Plugins lists it (from 0.15.0, which has no such
+// page: Extensions › Permissions lists it) › back in the main window:
+// Installed › Enable with consent › Uninstall. From 0.15.0 (#440) the
+// Marketplace's sections are entries of its own sidebar, not tabs, and a
+// plugin's page has one "Install <name>" and marks the installed version in
+// its Versions list; both shells are accepted. Up to 0.8.1 the settings are
 // a window of their own ("Back to DeckPilot" returns); later releases show
 // them in the main window (back with the toolbar). Both are accepted, and
 // the step says which one the release has.
@@ -75,6 +79,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const lit = (t) => (t.includes("'") ? `"${t}"` : `'${t}'`)
 const button = (t) => `//button[normalize-space(.)=${lit(t)}]`
 const tab = (t) => `//button[@role='tab' and starts-with(normalize-space(.),${lit(t)})]`
+/** The Marketplace's own sidebar (0.15.0 and later). */
+const SIDEBAR = "//*[@data-slot='marketplace-sidebar']"
+/**
+ * A destination of the sidebar by its label: its text, or (a narrow window,
+ * icons only) its accessible name, which adds a count ("Installed (3)").
+ */
+const nav = (t) =>
+  `${SIDEBAR}//button[normalize-space(.)=${lit(t)} or @aria-label=${lit(t)} or starts-with(@aria-label,${lit(`${t} (`)})]`
+/** A section of the Marketplace: the sidebar's entry, else (up to 0.14) the tab. */
+const section = (t) => `${nav(t)} | ${tab(t)}`
 const DIALOG = "//*[@role='dialog' or @role='alertdialog']"
 /** The toolbar's Settings button (its label mentions an available update). */
 const SETTINGS = "//header[@aria-label='Toolbar']//button[starts-with(@aria-label,'Settings')]"
@@ -226,24 +240,59 @@ async function mainWindow(timeout = WAIT) {
   )
 }
 
-/** The Marketplace (toolbar › Marketplace) at its tabs, unless open already. */
+/**
+ * The Marketplace (toolbar › Marketplace) at its sections, unless open
+ * already: its sidebar (0.15.0 and later) or its tabs. Returns which.
+ */
 async function marketplace() {
-  // A plugin's details replace the tabs until "Back to plugins".
+  // A plugin's page replaces the sections until "Back to plugins".
   if (await visible(button("Back to plugins"))) await click(button("Back to plugins"))
-  if (!(await visible(tab("Discover")))) {
+  // Search results replace the sections until the search is cleared.
+  const clear = `${SIDEBAR}//button[@aria-label='Clear search']`
+  if (await visible(clear)) await click(clear)
+  const discover = section("Discover")
+  if (!(await visible(discover))) {
     await click(MARKETPLACE)
-    await wait(tab("Discover"))
+    await wait(discover)
   }
+  return (await visible(SIDEBAR)) ? "sidebar" : "tabs"
 }
 
 async function installedTab() {
   await marketplace()
-  await click(tab("Installed"))
+  await click(section("Installed"))
   await wait("//ul[@aria-label='Installed plugins']")
+  await wait(installedItem)
 }
 
-const card = `//ul[@aria-label='Plugins']//button[.//span[normalize-space(.)=${lit(NAME)}]]`
+/** Memory's tile: from 0.15.0 its name is the button opening its page; before, a card. */
+const card =
+  `//ul/li//button[starts-with(@id,'plugin-tile-') and normalize-space(.)=${lit(NAME)}]` +
+  ` | //ul[@aria-label='Plugins']//button[.//span[normalize-space(.)=${lit(NAME)}]]`
 const installedItem = `//ul[@aria-label='Installed plugins']//li[.//span[normalize-space(.)=${lit(NAME)}]]`
+
+/**
+ * What Memory's page shows once VERSION is installed, or null: from 0.15.0
+ * the version marked Installed in its Versions list and as the About
+ * strip's version; before, the install status "Installed <version>".
+ */
+async function installedOnPage() {
+  const article = "//article[@aria-labelledby='plugin-detail-name']"
+  if (await visible(article)) {
+    const marked = await findAll(
+      `//ul[@aria-label='Versions']/li[.//span[normalize-space(.)=${lit(VERSION)}] and .//*[@data-slot='badge' and normalize-space(.)='Installed']]`,
+    )
+    const version = await findAll(
+      `//dl[@aria-label='About']//dd[normalize-space(.)=${lit(VERSION)}]`,
+    )
+    if (marked.length === 0 || version.length === 0) return null
+    const about = await call("GET", s(`element/${await wait("//dl[@aria-label='About']")}/text`))
+    return `Versions marks ${VERSION} Installed; About: '${String(about).replace(/\s+/g, " ").trim()}'`
+  }
+  if (!(await visible("//section[@aria-label='Install status']"))) return null
+  const t = await text("//section[@aria-label='Install status']")
+  return t.includes(`Installed ${VERSION}`) ? `install status '${t.trim()}'` : null
+}
 let mainHandle
 
 const steps = [
@@ -268,19 +317,29 @@ const steps = [
   [
     "toolbar > Marketplace",
     async () => {
-      await marketplace()
+      const shell = await marketplace()
       await wait("//h1[normalize-space(.)='Marketplace']")
-      return `Marketplace shown in the main window (Discover tab); ${await screenshot("marketplace")}`
+      return `Marketplace shown in the main window (${shell === "sidebar" ? "its sidebar, 0.15.0 and later" : "Discover tab, up to 0.14"}); ${await screenshot("marketplace")}`
     },
   ],
   [
     "production catalog lists Memory",
     async () => {
-      await click(tab("Discover"))
+      await click(section("Discover"))
       try {
         await wait(card, 15_000)
       } catch {
-        await click(button("Refresh"))
+        if (await visible(SIDEBAR)) {
+          // 0.15.0 and later: Discover shows the newest plugins not
+          // installed; the sidebar's search finds any in the catalog.
+          const retry =
+            "//*[@role='alert' and @aria-label='Registry']//button[normalize-space(.)='Retry']"
+          if (await visible(retry)) await click(retry)
+          const search = `${SIDEBAR}//input[@type='search' and @aria-label='Search plugins']`
+          await call("POST", s(`element/${await wait(search)}/value`), { text: NAME })
+        } else {
+          await click(button("Refresh"))
+        }
         await wait(card, LONG)
       }
       const available = await invoke("list_available_plugins", { refresh: false })
@@ -297,22 +356,29 @@ const steps = [
       await click(card)
       const title = await text("//h3[@id='plugin-detail-name']")
       if (title.trim() !== NAME) throw new Error(`details show '${title}'`)
-      await click(button(`Install ${VERSION}`))
+      // From 0.15.0 the page's one Install ("Install <name>", the latest
+      // version); before, "Install <version>".
+      const install = `//article[@aria-labelledby='plugin-detail-name']//button[@aria-label=${lit(`Install ${NAME}`)}] | ${button(`Install ${VERSION}`)}`
+      const installName = await execute(
+        "return arguments[0].getAttribute('aria-label') || arguments[0].textContent.trim()",
+        [{ [ELEMENT]: await wait(install) }],
+      )
+      await click(install)
       await wait(DIALOG)
       const consentShot = await screenshot("install-consent")
       const boxes = await consentAll()
       await click(`${DIALOG}${button("Install")}`)
       await dialogClosed()
-      const status = await until(`Installed ${VERSION}`, async () => {
-        const t = await text("//section[@aria-label='Install status']")
-        return t.includes(`Installed ${VERSION}`) ? t : null
-      })
+      const status = await until(
+        `${NAME} ${VERSION} shown as installed on its page`,
+        installedOnPage,
+      )
       const plugin = await invoke("get_plugin", { plugin: PLUGIN })
-      return `${boxes} consent box(es) checked; status '${status.trim()}'; get_plugin: version ${plugin?.summary?.version}, state ${plugin?.summary?.state}; ${consentShot}; ${await screenshot("installed")}`
+      return `'${installName}' on the plugin's page; ${boxes} consent box(es) checked; ${status}; get_plugin: version ${plugin?.summary?.version}, state ${plugin?.summary?.state}; ${consentShot}; ${await screenshot("installed")}`
     },
   ],
   [
-    "Settings > Extensions > Plugins lists Memory",
+    "Settings lists Memory",
     async () => {
       await switchTo(mainHandle)
       const before = new Set(await handles())
@@ -358,8 +424,42 @@ const steps = [
       }
       // In the main window the Plugins entry of the settings' sidebar (the
       // workspace page under the settings is hidden).
-      await click(inMain ? `${SETTINGS_VIEW}${button("Plugins")}` : button("Plugins"))
-      const row = await wait(`${installedItem}//span[normalize-space(.)='v${VERSION}']`)
+      // Up to 0.14 Extensions > Plugins lists the installed plugins with
+      // their versions. 0.15.0 (#440) removed that page; Extensions >
+      // Permissions lists every installed plugin with its state and "Open
+      // <name> in the Marketplace".
+      const scope = inMain ? SETTINGS_VIEW : ""
+      const pluginsEntry = `${scope}${button("Plugins")}`
+      const permissionsEntry = `${scope}${button("Permissions")}`
+      const entry = await until(
+        "the settings' Plugins (up to 0.14) or Permissions",
+        async () =>
+          (await visible(pluginsEntry))
+            ? "plugins"
+            : (await visible(permissionsEntry))
+              ? "permissions"
+              : null,
+        WAIT,
+      )
+      let listed
+      let row
+      if (entry === "plugins") {
+        await click(pluginsEntry)
+        row = await wait(`${installedItem}//span[normalize-space(.)='v${VERSION}']`)
+        listed = `Extensions > Plugins lists ${NAME} v${VERSION}`
+      } else {
+        await click(permissionsEntry)
+        const item = `//ul[@aria-label='Permissions of installed plugins']/li[@aria-labelledby=${lit(`plugin-permissions-${PLUGIN}`)}]`
+        row = await wait(
+          `${item}//button[@aria-label=${lit(`Open ${NAME} in the Marketplace`)}]`,
+          LONG,
+        )
+        const name = await text(`//span[@id=${lit(`plugin-permissions-${PLUGIN}`)}]`)
+        if (name.trim() !== NAME)
+          throw new Error(`the Permissions row of ${PLUGIN} is named '${name}'`)
+        const summary = (await text(item)).replace(/\s+/g, " ").trim().slice(0, 160)
+        listed = `no Extensions > Plugins page (0.15.0 and later); Extensions > Permissions lists ${NAME} under 'Permissions of installed plugins' ('${summary}', with 'Open ${NAME} in the Marketplace')`
+      }
       await execute("arguments[0].scrollIntoView({block: 'center'});", [{ [ELEMENT]: row }])
       const shot = await screenshot("settings-plugins")
       let back = "back to the main window"
@@ -369,11 +469,8 @@ const steps = [
         await click(MARKETPLACE)
         await until("the settings view to close", async () => !(await visible(SETTINGS_VIEW)), WAIT)
         const status = await until(
-          `the Marketplace as it was: Installed ${VERSION}`,
-          async () => {
-            const t = await text("//section[@aria-label='Install status']")
-            return t.includes(`Installed ${VERSION}`) ? t : null
-          },
+          `the Marketplace as it was: ${NAME}'s page, ${VERSION} installed`,
+          installedOnPage,
           WAIT,
         )
         const after = await execute("return arguments[0].getAttribute('aria-pressed')", [
@@ -381,7 +478,7 @@ const steps = [
         ])
         if (after === "true")
           throw new Error("the Settings button stays pressed after leaving the settings")
-        back = `the toolbar's Marketplace left them: the Marketplace is back as it was (install status '${status.trim()}'), Settings aria-pressed ${after}`
+        back = `the toolbar's Marketplace left them: the Marketplace is back as it was (${status}), Settings aria-pressed ${after}`
       } else {
         await click(button("Back to DeckPilot"))
         await switchTo(mainHandle)
@@ -390,7 +487,7 @@ const steps = [
       const how = inMain
         ? `new UI: settings shown in the main window (${SETTINGS_VIEW}; no other window, no 'Back to DeckPilot', Settings aria-pressed ${pressed})`
         : `UI up to 0.8.1: settings window ${before.has(where.handle) ? "(already open)" : "opened"} as its own window (${SETTINGS_WINDOW})`
-      return `${how}; Extensions > Plugins lists ${NAME} v${VERSION}; ${back}; ${shot}`
+      return `${how}; ${listed}; ${back}; ${shot}`
     },
   ],
   [
@@ -400,8 +497,8 @@ const steps = [
       // From 0.9.0 (plugin API 1.4) the install plan activates a plugin whose
       // install consent covered all its permissions: disable it here first so
       // enabling it again goes through the consent review as before.
-      const enableSwitch = `//button[@role='switch' and @aria-label=${lit(`Enable ${NAME}`)}]`
-      const disableSwitch = `//button[@role='switch' and @aria-label=${lit(`Disable ${NAME}`)}]`
+      const enableSwitch = `${installedItem}//button[@role='switch' and @aria-label=${lit(`Enable ${NAME}`)}]`
+      const disableSwitch = `${installedItem}//button[@role='switch' and @aria-label=${lit(`Disable ${NAME}`)}]`
       const atInstall = await until("the plugin's enable switch", async () =>
         (await visible(enableSwitch))
           ? "disabled"

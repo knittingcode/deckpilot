@@ -256,6 +256,10 @@ pub struct Runtime {
     /// Which absent workflows are another profile's and whether graph
     /// workflows run from keys (the agent sets it with the profile).
     workflow_scope: crate::WorkflowScope,
+    /// What the targets of keys with an automatic icon are (Open: a file
+    /// or a folder), cleared when the machine, the engine, the profile or
+    /// a layout a device shows changes; never polled.
+    targets: crate::TargetCache,
     clock: Clock,
 }
 
@@ -286,6 +290,7 @@ impl Runtime {
             folders: FolderTimers::default(),
             working: BTreeMap::new(),
             workflow_scope: crate::WorkflowScope::default(),
+            targets: crate::TargetCache::new(),
             clock: Clock::default(),
         }
     }
@@ -581,6 +586,7 @@ impl Runtime {
     pub fn set_engine(&mut self, engine: Engine) {
         self.engine = Arc::new(engine);
         self.refused.clear();
+        self.targets.clear();
     }
 
     /// The engine, to run work on another thread.
@@ -603,6 +609,7 @@ impl Runtime {
 
     pub fn set_machine(&mut self, machine: MachineConfig) {
         self.machine = machine;
+        self.targets.clear();
     }
 
     pub fn devices(&self) -> &DeviceRegistry {
@@ -622,6 +629,7 @@ impl Runtime {
         self.remember_pages();
         self.parked.clear();
         self.refused.clear();
+        self.targets.clear();
         self.session = profile.map(|profile| Session {
             projects: ActiveProjectContext::restore(&profile, project),
             profile,
@@ -648,6 +656,7 @@ impl Runtime {
         }
         let project = self.active_project_id();
         self.refused.clear();
+        self.targets.clear();
         self.session = Some(Session {
             projects: ActiveProjectContext::restore(&profile, project),
             profile,
@@ -1097,6 +1106,8 @@ impl Runtime {
         if self.device_layouts.get(&key) != Some(&target) {
             self.device_layouts.insert(key, target);
             self.device_layouts_changed = true;
+            // Another layout loads: its targets are looked at again.
+            self.targets.clear();
         }
         result.message = if switched {
             format!("layout {name}")
@@ -1149,6 +1160,8 @@ impl Runtime {
         if self.device_layouts.get(&key) != Some(&entry.layout) {
             self.device_layouts.insert(key, entry.layout);
             self.device_layouts_changed = true;
+            // Another layout loads: its targets are looked at again.
+            self.targets.clear();
         }
         result.message = format!("layout {name}");
         result
@@ -1223,6 +1236,7 @@ impl Runtime {
                     Some(&model.capabilities),
                     &recorder,
                     &self.workflow_scope,
+                    &self.targets.on(&self.machine, self.active_project()),
                 );
                 (faces, recorder.into_texts())
             },
@@ -1663,6 +1677,8 @@ pub fn core_display<R>(
         outputs: None,
         registry: &CORE,
         live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: false,
     };
     then(&crate::variables::DisplayEnvironment {
         context: &context,
@@ -1697,6 +1713,7 @@ pub fn page_faces_in(
             capabilities,
             titles,
             scope,
+            &crate::NoTargets,
         )
     })
 }
@@ -1724,11 +1741,17 @@ pub fn page_faces_with(
         capabilities,
         titles,
         &crate::WorkflowScope::default(),
+        &crate::NoTargets,
     )
 }
 
 /// [`page_faces_with`] and [`page_faces_in`] together: titles resolved by
-/// `titles`, keys that start workflows shown as `scope` says.
+/// `titles`, keys that start workflows shown as `scope` says, and the
+/// automatic icons of keys whose target is a file or a folder told by
+/// `targets` ([`crate::target_kind`]; the others pass
+/// [`crate::NoTargets`]: the type's icon). The device
+/// ([`Runtime::display_faces`]) and the app's previews call it, so both
+/// show the same icon.
 #[allow(clippy::too_many_arguments)]
 pub fn page_faces_scoped(
     registry: &ActionRegistry,
@@ -1740,6 +1763,7 @@ pub fn page_faces_scoped(
     capabilities: Option<&DeviceCapabilities>,
     titles: &dyn DisplayTemplates,
     scope: &crate::WorkflowScope,
+    targets: &dyn crate::TargetKinds,
 ) -> Vec<(ControlId, KeyFace)> {
     let Some(page) = layout.page(page) else {
         return controls
@@ -1808,7 +1832,7 @@ pub fn page_faces_scoped(
                                 .any(|other| binding_runs(registry, other, profile, capabilities));
                             face_for(
                                 registry, binding, layout, profile, project, &title, scope,
-                                other_runs,
+                                targets, other_runs,
                             )
                         }
                         .with_appearance(binding.appearance.as_ref())
@@ -2081,6 +2105,33 @@ fn binding_runs(
     }
 }
 
+/// The icon of a key that runs `instance` ([`KeyFace::symbol`]), in this
+/// order: the action's own icon, chosen by the user; the automatic icon of
+/// its target ([`crate::ActionHandler::automatic_symbol`]: Open shows a
+/// folder for a folder, a document for a file); the type's icon. New Open
+/// actions are made without an icon; older ones were made with a copy of
+/// the type's, which is never rewritten and so is not taken for a choice:
+/// an own icon equal to the type's does not hide the automatic icon. The key's own
+/// icon or image ([`crate::KeyAppearance`]) is drawn over all of them by
+/// the renderer. Nothing here is stored.
+fn action_symbol(
+    registry: &ActionRegistry,
+    instance: &crate::ActionInstance,
+    parameters: &ActionParameters,
+    targets: &dyn crate::TargetKinds,
+) -> Option<String> {
+    let type_icon = registry
+        .definition(&instance.action_type)
+        .and_then(|definition| definition.node.icon.clone());
+    instance
+        .icon
+        .clone()
+        .filter(|icon| Some(icon) != type_icon.as_ref())
+        .or_else(|| registry.automatic_symbol(&instance.action_type, parameters, targets))
+        .or_else(|| instance.icon.clone())
+        .or(type_icon)
+}
+
 /// The face of an action whose type cannot run now: the compact
 /// missing-plugin face, or with `another_gesture_runs` the key's plain look
 /// with the action's own icon.
@@ -2107,6 +2158,7 @@ fn face_for(
     project: Option<&Project>,
     title: &Title<'_>,
     scope: &crate::WorkflowScope,
+    targets: &dyn crate::TargetKinds,
     another_gesture_runs: bool,
 ) -> KeyFace {
     match &binding.target {
@@ -2149,12 +2201,7 @@ fn face_for(
                         .with_system_detail(SystemText::NotInThisProfile),
                 );
             }
-            // The action's own icon, else its type's.
-            let symbol = instance.icon.clone().or_else(|| {
-                registry
-                    .definition(&instance.action_type)
-                    .and_then(|definition| definition.node.icon.clone())
-            });
+            let symbol = action_symbol(registry, instance, &parameters, targets);
             // The owning module may add context such as the active project.
             named(
                 registry

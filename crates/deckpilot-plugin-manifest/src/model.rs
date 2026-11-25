@@ -1330,6 +1330,12 @@ pub struct Action {
     /// data only, the user's own title and look always win.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<ActionTitle>,
+    /// Where the action makes sense (plugin API 1.11): some of
+    /// [`ACTION_CONTEXTS`], each at most once (`docs/action-contexts.md`).
+    /// Absent: all five, as before. Advisory: the app offers the action
+    /// where it belongs, and a use elsewhere is reported, never refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<Vec<String>>,
     /// Plugin API 1.14: not in the Action Library, never on a key or a
     /// workflow node. The app (the plugin's screen, its pickers, a
     /// connection test) and the plugin's own parameter `options` invoke
@@ -1344,6 +1350,13 @@ impl Action {
         self.internal == Some(true)
     }
 }
+
+/// The plugin API level that introduced `contributes.actions[].contexts`.
+pub const ACTION_CONTEXTS_API: ApiLevel = ApiLevel::new(1, 11);
+
+/// The contexts `contributes.actions[].contexts` may name (the core's
+/// `ActionContext`).
+pub const ACTION_CONTEXTS: [&str; 5] = ["key", "gesture", "display", "sequence", "workflow"];
 
 /// The plugin API level that introduced `contributes.actions[].title`.
 pub const TITLE_API: ApiLevel = ApiLevel::new(1, 8);
@@ -1614,6 +1627,28 @@ pub enum VariableValueKind {
     Integer,
     Boolean,
     Json,
+    /// Plugin API 1.12, host sources only: one object of a shape
+    /// (`{"type": "object", "shape": "repository"}`).
+    Object,
+    /// Plugin API 1.12, host sources only: objects of a shape by key
+    /// (`{"type": "map", "of": "repository"}`).
+    Map,
+}
+
+/// The shapes of structured variable values (plugin API 1.12): the
+/// core's closed list (`deckpilot_core::variables::Shape`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableShape {
+    Repository,
+}
+
+impl VariableShape {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Repository => "repository",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1621,7 +1656,29 @@ pub enum VariableValueKind {
 pub struct VariableValueType {
     #[serde(rename = "type")]
     pub kind: VariableValueKind,
+    /// The shape of an `object` (plugin API 1.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<VariableShape>,
+    /// The shape of a `map`'s objects (plugin API 1.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<VariableShape>,
 }
+
+impl VariableValueType {
+    /// Whether the type is `object` or `map`: never published by a
+    /// plugin, only a host source's.
+    pub fn is_structured(&self) -> bool {
+        matches!(
+            self.kind,
+            VariableValueKind::Object | VariableValueKind::Map
+        )
+    }
+}
+
+/// The plugin API level that introduced structured variables and the
+/// repository host sources (`host:project.repositories`,
+/// `host:project.repository`).
+pub const REPOSITORY_VARIABLES_API: ApiLevel = ApiLevel::new(1, 12);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -1661,8 +1718,8 @@ pub struct Variable {
 }
 
 /// Where the host takes a host-published variable's value from (X7):
-/// the id, key or name of the project in the context. Plugin API 1.9 has
-/// only these three.
+/// the id, key or name of the project in the context (plugin API 1.9),
+/// and its repositories (plugin API 1.12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VariableHostSource {
     #[serde(rename = "host:project.id")]
@@ -1671,6 +1728,14 @@ pub enum VariableHostSource {
     ProjectKey,
     #[serde(rename = "host:project.name")]
     ProjectName,
+    /// Every repository of the project, by key (`map<repository>`). Plugin
+    /// API 1.12.
+    #[serde(rename = "host:project.repositories")]
+    ProjectRepositories,
+    /// The project's default repository (`object<repository>`, decision
+    /// OD-3). Plugin API 1.12.
+    #[serde(rename = "host:project.repository")]
+    ProjectRepository,
 }
 
 impl VariableHostSource {
@@ -1679,6 +1744,45 @@ impl VariableHostSource {
             Self::ProjectId => "host:project.id",
             Self::ProjectKey => "host:project.key",
             Self::ProjectName => "host:project.name",
+            Self::ProjectRepositories => "host:project.repositories",
+            Self::ProjectRepository => "host:project.repository",
+        }
+    }
+
+    /// The value type a variable with this source declares.
+    pub fn value_type(self) -> VariableValueType {
+        let (kind, shape, of) = match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => {
+                (VariableValueKind::String, None, None)
+            }
+            Self::ProjectRepositories => (
+                VariableValueKind::Map,
+                None,
+                Some(VariableShape::Repository),
+            ),
+            Self::ProjectRepository => (
+                VariableValueKind::Object,
+                Some(VariableShape::Repository),
+                None,
+            ),
+        };
+        VariableValueType { kind, shape, of }
+    }
+
+    /// The plugin API level that introduced the source.
+    pub fn api(self) -> ApiLevel {
+        match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => PRIVILEGED_API,
+            Self::ProjectRepositories | Self::ProjectRepository => REPOSITORY_VARIABLES_API,
+        }
+    }
+
+    /// How the type is written in a manifest, for messages.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => "a string",
+            Self::ProjectRepositories => "`{\"type\": \"map\", \"of\": \"repository\"}`",
+            Self::ProjectRepository => "`{\"type\": \"object\", \"shape\": \"repository\"}`",
         }
     }
 }

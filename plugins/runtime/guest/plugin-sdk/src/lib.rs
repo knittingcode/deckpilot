@@ -105,7 +105,9 @@ pub use context::{
     StorageUsage, TranslateArg,
 };
 pub use controls::{Control, Controls, Input, MAX_INPUTS_PER_CONTROL};
-pub use definition::{Action, DefinitionError, Handler, Param, Plugin, StateHandler};
+pub use definition::{
+    Action, ActionContext, DefinitionError, Handler, Param, Plugin, StateHandler,
+};
 pub use output::{ActionResult, IntoValue, Output, PluginError, codes};
 
 pub use deckpilot_plugin_abi::capability::{AuthScheme, Header, LogLevel, NotifySeverity};
@@ -172,13 +174,22 @@ pub const API_LEVEL: ApiLevel = ApiLevel { major: 1, minor: 0 };
 /// guest (manifest-only), 1.9 the operations of DeckPilot's own bundled
 /// plugins ([`Context::run_tool`], [`Context::resource_param`],
 /// [`Context::current_project`]…) and [`Context::profile`], 1.10 nothing
-/// for the guest (the manifest's `contributes.gesturePresets`), 1.11 to
-/// 1.13 nothing in this SDK yet (each arrives with its own release), and
+/// for the guest (the manifest's `contributes.gesturePresets`), 1.11 the
+/// contexts an action declares ([`Action::contexts`]), 1.12 and 1.13
+/// nothing in this SDK yet (each arrives with its own release), and
 /// 1.14 connections ([`Context::connection`], [`Request::connection`],
 /// [`Context::report_connection_status`], [`Context::sleep`]).
 pub const LATEST_API_LEVEL: ApiLevel = ApiLevel {
     major: 1,
     minor: 14,
+};
+
+/// The plugin API level that introduced [`Action::contexts`] (the
+/// manifest's `contributes.actions[].contexts`): a plugin declaring
+/// contexts needs it.
+pub const ACTION_CONTEXTS_API_LEVEL: ApiLevel = ApiLevel {
+    major: 1,
+    minor: 11,
 };
 
 /// The plugin API level that introduced the manifest's

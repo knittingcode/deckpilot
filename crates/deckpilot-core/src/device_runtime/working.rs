@@ -95,6 +95,7 @@ impl Runtime {
         self.working
             .insert(device.clone(), WorkingLayout { profile, layout });
         self.refused.clear();
+        self.targets.clear();
         self.repair_navigation(device);
         self.follow_folders(device, true);
     }
@@ -107,6 +108,7 @@ impl Runtime {
             return false;
         }
         self.refused.clear();
+        self.targets.clear();
         self.repair_navigation(device);
         self.follow_folders(device, true);
         true

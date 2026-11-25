@@ -89,10 +89,12 @@ const INVALID_PARAMETERS: &str = "invalid-parameters";
 /// items and dashboard cards; `docs/marketplace/module-migration.md` §7)
 /// and their capability operations: `resource` parameters and
 /// `resource.resolve` are carried out, the others refused as not
-/// implemented until their host side lands (WP-A4 to WP-A6), and 1.10
-/// `contributes.gesturePresets` (data only; `convert::gesture_presets`).
+/// implemented until their host side lands (WP-A4 to WP-A6), 1.10
+/// `contributes.gesturePresets` (data only; `convert::gesture_presets`)
+/// and 1.11 `contributes.actions[].contexts` (advisory metadata,
+/// `engine::action_type`; `docs/action-contexts.md`).
 /// A plugin whose manifest asks for a higher minor is `incompatible`.
-const PLUGIN_API: ApiLevel = ApiLevel::new(1, 10);
+const PLUGIN_API: ApiLevel = ApiLevel::new(1, 11);
 /// Longest any invocation may take, whatever the manifest says.
 const MAX_INVOCATION: Duration = Duration::from_secs(600);
 /// Where the registry's verified state is kept (outside `plugins/`,
@@ -660,6 +662,7 @@ impl PluginService {
     /// The installed plugins and whether their actions can run, for the
     /// agent's module registry. Unreadable records are left out.
     pub fn catalog(&self) -> Vec<CatalogPlugin> {
+        use deckpilot_plugin_manifest::PermissionKind::Resources;
         let store = self.manager.store();
         let Ok(records) = store.plugins() else {
             return Vec::new();
@@ -694,6 +697,7 @@ impl PluginService {
                 visual_assets: Vec::new(),
                 project_context: false,
                 resources: false,
+                resource_paths: false,
                 wrap_around: None,
                 // Not installed: nothing to offer in the library. Keys
                 // that used its presets keep their bindings.
@@ -730,11 +734,11 @@ impl PluginService {
                     })
                     .filter(|(_, names)| !names.is_empty())
                     .collect();
-                let project_context = grants.iter().any(|g| {
-                    g.key.kind == deckpilot_plugin_manifest::PermissionKind::ProjectContext
-                        && g.key.key.is_empty()
-                        && g.status == deckpilot_plugin_store::GrantStatus::Granted
-                });
+                let project_context = granted(
+                    &grants,
+                    deckpilot_plugin_manifest::PermissionKind::ProjectContext,
+                    "",
+                );
                 let wrap_around = project_context.then(|| {
                     store
                         .settings(&record.id)
@@ -760,11 +764,8 @@ impl PluginService {
                     project_context,
                     wrap_around,
                     gesture_presets: convert::gesture_presets(manifest),
-                    resources: grants.iter().any(|g| {
-                        g.key.kind == deckpilot_plugin_manifest::PermissionKind::Resources
-                            && g.key.key.is_empty()
-                            && g.status == deckpilot_plugin_store::GrantStatus::Granted
-                    }),
+                    resources: granted(&grants, Resources, ""),
+                    resource_paths: granted(&grants, Resources, "paths"),
                 })
             })
             .chain(gone)
@@ -3416,6 +3417,20 @@ fn module_matches_record(
             &deckpilot_plugin_package::sha256(module),
         )
         .map_err(|e| e.to_string())
+}
+
+/// Whether `grants` hold the granted grant `kind:key` (`key` empty for the
+/// permission itself, `paths` for `resources:paths`).
+fn granted(
+    grants: &[deckpilot_plugin_store::StoredGrant],
+    kind: deckpilot_plugin_manifest::PermissionKind,
+    key: &str,
+) -> bool {
+    grants.iter().any(|g| {
+        g.key.kind == kind
+            && g.key.key == key
+            && g.status == deckpilot_plugin_store::GrantStatus::Granted
+    })
 }
 
 #[cfg(test)]

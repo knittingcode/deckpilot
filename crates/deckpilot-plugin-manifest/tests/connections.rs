@@ -593,6 +593,23 @@ fn an_action_is_never_replaced_by_an_internal_one() {
 }
 
 #[test]
+fn an_internal_action_declares_no_contexts() {
+    // Contexts (1.11) place an action on a deck; an internal one is never
+    // there, so even an otherwise valid list is refused.
+    let mut value = fixture();
+    value["contributes"]["actions"][0]["contexts"] = json!(["key"]);
+    refused(
+        &value,
+        "contributes.actions[0].contexts",
+        IssueCode::Conflict,
+    );
+    // The same list on the plugin's ordinary action is fine.
+    let mut value = fixture();
+    value["contributes"]["actions"][1]["contexts"] = json!(["key"]);
+    parse(&value).validate_bundled().unwrap();
+}
+
+#[test]
 fn naming_the_new_open_url_members_at_all_needs_their_level() {
     // `connections: false` is still a 1.14 field.
     let mut value = fixture();

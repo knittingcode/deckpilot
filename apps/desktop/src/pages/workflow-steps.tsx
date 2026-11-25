@@ -95,6 +95,7 @@ import {
   validateWorkflow,
 } from "@/lib/workflow-model"
 import { runBlockedReason } from "@/workflow-builder/run-model"
+import { shownActionIcon } from "@/lib/system-actions"
 
 const CONDITIONS: { value: string; label: TranslationKey }[] = [
   { value: "always", label: "workflows:steps.condition.always" },
@@ -535,7 +536,7 @@ function SortableStep({
           />
         ) : (
           <>
-            <ActionIcon name={action?.icon} className="size-4" />
+            <ActionIcon name={shownActionIcon(action)} className="size-4" />
             <Select
               value={step.action}
               onValueChange={(value) => {

@@ -91,6 +91,33 @@ describe("assignableTo", () => {
     expect(assignableTo({ type: "json" }, { type: "code", language: "json" })).toBe(true)
     expect(assignableTo({ type: "json" }, { type: "lines" })).toBe(false)
   })
+
+  it("passes structured values whole only where JSON is expected", () => {
+    const json: ParameterKind = { type: "code", language: "json" }
+    for (const type of [
+      { type: "map", of: "repository" },
+      { type: "object", shape: "repository" },
+    ] as const) {
+      expect(assignableTo(type, json)).toBe(true)
+      expect(assignableTo(type, text)).toBe(false)
+      expect(assignableTo(type, { type: "code", language: "shell" })).toBe(false)
+      expect(assignableTo(type, { type: "choice", options: [] })).toBe(false)
+    }
+  })
+})
+
+describe("structured previews", () => {
+  it("say how many objects, never a member", () => {
+    const shown = describeStatus({
+      status: "structured",
+      valueType: { type: "map", of: "repository" },
+      entries: 3,
+      source: { type: "system" },
+    })
+    expect(shown.tone).toBe("ok")
+    expect(shown.label).toContain("3")
+    expect(describeStatus({ status: "missing", reason: "noDefaultRepository" }).detail).toBeTruthy()
+  })
 })
 
 describe("matchesFilter", () => {

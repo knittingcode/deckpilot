@@ -315,6 +315,8 @@ fn builtin_variables_have_explicit_owners() {
         profile: &work,
         os: Os::Linux,
         live: &NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     let key = VariableId::new("projects.current.key").unwrap();
     assert!(!matches!(

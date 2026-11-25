@@ -606,6 +606,9 @@ fn action_rules(
     never("title", action.title.is_some());
     never("editorNavigation", action.editor_navigation.is_some());
     never("replacedBy", action.replaced_by.is_some());
+    // Contexts (plugin API 1.11) say where on a deck the action belongs;
+    // an internal action belongs nowhere on one.
+    never("contexts", action.contexts.is_some());
     if action.changes_context() {
         c.error(
             format!("{path}.node.changesContext"),
