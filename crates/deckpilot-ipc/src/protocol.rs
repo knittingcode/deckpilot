@@ -2766,7 +2766,7 @@ mod tests {
     }
 
     #[test]
-    fn calls_need_protocol_19_and_carry_no_private_text() {
+    fn calls_need_protocol_19() {
         assert!(!Capability::of_protocol(18).contains(&Capability::Calls));
         assert!(Capability::of_protocol(19).contains(&Capability::Calls));
         assert_eq!(serde_json::to_value(Capability::Calls).unwrap(), "calls");
@@ -2791,6 +2791,18 @@ mod tests {
             assert_eq!(request.since_protocol(), 19);
             request.validate().unwrap();
         }
+        let event = AgentEvent::CallsChanged {
+            status: Box::default(),
+        };
+        assert!(event.desktop_only());
+        assert!(!AgentEvent::ShowWindow.desktop_only());
+        assert!(event.clone().for_protocol(18).is_none());
+        assert!(event.for_protocol(19).is_some());
+    }
+
+    /// The Calls requests refuse a bad copy name and an over-long serial.
+    #[test]
+    fn calls_requests_refuse_bad_names_and_serials() {
         let json = serde_json::to_value(Request::RestoreCallsLayout {
             model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
             copy_name: "Mine".into(),
@@ -2831,13 +2843,12 @@ mod tests {
             .is_err()
         );
         assert!(crate::calls::valid_copy_name("  Rozmowy (moja wersja)  "));
-        let event = AgentEvent::CallsChanged {
-            status: Box::default(),
-        };
-        assert!(event.desktop_only());
-        assert!(!AgentEvent::ShowWindow.desktop_only());
-        assert!(event.clone().for_protocol(18).is_none());
-        assert!(event.for_protocol(19).is_some());
+    }
+
+    /// The Calls status and each device's entry carry no private text: no
+    /// title, participant or process, and a preview only as its page kind.
+    #[test]
+    fn calls_status_and_device_entries_carry_no_private_text() {
         // The status names no title, participant or process.
         let status = serde_json::to_value(crate::calls::CallsStatus::default()).unwrap();
         let keys: Vec<&String> = status.as_object().unwrap().keys().collect();
