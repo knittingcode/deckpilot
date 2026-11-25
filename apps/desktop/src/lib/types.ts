@@ -1998,7 +1998,14 @@ export interface CatalogEntry {
   declaredScope?: DeclaredScope
   /** For a structured variable: the scalar members of its shape (protocol 18). */
   members?: CatalogMember[]
-  /** For one member of a structured variable: that variable's reference (protocol 18). */
+  /** For a map: its keys in the context's project, in order (protocol 18). */
+  mapKeys?: string[]
+  /** Listed for its members only; never offered itself (protocol 18). */
+  membersOnly?: boolean
+  /**
+   * For one member of a structured variable: that variable's reference
+   * (protocol 18). Composed by the desktop app from `members` and `mapKeys`.
+   */
   memberOf?: string
 }
 

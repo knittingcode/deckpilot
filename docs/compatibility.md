@@ -252,12 +252,17 @@ database, document or export change.
 
 IPC protocol 18 (unreleased): structured variables (capability
 `structuredVariables`). `CatalogEntry.valueType` may be `object` or `map`
-with the shape's `members`, catalogs list member entries (`memberOf`), a
-preview of a whole structured value is `structured` (a count, never a
-member), and the reasons `unknownMember`, `repositoryNotInProject` and
-`noDefaultRepository` are new. An agent of 18 answers an older client with
-structured types as `json` without members, no member entries, a
-structured preview as `redacted` JSON and the nearest older reasons
+with the shape's `members` and, for a map, its keys in the context's
+project (`mapKeys`); each structured variable is listed once and the app
+composes its member entries (`memberOf`), so a catalog stays within one
+message with up to 256 repositories. The title picker's catalog marks a
+structured variable listed for its display-safe members only
+(`membersOnly`). A preview of a whole structured value is `structured` (a
+count, never a member), and the reasons `unknownMember`,
+`repositoryNotInProject` and `noDefaultRepository` are new. An agent of 18
+answers an older client with structured types as `json` without members
+or keys, no members-only entries, a structured preview as `redacted` JSON
+and the nearest older reasons
 (`Response::for_protocol`); no request changes, so an app of 18 works with
 an agent of 17 as before (without repository variables).
 
@@ -499,7 +504,7 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | protocol 12 app or agent with a protocol 13 peer (the app's language) | IPC test `a_protocol_12_agent_is_never_told_the_locale`; agent test `a_protocol_12_app_never_sets_the_language` (`tests/locale.rs`); IPC test `the_locale_is_protocol_13_and_only_a_tag` | the client does not send `setLocale` below protocol 13 and refuses it locally; the agent refuses it from an older connection; the status of an older agent has no `locale`; keys and plugin texts stay English; everything else works as before |
 | protocol 13 app or agent with a protocol 14 peer (simulated presses) | IPC test `a_protocol_13_agent_is_never_asked_to_simulate_a_press`; agent test `a_protocol_13_app_cannot_simulate` (`tests/simulate_press.rs`); IPC test `simulated_presses_are_protocol_14`; desktop test `simulated_presses_answer_ran_confirmation_or_refused` | the client does not send `simulatePress` below protocol 14 and refuses it locally (the app answers `refused` with code `unsupported`); the agent refuses it from an older connection; nothing is pressed; everything else works as before |
 | protocol 15 app or agent with a protocol 16 peer (live preview) | IPC test `a_protocol_15_agent_is_never_asked_for_a_live_preview`; agent test `a_protocol_15_connection_cannot_preview` (`tests/live_preview.rs`); IPC test `live_preview_is_protocol_16`; frontend `use-live-preview.test.tsx` | the client does not send the live preview requests below protocol 16 and refuses them locally; the agent refuses them from an older connection; the editor says changes reach the device when saved; everything else works as before |
-| protocol 17 app or agent with a protocol 18 peer (structured variables) | IPC tests `structured_variables_need_protocol_18` (`protocol.rs`) and `a_protocol_17_agent_has_no_structured_variables` (`tests/peers.rs`) | an older app receives structured types as `json` without members, no member entries, structured previews as `redacted` and the nearest older missing reasons; nothing it sends changes; a newer app with an older agent sees no repository variables |
+| protocol 17 app or agent with a protocol 18 peer (structured variables) | IPC tests `structured_variables_need_protocol_18` (`protocol.rs`) and `a_protocol_17_agent_has_no_structured_variables` (`tests/peers.rs`) | an older app receives structured types as `json` without members or keys, no members-only entries, structured previews as `redacted` and the nearest older missing reasons; nothing it sends changes; a newer app with an older agent sees no repository variables |
 | protocol 16 app or agent with a protocol 17 peer (variables in key titles, key labels) | IPC test `a_protocol_16_agent_is_never_asked_to_resolve_display_templates` (`tests/peers.rs`) | the client does not send `listDisplayVariables` or `resolveDisplayTemplates` below protocol 17 and refuses them locally; the app shows titles resolved by the core alone; labels travel only as optional fields that an older peer ignores; everything else works as before |
 | agent temporarily unavailable | desktop tests (`stopped` state), connect timeouts (`deckpilot-ipc`) | stopped state; no request hangs |
 | agent restarted during a running workflow | agent test `runs_of_a_stopped_agent_are_recorded_as_interrupted` | run recorded as interrupted; history kept |

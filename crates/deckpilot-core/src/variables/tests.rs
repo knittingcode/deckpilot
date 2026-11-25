@@ -751,6 +751,8 @@ fn entry(reference: &str, group: VariableGroup, value_type: VariableType) -> Cat
         deprecated: None,
         declared_scope: None,
         members: Vec::new(),
+        map_keys: Vec::new(),
+        members_only: false,
         member_of: None,
     }
 }

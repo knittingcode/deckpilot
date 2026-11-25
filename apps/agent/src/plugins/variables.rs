@@ -42,9 +42,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use deckpilot_core::variables::{
-    DeclaredScope, MissingReason, Requirement, Resolution, Shape, ValueSource, VariableDeclaration,
-    VariableEnvironment, VariableId, VariableSource, VariableType, VariableValue,
-    default_repository_value, repositories_value,
+    DeclaredScope, Filesystem, FolderProbe, MemberPath, MissingReason, Requirement, Resolution,
+    Shape, ValueSource, VariableDeclaration, VariableEnvironment, VariableId, VariableSource,
+    VariableType, VariableValue, default_repository_value, repositories_value,
 };
 use deckpilot_plugin_manifest::{
     Variable, VariableHostSource, VariableRequirement, VariableScope, VariableShape,
@@ -273,6 +273,9 @@ pub(crate) struct PluginVariableSource {
     /// The plugin is enabled and holds `projectContext`: only then do
     /// host-published variables have a value.
     host_context: bool,
+    /// Tells whether a repository's folder exists: the filesystem, asked
+    /// only for a read of `exists` or a whole value.
+    probe: Arc<dyn FolderProbe>,
 }
 
 impl PluginVariableSource {
@@ -283,7 +286,16 @@ impl PluginVariableSource {
             values,
             host: BTreeMap::new(),
             host_context: false,
+            probe: Arc::new(Filesystem),
         }
+    }
+
+    /// The same source, folders looked at by `probe`.
+    #[cfg(test)]
+    #[must_use]
+    fn with_probe(mut self, probe: Arc<dyn FolderProbe>) -> Self {
+        self.probe = probe;
+        self
     }
 
     /// The host-published variables among `variables`, with a value only
@@ -300,7 +312,14 @@ impl PluginVariableSource {
 }
 
 /// The value of a host-published variable: the project in the context.
-fn host_value(source: VariableHostSource, environment: &VariableEnvironment<'_>) -> Resolution {
+/// For a read of `member` of a structured one, only what it needs: one
+/// repository, its folder looked at only for `exists`.
+fn host_value(
+    source: VariableHostSource,
+    member: Option<&MemberPath>,
+    probe: &dyn FolderProbe,
+    environment: &VariableEnvironment<'_>,
+) -> Resolution {
     let project = match environment.project() {
         Ok(project) => project,
         Err(resolution) => return resolution,
@@ -311,10 +330,10 @@ fn host_value(source: VariableHostSource, environment: &VariableEnvironment<'_>)
         VariableHostSource::ProjectKey => VariableValue::String(project.key.to_string()),
         VariableHostSource::ProjectName => VariableValue::String(project.name.clone()),
         VariableHostSource::ProjectRepositories => {
-            VariableValue::Map(repositories_value(project, machine, paths))
+            VariableValue::Map(repositories_value(project, machine, paths, member, probe))
         }
         VariableHostSource::ProjectRepository => {
-            match default_repository_value(project, machine, paths) {
+            match default_repository_value(project, machine, paths, member, probe) {
                 Ok(object) => VariableValue::Object(object),
                 Err(reason) => return Resolution::Missing(reason),
             }
@@ -333,6 +352,26 @@ impl VariableSource for PluginVariableSource {
         declaration: &VariableDeclaration,
         environment: &VariableEnvironment<'_>,
     ) -> Resolution {
+        self.value(declaration, None, environment)
+    }
+
+    fn resolve_member(
+        &self,
+        declaration: &VariableDeclaration,
+        member: &MemberPath,
+        environment: &VariableEnvironment<'_>,
+    ) -> Resolution {
+        self.value(declaration, Some(member), environment)
+    }
+}
+
+impl PluginVariableSource {
+    fn value(
+        &self,
+        declaration: &VariableDeclaration,
+        member: Option<&MemberPath>,
+        environment: &VariableEnvironment<'_>,
+    ) -> Resolution {
         let relative = declaration
             .id
             .as_str()
@@ -340,7 +379,7 @@ impl VariableSource for PluginVariableSource {
             .and_then(|rest| rest.strip_prefix('.'));
         if let Some(source) = relative.and_then(|id| self.host.get(id)) {
             return if self.host_context {
-                host_value(*source, environment)
+                host_value(*source, member, self.probe.as_ref(), environment)
             } else {
                 Resolution::Missing(MissingReason::NoValue)
             };
@@ -694,5 +733,231 @@ mod tests {
             ),
             Resolution::Missing(MissingReason::NoValue)
         );
+    }
+
+    /// Counts the folders it is asked about.
+    #[derive(Default)]
+    struct CountingProbe(std::sync::atomic::AtomicUsize);
+
+    impl CountingProbe {
+        fn take(&self) -> usize {
+            self.0.swap(0, std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl FolderProbe for CountingProbe {
+        fn is_dir(&self, folder: &str) -> bool {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::path::Path::new(folder).is_dir()
+        }
+    }
+
+    fn repository_variables() -> [Variable; 2] {
+        [
+            repository_variable(
+                "current.repositories",
+                "host:project.repositories",
+                &serde_json::json!({"type": "map", "of": "repository"}),
+            ),
+            repository_variable(
+                "current.repository",
+                "host:project.repository",
+                &serde_json::json!({"type": "object", "shape": "repository"}),
+            ),
+        ]
+    }
+
+    /// A profile whose one project has `count` repositories with the
+    /// longest keys and names, each bound to an existing folder; the first
+    /// is the default.
+    fn many_repositories(count: usize) -> (deckpilot_core::Profile, deckpilot_core::MachineConfig) {
+        use deckpilot_core::project::{MAX_REPOSITORY_KEY_CHARS, MAX_REPOSITORY_NAME_CHARS};
+        use deckpilot_core::{
+            MachineConfig, MachineResourceBinding, Os, Profile, Project, ProjectKey, Repository,
+            RepositoryId, RepositoryKey, ResourceKey, ResourceKind,
+        };
+        let mut profile = Profile::new("Work");
+        let mut project = Project::new(ProjectKey::new("SHOP").unwrap(), "Shop");
+        let mut machine = MachineConfig::new(Os::current());
+        let folder = std::env::temp_dir().to_string_lossy().into_owned();
+        for index in 0..count {
+            let mut key = format!("r{index:03}_");
+            key.push_str(&"k".repeat(MAX_REPOSITORY_KEY_CHARS - key.len()));
+            let resource = ResourceKey::new(format!("shop.{key}")).unwrap();
+            machine.set_binding(MachineResourceBinding {
+                key: resource.clone(),
+                kind: ResourceKind::Directory,
+                value: folder.clone(),
+            });
+            project.repositories.push(Repository {
+                id: RepositoryId::new(),
+                key: RepositoryKey::new(key).unwrap(),
+                name: format!("{index:03} {}", "N".repeat(MAX_REPOSITORY_NAME_CHARS - 4)),
+                resource,
+                description: Some("d".repeat(200)),
+                remotes: Vec::new(),
+            });
+        }
+        project.default_repository = project.repositories.first().map(|r| r.id);
+        profile.projects.push(project);
+        (profile, machine)
+    }
+
+    /// A member read builds only what it needs (review of #460): one
+    /// repository, and its folder looked at only for `exists`, so a key
+    /// title never stalls on an unmounted network volume.
+    #[test]
+    fn a_member_read_looks_at_no_folder_but_for_exists() {
+        use deckpilot_core::variables::Shape;
+        use deckpilot_core::variables::{
+            NoLiveState, ProjectSource, ResolutionContext, VariableRegistry,
+        };
+        use deckpilot_core::{ModuleId, Os};
+
+        let (profile, machine) = many_repositories(8);
+        let variables = repository_variables();
+        let namespace = "plugins.deckpilot.projects";
+        let probe = Arc::new(CountingProbe::default());
+        let source = PluginVariableSource::new(
+            "deckpilot.projects".into(),
+            namespace.into(),
+            PublishedVariables::default(),
+        )
+        .with_host_context(&variables, true)
+        .with_probe(probe.clone());
+        let mut registry = VariableRegistry::new();
+        registry
+            .register_module(
+                &ModuleId::new("deckpilot.projects").unwrap(),
+                &declarations(namespace, &variables),
+                Some(Arc::new(source)),
+            )
+            .unwrap();
+        let context = ResolutionContext::preview(profile.id)
+            .with_project(Some(profile.projects[0].id), ProjectSource::Application);
+        let key = profile.projects[0].repositories[3].key.as_str().to_owned();
+        for private_paths in [true, false] {
+            let environment = VariableEnvironment {
+                context: &context,
+                profile: &profile,
+                os: Os::current(),
+                live: &NoLiveState,
+                machine: Some(&machine),
+                private_paths,
+            };
+            let resolve = |id: &str| {
+                registry.resolve(
+                    &VariableId::reference(format!("{namespace}.{id}")).unwrap(),
+                    &environment,
+                )
+            };
+            for member in Shape::Repository.members() {
+                let path = member.path;
+                let expected = usize::from(path == "exists");
+                let _ = resolve(&format!("current.repositories.{key}.{path}"));
+                assert_eq!(probe.take(), expected, "repositories.{key}.{path}");
+                let _ = resolve(&format!("current.repository.{path}"));
+                assert_eq!(probe.take(), expected, "repository.{path}");
+            }
+            assert!(matches!(
+                resolve(&format!("current.repositories.{key}.name")),
+                Resolution::Value { value: VariableValue::String(name), .. }
+                    if name == profile.projects[0].repositories[3].name
+            ));
+            // The whole map looks at every folder once; one entry at its own.
+            let _ = resolve("current.repositories");
+            assert_eq!(probe.take(), 8);
+            let _ = resolve(&format!("current.repositories.{key}"));
+            assert_eq!(probe.take(), 1);
+        }
+    }
+
+    /// Both catalogs of a project with the most repositories, the longest
+    /// keys and names, fit one IPC message (review of #460: one entry per
+    /// member of each repository did not, from about a dozen on, and the
+    /// whole picker came back empty). The app composes every member entry.
+    #[test]
+    fn the_catalogs_of_the_most_repositories_fit_one_message() {
+        use deckpilot_core::ModuleId;
+        use deckpilot_core::project::MAX_REPOSITORIES_PER_PROJECT;
+        use deckpilot_core::variables::Shape;
+        use deckpilot_core::variables::{
+            CatalogFilter, ProjectSource, ResolutionContext, VariableRegistry, catalog_listing,
+            display_context, display_listing, expand_members,
+        };
+        use deckpilot_ipc::framing::MAX_MESSAGE_BYTES;
+        use deckpilot_ipc::{Response, ServerMessage};
+
+        let wire = |entries: Vec<deckpilot_core::variables::CatalogEntry>| {
+            serde_json::to_vec(&ServerMessage::Response {
+                id: u64::MAX,
+                response: Response::Variables { entries },
+            })
+            .unwrap()
+            .len()
+        };
+        let (profile, _) = many_repositories(MAX_REPOSITORIES_PER_PROJECT);
+        let project = &profile.projects[0];
+        let variables = repository_variables();
+        let namespace = "plugins.deckpilot.projects";
+        let mut registry = VariableRegistry::new();
+        registry
+            .register_module(
+                &ModuleId::new("deckpilot.projects").unwrap(),
+                &declarations(namespace, &variables),
+                Some(Arc::new(
+                    PluginVariableSource::new(
+                        "deckpilot.projects".into(),
+                        namespace.into(),
+                        PublishedVariables::default(),
+                    )
+                    .with_host_context(&variables, true),
+                )),
+            )
+            .unwrap();
+        let all = CatalogFilter::default();
+        let members = Shape::Repository.members().len();
+
+        // `listVariables`, as `Agent::list_variables` answers it.
+        let context = ResolutionContext::preview(profile.id)
+            .with_project(Some(project.id), ProjectSource::Application);
+        let listed = catalog_listing(registry.catalog(&context, false), Some(project), &all);
+        let size = wire(listed.clone());
+        assert!(size <= MAX_MESSAGE_BYTES, "listVariables: {size} bytes");
+        let expanded = expand_members(listed, &all);
+        let composed = expanded.iter().filter(|e| e.member_of.is_some()).count();
+        assert_eq!(composed, (MAX_REPOSITORIES_PER_PROJECT + 1) * members);
+        // One entry per member, as before, would not have fitted.
+        assert!(wire(expanded) > MAX_MESSAGE_BYTES);
+
+        // `listDisplayVariables`, as `Agent::list_display_variables`.
+        let context = display_context(profile.id, Some(project.id));
+        let listed = display_listing(
+            registry.catalog(&context, false),
+            Some(project),
+            &registry,
+            &all,
+        );
+        let size = wire(listed.clone());
+        assert!(
+            size <= MAX_MESSAGE_BYTES,
+            "listDisplayVariables: {size} bytes"
+        );
+        let safe = Shape::Repository
+            .members()
+            .iter()
+            .filter(|m| m.display_safe)
+            .count();
+        let expanded = expand_members(listed, &all);
+        assert!(expanded.iter().all(|e| !e.value_type.is_structured()));
+        assert_eq!(
+            expanded.iter().filter(|e| e.member_of.is_some()).count(),
+            (MAX_REPOSITORIES_PER_PROJECT + 1) * safe
+        );
+        assert!(expanded.iter().all(|e| {
+            let reference = e.reference.to_string();
+            let member = reference.rsplit('.').next().unwrap_or_default();
+            member != "path" && member != "id" && member != "url"
+        }));
     }
 }

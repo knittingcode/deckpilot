@@ -30,12 +30,14 @@ use crate::{
 };
 
 pub use catalog::{
-    CatalogEntry, CatalogFilter, CatalogMember, ReferenceAvailability, VariableGroup, with_members,
+    CatalogEntry, CatalogFilter, CatalogMember, ReferenceAvailability, VariableGroup,
+    catalog_listing, expand_members, with_members,
 };
 pub use display::{
     DisplayDependency, DisplayEnvironment, DisplayTemplates, DisplayText, MarkerSpan,
     RecordingTemplates, ResolvedTemplates, TextKey, TextSlot, UNRESOLVED_MARKER, UnresolvedReason,
-    UnresolvedReference, display_context, display_listed, display_safe, resolve_display_template,
+    UnresolvedReference, display_context, display_listed, display_listing, display_members,
+    display_safe, resolve_display_template,
 };
 pub use expression::{
     ExpressionError, ExpressionPart, SystemVariable, VariableRef, parse_expression,
@@ -55,8 +57,9 @@ pub use resolution::{
     current_descriptor, preview, preview_reference, select_value,
 };
 pub use shape::{
-    MapEntry, MapValue, Member, MemberPath, MemberTarget, MemberValue, Members, ObjectValue,
-    Scalar, Shape, default_repository_value, member_target, repositories_value, repository_members,
+    Filesystem, FolderProbe, MapEntry, MapValue, Member, MemberPath, MemberTarget, MemberValue,
+    Members, ObjectValue, Scalar, Shape, default_repository_value, member_target,
+    repositories_value, repository_members,
 };
 
 /// The type of a shared variable, a system variable or a resolved reference.

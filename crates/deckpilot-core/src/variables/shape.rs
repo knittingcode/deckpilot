@@ -385,6 +385,30 @@ pub fn member_target(value_type: VariableType, path: &MemberPath) -> MemberTarge
         .map_or(MemberTarget::Unknown, MemberTarget::Scalar)
 }
 
+/// Tells whether a folder of this computer exists: the only filesystem
+/// access a structured value needs (a repository's `exists`). On an
+/// unmounted network volume it can take long, so it is asked only for an
+/// `exists` that is read (or a whole value), never for any other member.
+pub trait FolderProbe: Send + Sync {
+    fn is_dir(&self, folder: &str) -> bool;
+}
+
+/// The filesystem itself.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Filesystem;
+
+impl FolderProbe for Filesystem {
+    fn is_dir(&self, folder: &str) -> bool {
+        std::path::Path::new(folder).is_dir()
+    }
+}
+
+/// Whether a read of `member` (a member of one object, `None` for the whole
+/// object) needs to know if the folder exists.
+fn needs_exists(member: Option<&str>) -> bool {
+    member.is_none_or(|member| member == "exists")
+}
+
 /// The members of `repository` of `project` (`docs/variables.md` §2.8):
 /// its id, key, name, description, whether it is the project's default,
 /// its folder from `machine` (the binding of its resource, a directory)
@@ -393,17 +417,21 @@ pub fn member_target(value_type: VariableType, path: &MemberPath) -> MemberTarge
 /// it exists is still told), and when the resource is unbound or bound to
 /// something other than a directory. No connection or provider id
 /// (decision K4).
+///
+/// `exists` is asked of `probe` only with `probe` given; without it the
+/// member is left out (it reads `null`): what a read of another member
+/// builds, so that it never touches the filesystem.
 pub fn repository_members(
     project: &crate::Project,
     repository: &crate::Repository,
     machine: Option<&crate::MachineConfig>,
     private_paths: bool,
+    probe: Option<&dyn FolderProbe>,
 ) -> Members {
     let folder = machine
         .and_then(|machine| machine.binding(&repository.resource))
         .filter(|binding| binding.kind == crate::ResourceKind::Directory)
         .map(|binding| binding.value.as_str());
-    let exists = folder.is_some_and(|folder| std::path::Path::new(folder).is_dir());
     let default = project.default_repository().map(|r| r.id);
     let remote = repository.primary_remote().map_or(Scalar::Null, |remote| {
         Scalar::Object(BTreeMap::from([
@@ -415,7 +443,7 @@ pub fn repository_members(
             ),
         ]))
     });
-    BTreeMap::from([
+    let mut members = BTreeMap::from([
         ("id".to_owned(), Scalar::String(repository.id.to_string())),
         (
             "key".to_owned(),
@@ -434,27 +462,47 @@ pub fn repository_members(
             "path".to_owned(),
             Scalar::text(folder.filter(|_| private_paths)),
         ),
-        ("exists".to_owned(), Scalar::Boolean(exists)),
         ("remote".to_owned(), remote),
-    ])
+    ]);
+    if let Some(probe) = probe {
+        let exists = folder.is_some_and(|folder| probe.is_dir(folder));
+        members.insert("exists".to_owned(), Scalar::Boolean(exists));
+    }
+    members
 }
 
 /// Every repository of `project` (the stored ones, or the one its
 /// `repository` role stands for), by key in the user's order:
 /// `projects.current.repositories`.
+///
+/// With `member` (`cms.name`, a [`MemberPath`] of the map), only what a
+/// read of it needs: the one entry it names (none when the project has no
+/// such repository), its folder looked at only for `cms.exists` or the
+/// whole `cms`. Without, every entry, each folder looked at once.
 pub fn repositories_value(
     project: &crate::Project,
     machine: Option<&crate::MachineConfig>,
     private_paths: bool,
+    member: Option<&MemberPath>,
+    probe: &dyn FolderProbe,
 ) -> MapValue {
+    let (key, rest) = match member.map(MemberPath::as_str) {
+        None => (None, None),
+        Some(path) => match path.split_once('.') {
+            Some((key, rest)) => (Some(key), Some(rest)),
+            None => (Some(path), None),
+        },
+    };
+    let probe = needs_exists(rest).then_some(probe);
     MapValue {
         shape: Shape::Repository,
         entries: project
             .effective_repositories()
             .iter()
+            .filter(|repository| key.is_none_or(|key| repository.key.as_str() == key))
             .map(|repository| MapEntry {
                 key: repository.key.as_str().to_owned(),
-                members: repository_members(project, repository, machine, private_paths),
+                members: repository_members(project, repository, machine, private_paths, probe),
             })
             .collect(),
     }
@@ -466,15 +514,21 @@ pub fn repositories_value(
 /// reordering never changes what a key does. Without one: no repository at
 /// all ([`super::MissingReason::NoValue`]), or several and none the default
 /// ([`super::MissingReason::NoDefaultRepository`]).
+///
+/// With `member`, its folder is looked at only when that member is
+/// `exists`.
 pub fn default_repository_value(
     project: &crate::Project,
     machine: Option<&crate::MachineConfig>,
     private_paths: bool,
+    member: Option<&MemberPath>,
+    probe: &dyn FolderProbe,
 ) -> Result<ObjectValue, super::MissingReason> {
+    let probe = needs_exists(member.map(MemberPath::as_str)).then_some(probe);
     match project.default_repository() {
         Some(repository) => Ok(ObjectValue {
             shape: Shape::Repository,
-            members: repository_members(project, &repository, machine, private_paths),
+            members: repository_members(project, &repository, machine, private_paths, probe),
         }),
         None if project.effective_repositories().is_empty() => Err(super::MissingReason::NoValue),
         None => Err(super::MissingReason::NoDefaultRepository),

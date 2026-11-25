@@ -179,13 +179,19 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// (`projects.current.repositories`, `map<repository>`) and its default
 /// repository (`projects.current.repository`, `object<repository>`), read
 /// member by member (`….repositories.cms.name`). `CatalogEntry.valueType`
-/// may be `object` or `map` with its shape, with the shape's `members`;
-/// catalogs list one entry per scalar member (`memberOf`); previews
-/// summarise a whole structured value (`structured`: how many objects,
-/// never a member); the reasons `unknownMember`, `repositoryNotInProject`
-/// and `noDefaultRepository` are new. A client of protocol 17 or older
-/// receives structured types as `json` without members, no member entries,
-/// a structured preview as `redacted` JSON and the nearest older reason
+/// may be `object` or `map` with its shape, with the shape's `members`
+/// and, for a map, its keys in the context's project (`mapKeys`). Each
+/// structured variable is listed once: a client composes the member
+/// references (`<reference>.<key>.<member>`,
+/// `deckpilot_core::variables::expand_members`), so a catalog grows by one
+/// key per repository and fits one message. The title picker's catalog
+/// lists a structured variable for its display-safe members only
+/// (`membersOnly`). Previews summarise a whole structured value
+/// (`structured`: how many objects, never a member); the reasons
+/// `unknownMember`, `repositoryNotInProject` and `noDefaultRepository` are
+/// new. A client of protocol 17 or older receives structured types as
+/// `json` without members or keys, no members-only entries, a structured
+/// preview as `redacted` JSON and the nearest older reason
 /// ([`Response::for_protocol`]); no request changes.
 pub const PROTOCOL_VERSION: u32 = 18;
 
@@ -2511,6 +2517,8 @@ mod tests {
                 deprecated: None,
                 declared_scope: None,
                 members: Vec::new(),
+                map_keys: Vec::new(),
+                members_only: false,
                 member_of: None,
             }
         };
@@ -2679,12 +2687,25 @@ mod tests {
             } else {
                 Vec::new()
             },
+            map_keys: Vec::new(),
+            members_only: false,
             member_of: member_of.map(str::to_owned),
         };
         let repositories = "projects.current.repositories";
         let variables = Response::Variables {
             entries: vec![
-                entry(repositories, map, None),
+                // The configuration catalog's form: members and keys once.
+                CatalogEntry {
+                    map_keys: vec!["cms".into(), "api".into()],
+                    ..entry(repositories, map, None)
+                },
+                // The title picker's: for its members only.
+                CatalogEntry {
+                    map_keys: vec!["cms".into()],
+                    members_only: true,
+                    ..entry("projects.current.repository", map, None)
+                },
+                // Never sent by an agent; a client composes it.
                 entry(
                     "projects.current.repositories.cms.name",
                     VariableType::String,
@@ -2698,15 +2719,25 @@ mod tests {
             serde_json::json!({"type": "map", "of": "repository"})
         );
         assert_eq!(json["entries"][0]["members"][0]["path"], "id");
-        assert_eq!(json["entries"][1]["memberOf"], repositories);
+        assert_eq!(
+            json["entries"][0]["mapKeys"],
+            serde_json::json!(["cms", "api"])
+        );
+        assert!(json["entries"][0].get("membersOnly").is_none());
+        assert_eq!(json["entries"][1]["membersOnly"], true);
+        assert_eq!(json["entries"][2]["memberOf"], repositories);
         let Response::Variables { entries } = variables.for_protocol(17) else {
             panic!("variables");
         };
+        // Protocol 17: the map as JSON, without members or keys; the
+        // members-only entry and the member entry left out.
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].value_type, VariableType::Json);
         assert_eq!(entries[0].members, Vec::new());
         let json = serde_json::to_value(&entries[0]).unwrap();
-        assert!(json.get("members").is_none() && json.get("memberOf").is_none());
+        for field in ["members", "mapKeys", "membersOnly", "memberOf"] {
+            assert!(json.get(field).is_none(), "{field}");
+        }
 
         let previews = Response::ReferencePreviews {
             previews: vec![
@@ -2805,6 +2836,8 @@ mod tests {
             }),
             declared_scope: Some(deckpilot_core::variables::DeclaredScope::Project),
             members: Vec::new(),
+            map_keys: Vec::new(),
+            members_only: false,
             member_of: None,
         };
         let canonical = CatalogEntry {

@@ -864,3 +864,88 @@ fn mappings_into_a_plugins_parameters_read_folder_paths_only_when_allowed() {
         }
     }
 }
+
+/// The limit of that gate, pinned (docs/variables.md §2.8): it applies to
+/// the variable references a plugin's own mappings make. A folder an
+/// earlier node already read (here a Set variable node, which may see
+/// paths, into the workflow variable `folder`) is plain text from then on,
+/// with no mark of where it came from, and a plugin without
+/// `resources:paths` whose mapping names that value
+/// (`{{ steps.vars.output.folder }}`) receives it. The same holds for any
+/// node's output and for a workflow's inputs (`steps.start.output.…`)
+/// filled from a path by its caller. Only a mapping the workflow's author
+/// wrote passes it on.
+#[test]
+fn a_folder_passed_on_by_an_earlier_node_reaches_a_plugin_without_paths() {
+    let structured = crate::variables::structured_tests::fixture();
+    let folder = structured.machine.bindings[0].value.clone();
+    let mut f = Fixture::new();
+    f.profile = structured.profile.clone();
+    let definition = f
+        .engine
+        .registry()
+        .definition(&probe_type())
+        .unwrap()
+        .clone();
+    let mut registry = crate::ActionRegistry::default();
+    registry
+        .register_for_module(
+            crate::ModuleId::new("acme.probe").unwrap(),
+            &[],
+            Box::new(Probe {
+                definition,
+                log: f.log.clone(),
+                calls: f.calls.clone(),
+                concurrency: f.concurrency.clone(),
+            }),
+        )
+        .unwrap();
+    // No `resources:paths` for the plugin.
+    f.engine = Engine::new(registry).with_variable_registry(std::sync::Arc::new(
+        crate::variables::structured_tests::registry(),
+    ));
+    let workflow = adopt(
+        &mut f,
+        graph(
+            vec![
+                node("start", NodeKind::Trigger),
+                map(
+                    node(
+                        "set",
+                        NodeKind::SetVariable {
+                            values: BTreeMap::new(),
+                        },
+                    ),
+                    "folder",
+                    template("{{ projects.current.repository.path }}"),
+                ),
+                map(
+                    probe_step("p", "x"),
+                    "message",
+                    template("at {{ steps.vars.output.folder }}"),
+                ),
+            ],
+            chain(&["start", "set", "p"]),
+        ),
+    );
+    f.profile.workflows.last_mut().unwrap().variables =
+        vec![WorkflowVariable::new("folder", ValueKind::Text)];
+    let mut context: ActiveProjectContext = serde_json::from_value(serde_json::json!({
+        "profileId": f.profile.id,
+        "projectId": f.profile.projects[0].id,
+    }))
+    .unwrap();
+    let report = f
+        .engine
+        .execute_workflow(
+            &f.profile,
+            &structured.machine,
+            &mut context,
+            workflow,
+            &CancellationToken::new(),
+            &|_| {},
+        )
+        .unwrap();
+    assert_eq!(report.status, RunStatus::Succeeded, "{report:?}");
+    assert_eq!(f.ran(), [format!("at {folder}")]);
+}

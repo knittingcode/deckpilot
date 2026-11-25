@@ -641,6 +641,8 @@ fn the_picker_never_offers_ids_or_secrets() {
         deprecated: None,
         declared_scope: None,
         members: Vec::new(),
+        map_keys: Vec::new(),
+        members_only: false,
         member_of: None,
     };
     assert!(display_listed(

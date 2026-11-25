@@ -702,6 +702,21 @@ pub trait VariableSource: Send + Sync {
         declaration: &VariableDeclaration,
         environment: &VariableEnvironment<'_>,
     ) -> Resolution;
+
+    /// The value of the structured variable `declaration` for a read of
+    /// its `member` (`cms.name`): the registry reads the member from it.
+    /// A source may build only what that member needs (the one repository,
+    /// and no folder check unless `exists` is read), since a key's title
+    /// resolves on every redraw. The whole value by default.
+    fn resolve_member(
+        &self,
+        declaration: &VariableDeclaration,
+        member: &super::MemberPath,
+        environment: &VariableEnvironment<'_>,
+    ) -> Resolution {
+        let _ = member;
+        self.resolve(declaration, environment)
+    }
 }
 
 /// Why a declaration was refused.
@@ -940,15 +955,30 @@ impl VariableRegistry {
             return Resolution::Missing(MissingReason::OtherProfile);
         }
         if let Some((base, member)) = self.split_member(id) {
-            return read_member(self.resolve(&base, environment), &member, environment);
+            return read_member(
+                self.resolve_for(&base, Some(&member), environment),
+                &member,
+                environment,
+            );
         }
+        self.resolve_for(id, None, environment)
+    }
+
+    /// The value of `id` (no member of it), built for a read of `member`
+    /// when there is one ([`VariableSource::resolve_member`]).
+    fn resolve_for(
+        &self,
+        id: &VariableId,
+        member: Option<&super::MemberPath>,
+        environment: &VariableEnvironment<'_>,
+    ) -> Resolution {
         if id.segments() > MAX_ID_SEGMENTS {
             // A member of nothing structured: no such variable (or its
             // owner is not here, which the namespace tells).
             return self.unknown(id);
         }
         if let Some(alias) = module_variable_alias(id)
-            && let Some(resolution) = self.resolve_moved(id, alias, environment)
+            && let Some(resolution) = self.resolve_moved(id, alias, member, environment)
         {
             return resolution;
         }
@@ -966,7 +996,12 @@ impl VariableRegistry {
                 }
             },
         };
-        checked(&registered.declaration, source.as_ref(), environment)
+        checked(
+            &registered.declaration,
+            source.as_ref(),
+            member,
+            environment,
+        )
     }
 
     /// An id nothing declares: missing in a namespace someone owns, else
@@ -1047,6 +1082,7 @@ impl VariableRegistry {
         &self,
         id: &VariableId,
         alias: &ModuleVariableAlias,
+        member: Option<&super::MemberPath>,
         environment: &VariableEnvironment<'_>,
     ) -> Option<Resolution> {
         let provided = self.variables.get(id).is_some_and(|registered| {
@@ -1062,7 +1098,7 @@ impl VariableRegistry {
         let canonical = VariableId::new(alias.canonical).ok()?;
         self.variables
             .contains_key(&canonical)
-            .then(|| self.resolve(&canonical, environment))
+            .then(|| self.resolve_for(&canonical, member, environment))
     }
 
     /// The value of a legacy id, exactly as before the registry, whatever
@@ -1097,9 +1133,12 @@ impl VariableRegistry {
             Some((registered, self.modules.get(module)?))
         });
         match source {
-            Some((registered, entry)) => {
-                checked(&registered.declaration, entry.source.as_ref(), environment)
-            }
+            Some((registered, entry)) => checked(
+                &registered.declaration,
+                entry.source.as_ref(),
+                None,
+                environment,
+            ),
             None => Resolution::Missing(MissingReason::NoValue),
         }
     }
@@ -1175,14 +1214,20 @@ fn without_private_paths(
     }
 }
 
-/// What `source` gives for `declaration`, with the declared type enforced
-/// and the declared sensitivity applied.
+/// What `source` gives for `declaration` (for a read of `member`, when
+/// there is one), with the declared type enforced and the declared
+/// sensitivity applied.
 fn checked(
     declaration: &VariableDeclaration,
     source: &dyn VariableSource,
+    member: Option<&super::MemberPath>,
     environment: &VariableEnvironment<'_>,
 ) -> Resolution {
-    match source.resolve(declaration, environment) {
+    let resolution = match member {
+        Some(member) => source.resolve_member(declaration, member, environment),
+        None => source.resolve(declaration, environment),
+    };
+    match resolution {
         Resolution::Value {
             value,
             source,
@@ -1259,6 +1304,8 @@ impl VariableRegistry {
                     deprecated: variable.deprecation(),
                     declared_scope: registered.map(|r| r.declaration.scope),
                     members: Vec::new(),
+                    map_keys: Vec::new(),
+                    members_only: false,
                     member_of: None,
                 }
             })
@@ -1284,6 +1331,8 @@ impl VariableRegistry {
                 deprecated: None,
                 declared_scope: Some(declaration.scope),
                 members: Vec::new(),
+                map_keys: Vec::new(),
+                members_only: false,
                 member_of: None,
             });
         }

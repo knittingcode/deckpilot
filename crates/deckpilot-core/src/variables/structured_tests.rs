@@ -17,31 +17,33 @@ const OBJECT: &str = "plugins.deckpilot.projects.current.repository";
 
 /// What the agent's host sources `host:project.repositories` and
 /// `host:project.repository` give: the core's builders on the context's
-/// project.
-pub(crate) struct Repositories;
+/// project, folders looked at by `probe`.
+pub(crate) struct Repositories {
+    probe: Arc<dyn FolderProbe>,
+}
 
-impl VariableSource for Repositories {
-    fn resolve(
+impl Repositories {
+    fn value(
         &self,
         declaration: &VariableDeclaration,
+        member: Option<&MemberPath>,
         environment: &VariableEnvironment<'_>,
     ) -> Resolution {
         let project = match environment.project() {
             Ok(project) => project,
             Err(resolution) => return resolution,
         };
+        let (machine, paths, probe) = (
+            environment.machine,
+            environment.private_paths,
+            self.probe.as_ref(),
+        );
         let value = match declaration.value_type {
-            VariableType::Map { .. } => VariableValue::Map(repositories_value(
-                project,
-                environment.machine,
-                environment.private_paths,
-            )),
+            VariableType::Map { .. } => {
+                VariableValue::Map(repositories_value(project, machine, paths, member, probe))
+            }
             VariableType::Object { .. } => {
-                match default_repository_value(
-                    project,
-                    environment.machine,
-                    environment.private_paths,
-                ) {
+                match default_repository_value(project, machine, paths, member, probe) {
                     Ok(object) => VariableValue::Object(object),
                     Err(reason) => return Resolution::Missing(reason),
                 }
@@ -56,7 +58,31 @@ impl VariableSource for Repositories {
     }
 }
 
+impl VariableSource for Repositories {
+    fn resolve(
+        &self,
+        declaration: &VariableDeclaration,
+        environment: &VariableEnvironment<'_>,
+    ) -> Resolution {
+        self.value(declaration, None, environment)
+    }
+
+    fn resolve_member(
+        &self,
+        declaration: &VariableDeclaration,
+        member: &MemberPath,
+        environment: &VariableEnvironment<'_>,
+    ) -> Resolution {
+        self.value(declaration, Some(member), environment)
+    }
+}
+
 pub(crate) fn registry() -> VariableRegistry {
+    registry_with(Arc::new(Filesystem))
+}
+
+/// [`registry`], its folders looked at by `probe`.
+pub(crate) fn registry_with(probe: Arc<dyn FolderProbe>) -> VariableRegistry {
     let declare = |id: &str, value_type| {
         VariableDeclaration::new(id, id, value_type, DeclaredScope::Project)
             .requires(Requirement::Project)
@@ -83,7 +109,7 @@ pub(crate) fn registry() -> VariableRegistry {
                     VariableType::String,
                 ),
             ],
-            Some(Arc::new(Repositories)),
+            Some(Arc::new(Repositories { probe })),
         )
         .unwrap();
     registry
@@ -493,7 +519,10 @@ impl VariableSource for Leaky {
             private_paths: true,
             ..*e
         };
-        Repositories.resolve(d, &paths)
+        Repositories {
+            probe: Arc::new(Filesystem),
+        }
+        .resolve(d, &paths)
     }
 }
 
@@ -684,17 +713,78 @@ fn keys_show_display_safe_members_only() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // both catalogs, both protocols
 fn the_title_picker_lists_display_safe_members_and_never_structured_values() {
     let f = fixture();
     let context = f.context("SHOP");
-    let entries = with_members(f.registry.catalog(&context, false), Some(f.project("SHOP")));
+    let project = Some(f.project("SHOP"));
     let reference = |entry: &CatalogEntry| entry.reference.to_string();
-    let map = entries.iter().find(|e| reference(e) == MAP).unwrap();
+    let all = CatalogFilter::default();
+
+    // The configuration catalog: each structured variable once, with its
+    // shape's members and, for the map, the repositories' keys; never one
+    // entry per member.
+    let configuration = catalog_listing(f.registry.catalog(&context, false), project, &all);
+    let map = configuration.iter().find(|e| reference(e) == MAP).unwrap();
     assert_eq!(map.members.len(), Shape::Repository.members().len());
-    assert!(map.member_of.is_none());
-    let listed: Vec<String> = entries
+    assert_eq!(map.map_keys, ["cms", "api"]);
+    assert!(map.member_of.is_none() && !map.members_only);
+    let object = configuration
         .iter()
-        .filter(|entry| display_listed(entry, &f.registry))
+        .find(|e| reference(e) == OBJECT)
+        .unwrap();
+    assert_eq!(object.map_keys, Vec::<String>::new());
+    assert!(configuration.iter().all(|e| e.member_of.is_none()));
+    // K4: never a connection or provider id.
+    for entry in [map, object] {
+        assert!(
+            entry
+                .members
+                .iter()
+                .all(|m| !m.path.contains("connectionId") && !m.path.contains("RepositoryId"))
+        );
+    }
+    // The app composes the member entries.
+    let expanded: Vec<String> = expand_members(configuration.clone(), &all)
+        .iter()
+        .map(reference)
+        .collect();
+    for expected in [
+        MAP.to_owned(),
+        format!("{MAP}.cms.name"),
+        format!("{MAP}.api.path"),
+        format!("{MAP}.cms.remote.url"),
+        OBJECT.to_owned(),
+        format!("{OBJECT}.exists"),
+    ] {
+        assert!(expanded.contains(&expected), "{expected}: {expanded:?}");
+    }
+    let members = Shape::Repository.members().len();
+    assert_eq!(
+        expanded.len(),
+        configuration.len() + 2 * members + members,
+        "{expanded:?}"
+    );
+
+    // The title picker's catalog: the structured variables for their
+    // display-safe members only.
+    let display = display_listing(
+        f.registry.catalog(&context, false),
+        project,
+        &f.registry,
+        &all,
+    );
+    let map = display.iter().find(|e| reference(e) == MAP).unwrap();
+    assert!(map.members_only);
+    assert_eq!(map.map_keys, ["cms", "api"]);
+    assert!(map.members.iter().all(|m| m.display_safe));
+    assert!(
+        !map.members
+            .iter()
+            .any(|m| m.path == "path" || m.path == "id")
+    );
+    let listed: Vec<String> = expand_members(display.clone(), &all)
+        .iter()
         .map(reference)
         .collect();
     for expected in [
@@ -726,17 +816,142 @@ fn the_title_picker_lists_display_safe_members_and_never_structured_values() {
             "{entry}: {shown:?}"
         );
     }
-    // Member entries name their variable; older clients get neither.
-    let member = entries
+    // Composed member entries name their variable.
+    let composed = expand_members(display.clone(), &all);
+    let member = composed
         .iter()
         .find(|e| reference(e) == format!("{MAP}.cms.name"))
         .unwrap();
     assert_eq!(member.member_of.as_deref(), Some(MAP));
-    assert_eq!(member.clone().for_protocol(17), None);
+
+    // Protocol 17: the configuration catalog's variables are `json`
+    // without members or keys; the title picker's are left out.
+    let map = configuration.iter().find(|e| reference(e) == MAP).unwrap();
     let old = map.clone().for_protocol(17).unwrap();
     assert_eq!(old.value_type, VariableType::Json);
     assert_eq!(old.members, Vec::new());
+    assert_eq!(old.map_keys, Vec::<String>::new());
     assert_eq!(map.clone().for_protocol(18).unwrap(), *map);
+    assert!(
+        display
+            .iter()
+            .filter(|e| e.value_type.is_structured())
+            .all(|e| e.clone().for_protocol(17).is_none())
+    );
+    assert_eq!(member.clone().for_protocol(17), None);
+}
+
+/// A search matches a structured variable by its members too: the agent
+/// lists it, and the app keeps only what matches.
+#[test]
+fn a_search_finds_members_and_the_app_keeps_only_the_matches() {
+    let f = fixture();
+    let context = f.context("SHOP");
+    let project = Some(f.project("SHOP"));
+    let reference = |entry: &CatalogEntry| entry.reference.to_string();
+    let filter = CatalogFilter {
+        query: "api default branch".into(),
+        ..CatalogFilter::default()
+    };
+    let listed = catalog_listing(f.registry.catalog(&context, false), project, &filter);
+    assert_eq!(listed.iter().map(reference).collect::<Vec<_>>(), [MAP]);
+    let shown: Vec<String> = expand_members(listed, &filter)
+        .iter()
+        .map(reference)
+        .collect();
+    assert_eq!(shown, [format!("{MAP}.api.remote.defaultBranch")]);
+    // Only text: the map itself is not, its names and keys are.
+    let text = CatalogFilter {
+        compatible_with: Some(crate::ParameterKind::Text {
+            multiline: false,
+            max_length: None,
+        }),
+        ..CatalogFilter::default()
+    };
+    let listed = catalog_listing(f.registry.catalog(&context, false), project, &text);
+    let shown: Vec<String> = expand_members(listed, &text)
+        .iter()
+        .map(reference)
+        .collect();
+    assert!(!shown.contains(&MAP.to_owned()), "{shown:?}");
+    assert!(shown.contains(&format!("{MAP}.cms.name")), "{shown:?}");
+}
+
+/// Counts the folders it is asked about.
+#[derive(Default)]
+struct CountingProbe(std::sync::atomic::AtomicUsize);
+
+impl CountingProbe {
+    fn take(&self) -> usize {
+        self.0.swap(0, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl FolderProbe for CountingProbe {
+    fn is_dir(&self, folder: &str) -> bool {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::path::Path::new(folder).is_dir()
+    }
+}
+
+/// A member read builds only what it needs: no folder is looked at for any
+/// member but `exists`, and then only the one repository's (finding of
+/// the review of #460: a key title must not stall on an unmounted
+/// network volume).
+#[test]
+fn a_member_read_looks_at_a_folder_only_for_exists() {
+    let probe = Arc::new(CountingProbe::default());
+    let mut f = fixture();
+    f.registry = registry_with(probe.clone());
+    // Both repositories of SHOP bound, so a whole read looks at two.
+    f.machine.set_binding(MachineResourceBinding {
+        key: ResourceKey::new("shop.api").unwrap(),
+        kind: ResourceKind::Directory,
+        value: std::env::temp_dir().to_string_lossy().into_owned(),
+    });
+    for member in Shape::Repository.members() {
+        let path = member.path;
+        let expected = usize::from(path == "exists");
+        for private_paths in [true, false] {
+            let _ = f.resolve(&format!("{MAP}.cms.{path}"), "SHOP", private_paths);
+            assert_eq!(probe.take(), expected, "{MAP}.cms.{path}");
+            let _ = f.resolve(&format!("{OBJECT}.{path}"), "SHOP", private_paths);
+            assert_eq!(probe.take(), expected, "{OBJECT}.{path}");
+        }
+    }
+    // On a key: names never touch the filesystem.
+    for template in [
+        "{{ projects.current.repositories.cms.name }}",
+        "{{ projects.current.repository.name }}",
+        "{{ projects.current.repositories.web.name }}",
+    ] {
+        let _ = f.display(template, "SHOP");
+        assert_eq!(probe.take(), 0, "{template}");
+    }
+    assert_eq!(
+        f.display("{{ projects.current.repositories.cms.exists }}", "SHOP")
+            .text,
+        "true"
+    );
+    assert_eq!(probe.take(), 1);
+    // The values are those of a whole read.
+    let whole = |reference: &str| match f.resolve(reference, "SHOP", true) {
+        Resolution::Value { value, .. } => value.structured_json().unwrap(),
+        other => panic!("{other:?}"),
+    };
+    let map = whole(MAP);
+    assert_eq!(probe.take(), 2);
+    assert_eq!(
+        text(&f.resolve(&format!("{MAP}.api.name"), "SHOP", true)),
+        map["api"]["name"].as_str()
+    );
+    assert_eq!(whole(&format!("{MAP}.cms")), map["cms"]);
+    assert_eq!(probe.take(), 1);
+    assert_eq!(
+        f.resolve(&format!("{MAP}.web.name"), "SHOP", true),
+        missing(MissingReason::RepositoryNotInProject)
+    );
+    assert_eq!(probe.take(), 0);
 }
 
 #[test]

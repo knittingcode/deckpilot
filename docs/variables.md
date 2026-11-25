@@ -354,14 +354,45 @@ The host source leaves the folder out for such a reader, and the registry
 removes it again from whatever a source returns (`read_member`, `checked`),
 so no source can hand a path to a reader that may not see it.
 
+*Limit of the plugin gate.* It applies to the variable references a
+plugin action's own parameters and mappings make. A value is not marked
+with where it came from: once a node that may see paths has read a folder
+(a Set variable node, DeckPilot's own action, a plugin with
+`resources:paths`), it is that node's output, plain text, and a plugin
+without `resources:paths` whose mapping names it receives it:
+`{{ steps.<node>.output.… }}`, a workflow variable
+(`{{ steps.vars.output.… }}`) or a workflow's input
+(`{{ steps.start.output.… }}`) that its caller filled from a path. Only a
+mapping the workflow's author wrote passes it on; nothing reaches such a
+plugin without one. Pinned by
+`a_folder_passed_on_by_an_earlier_node_reaches_a_plugin_without_paths`
+(`crates/deckpilot-core/src/graph/tests/references.rs`).
+
+**Filesystem access.** The only one is `exists`, a directory check of the
+repository's folder (`FolderProbe`). A read of one member builds only what
+it needs (`VariableSource::resolve_member`): the one repository it names,
+and its folder is looked at only when `exists` itself is read (or a whole
+object or map), so a key that shows a name never waits on an unmounted
+network volume.
+
 **Catalog and previews (protocol 18).** `listVariables` lists a structured
-variable with its shape's `members`, followed by one entry per scalar member
-(`memberOf`), per repository of the context's project for a map.
-`listDisplayVariables` keeps only the display-safe ones (§3.2). A preview of a
-whole structured value is `structured`: how many objects, never a member. A
-client of protocol 17 or older receives structured types as `json` without
-members, no member entries, a structured preview as `redacted` JSON, and
-`noValue` or `unknownVariable` for the new reasons.
+variable once, with its shape's `members` and, for a map, the keys of the
+context's project's repositories in the user's order (`mapKeys`). The agent
+never lists one entry per member: the app composes them
+(`expand_members`, in the desktop app's `list_variables` command), one per
+member (`….repository.name`) and for a map one per key and member
+(`….repositories.cms.name`), each naming its variable (`memberOf`). So a
+catalog grows by one key per repository (at most 32 characters, at most
+256 repositories) and always fits one IPC message (64 KiB); a search
+(`CatalogFilter`) lists a structured variable when it or one of its
+members matches, and the app keeps only the matching ones.
+`listDisplayVariables` lists a structured variable for its display-safe
+members only (`membersOnly`, §3.2); the variable itself is never offered. A
+preview of a whole structured value is `structured`: how many objects,
+never a member. A client of protocol 17 or older receives structured types
+as `json` without members or keys, no members-only entries, a structured
+preview as `redacted` JSON, and `noValue` or `unknownVariable` for the new
+reasons.
 
 **Legacy spellings.** `projects.current.repositories` and
 `projects.current.repository` are module variable aliases of

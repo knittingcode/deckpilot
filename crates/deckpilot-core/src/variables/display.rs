@@ -333,6 +333,67 @@ pub fn display_listed(entry: &super::CatalogEntry, registry: &VariableRegistry) 
         && display_safe(&entry.reference, registry).is_ok()
 }
 
+/// What the picker of a key title lists of a structured variable `entry`
+/// (with its shape, [`super::with_members`]): the variable for its members
+/// only ([`super::CatalogEntry::members_only`]), with the members that are
+/// [`display_listed`] (names and keys, never a path, a URL or an id);
+/// `None` when none is, or the variable is not structured.
+pub fn display_members(
+    entry: super::CatalogEntry,
+    registry: &VariableRegistry,
+) -> Option<super::CatalogEntry> {
+    if !entry.value_type.is_structured()
+        || entry.sensitive
+        || entry.availability == super::ReferenceAvailability::RuntimeOnly
+    {
+        return None;
+    }
+    let members: Vec<super::CatalogMember> = entry
+        .members
+        .iter()
+        .filter(|member| {
+            let one = super::CatalogEntry {
+                members: vec![(*member).clone()],
+                ..entry.clone()
+            };
+            let composed = one.member_entries();
+            !composed.is_empty() && composed.iter().all(|m| display_listed(m, registry))
+        })
+        .cloned()
+        .collect();
+    if members.is_empty() {
+        return None;
+    }
+    Some(super::CatalogEntry {
+        members,
+        members_only: true,
+        ..entry
+    })
+}
+
+/// What `listDisplayVariables` answers: of `entries` ([`super::with_members`]
+/// of `project`), the [`display_listed`] ones and the structured variables
+/// for their display-safe members ([`display_members`]), that match
+/// `filter`.
+pub fn display_listing(
+    entries: Vec<super::CatalogEntry>,
+    project: Option<&crate::Project>,
+    registry: &VariableRegistry,
+    filter: &super::CatalogFilter,
+) -> Vec<super::CatalogEntry> {
+    super::with_members(entries, project)
+        .into_iter()
+        .filter_map(|entry| {
+            if entry.value_type.is_structured() {
+                display_members(entry, registry)
+            } else {
+                display_listed(&entry, registry).then_some(entry)
+            }
+        })
+        .filter(|entry| filter.matches_listed(entry))
+        .collect()
+}
+
 /// Variables that hold an id, refused on keys by name too: the project id
 /// under its legacy, module and plugin spellings, and the work session's.
 /// A plugin's own ids are refused by their declaration

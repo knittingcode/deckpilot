@@ -25,8 +25,8 @@ use deckpilot_core::variables::{
     CatalogEntry, CatalogFilter, LiveState, MissingReason, PreviewItem, ProjectResolver,
     ProjectSource, ReferenceAvailability, ReferencePreview, Resolution, ResolutionContext,
     ResolutionPhase, ValueSource, VariableGroup, VariableKey, VariableOwner, VariableRef,
-    VariableRegistry, VariableResolver, VariableScope, preview_reference, select_value,
-    with_members,
+    VariableRegistry, VariableResolver, VariableScope, catalog_listing, preview_reference,
+    select_value,
 };
 use deckpilot_core::work_session::{WorkSessionSnapshot, WorkSessionVariable};
 use deckpilot_core::{ModuleId, Profile, ProfileId, ProjectId};
@@ -392,6 +392,8 @@ pub fn catalog(
             deprecated: None,
             declared_scope: None,
             members: Vec::new(),
+            map_keys: Vec::new(),
+            members_only: false,
             member_of: None,
         });
     }
@@ -500,13 +502,11 @@ impl Agent {
             &context,
             active,
         );
-        // Structured variables with one entry per member, per repository
-        // of the context's project (protocol 18).
+        // Structured variables with their shape's members and the keys of
+        // the context's project's repositories; the app composes the
+        // member references (protocol 18).
         let project = context.project.and_then(|id| profile.project(id));
-        let entries = with_members(entries, project)
-            .into_iter()
-            .filter(|entry| filter.matches(entry))
-            .collect();
+        let entries = catalog_listing(entries, project, filter);
         Ok(Response::Variables { entries })
     }
 

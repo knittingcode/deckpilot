@@ -23,8 +23,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use deckpilot_core::Engine;
 use deckpilot_core::variables::{
-    CatalogFilter, DisplayDependency, DisplayText, ResolutionContext, TextKey, display_listed,
-    resolve_display_template, with_members,
+    CatalogFilter, DisplayDependency, DisplayText, ResolutionContext, TextKey, display_listing,
+    resolve_display_template,
 };
 use deckpilot_device::DeviceId;
 use deckpilot_ipc::display_templates::{ResolvedDisplayTemplate, check_templates};
@@ -138,14 +138,12 @@ impl Agent {
             &context,
             false,
         );
-        // The display-safe members of structured variables (the current
-        // project's repositories' names and keys, never a path or an id);
-        // never the structured variables themselves.
+        // Structured variables for their display-safe members only (the
+        // current project's repositories' names and keys, never a path or
+        // an id), with the repositories' keys: the app composes the member
+        // references, so the answer stays small (protocol 18).
         let project = context.project.and_then(|id| profile.project(id));
-        let entries = with_members(entries, project)
-            .into_iter()
-            .filter(|entry| display_listed(entry, registry) && filter.matches(entry))
-            .collect();
+        let entries = display_listing(entries, project, registry, filter);
         Ok(Response::Variables { entries })
     }
 
