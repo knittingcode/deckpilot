@@ -180,6 +180,7 @@ impl Executor {
         let stop = || must_stop(broker, plugin, request.tool, access, interrupt);
         let give_up = || stop().is_some() || deadline.is_some_and(|d| Instant::now() >= d);
         let _slot = RunSlot::acquire(
+            self.tools.slots(),
             plugin.as_str(),
             checked.grant == ToolGrant::Modify,
             &give_up,
