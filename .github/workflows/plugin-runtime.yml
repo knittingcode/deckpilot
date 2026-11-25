@@ -28,6 +28,12 @@ on:
       - tools/ci/rust-pinned-toolchain.sh
       - apps/desktop/src-tauri/entitlements/**
       - .github/workflows/plugin-runtime.yml
+  # A merge queue group (gh-readonly-queue/main/...). GitHub applies no
+  # paths filter to it, so the merge-group-paths job applies the
+  # pull_request paths above to the group's files and the jobs report as
+  # skipped when none matches. Inert until the merge queue is enabled.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -41,8 +47,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Merge queue groups only (skipped for every other event): whether the
+  # group changes a path of on.pull_request.paths
+  # (tools/ci/merge-group-paths.sh).
+  merge-group-paths:
+    name: Changed paths (merge group)
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: tools/ci/merge-group-paths.sh .github/workflows/plugin-runtime.yml
+
   test:
     name: Plugin runtime (${{ matrix.os }})
+    needs: merge-group-paths
+    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.merge-group-paths.outputs.run == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +154,8 @@ jobs:
   # are printed for comparison. No cache: both builds start from clean.
   reproducible:
     name: Reproducible example plugins (${{ matrix.os }})
+    needs: merge-group-paths
+    if: ${{ !cancelled() && (github.event_name != 'merge_group' || needs.merge-group-paths.outputs.run == 'true') }}
     strategy:
       fail-fast: false
       matrix:
