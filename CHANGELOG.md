@@ -54,6 +54,13 @@ released either. 0.6.0 is the first version intended for publication.
 - Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
   presets over its own actions, with localized texts and `allowPartial`.
   Presets grant nothing; each action keeps its permissions and checks.
+- Settings › Profiles › a profile: "Saved actions" lists the profile's
+  saved actions by name with how many places use each, and can show only
+  the unused ones. Each can be opened in the action editor; an unused one
+  can also be deleted from its row, after the same confirmation as in the
+  editor (the agent still refuses while anything uses it). Nothing is
+  deleted by itself, and there is no "delete all". Until now a saved
+  action that no key, gesture or workflow used could not be opened.
 
 ### Changed
 
