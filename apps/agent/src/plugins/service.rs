@@ -1832,6 +1832,27 @@ impl PluginService {
             | Request::SetPluginConnectionSecret { .. }
             | Request::UpdatePluginConnection { .. }
             | Request::RemovePluginConnection { .. }) => self.handle_connections(request),
+            Request::SetPluginCredential {
+                plugin,
+                key,
+                secret,
+            } => {
+                let id = plugin_id(&plugin)?;
+                self.manager
+                    .set_credential(&id, &key, secret.expose())
+                    .map_err(|e| store_error(&e))?;
+                // The slot only; never the secret.
+                info!(plugin = %id, credential = %key, "plugin credential stored");
+                self.credentials(&id)
+            }
+            Request::DeletePluginCredential { plugin, key } => {
+                let id = plugin_id(&plugin)?;
+                self.manager
+                    .delete_credential(&id, &key)
+                    .map_err(|e| store_error(&e))?;
+                info!(plugin = %id, credential = %key, "plugin credential deleted");
+                self.credentials(&id)
+            }
             Request::ListModuleMigrations => Ok(Response::ModuleMigrations {
                 migrations: super::migration::infos(
                     &self.manager,

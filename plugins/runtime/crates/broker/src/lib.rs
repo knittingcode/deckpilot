@@ -456,6 +456,7 @@ enum RateClass {
     /// Requests on connections, per plugin (plugin API 1.14).
     ConnectionHttp,
     Sleep,
+    ConnectionReport,
 }
 
 #[derive(Debug)]
@@ -634,6 +635,7 @@ impl Broker {
             RateClass::ProjectSwitch => self.inner.limits.project_switch,
             RateClass::ConnectionHttp => self.inner.limits.connections_http,
             RateClass::Sleep => self.inner.limits.sleep,
+            RateClass::ConnectionReport => self.inner.limits.connection_report,
         };
         let now = self.inner.clock.now();
         let mut buckets = self.inner.buckets.lock().unwrap_or_else(|e| e.into_inner());
@@ -885,6 +887,9 @@ impl Session {
             CapabilityRequest::ConnectionReportStatus(r) => (
                 match bound_connection(&grants, &r.connection, bound) {
                     Err(reason) => Decision::Deny(reason),
+                    Ok(_) if !b.take(&self.plugin, RateClass::ConnectionReport) => {
+                        Decision::Deny(DenyReason::RateLimited)
+                    }
                     Ok(_) => Decision::Allow(Allowed::ConnectionReportStatus {
                         connection: r.connection.clone(),
                         status: r.status,

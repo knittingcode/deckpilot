@@ -116,6 +116,10 @@ pub struct RateLimits {
     /// `time.sleep` (plugin API 1.14): 30 per minute; each one is also
     /// bounded by the invocation's deadline.
     pub sleep: Rate,
+    /// `connections.reportStatus` (plugin API 1.14): 12 per minute per
+    /// plugin, so a plugin cannot flood the store or keep overwriting the
+    /// status the user sees.
+    pub connection_report: Rate,
 }
 
 impl Default for RateLimits {
@@ -140,6 +144,7 @@ impl Default for RateLimits {
             connection_http: Rate::new(60, Duration::from_secs(60)),
             connections_http: Rate::new(180, Duration::from_secs(60)),
             sleep: Rate::new(30, Duration::from_secs(60)),
+            connection_report: Rate::new(12, Duration::from_secs(60)),
         }
     }
 }

@@ -88,6 +88,7 @@ impl Executor {
         &self,
         plugin: &PluginId,
         connection: &str,
+        fetch: &deckpilot_plugin_broker::AllowedFetch,
     ) -> Result<Auth, CallResult> {
         let (record, secret, auth) = self.with_store(plugin, |data, id, manifest| {
             let record = data.connection(id, connection);
@@ -110,6 +111,14 @@ impl Executor {
             return Err(CallResult::error(
                 CallErrorCode::Unavailable,
                 "connection-disabled: the connection is turned off in DeckPilot",
+            ));
+        }
+        // Defense in depth: the token goes only to the server stored with
+        // it now, whatever the broker's copy of the grant said.
+        if fetch.origin.to_string() != record.origin {
+            return Err(CallResult::error(
+                CallErrorCode::NotPermitted,
+                "connection-missing: the request is not for the connection's server",
             ));
         }
         let secret = secret.map_err(failed)?.ok_or_else(|| {
@@ -505,6 +514,34 @@ mod tests {
         let mut executor = f.executor(&json!([{"url": PROJECTS, "status": 200}]), &[GITLAB]);
         let result = f.call(&mut executor, &fetch(PROJECTS, GITLAB));
         assert!(message(&result).contains("no token"), "{result:?}");
+        assert_eq!(f.sent(), "");
+    }
+
+    /// The token goes only to the server stored with the connection now:
+    /// a broker grant that disagrees with the store (a stale copy) sends
+    /// nothing.
+    #[test]
+    fn the_token_follows_the_stored_server_only() {
+        let f = fixture(true);
+        f.broker
+            .set_grants(
+                &f.plugin,
+                &ApprovedPermissions::from_json(
+                    r#"[{"kind":"connection","id":"cn_01JD7Q0000000000000000000A",
+                     "origin":"https://stale.example.com","pathPrefix":"/gitlab/api/v4",
+                     "webOrigin":"https://stale.example.com","methods":["GET"],
+                     "enabled":true,"headerName":"PRIVATE-TOKEN"}]"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let stale = "https://stale.example.com/gitlab/api/v4/projects";
+        let mut executor = f.executor(&json!([{"url": stale, "status": 200}]), &[GITLAB]);
+        let result = f.call(&mut executor, &fetch(stale, GITLAB));
+        assert!(
+            message(&result).contains("connection-missing"),
+            "{result:?}"
+        );
         assert_eq!(f.sent(), "");
     }
 
