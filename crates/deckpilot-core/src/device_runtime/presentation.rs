@@ -715,6 +715,8 @@ impl Runtime {
                         Some(capabilities),
                         &recorder,
                         &self.workflow_scope,
+                        // The overlay's own profile, no project (as above).
+                        &self.targets.on(&self.machine, None),
                     );
                     (faces, ())
                 });
