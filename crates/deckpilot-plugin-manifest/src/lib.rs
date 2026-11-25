@@ -32,6 +32,7 @@
 //! representation at all.
 
 mod compat;
+mod connections;
 mod dependency;
 mod error;
 mod icon;
@@ -50,6 +51,7 @@ pub use compat::{
     ApiLevel, ApiRequirement, HostEnvironment, Incompatibility, MAX_RANGE_LEN, Platform,
     RangeError, VersionRange,
 };
+pub use connections::*;
 pub use dependency::{
     DEPENDENCIES_API, Dependency, DependencyTarget, MAX_BUILTIN_ID_LEN, MAX_DEPENDENCIES,
     MAX_DEPENDENCY_JUSTIFICATION,

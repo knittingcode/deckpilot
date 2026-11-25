@@ -12,7 +12,9 @@
 //! keys with every key input) and, when the action declares `contexts`
 //! (plugin API 1.11), one whose context it declares (`gesture` for a
 //! double or long press, `key` otherwise). A preset never names a
-//! permission: it grants nothing.
+//! permission: it grants nothing. It never names an internal action
+//! (plugin API 1.14: never on a key) and gives no value for a `connection`
+//! parameter (a connection has no literal value; the user picks it).
 
 use deckpilot_device::{ControlKind, InputCapability};
 

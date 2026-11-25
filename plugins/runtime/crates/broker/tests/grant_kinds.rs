@@ -30,6 +30,7 @@ fn get(url: &str, auth: Option<HttpAuth>) -> CapabilityRequest {
         headers: vec![],
         body: None,
         auth,
+        connection: None,
     })
 }
 

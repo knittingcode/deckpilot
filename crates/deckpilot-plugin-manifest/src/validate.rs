@@ -28,12 +28,22 @@ use crate::{MANIFEST_VERSION, path_rules};
 
 #[path = "action_contexts.rs"]
 mod action_contexts;
+#[path = "connections_check.rs"]
+mod connections;
 #[path = "gesture_presets.rs"]
 mod gesture_presets;
 #[path = "privileged.rs"]
 mod privileged;
 pub use privileged::OPTIONAL_PERMISSIONS;
-pub(crate) use privileged::{first_party_only, usages as privileged_usages};
+pub(crate) use privileged::first_party_only;
+
+/// Every privileged usage (X12): plugin API 1.9's kinds and the
+/// connection constructs of 1.14, as `(JSON path, what)`.
+pub(crate) fn privileged_usages(m: &Manifest) -> Vec<(String, String)> {
+    let mut found = privileged::usages(m);
+    found.extend(connections::usages(m));
+    found
+}
 
 /// Error codes every plugin may return without declaring them (`SharedCode`
 /// in the SDK). `errorCodes` must not redeclare them (section 7, rule 13).
@@ -385,6 +395,7 @@ pub(crate) fn check(manifest: &Manifest) -> Checker {
     needs_project(&mut c, manifest);
     dependencies(&mut c, manifest);
     privileged::check(&mut c, manifest);
+    connections::check(&mut c, manifest);
     c
 }
 
@@ -697,6 +708,7 @@ fn permissions(c: &mut Checker, m: &Manifest) {
             | Permission::Resources { .. }
             | Permission::ProjectContext { .. }
             | Permission::HostViews { .. } => privileged::permission(c, &path, permission),
+            Permission::Connections { .. } => connections::permission(c, &path, permission),
             Permission::Notifications { routing: None, .. } | Permission::Dialogs { .. } => {}
         }
     }
@@ -783,7 +795,9 @@ fn open_url(c: &mut Checker, path: &str, permission: &Permission, m: &Manifest) 
         return;
     };
     let min = usize::from(
-        user_origins.as_ref().is_none_or(Vec::is_empty) && !permission.opens_from_params(),
+        user_origins.as_ref().is_none_or(Vec::is_empty)
+            && !permission.opens_from_params()
+            && !permission.opens_connections(),
     );
     c.hosts_min(&format!("{path}.hosts"), hosts, min, 16);
     let Some(settings) = user_origins else {
@@ -984,6 +998,7 @@ fn parameter_kind(c: &mut Checker, path: &str, kind: &ParameterKind) {
             c.count(&field, kinds.len(), 1, 4);
             c.unique(&field, kinds.iter().map(|k| k.as_str()));
         }
+        ParameterKind::Connection { .. } => connections::parameter_kind(c, path, kind),
         ParameterKind::Integer { .. } | ParameterKind::Boolean {} | ParameterKind::Project {} => {}
     }
 }
@@ -999,6 +1014,7 @@ fn kind_name(kind: &ParameterKind) -> &'static str {
         ParameterKind::Lines { .. } => "lines",
         ParameterKind::Pairs { .. } => "pairs",
         ParameterKind::Code { .. } => "code",
+        ParameterKind::Connection { .. } => "connection",
     }
 }
 
@@ -1067,6 +1083,10 @@ fn default_value(c: &mut Checker, path: &str, kind: &ParameterKind, value: &Para
         (ParameterKind::Resource { .. }, _) => {
             Some("a resource parameter cannot have a default: the user binds it".into())
         }
+        (ParameterKind::Connection { .. }, _) => Some(
+            "a connection parameter cannot have a default: the user's default connection is used"
+                .into(),
+        ),
         (kind, value) => {
             let value = match value {
                 ParameterValue::Text(_) => "text",
@@ -1826,6 +1846,12 @@ fn replaced_by(c: &mut Checker, path: &str, action: &Action, actions: &[Action])
             &field,
             IssueCode::UnknownReference,
             format!("`{target}` is not an action of this plugin"),
+        );
+    } else if actions.iter().any(|a| &a.id == target && a.is_internal()) {
+        c.error(
+            &field,
+            IssueCode::Conflict,
+            format!("`{target}` is internal: an action is never replaced by one off the keys"),
         );
     }
     if action.deprecated != Some(true) {
