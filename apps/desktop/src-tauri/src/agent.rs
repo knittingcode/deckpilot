@@ -483,8 +483,9 @@ async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result
             AgentEvent::WorkSessionChanged { snapshot } => {
                 let _ = app.emit(WORK_SESSION_EVENT, snapshot);
             }
+            // Settings is in the main window only.
             AgentEvent::CallsChanged { status } => {
-                let _ = app.emit(CALLS_EVENT, status);
+                let _ = app.emit_to(crate::windows::MAIN, CALLS_EVENT, status);
             }
         }
     }

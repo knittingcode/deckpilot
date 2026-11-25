@@ -675,9 +675,15 @@ async fn the_app_reads_and_changes_calls_over_ipc() {
 }
 
 /// A connection of protocol 18 is never asked, and never told, about
-/// Calls: the client refuses the requests before they leave.
+/// Calls: the client refuses the requests before they leave, the agent
+/// refuses them from such a connection when they are sent anyway, and its
+/// subscription gets no `callsChanged` while a protocol 19 one does.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_protocol_18_connection_cannot_ask_about_calls() {
+    use deckpilot_ipc::framing::{read_message, write_message};
+    use deckpilot_ipc::{AgentEvent, ErrorCode, ServerMessage, SharedStream};
+    use serde_json::json;
+    use tokio::io::BufReader;
     use deckpilot_ipc::{AgentClient, ClientError, ClientKind, Request};
     let f = fixture();
     let deck = start(&f).await;
@@ -702,6 +708,65 @@ async fn a_protocol_18_connection_cannot_ask_about_calls() {
         );
     }
     assert!(!deck.shows_overlay().await);
+
+    // A raw protocol 18 desktop connection, subscribed.
+    let token = std::fs::read_to_string(&deck.agent.paths.token_file).unwrap();
+    let stream = SharedStream::new(deck.agent.paths.endpoint().connect().await.unwrap());
+    let mut reader = BufReader::new(stream.clone());
+    let mut writer = stream;
+    let mut receive = async move |reader: &mut BufReader<SharedStream>| {
+        tokio::time::timeout(Duration::from_millis(300), read_message::<_, ServerMessage>(reader))
+            .await
+            .ok()
+            .and_then(|m| m.ok().flatten())
+    };
+    write_message(
+        &mut writer,
+        &json!({"type":"hello","protocol":18,"token":token.trim(),"client":"desktop"}),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        receive(&mut reader).await,
+        Some(ServerMessage::Welcome { .. })
+    ));
+    write_message(
+        &mut writer,
+        &json!({"type":"request","id":1,"request":{"type":"subscribe"}}),
+    )
+    .await
+    .unwrap();
+    let mut current = deck.agent.events().await;
+    deck.join().await;
+    // The protocol 19 subscription is told.
+    loop {
+        match tokio::time::timeout(TIMEOUT, current.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            AgentEvent::CallsChanged { .. } => break,
+            _ => {}
+        }
+    }
+    // Sent anyway at protocol 18: refused by the agent.
+    write_message(
+        &mut writer,
+        &json!({"type":"request","id":2,"request":{"type":"getCallsStatus"}}),
+    )
+    .await
+    .unwrap();
+    let mut refused = None;
+    while let Some(message) = receive(&mut reader).await {
+        match message {
+            ServerMessage::Event {
+                event: AgentEvent::CallsChanged { .. },
+            } => panic!("a protocol 18 connection was told about Calls"),
+            ServerMessage::Error { id: Some(2), error } => refused = Some(error.code),
+            _ => {}
+        }
+    }
+    assert_eq!(refused, Some(ErrorCode::Unsupported));
     deck.agent.shutdown().await;
 }
 

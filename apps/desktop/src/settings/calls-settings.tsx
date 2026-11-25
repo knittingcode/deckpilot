@@ -80,6 +80,9 @@ export function CallsSettings() {
         ?.modelName ?? model
     return `${name} (${serial})`
   }
+  // The model's name from a connected device of it, else its id.
+  const modelName = (model: string) =>
+    agent.status?.devices.find((d) => d.id.model === model)?.modelName ?? model
   return (
     <SettingsSection title={t("devices:calls.title")} description={t("devices:calls.description")}>
       <SettingsGroup>
@@ -135,7 +138,9 @@ export function CallsSettings() {
             <SettingsRow
               key={layout.layout}
               label={layout.name}
-              description={t("devices:calls.layoutDescription", { model: layout.model })}
+              description={t("devices:calls.layoutDescription", {
+                model: modelName(layout.model),
+              })}
             >
               <span className="flex items-center gap-2">
                 {layout.edited && <Badge variant="outline">{t("devices:calls.edited")}</Badge>}

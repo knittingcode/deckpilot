@@ -2685,6 +2685,9 @@ mod tests {
             "\u{202E}x",
             "\0",
             "a\u{2066}b",
+            "a\u{200B}b",
+            "a\u{2028}b",
+            "\u{FEFF}x",
         ] {
             assert!(
                 Request::RestoreCallsLayout {

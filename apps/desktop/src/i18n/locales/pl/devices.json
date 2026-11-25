@@ -211,7 +211,7 @@
     "overlay": "Pokazuj rozmowy na tym urządzeniu",
     "overlayDescription": "Podczas rozmowy urządzenie pokazuje układ Rozmów; Twój układ zostaje bez zmian.",
     "shown": "Pokazuje teraz rozmowę.",
-    "suspended": "Wróć do pracy: pokazuje Twój układ, dopóki rozmowa nie wróci.",
+    "suspended": "Powrót do pracy: pokazuje Twój układ, dopóki rozmowa nie wróci.",
     "overlayFailed": "Nie udało się zmienić ustawienia",
     "layoutDescription": "Zarządzany przez wtyczkę Rozmowy, dla {{model}}.",
     "edited": "Zmieniony",
@@ -227,7 +227,7 @@
     "states": {
       "idle": "Brak rozmowy",
       "incoming": "Rozmowa przychodząca",
-      "outgoing": "Łączenie",
+      "outgoing": "Połączenie wychodzące",
       "connecting": "Łączenie",
       "active": "W rozmowie",
       "ending": "Kończenie",

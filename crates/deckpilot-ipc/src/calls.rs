@@ -25,15 +25,20 @@ pub const MAX_COPY_NAME: usize = 80;
 pub const MAX_SERIAL: usize = 64;
 
 /// Whether `name` may name a kept copy: 1 to [`MAX_COPY_NAME`] characters
-/// once trimmed, with no control character and no bidirectional override
-/// or isolate (which could make the name read as another).
+/// once trimmed, with no control character, no bidirectional override or
+/// isolate, no line or paragraph separator and no zero-width character
+/// (each could make the name read as another).
 pub fn valid_copy_name(name: &str) -> bool {
     let trimmed = name.trim();
     !trimmed.is_empty()
         && trimmed.chars().count() <= MAX_COPY_NAME
         && !trimmed
             .chars()
-            .any(|c| c.is_control() || is_bidi_control(c))
+            .any(|c| c.is_control() || is_bidi_control(c) || is_invisible(c))
+}
+
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}' | '\u{200B}'..='\u{200D}' | '\u{FEFF}')
 }
 
 fn is_bidi_control(c: char) -> bool {

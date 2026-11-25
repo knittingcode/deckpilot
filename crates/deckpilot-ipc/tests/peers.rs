@@ -761,10 +761,8 @@ async fn a_protocol_15_agent_is_never_asked_for_a_live_preview() {
     ));
 }
 
-/// A protocol 16 agent (DeckPilot before variables in key titles): the
-/// client refuses `listDisplayVariables` and `resolveDisplayTemplates`
-/// before sending them, so the app shows titles resolved by the core alone;
-/// the rest works.
+/// A protocol 18 agent (DeckPilot before Calls): the client refuses the
+/// Calls requests before sending them; the rest works.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_protocol_18_agent_is_never_asked_about_calls() {
     let peer = peer(18, "0.16.0");
@@ -813,6 +811,10 @@ async fn a_protocol_18_agent_is_never_asked_about_calls() {
     ));
 }
 
+/// A protocol 16 agent (DeckPilot before variables in key titles): the
+/// client refuses `listDisplayVariables` and `resolveDisplayTemplates`
+/// before sending them, so the app shows titles resolved by the core alone;
+/// the rest works.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_protocol_16_agent_is_never_asked_to_resolve_display_templates() {
     use deckpilot_core::variables::{CatalogFilter, ResolutionContext};
