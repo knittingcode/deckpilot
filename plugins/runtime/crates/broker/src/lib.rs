@@ -782,9 +782,8 @@ impl Session {
         // for a plugin that holds `scripts` and not `projectContext`.
         if let Some(scope) = request.script_scope().or_else(|| {
             (matches!(request, CapabilityRequest::ProjectList(_))
-                && grants.project_context.is_none()
-                && grants.scripts.is_some())
-            .then_some(ScriptScope::Projects)
+                && self.plugin.as_str() == SCRIPTS_PLUGIN)
+                .then_some(ScriptScope::Projects)
         }) {
             return (self.decide_script(&grants, request, scope), None);
         }

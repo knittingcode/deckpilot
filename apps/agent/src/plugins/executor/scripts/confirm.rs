@@ -49,6 +49,8 @@ struct Pending {
     op: &'static str,
     digest: [u8; 32],
     plan: RemovalPlan,
+    /// Every entry of the plan (`fs::Plan::fingerprint`).
+    fingerprint: [u8; 32],
     /// What the dialog says the op does ("Delete", "Overwrite").
     action: &'static str,
     answer: Answer,
@@ -84,6 +86,7 @@ impl Tokens {
         op: &'static str,
         digest: [u8; 32],
         plan: RemovalPlan,
+        fingerprint: [u8; 32],
         action: &'static str,
     ) -> Result<String, ScriptFault> {
         self.expire();
@@ -101,6 +104,7 @@ impl Tokens {
                 op,
                 digest,
                 plan,
+                fingerprint,
                 action,
                 answer: Answer::NotAsked,
                 issued: Instant::now(),
@@ -129,13 +133,14 @@ impl Tokens {
     }
 
     /// Takes the token for `op` with `digest`: removed first, then checked.
-    /// The confirmed plan, to compare with the one recomputed now.
+    /// The confirmed plan and its entries, to compare with the ones
+    /// recomputed now.
     pub fn take(
         &mut self,
         token: &str,
         op: &str,
         digest: &[u8; 32],
-    ) -> Result<RemovalPlan, ScriptFault> {
+    ) -> Result<(RemovalPlan, [u8; 32]), ScriptFault> {
         let pending = self.pending.remove(token).ok_or_else(unknown)?;
         if pending.issued.elapsed() >= TTL {
             return Err(fault(
@@ -150,7 +155,7 @@ impl Tokens {
             ));
         }
         match pending.answer {
-            Answer::Yes => Ok(pending.plan),
+            Answer::Yes => Ok((pending.plan, pending.fingerprint)),
             Answer::No => Err(fault(codes::CANCELLED, "the operation was not confirmed")),
             Answer::NotAsked => Err(fault(
                 codes::NEEDS_CONFIRMATION,
@@ -240,7 +245,11 @@ impl Executor {
             ));
         }
         let (plan, action) = call.run.state().tokens.question(&confirm.token)?;
-        notes.add("label", plan.root.clone());
+        // The scope's label, never the path below it.
+        notes.add(
+            "scope",
+            plan.root.split('/').next().unwrap_or_default().to_owned(),
+        );
         notes.add("files", plan.files.to_string());
         notes.add("directories", plan.directories.to_string());
         let yes = self.ask(plugin, call, &plan, action)?;

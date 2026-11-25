@@ -155,6 +155,10 @@ impl std::fmt::Debug for ScriptRun {
 #[derive(Default)]
 struct RunState {
     loaded: Option<StoredScript>,
+    /// The run's project, pinned by `script.load`: switching the active
+    /// project during the run changes nothing for it (security review of
+    /// #469, L5).
+    project: Option<String>,
     /// When the run's time is up (from the script's `timeoutMs`, never past
     /// the invocation's deadline); set by `script.load`.
     deadline: Option<Instant>,
@@ -297,6 +301,15 @@ impl Call<'_> {
             return Err(fault(codes::TIMED_OUT, "the script ran out of time"));
         }
         Ok(left)
+    }
+
+    /// The run's project (pinned at `script.load`) with its repositories.
+    pub fn project(&self) -> Result<Option<RunProject>, ScriptFault> {
+        let pinned = self.run.state().project.clone();
+        match pinned {
+            Some(id) => self.run.host.project(Some(&id)),
+            None => Ok(None),
+        }
     }
 
     /// Time left until the run's deadline (or the invocation's).

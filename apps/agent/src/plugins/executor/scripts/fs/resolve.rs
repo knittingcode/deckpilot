@@ -25,7 +25,7 @@ use deckpilot_core::script_grants::{FsAccess, FsRoot, ScriptGrants};
 use deckpilot_plugin_abi::scripts::{PathArg, ScriptFault, codes};
 
 use super::super::{RunProject, fault};
-use super::protected::{same_path, starts_with};
+use super::protected::{Protected, canonical, same_path, simplify, starts_with};
 
 /// A granted scope, for this call.
 #[derive(Debug, Clone)]
@@ -63,7 +63,7 @@ pub(crate) fn scopes(grants: &ScriptGrants, project: Option<&RunProject>) -> Vec
                     let Some(folder) = &repo.folder else { continue };
                     if key == "*" || *key == repo.key {
                         add(Scope {
-                            root: folder.clone(),
+                            root: simplify(folder.clone()),
                             label: repo.key.clone(),
                             access: grant.access,
                             root_destructive: grant.root_destructive,
@@ -73,7 +73,7 @@ pub(crate) fn scopes(grants: &ScriptGrants, project: Option<&RunProject>) -> Vec
                 }
             }
             FsRoot::Directory { path, label } => add(Scope {
-                root: path.clone(),
+                root: simplify(path.clone()),
                 label: label.clone(),
                 access: grant.access,
                 root_destructive: grant.root_destructive,
@@ -137,14 +137,25 @@ fn is_device_name(name: &str) -> bool {
         && stem.as_bytes()[3].is_ascii_digit())
 }
 
+/// A Windows 8.3 short name (`GIT~1`), which reaches a folder under
+/// another name than the one the checks compare (security review of
+/// #469, H2).
+fn is_short_name(name: &str) -> bool {
+    name.as_bytes()
+        .windows(2)
+        .any(|w| w[0] == b'~' && w[1].is_ascii_digit())
+}
+
 /// One name below a root: never empty, `.`, `..`, with a separator, NUL
-/// or `:`; on Windows never a device name or ending in a dot or a space.
+/// or `:`; on Windows never a device name, a short name or ending in a dot
+/// or a space.
 fn checked_name(name: &str) -> Result<(), ScriptFault> {
     let bad = name.is_empty()
         || name == "."
         || name == ".."
         || name.contains(['/', '\\', '\0', ':'])
-        || (cfg!(windows) && (is_device_name(name) || name.ends_with(['.', ' '])));
+        || (cfg!(windows)
+            && (is_device_name(name) || is_short_name(name) || name.ends_with(['.', ' '])));
     if bad {
         Err(fault(
             codes::INVALID_ARGUMENT,
@@ -251,12 +262,14 @@ pub(crate) fn failure(e: &std::io::Error, target: &str) -> ScriptFault {
     io_fault(e, &format!("“{target}”"))
 }
 
-/// Resolves `path` to a scope with at least `need` access.
+/// Resolves `path` to a scope with at least `need` access; never into,
+/// onto or around one of DeckPilot's private folders.
 pub(crate) fn resolve(
     path: &PathArg,
     grants: &ScriptGrants,
     project: Option<&RunProject>,
     need: FsAccess,
+    protected: &Protected,
 ) -> Result<Target, ScriptFault> {
     let scopes = scopes(grants, project);
     let (candidate, absolute_form) = match (&path.path, &path.repository) {
@@ -312,6 +325,19 @@ pub(crate) fn resolve(
             format!("the script may not {what} in “{}”", scope.label),
         ));
     }
+    let private = || {
+        fault(
+            codes::PROTECTED_PATH,
+            "DeckPilot's own folders are never read or changed by scripts",
+        )
+    };
+    if protected.forbids(&candidate) {
+        return Err(private());
+    }
+    // Where a link inside the scope leads (a read may follow one).
+    if canonical(&candidate).is_ok_and(|real| protected.forbids(&real)) {
+        return Err(private());
+    }
     let rel: Vec<String> = candidate
         .components()
         .skip(scope.root.components().count())
@@ -332,7 +358,7 @@ pub(crate) fn open_root(scope: &Scope) -> Result<Dir, ScriptFault> {
             format!("the folder of “{label}” moved or was replaced since it was granted"),
         )
     };
-    let canonical = std::fs::canonicalize(&scope.root).map_err(|_| moved())?;
+    let canonical = canonical(&scope.root).map_err(|_| moved())?;
     if !same_path(&canonical, &scope.root) {
         return Err(moved());
     }
@@ -384,6 +410,16 @@ pub(crate) mod lexical_tests {
         assert!(absolute("\\\\.\\pipe\\x").is_err());
         assert!(absolute("C:\\work\\CON").is_err());
         assert!(absolute("C:\\work\\a.").is_err());
+    }
+
+    #[test]
+    fn short_names_are_known() {
+        for name in ["GIT~1", "LONGRE~2", "a~9b"] {
+            assert!(is_short_name(name), "{name}");
+        }
+        for name in [".git", "a~b", "~", "x~"] {
+            assert!(!is_short_name(name), "{name}");
+        }
     }
 
     #[test]

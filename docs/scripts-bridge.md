@@ -165,8 +165,8 @@ ceiling. The broker allows a bridge operation only for `deckpilot.scripts`,
 only with the permission, and only within the sub-ceiling it needs: `fs`
 for the `fs.*` operations, `process` for `process.run`, `shell` for
 `shell.run` and `shell.available`; the run's own operations and the
-projects with any. `project.list` is the bridge's for a plugin with
-`scripts` and without `projectContext`. Revoking the permission refuses
+projects with any. `project.list` of `deckpilot.scripts` is always the
+bridge's (its `projects.read` decides), whatever else it holds. Revoking the permission refuses
 every operation at the next call. The bridge has its own rate (2,000 calls
 per second, `RateLimits::scripts`) in place of the shared 200, since a run
 polls and logs often and the host already bounds each run.
@@ -221,9 +221,16 @@ moved"). Every operation then works relative to that open folder:
 
 - **reads** (`exists`, `stat`, `list`, `readFile`) may pass through a
   relative link that stays inside the scope; one that leads out, and every
-  absolute link, is refused (`symlinkEscape`). `stat` and `list` never
-  follow the final name. `readFile` opens without blocking (a FIFO never
-  hangs the run) and reads only a regular file;
+  absolute link, is refused (`symlinkEscape`). `exists` and `stat` never
+  follow the final name. `readFile` (and a copy's source) opens without
+  blocking (a FIFO never hangs the run) and reads only a regular file;
+- **DeckPilot's private folders** (its data with the database and the IPC
+  token, its logs, configuration and caches, and the app) are never read
+  or changed, nor anything that holds them, also through a link: a scope
+  over the home folder still never reaches them;
+- **Windows names**: a device name, a name ending in a dot or a space, and
+  an 8.3 short name (`GIT~1`) are refused, so no name reaches a folder
+  under another name than the one checked;
 - **changes** never pass through a link: each folder of the path is opened
   without following it. A link is removed, replaced or copied as a link,
   never followed;
@@ -250,18 +257,36 @@ moved"). Every operation then works relative to that open folder:
   120 s, and dropped with the run. The plan is computed again before the
   operation runs; a plan that grew is refused and a new token issued. A
   run nobody started is refused (`notUserInitiated`) unless the script's
-  grant says `destructive: "allow"`, which needs no token. A removal
-  stops if more entries appear than were planned;
+  grant says `destructive: "allow"`, which needs no token; with `ask`, a
+  run nobody started removes or replaces nothing at all, not even one
+  file. The token is bound to every entry of the plan (its path, kind,
+  size, file id and time), not only to the counts: other files in place
+  of the confirmed ones are asked again. Replacing a folder that is not
+  empty needs `delete` access. A removal stops if more entries appear
+  than were planned. `keep` spares a `.git` only at a repository's own
+  root; elsewhere a tree holding one is never emptied. Note that `delete`
+  access removes single files and empty folders without a confirmation in
+  runs the user starts;
+- **copies** re-create a link only when it is relative and still leads
+  inside the scope from its new place; any other link is refused;
 - **writes** go to a temporary file in the target's folder, renamed over
   the target on commit (with `createOnly`, linked to it, which never
-  replaces an existing file); a folder is never written over. An abort, a
+  replaces an existing file; on a volume without links, checked and
+  renamed); a folder is never written over. An abort, a
   revoked grant between chunks, or the end of the run removes the
   temporary file;
 - **limits**: 4 MiB per file read or written (`maxBytes`, the chunked
   total), 512 KiB per read and its JSON within the reply cap (text that
   escapes heavily is read in shorter pieces), at most 4 open chunked
-  writes, 10,000 entries per `list`, 100,000 per removal, 1 GiB copied per
-  run, 128 folders deep.
+  writes, 10,000 entries (and about 900 KiB of names) per `list`, 100,000
+  per removal, 1 GiB copied per run, 48 folders deep (so a walk holds few
+  file descriptors).
+
+A run keeps the project it had at `script.load`: switching the active
+project during the run changes nothing for it. On Windows the root is
+checked by its canonical path only (no file id), and paths are compared
+without the verbatim prefix `canonicalize` adds; the window between that
+check and the open is the residual the design documents.
 
 Tests (temporary folders only; the fixture checks the folder is not inside
 the real home, and a protected "home" inside it stands for the real one):
