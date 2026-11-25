@@ -36,6 +36,7 @@ use deckpilot_plugin_abi::dialog::DialogRequest;
 use deckpilot_plugin_abi::privileged::{
     OpenUrlParam, ProjectCycle, ResourceOpen, ResourceResolve, ToolAccess, ToolRun,
 };
+pub use deckpilot_plugin_abi::scripts::ScriptScope;
 use deckpilot_plugin_abi::{CallErrorCode, CapabilityRequest, HttpMethod, NetworkErrorKind};
 use serde_json::Value;
 use url::Url;
@@ -46,7 +47,7 @@ pub use origin::{Origin, OriginError, UserOrigin};
 pub use permissions::{
     ApprovedPermission, ApprovedPermissions, CredentialGrant, DEFAULT_STORAGE_QUOTA_BYTES,
     GrantError, Grants, MAX_STORAGE_KEYS, MAX_STORAGE_QUOTA_BYTES, ProfileScope, ResourceGrant,
-    StorageQuota, ToolGrant, UserOriginGrant,
+    ScriptsGrant, StorageQuota, ToolGrant, UserOriginGrant,
 };
 pub use plugin_id::PluginId;
 pub use rate::{Clock, ManualClock, Rate, RateLimits, SystemClock};
@@ -356,6 +357,26 @@ pub enum Allowed {
     LocaleTranslate {
         request: deckpilot_plugin_abi::locale::Translate,
     },
+    /// A Scripts bridge operation (plugin API 1.13) of `deckpilot.scripts`
+    /// within its `scripts` ceiling. The agent's executor checks it again
+    /// against the script's own grants (read at the call), the run's
+    /// origin and the limits before anything happens.
+    Script(Box<ScriptCall>),
+}
+
+/// The plugin the Scripts bridge answers, and no other
+/// (`docs/scripts-bridge.md`).
+pub const SCRIPTS_PLUGIN: &str = "deckpilot.scripts";
+
+/// A Scripts bridge call the broker allowed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptCall {
+    /// The request as the guest sent it (validated).
+    pub request: CapabilityRequest,
+    /// The sub-ceiling it was allowed under.
+    pub scope: ScriptScope,
+    /// The plugin's `scripts` ceiling at the call.
+    pub ceiling: ScriptsGrant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -399,6 +420,7 @@ enum RateClass {
     ResourceOpen,
     OpenUrlParam,
     ProjectSwitch,
+    Scripts,
 }
 
 #[derive(Debug)]
@@ -566,6 +588,7 @@ impl Broker {
             RateClass::ResourceOpen => self.inner.limits.resource_open,
             RateClass::OpenUrlParam => self.inner.limits.open_url_param,
             RateClass::ProjectSwitch => self.inner.limits.project_switch,
+            RateClass::Scripts => self.inner.limits.scripts,
         };
         let now = self.inner.clock.now();
         let mut buckets = self.inner.buckets.lock().unwrap_or_else(|e| e.into_inner());
@@ -747,6 +770,18 @@ impl Session {
         let Some(grants) = b.grants(&self.plugin) else {
             return (Decision::Deny(DenyReason::UnknownPlugin), None);
         };
+        // The Scripts bridge has its own rate (a run polls and logs far
+        // more often than other plugins call) and is bounded per run by
+        // the host's call budgets; `project.list` is one of its operations
+        // for a plugin that holds `scripts` and not `projectContext`.
+        if let Some(scope) = request.script_scope().or_else(|| {
+            (matches!(request, CapabilityRequest::ProjectList(_))
+                && grants.project_context.is_none()
+                && grants.scripts.is_some())
+            .then_some(ScriptScope::Projects)
+        }) {
+            return (self.decide_script(&grants, request, scope), None);
+        }
         if !b.take(&self.plugin, RateClass::Any) {
             return (Decision::Deny(DenyReason::RateLimited), None);
         }
@@ -948,9 +983,7 @@ impl Session {
             | CapabilityRequest::ProfileRead(_) => {
                 (self.decide_privileged(&grants, request, context), None)
             }
-            // The Scripts bridge (plugin API 1.13): no plugin is granted it
-            // yet; the `scripts` permission that will decide it comes with
-            // the agent's executor.
+            // Decided before the shared rate limit (`decide_script`).
             CapabilityRequest::ScriptLoad(_)
             | CapabilityRequest::ScriptPoll(_)
             | CapabilityRequest::ScriptLog(_)
@@ -974,7 +1007,7 @@ impl Session {
             | CapabilityRequest::ProcessRun(_)
             | CapabilityRequest::ShellRun(_)
             | CapabilityRequest::ShellAvailable(_) => {
-                (Decision::Deny(DenyReason::NotGranted), None)
+                unreachable!("the Scripts bridge is decided by decide_script")
             }
             // Own variables (design §5.2): always granted, rate limited.
             CapabilityRequest::VariablesPublish(_) | CapabilityRequest::VariablesClear(_) => {
@@ -994,6 +1027,47 @@ impl Session {
                 (Decision::Allow(allowed), None)
             }
         }
+    }
+
+    /// The Scripts bridge (plugin API 1.13, `docs/scripts-bridge.md`):
+    /// only `deckpilot.scripts`, only with the `scripts` permission, and
+    /// only the operations of the sub-ceilings it holds (`fs`, `process`,
+    /// `shell`; the run's own operations and the projects with any). The
+    /// agent decides each allowed call again against the script's own
+    /// grants, the run's origin and the limits.
+    fn decide_script(
+        &self,
+        grants: &Grants,
+        request: &CapabilityRequest,
+        scope: ScriptScope,
+    ) -> Decision {
+        let deny = Decision::Deny;
+        if self.plugin.as_str() != SCRIPTS_PLUGIN {
+            return deny(DenyReason::NotGranted);
+        }
+        let Some(ceiling) = grants.scripts else {
+            return deny(DenyReason::NotGranted);
+        };
+        if !self.broker.take(&self.plugin, RateClass::Scripts) {
+            return deny(DenyReason::RateLimited);
+        }
+        if request.validate().is_err() {
+            return deny(DenyReason::TooLarge);
+        }
+        let held = match scope {
+            ScriptScope::Run | ScriptScope::Projects => true,
+            ScriptScope::Fs => ceiling.fs,
+            ScriptScope::Process => ceiling.process,
+            ScriptScope::Shell => ceiling.shell,
+        };
+        if !held {
+            return deny(DenyReason::NotGranted);
+        }
+        Decision::Allow(Allowed::Script(Box::new(ScriptCall {
+            request: request.clone(),
+            scope,
+            ceiling,
+        })))
     }
 
     /// Plugin API 1.9's operations (`docs/marketplace/module-migration.md`

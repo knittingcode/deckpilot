@@ -43,6 +43,7 @@ pub mod registry;
 pub mod resolution;
 pub mod resource;
 pub mod runtime;
+pub mod script_grants;
 pub mod shared_layouts;
 pub mod stateful;
 pub mod target_kind;
