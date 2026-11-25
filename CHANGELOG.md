@@ -64,6 +64,13 @@ released either. 0.6.0 is the first version intended for publication.
   an action's parameters name. The app's requests to list, create, test,
   rename, turn off and remove connections are IPC protocol 20; the plugin
   store goes to schema 7. No plugin uses them yet.
+- Calls (groundwork): a locked device never shows a call. Locking the
+  configuration takes the Calls overlay off every device, and it comes back
+  after unlocking if the call is still going on.
+- Calls (groundwork, tests): "Back to work" is followed to the end of a
+  real plugin action through a spawned agent and the sandboxed plugin
+  host. A test-only agent option installs the mock call provider; normal
+  builds do not have it, which a test checks.
 - Calls (groundwork, nothing user-visible yet): the provider contract
   with capability discovery, where every capability a provider does not
   offer is explicitly unsupported with a reason; the sanitised call state;
@@ -81,6 +88,35 @@ released either. 0.6.0 is the first version intended for publication.
   "Back to work" return sessions (timer, real completion, or whichever
   comes first, 60 s by default), one per device. Tested on a virtual clock;
   nothing user-visible yet.
+- Calls (groundwork, nothing user-visible yet):
+  - **Per-device overlay.** A device can show the Calls layout without
+    anything of its own presentation changing: profile, page, folder and
+    remembered layouts stay as they were. Keys held during the switch run
+    nothing, Auto Exit pauses underneath, and a protected key always
+    dismisses the overlay.
+  - **Managed Calls layouts.** One per device model, generated for its
+    capability class with stable ids. They are regenerated only while
+    unedited, and "Restore defaults" first keeps your version as a layout
+    of your own. This adds storage schema 15, which is additive.
+- Calls (tests): a mock call provider with full control (answer, reject,
+  cancel, end, microphone, camera), used only by tests. It runs the
+  "Back to work" scenarios on a virtual clock. No real call app is
+  driven.
+- Calls (groundwork, off in every build): the agent runs the Calls overlay
+  when a provider is installed. "Back to work" waits for the real end of
+  what a key started: a workflow, a plugin's action, or an action run in
+  place. Agent tests cover this with the mock provider and a simulated
+  Stream Deck.
+  A managed Calls layout that cannot be stored while the database is busy
+  is tried again after 1 s, then after waits doubling up to a minute;
+  other storage errors are not retried.
+- Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
+  `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
+  Settings › Devices gets a Calls section, in English and Polish, shown
+  only while Calls is installed, which no build does yet. It shows the
+  call's state, says plainly that Teams can only be detected, has a switch
+  per device for the overlay, and has *Restore defaults*, which first keeps
+  your version of the layout under a name it tells you.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
@@ -154,7 +190,20 @@ released either. 0.6.0 is the first version intended for publication.
   existing message size limits. The Scripts plugin alone can be given a
   larger budget of calls per run, and its polling and logging never
   extend its continuous CPU limit, so a busy script is still stopped
-  after 2 seconds.
+  after 2 seconds. The agent checks every file operation of a script
+  against that script's own folders and access, never follows a link
+  out of them, never changes a `.git` folder, the home folder, system
+  folders or DeckPilot's own, and asks before it deletes or replaces
+  files, showing what it computed itself. A script runs only the
+  programs granted to it, with an argument list and never a shell (a
+  shell only with its own grant), in its granted folders, with a clean
+  environment, and the program is stopped when the script is stopped,
+  runs out of time or loses its grant. Plugin manifests know the
+  Scripts plugin's permission, its script parameter, its page and its
+  limits (plugin API 1.13), for DeckPilot's own Scripts plugin only. A
+  file a script reads in parts comes from one snapshot of the file, so
+  its parts never mix two versions; a file replaced or changed between
+  them fails the read.
 
 ### Changed
 

@@ -162,7 +162,7 @@ fn decode_item<T: serde::de::DeserializeOwned>(version: u32, document: &str) -> 
 }
 
 /// Every action of the shared Action Library.
-fn library(connection: &Connection) -> Result<Vec<ActionInstance>> {
+pub(crate) fn library(connection: &Connection) -> Result<Vec<ActionInstance>> {
     let rows: Vec<(u32, String)> = connection
         .prepare("SELECT document_version, document FROM library_actions ORDER BY id")?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -184,7 +184,7 @@ fn icon(connection: &Connection, id: &str) -> Result<Option<Icon>> {
         .transpose()
 }
 
-fn layout_row(connection: &Connection, id: &str) -> Result<Option<DeviceLayout>> {
+pub(crate) fn layout_row(connection: &Connection, id: &str) -> Result<Option<DeviceLayout>> {
     let row: Option<(u32, String)> = connection
         .query_row(
             "SELECT document_version, document FROM layouts WHERE id = ?1",
@@ -422,6 +422,14 @@ pub(crate) fn decompose(tx: &Connection, profile: &Profile) -> Result<()> {
     )?;
     let mut new_defaults = BTreeMap::new();
     for (position, layout) in profile.layouts.iter().enumerate() {
+        // A managed layout (`managed_layouts.rs`) is never a profile's: a
+        // regeneration would drop it from the profile silently.
+        if crate::managed_layouts::is_managed(tx, &layout.id.to_string())? {
+            return Err(StorageError::Invalid(format!(
+                "the layout “{}” is managed by a plugin and cannot be assigned to a profile",
+                layout.name
+            )));
+        }
         let is_default = profile.active_layouts.get(&layout.model) == Some(&layout.id);
         if is_default {
             new_defaults.insert(layout.model.to_string(), layout.id.to_string());
@@ -477,7 +485,7 @@ pub(crate) fn decompose(tx: &Connection, profile: &Profile) -> Result<()> {
     collect_garbage(tx)
 }
 
-fn upsert_action(tx: &Connection, action: &ActionInstance, stamp: i64) -> Result<()> {
+pub(crate) fn upsert_action(tx: &Connection, action: &ActionInstance, stamp: i64) -> Result<()> {
     tx.execute(
         "INSERT INTO library_actions (id, document_version, document, updated_at)
          VALUES (?1, ?2, ?3, ?4)
@@ -918,7 +926,10 @@ impl SqliteStore {
         let connection = self.connection();
         let rows: Vec<(String, u32, String, i64, i64)> = connection
             .prepare(
+                // Managed layouts are their owner's (`managed_layouts.rs`):
+                // not in the Layouts list and not exported.
                 "SELECT id, document_version, document, created_at, updated_at FROM layouts
+                 WHERE id NOT IN (SELECT layout_id FROM managed_layouts)
                  ORDER BY name COLLATE NOCASE, id",
             )?
             .query_map([], |row| {
@@ -1037,6 +1048,11 @@ impl SqliteStore {
         let key = id.to_string();
         if layout_row(&tx, &key)?.is_none() {
             return Err(StorageError::UnknownLayout);
+        }
+        if crate::managed_layouts::is_managed(&tx, &key)? {
+            return Err(StorageError::Invalid(
+                "the layout is managed by a plugin: remove it with the plugin's layouts".into(),
+            ));
         }
         let users = assignments(&tx, &key)?;
         let using: BTreeSet<ProfileId> = users.iter().map(|a| a.profile_id).collect();
@@ -1207,7 +1223,10 @@ impl SqliteStore {
     pub(crate) fn delete_unused_layouts(tx: &Connection, keep: &[LayoutId]) -> Result<()> {
         let unused: Vec<String> = tx
             .prepare(
-                "SELECT id FROM layouts WHERE id NOT IN (SELECT layout_id FROM profile_layouts)",
+                // A managed layout (`managed_layouts.rs`) is its owner's to
+                // remove, never an import's.
+                "SELECT id FROM layouts WHERE id NOT IN (SELECT layout_id FROM profile_layouts)
+                   AND id NOT IN (SELECT layout_id FROM managed_layouts)",
             )?
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
@@ -1367,6 +1386,12 @@ pub enum ItemKind {
 /// transaction. The profile is stored again so that it sees what the layout
 /// uses and keeps what it has.
 fn assign(tx: &Connection, profile: ProfileId, layout: &DeviceLayout) -> Result<()> {
+    if crate::managed_layouts::is_managed(tx, &layout.id.to_string())? {
+        return Err(StorageError::Invalid(format!(
+            "the layout “{}” is managed by a plugin and cannot be assigned to a profile",
+            layout.name
+        )));
+    }
     let mut document =
         crate::sqlite::load_profile_in(tx, profile)?.ok_or(StorageError::UnknownProfile)?;
     if document.layouts.iter().any(|l| l.id == layout.id) {

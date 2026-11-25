@@ -103,6 +103,32 @@ impl DeviceLayout {
         copy
     }
 
+    /// [`DeviceLayout::duplicated`], with the bindings to the actions of
+    /// `actions` moved to their copies (a copy that keeps the user's own
+    /// version of a managed layout's actions).
+    #[must_use]
+    pub fn duplicated_with_actions(
+        &self,
+        name: &str,
+        actions: &std::collections::HashMap<crate::ActionInstanceId, crate::ActionInstanceId>,
+    ) -> DeviceLayout {
+        let mut copy = self.clone();
+        let pages: std::collections::HashMap<PageId, PageId> = copy
+            .pages
+            .iter()
+            .map(|page| (page.id, PageId::new()))
+            .collect();
+        crate::profile::remap_layout(
+            &mut copy,
+            LayoutId::new(),
+            &pages,
+            actions,
+            &std::collections::HashMap::new(),
+        );
+        name.trim().clone_into(&mut copy.name);
+        copy
+    }
+
     /// What a device needs to show and run this layout: every control it
     /// binds, with the triggers bound on it. Derived from the bindings, so
     /// it is always up to date.

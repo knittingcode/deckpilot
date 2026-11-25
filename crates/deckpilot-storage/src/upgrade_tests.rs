@@ -63,7 +63,7 @@ const V0_8_1: Fixture = Fixture {
 };
 const FIXTURES: [Fixture; 4] = [V0_5_0, V0_6_0, SCHEMA_8, V0_8_1];
 /// The schema this build upgrades to.
-const CURRENT: u32 = 14;
+const CURRENT: u32 = 15;
 /// The tables schema 10 adds (shared layouts). `device_layouts` starts
 /// empty; the others hold what the profile documents held.
 const SCHEMA_10_TABLES: [&str; 9] = [
@@ -313,6 +313,9 @@ fn every_row_is_kept(fixture: Fixture) {
     // Migration 14 adds two columns to `projects`; every value of the
     // columns it had is kept.
     assert_eq!(project_columns(store.connection_for_tests()), projects);
+    // T-L3: schema 15 adds the managed layouts, empty: no layout is
+    // adopted.
+    assert_eq!(upgraded.tables["managed_layouts"].1.len(), 0);
     for (table, (sql, rows)) in &original.tables {
         let (new_sql, new_rows) = &upgraded.tables[table];
         if table == "projects" {
@@ -340,6 +343,8 @@ fn every_row_is_kept(fixture: Fixture) {
         .map(String::as_str)
         .collect();
     let mut expected = BTreeSet::from(SCHEMA_10_TABLES);
+    // Schema 15 (`managed_layouts.rs`).
+    expected.insert("managed_layouts");
     if fixture.version < 9 {
         expected.extend(SCHEMA_9_TABLES);
     }
@@ -796,4 +801,5 @@ fn bindings_of_released_versions_stay_raw_and_unchanged() {
     }
 }
 
+mod managed_layouts;
 mod repositories;

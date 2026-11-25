@@ -299,12 +299,16 @@ pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
             ));
         }
         for (p, parameter) in action.parameters.iter().enumerate() {
-            if matches!(parameter.kind, ParameterKind::Resource { .. }) {
-                found.push((
-                    format!("contributes.actions[{a}].parameters[{p}].kind"),
-                    "a `resource` parameter".to_owned(),
-                ));
-            }
+            let what = match parameter.kind {
+                ParameterKind::Resource { .. } => "a `resource` parameter",
+                // Plugin API 1.13 (`scripts.rs`).
+                ParameterKind::Script {} => "a `script` parameter",
+                _ => continue,
+            };
+            found.push((
+                format!("contributes.actions[{a}].parameters[{p}].kind"),
+                what.to_owned(),
+            ));
         }
     }
     for (index, variable) in m.contributes.variables().iter().enumerate() {
@@ -321,6 +325,15 @@ pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
                 format!("contributes.views[{index}].kind"),
                 format!("the `{}` view", view.kind.as_str()),
             ));
+        }
+    }
+    // Plugin API 1.13 (`scripts.rs`): the Scripts plugin's runtime.
+    if let Some(runtime) = &m.runtime {
+        if runtime.limits.is_some() {
+            found.push(("runtime.limits".into(), "`runtime.limits`".into()));
+        }
+        if runtime.host_calls.is_some() {
+            found.push(("runtime.hostCalls".into(), "`runtime.hostCalls`".into()));
         }
     }
     if m.contributes.status_items.is_some() {
@@ -515,7 +528,7 @@ fn host_views(c: &mut Checker, m: &Manifest) {
     } else if declared && !used {
         c.warn(
             "permissions",
-            "`hostViews` grants nothing without a `workflows` or `projects` view, \
+            "`hostViews` grants nothing without a `workflows`, `projects` or `scripts` view, \
              `statusItems` or `dashboardCards`",
         );
     }

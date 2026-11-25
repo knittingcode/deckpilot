@@ -164,6 +164,7 @@ fn requests_stay_within_the_frame_caps_d1() {
         bytes: u64::from(MAX_READ_CHUNK),
         size: MAX_SCRIPT_FILE,
         eof: false,
+        version: Some("0123456789abcdef0123456789abcdef".into()),
     };
     let reply = serde_json::to_vec(&CallResult::Ok(serde_json::to_value(reply).unwrap())).unwrap();
     assert!(reply.len() < MAX_HOST_CALL_REPLY, "{}", reply.len());
@@ -244,6 +245,7 @@ fn replies_are_what_the_guest_reads() {
             origin: "key".into(),
             user_initiated: true,
         },
+        remaining_ms: 60_000,
         now_us: 1,
     };
     let v = serde_json::to_value(&loaded).unwrap();
@@ -252,6 +254,7 @@ fn replies_are_what_the_guest_reads() {
     assert_eq!(v["settings"]["stopOnError"], true);
     assert_eq!(v["run"]["userInitiated"], true);
     assert_eq!(v["nowUs"], 1);
+    assert_eq!(v["remainingMs"], 60_000);
     let polled = serde_json::to_value(ScriptPolled {
         cancelled: false,
         remaining_ms: 5,
