@@ -112,7 +112,8 @@ let runs: Runs = response.json().map_err(|_| PluginError::new("invalid-response"
     slot never receives them.
 
   Everything else is dropped: `set-cookie`, `www-authenticate`,
-  `authorization`-style and vendor headers (`x-oauth-scopes` except on a connection's responses, ...),
+  `authorization`-style and vendor headers (`x-oauth-scopes`, except on a
+  connection's responses, ...),
   `location` (redirects are followed by the agent). A value longer than
   4 KiB or with control characters is dropped, and at most 32 headers are
   returned. When the request carried a credential, every form of the
@@ -585,12 +586,12 @@ prefix ends the request with `redirect-refused`. Each of these messages
 plugins may rely on. A request the user cancelled, or one past its
 deadline, is answered by the supervisor as for every other plugin
 (`unavailable`, "the action was cancelled…"); `time.sleep` interrupted
-answers a message starting with `cancelled: `. A connection without a token sends nothing
-(`unavailable`). A fetch that names a connection is never checked as an
-ordinary fetch. `time.sleep` is rate limited to 30 a minute. The agent's
-`PLUGIN_API` still reports the level it fully provides, so a `^1.14`
-plugin installs only once the agent's level reaches 1.14 (with plugin
-API 1.12 and 1.13, `docs/compatibility.md`).
+answers a message starting with `cancelled: `. A connection without a
+token sends nothing (`unavailable`). A fetch that names a connection is
+never checked as an ordinary fetch. `time.sleep` is rate limited to 30 a
+minute. The agent's `PLUGIN_API` still reports the level it fully
+provides, so a `^1.14` plugin installs only once the agent's level reaches
+1.14 (with plugin API 1.12 and 1.13, `docs/compatibility.md`).
 
 ## What there is not (ABI 1)
 

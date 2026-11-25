@@ -20,25 +20,26 @@ released either. 0.6.0 is the first version intended for publication.
 - Plugins: a connection's HTTP answers carry GitHub's `x-oauth-scopes`,
   `x-accepted-oauth-scopes` and `github-authentication-token-expiration`
   (scope names and a date), so a connection's test can name a missing
-  permission or an expiring token; no other plugin request gets them. A connection's refusals always start
-  with their code (`redirect-refused: …`).
-- Plugins: connections (plugin API 1.14, host side). A plugin that
-  declares connection types (DeckPilot's own bundled plugins only) can be
-  connected to several servers, each with its own address, consent, token
-  and status: GitHub.com and GitLab.com at their own addresses, GitHub
-  Enterprise Server and self-managed GitLab at the address the user opens
-  in the browser (`https` only, with a port or a path). Tokens are kept in
-  the encrypted plugin database, protected like the configuration (its key
-  derives from the configuration's), are never sent back to the app, logged, exported or handed to
-  the plugin, and are injected by the agent only into requests to their
-  own server, and only to a connection the user chose for the action (never
-  one a workflow maps in); a redirect off that server ends the request, certificates
-  are checked against the system's trust store with no way to skip it,
-  and a server on a private network needs its own consent (this computer
-  and link-local addresses never). A plugin reaches only the connections
-  an action's parameters name. The app's requests to list, create, test,
-  rename, turn off and remove connections are IPC protocol 20; the plugin
-  store goes to schema 7. No plugin uses them yet.
+  permission or an expiring token; no other plugin request gets them. A
+  connection's refusals always start with their code (`redirect-refused:
+  …`).
+- Plugins: connections (plugin API 1.14, host side). A plugin that declares
+  connection types (DeckPilot's own bundled plugins only) can be connected
+  to several servers, each with its own address, consent, token and status:
+  GitHub.com and GitLab.com at their own addresses, GitHub Enterprise Server
+  and self-managed GitLab at the address the user opens in the browser
+  (`https` only, with a port or a path). Tokens are kept in the encrypted
+  plugin database, protected like the configuration (its key derives from
+  the configuration's), are never sent back to the app, logged, exported or
+  handed to the plugin, and are injected by the agent only into requests to
+  their own server, and only to a connection the user chose for the action
+  (never one a workflow maps in); a redirect off that server ends the
+  request, certificates are checked against the system's trust store with no
+  way to skip it, and a server on a private network needs its own consent
+  (this computer and link-local addresses never). A plugin reaches only the
+  connections an action's parameters name. The app's requests to list,
+  create, test, rename, turn off and remove connections are IPC protocol 20;
+  the plugin store goes to schema 7. No plugin uses them yet.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,

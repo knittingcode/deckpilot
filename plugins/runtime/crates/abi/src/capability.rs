@@ -567,8 +567,8 @@ pub const CONNECTION_RESPONSE_HEADERS: &[&str] = &[
     "github-authentication-token-expiration",
 ];
 
-/// Whether a response header (any case) is handed to plugins
-/// ([`RESPONSE_HEADERS`]).
+/// Whether a response header (any case) is handed to plugins on a
+/// connection's responses only ([`CONNECTION_RESPONSE_HEADERS`]).
 pub fn is_connection_response_header(name: &str) -> bool {
     CONNECTION_RESPONSE_HEADERS
         .iter()
@@ -1703,6 +1703,13 @@ mod tests {
         for name in ["authorization", "private-token", "x-oauth-scope", ""] {
             assert!(!is_connection_response_header(name), "{name}");
         }
+        let unique: std::collections::BTreeSet<_> = CONNECTION_RESPONSE_HEADERS.iter().collect();
+        assert_eq!(unique.len(), CONNECTION_RESPONSE_HEADERS.len());
+        assert!(
+            CONNECTION_RESPONSE_HEADERS
+                .iter()
+                .all(|name| !is_response_header(name))
+        );
         let unique: std::collections::BTreeSet<_> = RESPONSE_HEADERS.iter().collect();
         assert_eq!(unique.len(), RESPONSE_HEADERS.len());
         assert!(RESPONSE_HEADERS.len() <= MAX_HEADERS);

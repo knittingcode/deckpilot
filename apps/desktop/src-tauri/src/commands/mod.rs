@@ -26,6 +26,7 @@ mod modules;
 pub(crate) mod plugins;
 pub(crate) mod portability;
 mod profiles;
+pub mod repositories;
 pub(crate) mod reload;
 pub(crate) mod security;
 mod shared_layouts;
