@@ -591,6 +591,14 @@ pub fn resolve_parameters(
         let Some(spec) = definition.parameters.iter().find(|spec| spec.key == key) else {
             continue;
         };
+        // Which script runs is the user's choice, never a value's: a
+        // reference or template never fills a script parameter, wherever
+        // it came from (an import, a stored document, an older editor).
+        if spec.kind == ParameterKind::Script {
+            return Err(ResolutionFailure::Invalid(vec![format!(
+                "parameter `{key}` names a script: only a script chosen for the action can fill it"
+            )]));
+        }
         let outcome = match &value {
             ParameterValue::Reference(reference) => resolve_reference(
                 &key,

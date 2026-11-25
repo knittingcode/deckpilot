@@ -71,6 +71,7 @@ impl Probe {
                         options: vec!["a".into(), "b".into()],
                     },
                 ),
+                spec("script", ParameterKind::Script),
             ],
             requires_project: false,
             deprecated: false,
@@ -1300,4 +1301,50 @@ fn plugin_actions_read_folder_paths_only_when_allowed() {
             .unwrap();
         assert_eq!(result.message, "Storefront CMS", "{module}");
     }
+}
+
+/// Which script runs is never a value's: a template or reference on a
+/// script parameter (from an import or a stored document; the editor
+/// never saves one) is refused, a literal id passes.
+#[test]
+fn a_script_parameter_takes_only_a_chosen_script() {
+    let f = Fixture::new();
+    let resolver = ContextResolver {
+        profile: &f.profile,
+        os: Os::Linux,
+        shared: &NoSharedVariables,
+        outputs: None,
+        registry: &REGISTRY,
+        live: &crate::variables::NoLiveState,
+        machine: None,
+        private_paths: true,
+    };
+    let context = Invocation::default().context(&f.profile, None);
+    let id = crate::ScriptId::new().to_string();
+    for value in [
+        template(&format!("{id}{{{{ system.profile.current.name }}}}")),
+        reference("shared.scripts.chosen"),
+    ] {
+        let failure = resolve_parameters(
+            Probe::new().definition(),
+            &ActionParameters::new().with("script", value),
+            &resolver,
+            &context,
+            &f.profile,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&failure, ResolutionFailure::Invalid(m) if m[0].contains("names a script")),
+            "{failure:?}"
+        );
+    }
+    let resolved = resolve_parameters(
+        Probe::new().definition(),
+        &ActionParameters::new().with("script", ParameterValue::Text(id.clone())),
+        &resolver,
+        &context,
+        &f.profile,
+    )
+    .unwrap();
+    assert_eq!(resolved.parameters.text("script"), Some(id.as_str()));
 }

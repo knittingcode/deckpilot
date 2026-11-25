@@ -103,7 +103,10 @@
     "workflowReferencesChanged": "od potwierdzenia zmieniło się to, co używa przepływu pracy; sprawdź to ponownie",
     "workflowNotInProfile": "klawisz {{key}} na stronie „{{page}}” uruchamia przepływ pracy spoza tego profilu; wybierz przepływ pracy tego profilu",
     "workflowNeedsInputs": "klawisz {{key}} na stronie „{{page}}” uruchamia przepływ pracy wymagający wartości wejściowych; użyj go w węźle podprzepływu",
-    "workflowInWorkSession": "ustawienia sesji pracy używają tego przepływu pracy; wyczyść je też, aby go usunąć"
+    "workflowInWorkSession": "ustawienia sesji pracy używają tego przepływu pracy; wyczyść je też, aby go usunąć",
+    "notMainWindow": "skrypty zmienia się tylko w oknie głównym",
+    "scriptFolderMissing": "tego folderu nie ma na tym komputerze",
+    "scriptProgramTwice": "ten program jest już nadany"
   },
   "storage": {
     "database": "błąd bazy danych: {{detail}}",

@@ -247,6 +247,60 @@ fn canonical_folder(path: &std::path::Path) -> CommandResult<std::path::PathBuf>
     Ok(real)
 }
 
+/// The file a granted command stands for, as the agent's executor finds
+/// it: an absolute path as it is, a bare name on the `PATH` (with `.exe`
+/// and `.com` on Windows); canonical. `None` when it is not found here.
+fn program_file(command: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(command);
+    if path.is_absolute() {
+        return std::fs::canonicalize(path).ok();
+    }
+    let names: Vec<String> = if cfg!(windows) {
+        vec![
+            command.to_owned(),
+            format!("{command}.exe"),
+            format!("{command}.com"),
+        ]
+    } else {
+        vec![command.to_owned()]
+    };
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
+            .find(|candidate| candidate.is_file())
+            .and_then(|found| std::fs::canonicalize(found).ok())
+    })
+}
+
+/// Refuses a program granted twice: by the file each command stands for
+/// here (`make`, `Make` and `/usr/bin/make` alike), or by its name without
+/// case when it is not found here.
+fn no_program_twice(grants: &ScriptGrants) -> CommandResult<()> {
+    let mut seen: Vec<String> = Vec::new();
+    for grant in &grants.process {
+        let key = program_file(&grant.command).map_or_else(
+            || grant.command.to_lowercase(),
+            |file| {
+                let text = file.to_string_lossy().into_owned();
+                if cfg!(any(target_os = "macos", windows)) {
+                    text.to_lowercase()
+                } else {
+                    text
+                }
+            },
+        );
+        if seen.contains(&key) {
+            return Err(CommandError::invalid_with(
+                "scriptProgramTwice",
+                format!("{} is granted twice", grant.command),
+                [],
+            ));
+        }
+        seen.push(key);
+    }
+    Ok(())
+}
+
 /// The Permissions tab's save. Folder scopes are stored canonical.
 #[tauri::command]
 pub fn set_script_grants<R: Runtime>(
@@ -258,6 +312,7 @@ pub fn set_script_grants<R: Runtime>(
 ) -> CommandResult<()> {
     main_only(&window)?;
     let mut grants = grants;
+    no_program_twice(&grants)?;
     for scope in &mut grants.fs {
         if let deckpilot_core::script_grants::FsRoot::Directory { path, .. } = &mut scope.root {
             *path = canonical_folder(path)?;

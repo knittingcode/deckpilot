@@ -440,7 +440,13 @@ impl ScriptGrants {
                 return Err(GrantsError::Command);
             }
         }
-        let mut commands: Vec<&str> = self.process.iter().map(|g| g.command.as_str()).collect();
+        // Without case: `make` and `Make` are one program where names
+        // compare so, and never meant as two grants elsewhere.
+        let mut commands: Vec<String> = self
+            .process
+            .iter()
+            .map(|g| g.command.to_lowercase())
+            .collect();
         commands.sort_unstable();
         if commands.windows(2).any(|w| w[0] == w[1]) {
             return Err(GrantsError::Command);

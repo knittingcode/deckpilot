@@ -122,7 +122,7 @@ export function PermissionsTab({
     setClasses((c) => ({ ...c, [trimmed]: kind }))
     setGrants((g) => {
       const current = g.process ?? []
-      if (current.some((p) => p.command === trimmed)) return g
+      if (current.some((p) => p.command.toLowerCase() === trimmed.toLowerCase())) return g
       return {
         ...g,
         process: [...current, { command: trimmed, cwd: "repositories", env: "none" }],
