@@ -606,9 +606,40 @@ impl Runtime {
             })
     }
 
-    /// Sets the text devices show while no profile is loaded.
+    /// Whether devices show the placeholder ("Locked"): one is set and
+    /// there is no profile.
+    pub fn shows_placeholder(&self) -> bool {
+        self.placeholder.is_some() && self.profile().is_none()
+    }
+
+    /// Sets the text devices show while no profile is loaded. Showing it
+    /// (or no longer) changes what every device presents, so controls held
+    /// down across it are fenced like across any other switch: a press
+    /// before a lock never releases into an overlay after the unlock.
     pub fn set_placeholder(&mut self, text: Option<&str>) {
-        self.placeholder = text.map(str::to_owned);
+        self.with_presentation_fenced(|runtime| {
+            runtime.placeholder = text.map(str::to_owned);
+        });
+    }
+
+    /// Runs `change`, then fences the controls of every connected device
+    /// whose shown overlay it changed (`after_presentation_change`).
+    fn with_presentation_fenced(&mut self, change: impl FnOnce(&mut Self)) {
+        let before: Vec<(DeviceId, Option<(OverlaySession, PageId)>)> = self
+            .devices
+            .connected()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|device| {
+                let shown = self.shown_session(&device);
+                (device, shown)
+            })
+            .collect();
+        change(self);
+        for (device, shown) in before {
+            self.after_presentation_change(&device, shown);
+        }
     }
 
     pub fn engine(&self) -> &Engine {
@@ -660,6 +691,12 @@ impl Runtime {
     /// page of its layout the first time); folders are closed. No action is
     /// executed.
     pub fn set_profile(&mut self, profile: Option<Profile>, project: Option<ProjectId>) {
+        // No profile with a placeholder hides every overlay (locked), and a
+        // profile shows them again: held controls are fenced across it.
+        self.with_presentation_fenced(|runtime| runtime.set_profile_unfenced(profile, project));
+    }
+
+    fn set_profile_unfenced(&mut self, profile: Option<Profile>, project: Option<ProjectId>) {
         self.remember_pages();
         self.parked.clear();
         self.refused.clear();
