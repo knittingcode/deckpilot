@@ -586,9 +586,16 @@ function ProjectForm({
       throw new InvalidInput(t("workspace:projects.form.repeatedRole", { role: repeated }))
     }
     const resources = Object.fromEntries(filled.map((r) => [r.role, r.key]))
-    // Repositories are sent when there are (or were) any; their remotes
+    // Repositories are sent only when the form changed them; their remotes
     // and other metadata the form does not edit are kept by the backend.
-    const withRepositories = repositories.length > 0 || initialRepositories.length > 0
+    // Left out, a project whose only repository is the one its role stands
+    // for keeps deriving it (from its name and role as saved now), and a
+    // folder chosen for an existing repository is bound below without it.
+    const comparable = (list: RepositoryRow[]) =>
+      JSON.stringify(list.map((r) => [r.id, r.key, r.name, r.description, r.resource]))
+    const withRepositories =
+      comparable(repositories) !== comparable(initialRepositories) ||
+      defaultRepository !== initialDefault
     const input: ProjectInput = withRepositories
       ? {
           key,
@@ -686,6 +693,8 @@ function ProjectForm({
         defaultId={defaultRepository}
         onDefault={setDefaultRepository}
         initialDefaultId={initialDefault}
+        projectKey={project?.key ?? null}
+        savedRows={initialRepositories}
         roleResource={
           // As the form has it now: the advanced section may change the role.
           rows.find((r) => r.role.trim() === "repository")?.key.trim() || null

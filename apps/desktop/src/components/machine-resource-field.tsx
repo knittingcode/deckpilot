@@ -308,6 +308,7 @@ export function LocationRow({
   folder,
   files,
   busy,
+  showGone = true,
   onBrowse,
 }: {
   id: string
@@ -321,6 +322,8 @@ export function LocationRow({
    */
   files: boolean
   busy: boolean
+  /** Alert when the bound file or folder is gone (off where the caller says so itself). */
+  showGone?: boolean
   onBrowse: (directory: boolean) => void
 }) {
   const { t } = useTranslation()
@@ -397,7 +400,7 @@ export function LocationRow({
           {t("actions:system.picker.fileOrFolder")}
         </p>
       )}
-      {gone && (
+      {gone && showGone && (
         <p className="text-xs text-destructive" role="alert">
           {t("actions:system.picker.locationGone")}
         </p>

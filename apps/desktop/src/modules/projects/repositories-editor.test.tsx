@@ -51,7 +51,7 @@ const checks: ResourceCheck[] = [
     kind: "directory",
     value: "/src/gone-cms",
     status: "missing",
-    usedBy: ["SHOP repositories.cms", "BLOG cms"],
+    usedBy: ["SHOP repositories.cms", "BLOG cms", "BLOG repositories.site"],
   },
 ]
 
@@ -200,6 +200,62 @@ describe("Repositories in the project form", () => {
     })
   })
 
+  it("lists other projects' repositories and roles on the folder, not its own use", async () => {
+    const { form, user } = await openEditor()
+    await user.click(within(row(form, "CMS")).getByRole("button", { name: "Remove CMS" }))
+    const confirm = screen.getByRole("alertdialog", { name: "Remove CMS?" })
+    expect(within(confirm).getByText("Also used by BLOG cms")).toBeInTheDocument()
+    expect(within(confirm).getByText("Also used by BLOG repositories.site")).toBeInTheDocument()
+    expect(within(confirm).queryByText("Also used by SHOP repositories.cms")).toBeNull()
+  })
+
+  it("says who else moves with a shared folder when another one is chosen", async () => {
+    dialog.open.mockResolvedValue("/src/cms-moved")
+    const { form, user } = await openEditor()
+    expect(within(row(form, "CMS")).queryByRole("note")).toBeNull()
+    await user.click(within(row(form, "CMS")).getByRole("button", { name: "Choose folder…" }))
+    expect(within(row(form, "CMS")).getByRole("note")).toHaveTextContent(
+      "Also changes the folder for BLOG cms, BLOG repositories.site.",
+    )
+  })
+
+  it("flags a folder that is gone once, in the row's header", async () => {
+    api.resourceStatus.mockResolvedValue("missing")
+    const { form } = await openEditor()
+    const cms = row(form, "CMS")
+    await waitFor(() => {
+      expect(api.resourceStatus).toHaveBeenCalledWith("shop.cms")
+    })
+    expect(within(cms).getAllByText("Folder not found")).toHaveLength(1)
+    expect(within(cms).queryByRole("alert")).toBeNull()
+  })
+
+  it("leaves the repository a role-only project derives out of a save", async () => {
+    // As get_profile shows it: the role's repository, derived, not stored.
+    const derived = project("SHOP", {
+      name: "Online Shop",
+      resources: { repository: "shop.repository" },
+      repositories: [{ id: MAIN, key: "main", name: "Online Shop", resource: "shop.repository" }],
+      defaultRepository: MAIN,
+    })
+    const { form, user } = await openEditor([derived])
+    // Renamed: the derived repository follows the name, so it is not sent.
+    const name = within(form).getByRole("textbox", { name: "Name" })
+    await user.clear(name)
+    await user.type(name, "Shop")
+    // The role pointed elsewhere: the derived repository follows the role.
+    await user.click(within(form).getByRole("button", { name: "Resource roles (advanced)" }))
+    const key = within(form).getAllByRole("textbox", { name: "Resource key" })[0] as HTMLElement
+    await user.clear(key)
+    await user.type(key, "shop.other")
+    await user.click(within(form).getByRole("button", { name: "Save" }))
+    await waitFor(() => {
+      expect(api.updateProject).toHaveBeenCalled()
+    })
+    const input = api.updateProject.mock.calls[0]?.[2]
+    expect(input).toEqual({ key: "SHOP", name: "Shop", resources: { repository: "shop.other" } })
+  })
+
   it("does nothing when the folder picker is cancelled", async () => {
     dialog.open.mockResolvedValue(null)
     const { form, user } = await openEditor()
@@ -237,7 +293,9 @@ describe("Repositories in the project form", () => {
         "The repository role of this project points at its folder and keeps pointing there.",
       ),
     ).toBeInTheDocument()
-    expect(within(confirm).getByText("Also used by SHOP repository")).toBeInTheDocument()
+    // The project's own role is said once, never as another user.
+    expect(within(confirm).queryByText("Also used by SHOP repository")).toBeNull()
+    expect(within(confirm).queryByText(/^Also used by/)).toBeNull()
     await user.click(within(confirm).getByRole("button", { name: "Remove" }))
     expect(
       await within(form).findByText(

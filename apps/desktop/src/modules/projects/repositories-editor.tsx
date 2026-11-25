@@ -55,6 +55,8 @@ export function RepositoriesEditor({
   defaultId,
   onDefault,
   initialDefaultId,
+  projectKey,
+  savedRows,
   roleResource,
   checks,
 }: {
@@ -64,6 +66,10 @@ export function RepositoriesEditor({
   onDefault: (id: string | null) => void
   /** The default when the form opened, to say what marking another changes. */
   initialDefaultId: string | null
+  /** The project's key as saved (`usedBy` names it so), `null` for a new one. */
+  projectKey: string | null
+  /** The repositories as saved, to tell this project's own uses of a folder. */
+  savedRows: RepositoryRow[]
   /** What the project's `repository` role points at now. */
   roleResource: string | null
   checks: ResourceCheck[]
@@ -152,6 +158,15 @@ export function RepositoriesEditor({
                   problems={rowProblems(rows, index)}
                   isDefault={row.id === defaultId}
                   roleResource={roleResource}
+                  ownUse={
+                    projectKey === null
+                      ? null
+                      : (() => {
+                          const saved = savedRows.find((r) => r.id === row.id)
+                          return saved ? `${projectKey} repositories.${saved.key}` : null
+                        })()
+                  }
+                  roleUse={projectKey === null ? null : `${projectKey} repository`}
                   removable={rows.length > 1 || roleResource === null}
                   check={row.resource ? checks.find((c) => c.key === row.resource) : undefined}
                   onChange={(patch) => {
@@ -198,6 +213,8 @@ function RepositoryItem({
   problems,
   isDefault,
   roleResource,
+  ownUse,
+  roleUse,
   removable,
   check,
   onChange,
@@ -212,6 +229,10 @@ function RepositoryItem({
   problems: ReturnType<typeof rowProblems>
   isDefault: boolean
   roleResource: string | null
+  /** How `usedBy` names this repository itself (`SHOP repositories.cms`). */
+  ownUse: string | null
+  /** How `usedBy` names this project's repository role (`SHOP repository`). */
+  roleUse: string | null
   /** The last repository stays while the repository role would bring it back. */
   removable: boolean
   check: ResourceCheck | undefined
@@ -235,9 +256,10 @@ function RepositoryItem({
   // is bound when the project is saved.
   const status = row.pendingPath ? null : (check?.status ?? (row.resource ? "unbound" : null))
   const path = row.pendingPath ?? check?.value ?? null
-  // What else uses this folder besides this repository (roles of projects).
-  const users = (check?.usedBy ?? []).filter((u) => !/ repositories\./.test(u))
   const usesRole = row.resource !== null && row.resource === roleResource
+  // What else uses this folder besides this repository: other projects'
+  // roles and repositories (the role of this one is said on its own).
+  const users = (check?.usedBy ?? []).filter((u) => u !== ownUse && !(usesRole && u === roleUse))
   return (
     <li
       ref={setNodeRef}
@@ -397,11 +419,20 @@ function RepositoryItem({
         folder
         files={false}
         busy={false}
+        // "Folder not found" is in the row's header already.
+        showGone={false}
         onBrowse={() => void onChooseFolder()}
       />
       {row.pendingPath && (
         <p className="text-xs text-muted-foreground">
           {t("workspace:projects.repositories.boundOnSave")}
+        </p>
+      )}
+      {row.pendingPath && row.resource !== null && users.length > 0 && (
+        // The folder is bound under the same key, so whatever else uses
+        // that key moves with it.
+        <p className="text-xs text-muted-foreground" role="note">
+          {t("workspace:projects.repositories.rebindShared", { users: users.join(", ") })}
         </p>
       )}
     </li>

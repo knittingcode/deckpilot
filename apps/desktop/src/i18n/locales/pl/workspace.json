@@ -279,6 +279,7 @@
       "invalidKey": "Użyj małej litery, a po niej najwyżej 31 małych liter, cyfr lub _.",
       "duplicateKey": "Klucz „{{key}}” jest już używany w tym projekcie.",
       "boundOnSave": "Ten folder zostanie ustawiony na tym komputerze po zapisaniu.",
+      "rebindShared": "Zmienia też folder dla: {{users}}.",
       "roleFollows": "Akcje używające roli repozytorium będą używać {{name}}.",
       "roleStays": "Rola repozytorium nadal wskazuje folder usuniętego repozytorium.",
       "bindFailed": "Projekt zapisano, ale nie ustawiono folderu na tym komputerze",

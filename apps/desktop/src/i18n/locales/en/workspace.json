@@ -271,6 +271,7 @@
       "invalidKey": "Use a lowercase letter, then up to 31 lowercase letters, digits or _.",
       "duplicateKey": "The key “{{key}}” is already used in this project.",
       "boundOnSave": "This folder is set on this computer when you save.",
+      "rebindShared": "Also changes the folder for {{users}}.",
       "roleFollows": "Actions that use the repository role will use {{name}}.",
       "roleStays": "The repository role still points at the removed repository's folder.",
       "bindFailed": "The project was saved, but a folder was not set on this computer",
