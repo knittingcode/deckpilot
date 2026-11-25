@@ -445,7 +445,12 @@ func tab(_ w: AXUIElement, _ title: String) throws {
 /// About strip's version), before the "Install status" group's
 /// "Installed <version>".
 func installedOnPage(_ w: AXUIElement) -> String? {
-  if let versions = first(w, { name($0) == "Versions" && role($0) == kAXListRole as String }) {
+  // The list (a grid: AXGroup AXApplicationGroup in WebKit), not its
+  // section's region or heading.
+  if let versions = first(w, { e in
+    name(e) == "Versions" && !isButton(e) && role(e) != "AXHeading" && subrole(e) != "AXLandmarkRegion"
+      && (role(e) == kAXListRole as String || role(e) == kAXGroupRole as String)
+  }) {
     let row = children(versions).first { li in
       hasText(li, pluginVersion) && hasText(li, "Installed")
     }
