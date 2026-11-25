@@ -589,6 +589,7 @@ let axSteps: [(String, () throws -> String)] = [
     let shell = try marketplace(mainWindow)
     try tab(mainWindow, "Discover")
     let c = try until("the '\(pluginName)' card", long) { card(mainWindow) }
+    let cardName = String(name(c).prefix(80))
     let catalog = catalogNames()
     let shot = screenshot("marketplace")
     let texts = all(mainWindow).map(name)
@@ -600,7 +601,12 @@ let axSteps: [(String, () throws -> String)] = [
       // every plugin of each category on its card.
       try tab(mainWindow, "Categories")
       cards = try until("the Categories section's list") { () -> [String]? in
-        guard let list = first(mainWindow, { name($0) == "Categories" && role($0) == kAXListRole as String }) else { return nil }
+        // The list (a grid: AXGroup AXApplicationGroup in WebKit), not the
+        // section's region or heading.
+        guard let list = first(mainWindow, { e in
+          name(e) == "Categories" && !isButton(e) && role(e) != "AXHeading" && subrole(e) != "AXLandmarkRegion"
+            && (role(e) == kAXListRole as String || role(e) == kAXGroupRole as String)
+        }) else { return nil }
         let names = all(list).filter(isButton).map(name)
         return names.isEmpty ? nil : names
       }
@@ -615,7 +621,7 @@ let axSteps: [(String, () throws -> String)] = [
       try tab(mainWindow, "Discover")
       _ = try until("the '\(pluginName)' card on Discover again") { card(mainWindow) }
     }
-    return "Marketplace with its \(shell == "sidebar" ? "sidebar (0.15.0 and later)" : "tabs (up to 0.14)"); card '\(name(c).prefix(80))'; production catalog (registry-index.json in the profile): \(catalog.isEmpty ? "not readable" : catalog.joined(separator: ", ")); all shown in \(where_); \(shot)"
+    return "Marketplace with its \(shell == "sidebar" ? "sidebar (0.15.0 and later)" : "tabs (up to 0.14)"); card '\(cardName)'; production catalog (registry-index.json in the profile): \(catalog.isEmpty ? "not readable" : catalog.joined(separator: ", ")); all shown in \(where_); \(shot)"
   }),
   ("install \(pluginName) with consent", {
     guard let c = card(mainWindow) else { throw Failure("no card") }
@@ -796,13 +802,18 @@ let axSteps: [(String, () throws -> String)] = [
       return "UI up to 0.8.1: Create a profile opened Settings > Profiles in the window '\(settingsTitle)'; New profile '\(profileName)' (\(how)) saved and listed; \(shot)"
     }
     // The compact table (aria-label "Profiles"): each profile's name is a
-    // button that makes it the profile being edited; the toolbar has no
-    // profile selector in the settings, so a button of that name is the row.
-    _ = try until("'\(profileName)' in the table of All profiles") { () -> Bool? in
-      first(mainWindow, { isButton($0) && name($0) == "Save" }) == nil && hasText(mainWindow, "All profiles")
-        && first(mainWindow, { isButton($0) && name($0) == profileName }) != nil ? true : nil
+    // button that makes it the profile being edited (from 0.15.0, #435, one
+    // that opens its details: "Open <name>"); the toolbar has no profile
+    // selector in the settings, so a button of that name is the row. Up to
+    // 0.14 under "All profiles", from 0.15.0 the page's one table.
+    let isTable: (AXUIElement) -> Bool = { name($0) == "Profiles" && (role($0) == kAXTableRole as String || role($0) == "AXGrid") }
+    let rowButton = try until("'\(profileName)' in the table of All profiles") { () -> String? in
+      guard first(mainWindow, { isButton($0) && name($0) == "Save" }) == nil else { return nil }
+      let scope: AXUIElement
+      if let t = first(mainWindow, isTable) { scope = t } else if hasText(mainWindow, "All profiles") { scope = mainWindow } else { return nil }
+      return first(scope) { isButton($0) && (name($0) == profileName || name($0) == "Open \(profileName)") }.map(name)
     }
-    let table = first(mainWindow) { name($0) == "Profiles" && (role($0) == kAXTableRole as String || role($0) == "AXGrid") }
+    let table = first(mainWindow, isTable)
     let shot = screenshot("settings-profiles")
     // Back where Create a profile was pressed: the rail's Device Editor.
     try press(try button(mainWindow, "Device Editor"))
@@ -810,7 +821,7 @@ let axSteps: [(String, () throws -> String)] = [
     let selector = try find(mainWindow, "the Device Editor's profile selector") { isButton($0) && name($0).hasPrefix("Profile:") }
     _ = try find(mainWindow, "the Device Editor's device selector") { isButton($0) && (name($0).hasPrefix("Device:") || name($0) == "Choose a device") }
     let heading = first(mainWindow) { role($0) == "AXHeading" && (name($0) == "Device Editor" || joined($0) == "Device Editor") } != nil
-    return "new UI: Create a profile showed Settings > Profiles in the main window; \(windowsEvidence); New profile '\(profileName)' (\(how)) saved and listed in All profiles (\(table != nil ? "table 'Profiles'" : "table role not exposed"), row button '\(profileName)'); the rail's Device Editor left the settings: back in the Device Editor (\(heading ? "heading 'Device Editor', " : "")device and profile selectors, '\(name(selector))'); \(shot); \(screenshot("settings-left-editor"))"
+    return "new UI: Create a profile showed Settings > Profiles in the main window; \(windowsEvidence); New profile '\(profileName)' (\(how)) saved and listed in All profiles (\(table != nil ? "table 'Profiles'" : "table role not exposed"), row button '\(rowButton)'); the rail's Device Editor left the settings: back in the Device Editor (\(heading ? "heading 'Device Editor', " : "")device and profile selectors, '\(name(selector))'); \(shot); \(screenshot("settings-left-editor"))"
   }),
   ("Device Editor, Action Library and key inspector", {
     var profile = try find(mainWindow, "the profile selector") { isButton($0) && (name($0).hasPrefix("Profile:") || name($0) == "Choose the profile to edit") }

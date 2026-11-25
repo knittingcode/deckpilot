@@ -537,6 +537,7 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
       $shell = Ui-Marketplace $main
       [void](Ui-Tab $main 'Discover')
       $card = Ui-Until "the '$($script:PluginName)' card" { Ui-PluginCard $main } $script:UiLong
+      $cardName = Ui-Name $card
       $catalog = @(Ui-CatalogNames $script:Envs.DECKPILOT_DATA_DIR)
       $shot = Ui-Shot 'marketplace'
       $texts = @(Ui-Texts $main)
@@ -548,7 +549,7 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
         # every plugin of each category on its card.
         [void](Ui-Tab $main 'Categories')
         $cards = @(Ui-Until "the Categories section's list" {
-          $list = Ui-All $main { (Ui-Name $_) -eq 'Categories' -and (Ui-Type $_) -eq 'List' } | Select-Object -First 1
+          $list = Ui-All $main { (Ui-Name $_) -eq 'Categories' -and (Ui-Type $_) -in 'List', 'Group' -and (Ui-All $_ { (Ui-Type $_) -eq 'Button' } | Select-Object -First 1) } | Select-Object -Last 1
           if ($list) { $names = @(Ui-All $list { (Ui-Type $_) -eq 'Button' } | ForEach-Object { Ui-Name $_ } | Where-Object { $_ }); if ($names.Count -gt 0) { , $names } }
         })
         $where = "Discover and Categories ($($cards -join ' | '))"
@@ -564,7 +565,7 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
         [void](Ui-Tab $main 'Discover')
         [void](Ui-Until "the '$($script:PluginName)' card on Discover again" { Ui-PluginCard $main })
       }
-      "Marketplace with its $(if ($shell -eq 'sidebar') { 'sidebar (0.15.0 and later)' } else { 'tabs (up to 0.14)' }); card '$(Ui-Name $card)'; production catalog (registry-index.json in the profile): $(if ($catalog) { $catalog -join ', ' } else { 'not readable' }); all shown in $where; $shot"
+      "Marketplace with its $(if ($shell -eq 'sidebar') { 'sidebar (0.15.0 and later)' } else { 'tabs (up to 0.14)' }); card '$cardName'; production catalog (registry-index.json in the profile): $(if ($catalog) { $catalog -join ', ' } else { 'not readable' }); all shown in $where; $shot"
     }
     "install $($script:PluginName) with consent" = {
       $main = $state.main
@@ -757,13 +758,18 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
         return "UI up to 0.8.1: Create a profile opened Settings > Profiles in the window 'DeckPilot Settings'; New profile '$($script:ProfileName)' saved and listed; $shot"
       }
       # The compact table (aria-label "Profiles"): each profile's name is a
-      # button that makes it the profile being edited; the toolbar has no
-      # profile selector in the settings, so a button of that name is the row.
-      [void](Ui-Until "'$($script:ProfileName)' in the table of All profiles" {
-        -not (Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Save' } | Select-Object -First 1) -and
-        (Ui-HasText $main 'All profiles') -and
-        [bool](Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq $script:ProfileName } | Select-Object -First 1)
-      })
+      # button that makes it the profile being edited (from 0.15.0, #435, one
+      # that opens its details: "Open <name>"); the toolbar has no profile
+      # selector in the settings, so a button of that name is the row. Up to
+      # 0.14 under "All profiles", from 0.15.0 the page's one table.
+      $rowButton = Ui-Until "'$($script:ProfileName)' in the table of All profiles" {
+        if (Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Save' } | Select-Object -First 1) { return $null }
+        $scope = Ui-All $main { (Ui-Name $_) -eq 'Profiles' -and (Ui-Type $_) -in 'Table', 'DataGrid' } | Select-Object -First 1
+        if (-not $scope -and (Ui-HasText $main 'All profiles')) { $scope = $main }
+        if (-not $scope) { return $null }
+        $b = Ui-All $scope { (Ui-Type $_) -eq 'Button' -and ((Ui-Name $_) -eq $script:ProfileName -or (Ui-Name $_) -eq "Open $($script:ProfileName)") } | Select-Object -First 1
+        if ($b) { Ui-Name $b }
+      }
       $table = Ui-All $main { (Ui-Name $_) -eq 'Profiles' -and (Ui-Type $_) -in 'Table', 'DataGrid' } | Select-Object -First 1
       $shot = Ui-Shot 'settings-profiles'
       # Back where Create a profile was pressed: the rail's Device Editor.
@@ -771,7 +777,7 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
       [void](Ui-Until 'the settings view to close' { -not (Ui-SettingsView $main) })
       $selector = Ui-Find $main "the Device Editor's profile selector" { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -like 'Profile:*' }
       [void](Ui-Find $main "the Device Editor's device selector" { (Ui-Type $_) -eq 'Button' -and ((Ui-Name $_) -like 'Device:*' -or (Ui-Name $_) -eq 'Choose a device') })
-      "new UI: Create a profile showed Settings > Profiles in the main window; $windows; New profile '$($script:ProfileName)' saved and listed in All profiles ($(if ($table) { "table 'Profiles'" } else { 'table not exposed as Table' }), row button '$($script:ProfileName)'); the rail's Device Editor left the settings: back in the Device Editor (device and profile selectors, '$(Ui-Name $selector)'); $shot; $(Ui-Shot 'settings-left-editor')"
+      "new UI: Create a profile showed Settings > Profiles in the main window; $windows; New profile '$($script:ProfileName)' saved and listed in All profiles ($(if ($table) { "table 'Profiles'" } else { 'table not exposed as Table' }), row button '$rowButton'); the rail's Device Editor left the settings: back in the Device Editor (device and profile selectors, '$(Ui-Name $selector)'); $shot; $(Ui-Shot 'settings-left-editor')"
     }
     'Device Editor, Action Library and key inspector' = {
       $main = $state.main
