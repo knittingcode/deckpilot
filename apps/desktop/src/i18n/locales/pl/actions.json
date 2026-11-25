@@ -315,7 +315,7 @@
       "open": "Otwiera plik, folder lub aplikację wybrane na tym komputerze w domyślnej aplikacji albo plik w wybranej aplikacji.",
       "openApplication": "Uruchamia aplikację zainstalowaną na tym komputerze, opcjonalnie z argumentami.",
       "closeApplication": "Zamyka aplikację wybraną na tym komputerze: każde uruchomione przez Ciebie wystąpienie, najpierw łagodnie. Nigdy programów innych użytkowników ani systemu.",
-      "openFolder": "Otwiera zasób folderu albo folder w nim w menedżerze plików."
+      "openFolder": "Otwiera zasób folderu albo folder w nim w menedżerze plików. Zachowane dla zapisanych klawiszy: Otwórz otwiera też foldery."
     },
     "parameters": {
       "url": {
@@ -374,6 +374,7 @@
       "chooseApplication": "Wybierz aplikację…",
       "chooseFile": "Wybierz plik…",
       "chooseFolder": "Wybierz folder…",
+      "fileOrFolder": "Wybierz plik, aby otworzyć go w jego aplikacji, albo folder, aby otworzyć go w menedżerze plików. Klawisz pokazuje wtedy dokument albo folder, chyba że nadasz mu własną ikonę.",
       "clear": "Wyczyść",
       "search": "Szukaj aplikacji",
       "loading": "Wyszukiwanie zainstalowanych aplikacji…",
@@ -426,6 +427,17 @@
       "openFailed": "System nie mógł tego otworzyć.",
       "interrupted": "Uruchomienie anulowano lub skończył się czas, gdy aplikacja miała czas na zakończenie. Niczego nie wymuszono; może nadal działać.",
       "elevated": "DeckPilot działa jako root lub administrator, więc nie zamyka aplikacji. Uruchom DeckPilota na swoim koncie."
+    }
+  },
+  "gesturePresets": {
+    "deck_brightness-control": {
+      "name": "Sterowanie jasnością",
+      "description": "Pojedyncze kliknięcie: ciemniej o 10%. Dwukrotne kliknięcie: pełna jasność. Długie naciśnięcie: połowa jasności.",
+      "gestures": {
+        "click": "Zmniejsz jasność o 10%",
+        "doubleClick": "Ustaw jasność na 100%",
+        "longPress": "Ustaw jasność na 50%"
+      }
     }
   }
 }

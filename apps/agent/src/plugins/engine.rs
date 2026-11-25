@@ -96,6 +96,10 @@ pub(crate) struct CatalogPlugin {
     /// the ends, as the plugin's own `cycle` does. `None` for every other
     /// plugin.
     pub wrap_around: Option<bool>,
+    /// Its gesture presets (plugin API 1.10), as the core's, in the app's
+    /// language; those the core would refuse are already left out
+    /// (`convert::gesture_presets`).
+    pub gesture_presets: Vec<deckpilot_core::GesturePreset>,
 }
 
 impl CatalogPlugin {
@@ -239,6 +243,10 @@ impl FeatureModule for PluginModule {
 
     fn variable_source(&self) -> Option<Arc<dyn VariableSource>> {
         self.source.clone()
+    }
+
+    fn gesture_presets(&self) -> Vec<deckpilot_core::GesturePreset> {
+        self.plugin.gesture_presets.clone()
     }
 
     fn unavailable_reason(&self) -> Option<String> {

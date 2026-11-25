@@ -15,8 +15,48 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+### Added
+
+- System actions: an Open key shows what it opens, the document icon for
+  a file and the open folder for a folder, on the Canvas, in the key
+  preview, in layout previews and on the Stream Deck alike. Nothing chosen,
+  a missing file or folder, or a target that cannot be told (a variable,
+  an application, a network path) shows the document icon. A key's own
+  icon or image, and an icon chosen for the action, always win; the
+  automatic icon is never saved. The target is looked at by its file
+  metadata only, never opened or run, and again when an action, a
+  resource binding, the profile or the layout changes, never on a timer.
+- Projects: a project can list several repositories, each with a key
+  (`cms`, unique in the project), a name, a description, the folder's
+  resource (bound on each computer, never exported) and a default. An
+  existing project with a `repository` role gets that one as its
+  repository `main` when the configuration is upgraded (schema 14); its
+  roles, resources and folder bindings are not changed. Marking a default
+  repository also points the `repository` role at it. Removing a
+  repository never removes its folder binding, and a missing folder is
+  shown, never removed. An export carries the repositories (format 5)
+  only when a project has more than that one. The editor for them follows.
+- Action Library: **gesture presets**, one entry that puts several actions
+  on the gestures of a key at once. *Brightness Control* (Device) dims by
+  10% on a single press, sets 100% on a double click and 50% on a long
+  press. Dropped on a key it creates ordinary actions and gesture bindings
+  in one undo step (keeping an occupied key's look and its other
+  gestures), or nothing when the key cannot take it. A key that acts on
+  its press at once is never switched to gestures by a preset: switch it
+  in the Inspector first, which asks; dropped on one
+  gesture card only that gesture changes. Every gesture stays editable on
+  its own; nothing of the preset is stored.
+- Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
+  presets over its own actions, with localized texts and `allowPartial`.
+  Presets grant nothing; each action keeps its permissions and checks.
+
 ### Changed
 
+- System actions: the Action Library offers one Open for files and
+  folders (Choose file… or Choose folder…); Open folder is no longer
+  offered for new keys, actions or workflow nodes. Saved Open folder
+  actions, keys, gestures and workflow steps keep running unchanged with
+  their folder icon; nothing is rewritten.
 - Device Editor: a label picked on the Canvas is nudged with the arrow
   keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
   nudge starts from the last one. Escape or a click on the key lets go of

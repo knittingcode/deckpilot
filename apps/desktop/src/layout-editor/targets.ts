@@ -3,6 +3,7 @@
 import { i18n } from "@/i18n"
 import type { MissingAction } from "@/lib/action-availability"
 import type { BindingTarget, DeviceLayout, Profile, WorkflowEntry } from "@/lib/types"
+import { shownActionIcon } from "@/lib/system-actions"
 
 export interface TargetOption {
   value: string
@@ -111,7 +112,7 @@ export function targetGroups(
         const lost = why ? missing(a.actionType) : null
         return {
           ...option({ type: "action", action: a.id }, a.name, "action"),
-          icon: a.icon,
+          icon: shownActionIcon(a) ?? null,
           actionType: a.actionType,
           ...(why ? { unavailable: why } : {}),
           ...(lost ? { missing: lost } : {}),

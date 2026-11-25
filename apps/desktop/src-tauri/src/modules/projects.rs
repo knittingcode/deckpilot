@@ -13,7 +13,8 @@ use tauri::State;
 
 use deckpilot_core::{
     ActiveProjectContext, CycleDirection, MachineResourceBinding, ProfileId, Project,
-    ProjectCatalog, ProjectId, ProjectKey, ProjectSwitcher, ResourceKey, ResourceKind,
+    ProjectCatalog, ProjectId, ProjectKey, ProjectSwitcher, Repository, RepositoryId,
+    RepositoryKey, ResourceKey, ResourceKind,
 };
 use deckpilot_ipc::{ClientError, Request, Response};
 use deckpilot_storage::ConfigStore;
@@ -42,6 +43,46 @@ pub struct ProjectInput {
     name: String,
     #[serde(default)]
     resources: BTreeMap<String, String>,
+    /// The project's repositories, in order. Left out: the stored ones are
+    /// kept as they are (an older editor, or a save of other fields).
+    #[serde(default)]
+    repositories: Option<Vec<RepositoryInput>>,
+    /// The default repository; read only together with `repositories`.
+    /// Left out: the stored default is kept (when it is still listed);
+    /// `null`: no default.
+    #[serde(default, deserialize_with = "some")]
+    #[allow(clippy::option_option)] // Left out, `null` and an id differ.
+    default_repository: Option<Option<RepositoryId>>,
+}
+
+/// `Some` for a field that is present, also when it is `null`, so that a
+/// left-out field (`None`) can be told apart from `null` (`Some(None)`).
+fn some<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// A repository as the editor sends it. Its remotes are not part of it:
+/// only the app writes them (Git Providers, after the user confirms), and
+/// every save keeps them.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryInput {
+    /// Left out for a new repository, which gets a new id.
+    #[serde(default)]
+    id: Option<RepositoryId>,
+    key: String,
+    name: String,
+    /// The resource key whose binding holds the folder. Left out for a new
+    /// repository: one is made from the project and repository keys that no
+    /// project or binding uses yet.
+    #[serde(default)]
+    resource: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 fn build_project(id: ProjectId, input: ProjectInput) -> CommandResult<Project> {
@@ -50,12 +91,8 @@ fn build_project(id: ProjectId, input: ProjectInput) -> CommandResult<Project> {
         "" => key.to_string(),
         name => name.to_owned(),
     };
-    let mut project = Project {
-        id,
-        key,
-        name,
-        resources: BTreeMap::new(),
-    };
+    let mut project = Project::new(key, name);
+    project.id = id;
     for (role, resource) in input.resources {
         let role = role.trim();
         if role.is_empty() {
@@ -71,13 +108,150 @@ fn build_project(id: ProjectId, input: ProjectInput) -> CommandResult<Project> {
     Ok(project)
 }
 
+/// Fills in `project`'s repositories from `input`, or keeps those of
+/// `stored` when the input has none (and the stored default). Remotes are
+/// kept by repository id. A repository without a resource gets a new key
+/// that `taken` does not hold. When the default changes to a repository,
+/// the `repository` role follows (R2).
+#[allow(clippy::option_option)] // `default`: left out, `null` or an id.
+fn apply_repositories(
+    project: &mut Project,
+    stored: Option<&Project>,
+    repositories: Option<Vec<RepositoryInput>>,
+    default: Option<Option<RepositoryId>>,
+    taken: &BTreeSet<ResourceKey>,
+) -> CommandResult<()> {
+    let Some(inputs) = repositories else {
+        if let Some(stored) = stored {
+            // The repository the migration stored for the role, never
+            // edited, is derived again from the project as saved now (its
+            // name, its role), so it never goes stale and exports as before.
+            if stored.has_only_derived_repository() {
+                return Ok(());
+            }
+            project.repositories.clone_from(&stored.repositories);
+            project.default_repository = stored.default_repository;
+        }
+        return Ok(());
+    };
+    // No repository while the role exists: the role would bring one back
+    // (R3); the role has to go first.
+    if inputs.is_empty()
+        && project
+            .resources
+            .contains_key(deckpilot_core::project::REPOSITORY_ROLE)
+    {
+        let shown = stored.map(Project::with_derived_repositories);
+        if shown.is_some_and(|p| !p.repositories.is_empty()) {
+            return Err(deckpilot_core::CatalogError::from(
+                deckpilot_core::RepositoryError::LastWithRole,
+            )
+            .into());
+        }
+    }
+    // What the editor showed: the stored repositories, or the derived one.
+    let shown = stored.map(Project::with_derived_repositories);
+    let mut used = taken.clone();
+    used.extend(inputs.iter().filter_map(|r| {
+        r.resource
+            .as_deref()
+            .and_then(|k| ResourceKey::new(k.trim()).ok())
+    }));
+    let mut built = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let key =
+            RepositoryKey::new(input.key.trim()).map_err(deckpilot_core::CatalogError::from)?;
+        let id = input.id.unwrap_or_default();
+        let resource = match input.resource.as_deref().map(str::trim) {
+            Some(resource) if !resource.is_empty() => ResourceKey::new(resource)?,
+            _ => {
+                let resource = project.new_repository_resource_key(&key, |k| used.contains(k));
+                used.insert(resource.clone());
+                resource
+            }
+        };
+        let name = match input.name.trim() {
+            "" => key.to_string(),
+            name => name.to_owned(),
+        };
+        let description = input
+            .description
+            .map(|d| d.trim().to_owned())
+            .filter(|d| !d.is_empty());
+        let remotes = shown
+            .as_ref()
+            .and_then(|p| p.repositories.iter().find(|r| r.id == id))
+            .map(|r| r.remotes.clone())
+            .unwrap_or_default();
+        built.push(Repository {
+            id,
+            key,
+            name,
+            resource,
+            description,
+            remotes,
+        });
+    }
+    project.repositories = built;
+    project.default_repository = None;
+    project
+        .validate_repositories()
+        .map_err(deckpilot_core::CatalogError::from)?;
+    let before = shown.as_ref().and_then(|p| p.default_repository);
+    // Left out: the stored default, while it is still listed.
+    let default = default
+        .unwrap_or_else(|| before.filter(|id| project.repositories.iter().any(|r| r.id == *id)));
+    if default.is_some_and(|id| !project.repositories.iter().any(|r| r.id == id)) {
+        return Err(deckpilot_core::CatalogError::from(
+            deckpilot_core::RepositoryError::UnknownDefault,
+        )
+        .into());
+    }
+    if default.is_some() && default != before {
+        project
+            .set_default_repository(default)
+            .map_err(deckpilot_core::CatalogError::from)?;
+    } else {
+        project.default_repository = default;
+    }
+    Ok(())
+}
+
+/// Resource keys in use by the profile's projects (roles and repositories)
+/// and this computer's bindings: a new repository never gets one of them.
+fn taken_resource_keys(
+    state: &AppState,
+    profile: &deckpilot_core::Profile,
+) -> CommandResult<BTreeSet<ResourceKey>> {
+    let config = machine_config(&*state.store()?)?;
+    // (The guard above is released at the end of that statement.)
+    let mut taken: BTreeSet<ResourceKey> = config.bindings.iter().map(|b| b.key.clone()).collect();
+    for project in &profile.projects {
+        taken.extend(project.resources.values().cloned());
+        taken.extend(
+            project
+                .effective_repositories()
+                .iter()
+                .map(|r| r.resource.clone()),
+        );
+    }
+    Ok(taken)
+}
+
 #[tauri::command]
 pub fn create_project(
     state: State<'_, AppState>,
     profile_id: ProfileId,
     project: ProjectInput,
 ) -> CommandResult<Project> {
-    let project = build_project(ProjectId::new(), project)?;
+    state.require_feature(PROJECTS_PLUGIN)?;
+    let profile = load_profile(&*state.store()?, profile_id)?;
+    let taken = taken_resource_keys(&state, &profile)?;
+    let mut input = project;
+    let repositories = input.repositories.take();
+    let default = input.default_repository;
+    let mut project = build_project(ProjectId::new(), input)?;
+    apply_repositories(&mut project, None, repositories, default, &taken)?;
     modify_projects(&state, profile_id, |profile| {
         profile.add_project(project.clone())?;
         Ok(project)
@@ -91,8 +265,42 @@ pub fn update_project(
     project_id: ProjectId,
     project: ProjectInput,
 ) -> CommandResult<Project> {
-    let project = build_project(project_id, project)?;
+    state.require_feature(PROJECTS_PLUGIN)?;
+    let mut input = project;
+    let repositories = input.repositories.take();
+    let default = input.default_repository;
+    let project = build_project(project_id, input)?;
+    // The store's guard is released before `taken_resource_keys` takes it.
+    let profile = load_profile(&*state.store()?, profile_id)?;
+    let taken = taken_resource_keys(&state, &profile)?;
     modify_projects(&state, profile_id, |profile| {
+        let mut project = project;
+        let stored = profile.project(project_id).cloned();
+        apply_repositories(&mut project, stored.as_ref(), repositories, default, &taken)?;
+        profile.update_project(project.clone())?;
+        Ok(project)
+    })
+}
+
+/// Marks a repository as the project's default, or clears the default
+/// (`None`). Marking one also points the `repository` role at its
+/// resource, adding the role when it is missing, in the same save (R2);
+/// clearing leaves the role as it is.
+#[tauri::command]
+pub fn set_default_repository(
+    state: State<'_, AppState>,
+    profile_id: ProfileId,
+    project_id: ProjectId,
+    repository_id: Option<RepositoryId>,
+) -> CommandResult<Project> {
+    modify_projects(&state, profile_id, |profile| {
+        let mut project = profile
+            .project(project_id)
+            .cloned()
+            .ok_or(CommandError::NotFound("project"))?;
+        project
+            .set_default_repository(repository_id)
+            .map_err(deckpilot_core::CatalogError::from)?;
         profile.update_project(project.clone())?;
         Ok(project)
     })
@@ -284,7 +492,8 @@ pub(crate) fn status_of(binding: &MachineResourceBinding) -> ResourceStatus {
 }
 
 /// Checks every machine binding and every resource the profile's projects
-/// refer to. Not gated on the Projects feature: the bindings are core
+/// and their repositories refer to. A missing folder is reported, never
+/// removed. Not gated on the Projects feature: the bindings are core
 /// (Settings › Resources, the `system.open-*` launchers); the projects'
 /// own resources are listed only as what uses a binding.
 #[tauri::command]
@@ -301,6 +510,14 @@ pub fn check_resources(
             used.entry(key.clone())
                 .or_default()
                 .push(format!("{} {role}", project.key));
+        }
+        // Repositories, the derived one too: `PROJECT repositories.KEY`.
+        for repository in project.effective_repositories().iter() {
+            let entry = used.entry(repository.resource.clone()).or_default();
+            let name = format!("{} repositories.{}", project.key, repository.key);
+            if !entry.contains(&name) {
+                entry.push(name);
+            }
         }
     }
     let keys: BTreeSet<ResourceKey> = config

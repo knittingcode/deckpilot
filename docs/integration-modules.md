@@ -56,7 +56,7 @@ is machine-specific: never exported, and an import cannot turn it on.
 | `system.open-app` (Open Application) | opens | `application` (application resource: a bundle id, App Paths name, AppUserModelID, desktop-file id or path), `arguments` (one per line) | `application` |
 | `system.open-url` (Website) | opens | `url` (`http` or `https`, normalised; `https://` added without a scheme; a saved `mailto` still opens), `browser` (optional application resource; the default browser otherwise) | `url` |
 | `system.open-file` (Open) | opens | `location` (resource: a file, folder or application), `path` (optional, relative inside a folder resource), `application` (optional application resource) | `path` |
-| `system.open-directory` | opens | `location` (folder resource), `path` (optional relative subfolder) | `path` |
+| `system.open-directory` | opens | `location` (folder resource), `path` (optional relative subfolder) | `path` — deprecated: saved actions run, new ones use `system.open-file` ([system-actions.md](system-actions.md#35-open-folder-and-open)) |
 | `system.close-app` (Close Application) | modifies | `application` (application resource), `force` (off) | `instances`, `closed`, `forced` |
 | `system.run-command` | modifies | `program` (resource), `arguments` (one per line), `workingDirectory` (optional folder resource; home folder otherwise), `timeoutSeconds` (1–3600, 60), `failOnNonZero` (on) | `exitCode`, `stdout`*, `stderr`*, `outputTruncated`, `durationMs` |
 | `system.process-status` | read-only | `name` (program name; case and `.exe` ignored) | `running`, `count`, `pids` |
