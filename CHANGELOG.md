@@ -102,6 +102,11 @@ released either. 0.6.0 is the first version intended for publication.
   or duplicated one is never trusted and never runs until reviewed. A
   script can never be granted a container runtime (Docker, Podman and
   the like) in this version.
+- Export and import of scripts (export format 6, only when there are
+  scripts): an export holds a script's code and settings, never whether
+  it is trusted or what it may do. An imported script arrives untrusted
+  with no permissions, and nothing runs on import; the import window
+  says so.
 
 ### Changed
 

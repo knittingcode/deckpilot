@@ -544,7 +544,10 @@
       "closeAllow": "Zezwól, aby „{{action}}” ({{profile}}) zamykała {{application}} na tym komputerze",
       "closeForce": "Wymusza zamknięcie: niezapisana praca w tej aplikacji przepada.",
       "closeBound": "Ten klucz jest powiązany na tym komputerze, więc zezwolenie zamknie tu prawdziwą aplikację.",
-      "closeLibrary": "w bibliotece układów"
+      "closeLibrary": "w bibliotece układów",
+      "scriptsTitle": "Skrypty trafiają jako niezaufane",
+      "scriptsDescription": "Te skrypty przychodzą z profilami, bez żadnych uprawnień. Żaden z nich nie uruchomi się z klawisza, wyzwalacza ani edytora, dopóki nie otworzysz go na stronie Skrypty, nie sprawdzisz kodu i nie oznaczysz go jako zaufany. Podczas importu nic się nie uruchamia.",
+      "scriptsList": "Skrypty w imporcie"
     },
     "variables": {
       "title": "Zmienne współdzielone",
@@ -580,7 +583,8 @@
       "skippedValuesList": "Niezaimportowane wartości",
       "setUp": "Skonfiguruj te zasoby na tym komputerze",
       "usedBy": "— używane przez: {{profiles}}",
-      "unboundCloses": "Zaimportowano bez aplikacji, więc na razie niczego nie zamykają: {{actions}}. Wybierz ich aplikację w edytorze, aby ich używać."
+      "unboundCloses": "Zaimportowano bez aplikacji, więc na razie niczego nie zamykają: {{actions}}. Wybierz ich aplikację w edytorze, aby ich używać.",
+      "scripts": "Zaimportowano jako niezaufane, więc na razie się nie uruchamiają: {{scripts}}. Sprawdź je i zaufaj im na stronie Skrypty, aby ich używać."
     }
   }
 }

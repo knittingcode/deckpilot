@@ -1755,6 +1755,21 @@ export interface ImportPreview {
    * closes nothing) unless confirmed in `ImportOptions.confirmedCloseActions`.
    */
   closeActions?: ImportCloseAction[]
+  /**
+   * Scripts of the export (deckpilot_portability::ScriptPreview). Each arrives
+   * untrusted, with no grants, and never runs until reviewed; nothing runs on
+   * import.
+   */
+  scripts?: ImportScriptPreview[]
+}
+
+/** A script an import brings. */
+export interface ImportScriptPreview {
+  profile: string
+  id: string
+  name: string
+  /** Size of its source, in bytes. */
+  bytes: number
 }
 
 /**
@@ -1833,6 +1848,8 @@ export interface ImportSummary {
   skippedValues: string[]
   /** Close Application actions imported unbound because they were not confirmed. */
   unboundCloseActions?: string[]
+  /** Scripts written, each untrusted until reviewed on the Scripts page. */
+  scripts?: string[]
   /**
    * The import was committed, but the app could not reload the imported
    * module settings; they take effect when it starts next.

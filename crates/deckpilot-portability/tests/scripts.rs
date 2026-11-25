@@ -12,6 +12,7 @@ use deckpilot_portability::import::{ConflictResolution, preview, validate};
 use deckpilot_portability::payload::{self, ExportOptions, Payload};
 use deckpilot_portability::{ImportMode, ImportOptions, PAYLOAD_VERSION, PortabilityError, plan};
 use deckpilot_storage::crypto::{KdfParams, Password};
+use deckpilot_storage::scripts::ScriptForRun;
 use deckpilot_storage::{ConfigStore, SqliteStore};
 
 const OPTIONS: ExportOptions = ExportOptions {
@@ -122,9 +123,15 @@ fn an_imported_script_is_untrusted_with_no_grants_and_never_runs() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].trust, TrustState::NeedsReview);
     assert_eq!(listed[0].grants, None);
-    let (stored, grants) = target.script_for_run(profile, script.id).unwrap().unwrap();
-    assert_eq!(stored.source, script.source);
-    assert_eq!(grants, None, "it must not run");
+    assert_eq!(
+        target.script(profile, script.id).unwrap().unwrap().source,
+        script.source
+    );
+    assert_eq!(
+        target.script_for_run(profile, script.id).unwrap(),
+        Some(ScriptForRun::NeedsReview),
+        "it must not run"
+    );
 }
 
 #[test]
@@ -134,12 +141,14 @@ fn importing_over_a_trusted_script_never_trusts_the_new_source() {
     let (mut payload, _) = exported(&store);
     payload.scripts[0].script.source = "steal()".into();
     import_into(&store, &payload, Some(ConflictResolution::Replace));
-    let (stored, grants) = store
-        .script_for_run(profile.id, script.id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.source, "steal()");
-    assert_eq!(grants, None);
+    assert_eq!(
+        store.script(profile.id, script.id).unwrap().unwrap().source,
+        "steal()"
+    );
+    assert_eq!(
+        store.script_for_run(profile.id, script.id).unwrap(),
+        Some(ScriptForRun::NeedsReview)
+    );
     // As a copy: a new profile, its own untrusted script.
     let summary = import_into(&store, &payload, Some(ConflictResolution::KeepBoth));
     let copy = summary.imported[0].0;
