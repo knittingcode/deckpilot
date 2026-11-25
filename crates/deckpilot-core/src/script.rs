@@ -107,14 +107,15 @@ fn is_plain(text: &str, max: usize, newlines: bool) -> bool {
     text.chars().count() <= max
         && !text
             .chars()
-            .any(|c| (c.is_control() && !(newlines && matches!(c, '\n' | '\t'))) || is_bidi(c))
+            .any(|c| (c.is_control() && !(newlines && matches!(c, '\n' | '\t'))) || is_hidden(c))
 }
 
 /// Invisible and direction-changing characters (format characters, line
 /// and paragraph separators, variation selectors, tags), which make a name
 /// read other than it is or two names look the same.
-fn is_bidi(c: char) -> bool {
+pub fn is_hidden(c: char) -> bool {
     matches!(c,
+        '\u{034F}' | '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}' |
         '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}'
         | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FE00}'..='\u{FE0F}'
         | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}'

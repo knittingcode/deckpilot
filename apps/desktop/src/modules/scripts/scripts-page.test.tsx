@@ -53,6 +53,24 @@ async function renderScripts(list: StoredScript[]) {
   return rendered
 }
 
+describe("hidden characters", () => {
+  it("are found as the core finds them, payload ranges included", async () => {
+    const { hasHiddenChars } = await import("./completions")
+    for (const hidden of [
+      "\u202E",
+      "\u200B",
+      "\u{E0041}",
+      "\u{E0100}",
+      "\u3164",
+      "\u0007",
+      "\u00AD",
+    ]) {
+      expect(hasHiddenChars(`a${hidden}b`), JSON.stringify(hidden)).toBe(true)
+    }
+    expect(hasHiddenChars("const a = 1\n\tb\r\n")).toBe(false)
+  })
+})
+
 describe("Scripts page", () => {
   it("creates a script, trusted with nothing granted", async () => {
     api.createScript.mockResolvedValue(script("Build"))
@@ -97,6 +115,7 @@ describe("Scripts page", () => {
       trust: "needsReview",
       sourceSha256: "a".repeat(64),
       grants: { projectsRead: true, process: [{ command: "make" }] },
+      commandClasses: { make: "runsAnyProgram" },
     })
     const { user } = await renderScripts([stored(imported, "needsReview")])
     await user.click(await screen.findByRole("button", { name: /Imported/ }))
@@ -108,7 +127,9 @@ describe("Scripts page", () => {
       name: "Permissions that come back when you trust it",
     })
     expect(grants).toHaveTextContent("Read the projects and their repositories")
-    expect(grants).toHaveTextContent("Run make")
+    expect(grants).toHaveTextContent(
+      "Run make (it runs any other program, as broad as a shell; in the project's repositories)",
+    )
     await user.click(screen.getByRole("button", { name: "Trust this script" }))
     // Exactly what the review showed.
     expect(api.trustScript).toHaveBeenCalledWith("profile-1", imported.id, "a".repeat(64), {
@@ -145,5 +166,55 @@ describe("Scripts page", () => {
     expect(within(dialog).getByText(/used in 1 place/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole("button", { name: "Delete script" }))
     expect(api.deleteScript).toHaveBeenCalledWith("profile-1", deploy.id, false)
+  })
+
+  it("names every permission that comes back, with its reach", async () => {
+    api.reviewScript.mockResolvedValue({
+      script: imported,
+      trust: "needsReview",
+      sourceSha256: "b".repeat(64),
+      grants: {
+        repositoriesPaths: true,
+        fs: [
+          {
+            root: { directory: { path: "/srv/docs", label: "Docs" } },
+            access: "delete",
+            rootDestructive: true,
+          },
+        ],
+        process: [{ command: "git", unrestrictedArgs: true, env: "allowed", cwd: "any" }],
+        shell: { shells: ["sh"] },
+        destructive: "allow",
+        limits: { timeoutMs: 120_000, memoryMiB: 128, maxOutputKiB: 1024 },
+      },
+      commandClasses: { git: "plain" },
+    })
+    const { user } = await renderScripts([stored(imported, "needsReview")])
+    await user.click(await screen.findByRole("button", { name: /Imported/ }))
+    const grants = await screen.findByRole("list", {
+      name: "Permissions that come back when you trust it",
+    })
+    for (const line of [
+      "See the folders of the repositories",
+      "Read, change and delete files in the folder “Docs” (/srv/docs)",
+      "Remove, empty or replace the folder “Docs” (/srv/docs) itself",
+      "Run git (with any arguments, options that run programs included; may set environment variables; in any folder)",
+      "Run shell code with sh",
+      "Delete files without asking",
+      "Limits: 120 s, 128 MiB, 1024 KiB of output",
+    ]) {
+      expect(grants).toHaveTextContent(line)
+    }
+  })
+
+  it("never deletes before the uses are known", async () => {
+    api.scriptUsages.mockRejectedValue(new Error("busy"))
+    const { user } = await renderScripts([stored(deploy)])
+    await user.click(await screen.findByRole("button", { name: /Deploy/ }))
+    await user.click(screen.getByRole("button", { name: "Delete Deploy" }))
+    const dialog = await screen.findByRole("alertdialog")
+    expect(await within(dialog).findByText(/could not be listed/)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole("button", { name: "Delete script" }))
+    expect(api.deleteScript).not.toHaveBeenCalled()
   })
 })

@@ -15,8 +15,10 @@
 //!   container runtime, a program that acts as another user or a shell as
 //!   a command is refused).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Runtime, State, WebviewWindow};
 
 use deckpilot_core::script::{Script, ScriptSettings, ScriptTrust, TrustState, source_sha256};
 use deckpilot_core::script_grants::{CommandClass, ScriptGrants, command_class};
@@ -49,6 +51,22 @@ pub struct ScriptReview {
     /// The grants that come back with trust (dormant while untrusted;
     /// none for a script that never had any).
     pub grants: ScriptGrants,
+    /// What each granted command is (a launcher runs any program).
+    pub command_classes: BTreeMap<String, CommandClass>,
+}
+
+/// Trust, grants and the scripts themselves change only from the main
+/// window (defense in depth: every window loads the app's own pages).
+fn main_only<R: Runtime>(window: &WebviewWindow<R>) -> CommandResult<()> {
+    if window.label() == crate::windows::MAIN {
+        Ok(())
+    } else {
+        Err(CommandError::invalid_with(
+            "notMainWindow",
+            "scripts are changed only from the main window",
+            [],
+        ))
+    }
 }
 
 fn script_of(state: &AppState, profile: ProfileId, id: ScriptId) -> CommandResult<Script> {
@@ -68,11 +86,13 @@ pub fn list_scripts(
 }
 
 #[tauri::command]
-pub fn create_script(
+pub fn create_script<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script: NewScript,
 ) -> CommandResult<Script> {
+    main_only(&window)?;
     let mut new = Script::new(script.name.trim(), script.source);
     if let Some(settings) = script.settings {
         new.settings = settings;
@@ -82,11 +102,13 @@ pub fn create_script(
 
 /// The editor's save of `script` (made from its `revision`).
 #[tauri::command]
-pub fn save_script(
+pub fn save_script<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script: Script,
 ) -> CommandResult<Script> {
+    main_only(&window)?;
     let script = Script {
         name: script.name.trim().to_owned(),
         ..script
@@ -95,11 +117,13 @@ pub fn save_script(
 }
 
 #[tauri::command]
-pub fn duplicate_script(
+pub fn duplicate_script<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script_id: ScriptId,
 ) -> CommandResult<Script> {
+    main_only(&window)?;
     Ok(state.store()?.duplicate_script(profile_id, script_id)?)
 }
 
@@ -119,32 +143,37 @@ pub fn script_usages_of(
 /// "Script missing", unless `clear_keys`: then the key bindings that run
 /// it are cleared first (steps and nodes stay, and show it missing).
 #[tauri::command]
-pub fn delete_script(
+pub fn delete_script<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script_id: ScriptId,
     clear_keys: bool,
 ) -> CommandResult<()> {
+    main_only(&window)?;
     script_of(&state, profile_id, script_id)?;
-    let store = state.store()?;
-    if clear_keys {
-        let profile = load_profile(&store, profile_id)?;
-        for usage in script_usages(&profile, script_id) {
-            let keys: Vec<ReferenceSite> = usage
-                .references
-                .iter()
-                .map(|r| r.site.clone())
-                .filter(|s| matches!(s, ReferenceSite::Binding { .. }))
-                .collect();
-            if !keys.is_empty() {
-                store.unbind_action(profile_id, usage.action, &Selection::Sites(keys))?;
+    let result = (|| -> CommandResult<()> {
+        let store = state.store()?;
+        if clear_keys {
+            let profile = load_profile(&store, profile_id)?;
+            for usage in script_usages(&profile, script_id) {
+                let keys: Vec<ReferenceSite> = usage
+                    .references
+                    .iter()
+                    .map(|r| r.site.clone())
+                    .filter(|s| matches!(s, ReferenceSite::Binding { .. }))
+                    .collect();
+                if !keys.is_empty() {
+                    store.unbind_action(profile_id, usage.action, &Selection::Sites(keys))?;
+                }
             }
         }
-    }
-    store.delete_script(profile_id, script_id)?;
-    drop(store);
+        store.delete_script(profile_id, script_id)?;
+        Ok(())
+    })();
+    // Also when the delete failed after keys were cleared.
     crate::agent::notify_reload(&state.paths);
-    Ok(())
+    result
 }
 
 /// What the review shows: the stored source, its hash and the grants that
@@ -157,10 +186,19 @@ pub fn review_script(
 ) -> CommandResult<ScriptReview> {
     let script = script_of(&state, profile_id, script_id)?;
     let record = state.store()?.script_trust(profile_id, script_id)?;
+    let grants = record
+        .as_ref()
+        .map(|r| r.grants.clone())
+        .unwrap_or_default();
     Ok(ScriptReview {
         trust: ScriptTrust::state(record.as_ref(), &script),
         source_sha256: source_sha256(&script.source),
-        grants: record.map(|r| r.grants).unwrap_or_default(),
+        command_classes: grants
+            .process
+            .iter()
+            .map(|p| (p.command.clone(), command_class(&p.command)))
+            .collect(),
+        grants,
         script,
     })
 }
@@ -168,13 +206,15 @@ pub fn review_script(
 /// "Trust this script": the user reviewed the source with this hash and
 /// the grants listed with it.
 #[tauri::command]
-pub fn trust_script(
+pub fn trust_script<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script_id: ScriptId,
     source_sha256: String,
     grants: ScriptGrants,
 ) -> CommandResult<()> {
+    main_only(&window)?;
     Ok(state
         .store()?
         .trust_script(profile_id, script_id, &source_sha256, &grants)?)
@@ -182,12 +222,14 @@ pub fn trust_script(
 
 /// The Permissions tab's save.
 #[tauri::command]
-pub fn set_script_grants(
+pub fn set_script_grants<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script_id: ScriptId,
     grants: ScriptGrants,
 ) -> CommandResult<()> {
+    main_only(&window)?;
     Ok(state
         .store()?
         .set_script_grants(profile_id, script_id, &grants)?)
@@ -195,11 +237,13 @@ pub fn set_script_grants(
 
 /// Revokes every grant of the script (it stays trusted).
 #[tauri::command]
-pub fn revoke_script_grants(
+pub fn revoke_script_grants<R: Runtime>(
+    window: WebviewWindow<R>,
     state: State<'_, AppState>,
     profile_id: ProfileId,
     script_id: ScriptId,
 ) -> CommandResult<()> {
+    main_only(&window)?;
     Ok(state
         .store()?
         .set_script_grants(profile_id, script_id, &ScriptGrants::default())?)

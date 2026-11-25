@@ -2493,6 +2493,8 @@ export interface ScriptReview {
   trust: ScriptTrustState
   sourceSha256: string
   grants: ScriptGrants
+  /** What each granted command is (a launcher runs any program). */
+  commandClasses: Record<string, ScriptCommandClass>
 }
 
 /** An action that runs a script, with its uses (deckpilot_storage::scripts::ScriptUsage). */

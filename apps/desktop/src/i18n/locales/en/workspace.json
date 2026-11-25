@@ -553,15 +553,24 @@
       "repositoriesPaths": "See the folders of the repositories",
       "everyRepository": "every repository of the project",
       "repository": "the repository {{key}}",
-      "folder": "the folder “{{label}}”",
+      "folder": "the folder “{{label}}” ({{path}})",
       "fs": {
         "read": "Read files in {{where}}",
         "write": "Read and change files in {{where}}",
         "delete": "Read, change and delete files in {{where}}"
       },
-      "process": "Run {{command}}",
+      "process": "Run {{command}} ({{qualifiers}})",
       "shell": "Run shell code with {{shells}}",
-      "destructiveAllow": "Delete files without asking"
+      "destructiveAllow": "Delete files without asking",
+      "rootDestructive": "Remove, empty or replace {{where}} itself",
+      "runsAnyProgram": "it runs any other program, as broad as a shell",
+      "unrestrictedArgs": "with any arguments, options that run programs included",
+      "envAllowed": "may set environment variables",
+      "cwdAny": "in any folder",
+      "cwdScopes": "in the script's folders",
+      "cwdRepositories": "in the project's repositories",
+      "limits": "Limits: {{seconds}} s, {{memory}} MiB, {{output}} KiB of output",
+      "unknown": "A permission this version does not know: {{key}}"
     },
     "delete": {
       "title": "Delete “{{name}}”?",
@@ -571,7 +580,10 @@
       "uses": "Uses of the script",
       "clearKeys": "Also clear the keys that run it",
       "confirm": "Delete script",
-      "failed": "“{{name}}” could not be deleted"
+      "failed": "“{{name}}” could not be deleted",
+      "loading": "Looking for the script's uses…",
+      "usagesFailed": "Its uses could not be listed, so it cannot be deleted now. Try again.",
+      "notYet": "The script's uses are not known yet."
     }
   }
 }
