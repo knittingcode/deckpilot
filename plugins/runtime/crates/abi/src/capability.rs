@@ -159,6 +159,22 @@ pub enum CapabilityRequest {
     /// X9). Every publisher.
     #[serde(rename = "profile.read")]
     ProfileRead(NoArgs),
+    /// One connection the invocation is bound to, without its secret
+    /// ([`ConnectionRef`](crate::connections::ConnectionRef),
+    /// [`ConnectionInfo`](crate::connections::ConnectionInfo); plugin API
+    /// 1.14). Needs `connections`. First-party bundled plugins only.
+    #[serde(rename = "connections.get")]
+    ConnectionGet(crate::connections::ConnectionRef),
+    /// What a request found about a bound connection
+    /// ([`ConnectionStatusReport`](crate::connections::ConnectionStatusReport);
+    /// plugin API 1.14). Needs `connections`; only the reportable statuses.
+    #[serde(rename = "connections.reportStatus")]
+    ConnectionReportStatus(crate::connections::ConnectionStatusReport),
+    /// Waits at most [`MAX_SLEEP_MS`](crate::connections::MAX_SLEEP_MS),
+    /// woken when the invocation is cancelled
+    /// ([`Sleep`](crate::connections::Sleep); plugin API 1.14).
+    #[serde(rename = "time.sleep")]
+    TimeSleep(crate::connections::Sleep),
 }
 
 /// The `ok` value of `time.now`. Unknown fields are **ignored** (host to
@@ -457,6 +473,13 @@ pub struct HttpFetch {
     /// without it are byte-identical to the original ABI 1 form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<HttpAuth>,
+    /// A connection the invocation is bound to (plugin API 1.14), instead
+    /// of `auth`: the host checks the URL against that connection's
+    /// origin, path prefix and methods and injects its secret. Optional and
+    /// omitted from the JSON when absent, so requests without it are
+    /// byte-identical to the earlier form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
 }
 
 /// How a credential handle is attached to a request.
@@ -735,6 +758,9 @@ impl CapabilityRequest {
             Self::ProjectSelect(_) => "project.select",
             Self::ProjectCycle(_) => "project.cycle",
             Self::ProfileRead(_) => "profile.read",
+            Self::ConnectionGet(_) => "connections.get",
+            Self::ConnectionReportStatus(_) => "connections.reportStatus",
+            Self::TimeSleep(_) => "time.sleep",
         }
     }
 
@@ -764,6 +790,15 @@ impl CapabilityRequest {
                     .is_some_and(|a| !is_credential_key(&a.credential))
                 {
                     return Err(RequestError::TooLarge("credential"));
+                }
+                if let Some(connection) = &f.connection {
+                    if !crate::connections::is_connection_id(connection) {
+                        return Err(RequestError::Invalid("connection"));
+                    }
+                    // A connection brings its own secret: never a slot too.
+                    if f.auth.is_some() {
+                        return Err(RequestError::Invalid("auth"));
+                    }
                 }
             }
             Self::Notify(n) => {
@@ -840,6 +875,9 @@ impl CapabilityRequest {
                 }
             }
             Self::DialogOpen(d) => d.validate().map_err(|e| RequestError::Invalid(e.0))?,
+            Self::ConnectionGet(c) => c.validate()?,
+            Self::ConnectionReportStatus(r) => r.validate()?,
+            Self::TimeSleep(t) => t.validate()?,
         }
         Ok(())
     }

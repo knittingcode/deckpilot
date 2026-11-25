@@ -549,6 +549,32 @@ is a result, not an error. A refusal starts with its reason code:
 - No operation is available in a [state call](actions.md#key-state).
 - Every call, allowed or denied, is audited by operation, never by value.
 
+## Plugin API 1.14: connections and sleep
+
+Plugin API 1.14 (`plugins/runtime/crates/abi/src/connections.rs`,
+`CONNECTIONS_API_LEVEL` in the SDK) lets DeckPilot's own plugins shipped
+inside the app talk to the servers the user connected
+([permissions](permissions.md#plugin-api-114-connections-first-party-bundled-plugins-only)),
+each with its own secret, and wait between status reads.
+
+| Call | Op | What it does |
+| --- | --- | --- |
+| `Request::get(url).connection(id)` | `http.fetch` with `"connection": "<id>"` | The agent checks `url` against that connection's origin, path prefix and methods and injects its secret in the type's scheme. Replaces `credential(..)`: a request names a slot or a connection, never both (`bad-request`) |
+| `ctx.connection(id)` | `connections.get` | `ConnectionInfo`: `id`, `type`, `deployment` (`cloud`, `selfHosted`), `apiBase` (normalized, no trailing `/`), `webBase`, `methods`, `status`, `capabilities`. Never the secret. Unknown fields are ignored, an unknown deployment or status reads as `Other` |
+| `ctx.report_connection_status(id, status, detail)` | `connections.reportStatus` | What a request found: `Ok`, `Unauthorized`, `InsufficientScope`, `Unreachable`, `TlsFailed`; `detail` is a code (`[a-z][a-z0-9-]*`, ≤ 48), never the server's text. `Disabled`, `Untested` and `NeedsReconnect` are the host's own and refused |
+| `ctx.sleep(ms)` | `time.sleep` | 1 to 30,000 ms, shortened to keep one second of the invocation's deadline; cancelling the run wakes it with an error. Not in state calls |
+
+Every id is checked before the host is asked (`cn_` and 26 Crockford
+base32 characters; `BadRequest` without a host call). Only connections the
+invocation is bound to are reachable: the connection its `connection`
+parameter names, or the one the app names for its own screens.
+
+**Status: the ABI and the SDK are in place; no agent carries the
+operations out yet.** The broker answers all four `unsupported-op`
+(`CapabilityErrorKind::Unsupported`) whatever the grants, including a
+fetch that names a connection, which is never checked as an ordinary
+fetch. The agent provides plugin API 1.10 until the host side lands.
+
 ## What there is not (ABI 1)
 
 No file system, process, clipboard, keychain or shell access, ever (plugin
@@ -558,7 +584,8 @@ policy builds and checks the command). No
 ambient clock or random source: `std::time::SystemTime::now()` and random
 number generators that read the system fail or panic in the guest; the
 time and random bytes come from the agent ([Time](#time),
-[Randomness](#randomness)). No sleep and no timers. No reading of the
+[Randomness](#randomness)). No sleep before plugin API 1.14's bounded
+`time.sleep`, and no timers. No reading of the
 active profile or project before plugin API 1.9's `profile.read` (the run
 context names what started the run and how its workflow run is going,
 nothing more), no reading of variables, no device
