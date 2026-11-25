@@ -105,12 +105,14 @@ let runs: Runs = response.json().map_err(|_| PluginError::new("invalid-response"
     GitLab's and the IETF draft's `ratelimit`, `ratelimit-policy`,
     `ratelimit-limit`, `ratelimit-remaining`, `ratelimit-reset`,
     `ratelimit-observed`;
-  - a token's permissions and expiry (GitHub): `x-oauth-scopes`,
+  - on a connection's responses only (plugin API 1.14), a token's
+    permissions and expiry (GitHub): `x-oauth-scopes`,
     `x-accepted-oauth-scopes`, `github-authentication-token-expiration`
-    (scope names and a date, never a secret).
+    (scope names and a date, never a secret). A fetch with a credential
+    slot never receives them.
 
   Everything else is dropped: `set-cookie`, `www-authenticate`,
-  `authorization`-style and other vendor headers,
+  `authorization`-style and vendor headers (`x-oauth-scopes` except on a connection's responses, ...),
   `location` (redirects are followed by the agent). A value longer than
   4 KiB or with control characters is dropped, and at most 32 headers are
   returned. When the request carried a credential, every form of the

@@ -17,10 +17,10 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
-- Plugins: a plugin's HTTP answers may carry GitHub's `x-oauth-scopes`,
+- Plugins: a connection's HTTP answers carry GitHub's `x-oauth-scopes`,
   `x-accepted-oauth-scopes` and `github-authentication-token-expiration`
   (scope names and a date), so a connection's test can name a missing
-  permission or an expiring token. A connection's refusals always start
+  permission or an expiring token; no other plugin request gets them. A connection's refusals always start
   with their code (`redirect-refused: …`).
 - Plugins: connections (plugin API 1.14, host side). A plugin that
   declares connection types (DeckPilot's own bundled plugins only) can be

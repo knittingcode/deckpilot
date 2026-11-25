@@ -1283,7 +1283,7 @@ impl Executor {
                 })
                 .flatten();
             let Some(location) = location.filter(|_| exchange.status != 304) else {
-                return reply(exchange);
+                return reply(exchange, current.connection.is_some());
             };
             hop += 1;
             match session.authorize_redirect(&current, &location, hop) {
@@ -1433,11 +1433,16 @@ fn quota(granted: GrantedQuota) -> StorageQuota {
 /// [`MAX_HEADERS`]. `set-cookie`, authentication challenges and every
 /// header not listed are dropped. Called after [`redacted`], so a kept
 /// value never carries an injected secret.
-fn response_headers(headers: Vec<(String, String)>) -> Vec<Header> {
+/// On a connection's responses (`connection`, plugin API 1.14) the token's
+/// scopes and expiry are kept too
+/// ([`CONNECTION_RESPONSE_HEADERS`](deckpilot_plugin_abi::capability::CONNECTION_RESPONSE_HEADERS)).
+fn response_headers(headers: Vec<(String, String)>, connection: bool) -> Vec<Header> {
     headers
         .into_iter()
         .filter(|(name, value)| {
-            is_response_header(name)
+            (is_response_header(name)
+                || (connection
+                    && deckpilot_plugin_abi::capability::is_connection_response_header(name)))
                 && value.len() <= MAX_HEADER_LEN
                 && !value.chars().any(char::is_control)
         })
@@ -1449,8 +1454,8 @@ fn response_headers(headers: Vec<(String, String)>) -> Vec<Header> {
         .collect()
 }
 
-fn reply(exchange: Exchange) -> CallResult {
-    let headers = response_headers(exchange.headers);
+fn reply(exchange: Exchange, connection: bool) -> CallResult {
+    let headers = response_headers(exchange.headers, connection);
     let response = HttpResponse {
         status: exchange.status,
         headers,
@@ -1858,6 +1863,12 @@ mod tests {
                     ("authorization", format!("Bearer {secret}")),
                     ("x-api-key", secret.to_owned()),
                     ("x-oauth-scopes", "repo".to_owned()),
+                    ("X-Accepted-OAuth-Scopes", "repo, workflow".to_owned()),
+                    (
+                        "github-authentication-token-expiration",
+                        "2026-12-31 00:00:00 UTC".to_owned(),
+                    ),
+                    ("x-oauth-scopes", "repo\r\nset-cookie: a=b".to_owned()),
                     ("location", "https://api.example.com/".to_owned()),
                     ("x-ratelimit-token", "t".to_owned()),
                     ("retry-after", "a\u{7f}b".to_owned()),
@@ -1870,7 +1881,8 @@ mod tests {
             },
             &forms,
         );
-        let headers = response_headers(exchange.headers);
+        let connection = response_headers(exchange.headers.clone(), true);
+        let headers = response_headers(exchange.headers, false);
         let names: Vec<&str> = headers.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(
             names,
@@ -1879,9 +1891,23 @@ mod tests {
                 "x-ratelimit-remaining",
                 "ratelimit-reset",
                 "x-total",
+                "etag"
+            ]
+        );
+        // A connection's responses (plugin API 1.14) also keep the token's
+        // scopes and expiry, still without control characters.
+        let names: Vec<&str> = connection.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "link",
+                "x-ratelimit-remaining",
+                "ratelimit-reset",
+                "x-total",
                 "etag",
-                // Scope names (plugin API 1.14), never a secret.
-                "x-oauth-scopes"
+                "x-oauth-scopes",
+                "x-accepted-oauth-scopes",
+                "github-authentication-token-expiration"
             ]
         );
         let all = format!("{headers:?}");
@@ -1893,7 +1919,7 @@ mod tests {
         );
         // Never more than the ABI allows.
         let many = (0..100).map(|i| ("link".to_owned(), format!("<https://a.example.com/{i}>")));
-        assert_eq!(response_headers(many.collect()).len(), MAX_HEADERS);
+        assert_eq!(response_headers(many.collect(), true).len(), MAX_HEADERS);
     }
 
     #[test]

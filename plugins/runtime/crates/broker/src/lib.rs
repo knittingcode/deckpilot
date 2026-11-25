@@ -1410,9 +1410,12 @@ impl Session {
             previous.method,
             &previous.headers,
         ) {
-            Err(DenyReason::OriginNotGranted | DenyReason::PathNotGranted) => {
-                Decision::Deny(DenyReason::RedirectRefused)
-            }
+            Err(
+                DenyReason::OriginNotGranted
+                | DenyReason::PathNotGranted
+                | DenyReason::MethodNotGranted
+                | DenyReason::ForbiddenHeader,
+            ) => Decision::Deny(DenyReason::RedirectRefused),
             Err(reason) => Decision::Deny(reason),
             Ok(()) => Decision::Allow(Allowed::Fetch(AllowedFetch {
                 url,
