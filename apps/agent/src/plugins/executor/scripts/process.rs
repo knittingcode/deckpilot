@@ -778,7 +778,7 @@ fn cwd(
             Some(absolute) => {
                 let real = canonical(std::path::Path::new(absolute))
                     .map_err(|_| fault(codes::NOT_FOUND, "the working folder does not exist"))?;
-                if call.run.protected.forbids(&real) {
+                if call.run.protected.forbids(&real) || call.run.protected.forbids_identity(&real) {
                     return Err(fault(
                         codes::PROTECTED_PATH,
                         "DeckPilot's own folders are never a working folder",
@@ -802,9 +802,11 @@ fn cwd(
             )?,
         },
     };
-    // Every folder of the way, by its identity on the handle.
-    let _guard = super::fs::Guard::enter(call.run.protected.clone());
-    super::fs::open_follow(&target.root, &target.rel, &target.shown())?;
+    // Every folder of the way, by its identity on the handle; the path the
+    // program starts in must be that very folder (the spawn takes a path:
+    // `fchdir` would need `unsafe`, see the module doc).
+    let _guard = super::fs::Guard::enter(&call.run.protected);
+    let opened = super::fs::open_follow(&target.root, &target.rel, false, &target.shown())?;
     let real = canonical(&target.absolute()).map_err(|_| {
         fault(
             codes::NOT_FOUND,
@@ -824,6 +826,12 @@ fn cwd(
         return Err(fault(
             codes::INVALID_ARGUMENT,
             format!("“{}” is not a folder", target.shown()),
+        ));
+    }
+    if super::fs::protected::handle_id(&opened) != super::fs::protected::folder_id(&real) {
+        return Err(fault(
+            codes::OUTSIDE_SCOPE,
+            format!("“{}” changed while it was checked", target.shown()),
         ));
     }
     let ceiling = target.scope.root.parent().map(Path::to_path_buf);

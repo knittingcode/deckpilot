@@ -383,7 +383,7 @@ pub(crate) fn resolve(
         .collect();
     let root = open_root(&scope)?;
     // The open root, and every folder above it, by identity.
-    if protected.forbids_above(&root) {
+    if protected.forbids_above(&root, &scope.root) {
         return Err(private());
     }
     Ok(Target { scope, rel, root })
