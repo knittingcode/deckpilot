@@ -430,6 +430,48 @@ provider, in a meeting from the start, through the test-only option
   back to work", "back on the call after a run ended"). They carry the
   device and the run's end, never a title.
 
+## In the app (IPC protocol 19)
+
+The agent answers `getCallsStatus` with a `CallsStatus` and pushes it again
+as `callsChanged` whenever it changes, to subscribed desktop clients of
+protocol 19 (hygiene: the IPC token is the access boundary, and any client
+holding it may ask `getCallsStatus`). The managed layouts in it are read
+from the store once and again only after seeding, *Restore defaults*, a
+configuration reload or a lock, never on the Calls tick.
+`CallsStatus` holds:
+
+- whether Calls is installed;
+- the call's state name and the provider id;
+- whether any control is possible;
+- per connected device: the overlay setting, whether it shows the call, and
+  whether it went back to work;
+- per model: the managed layout's id, name, edited flag and template
+  version.
+
+It never holds a meeting title, a participant or a process name.
+
+- `setCallsOverlay { device, on }` turns the overlay off or on for one
+  connected device (another is refused with `callsUnknownDevice`). An
+  overlay shown now goes at once.
+- `restoreCallsLayout { model, copyName }` is *Restore defaults*. It answers
+  the id of the kept copy of the user's version, or `null` for an unedited
+  layout.
+
+Settings › Devices shows a **Calls** section (en and pl) only when the agent
+has the capability and Calls is installed. The section has:
+
+- the state;
+- for detection-only Teams, "Controls: Not supported", with the reason
+  (Microsoft retired its device API);
+- a switch per device;
+- the managed layouts with an "Edited" badge, and *Restore defaults*. Its
+  confirmation names the copy that keeps the user's version
+  ("Calls (my version, <date>)").
+
+The per-device setting is kept by the running agent; saving it across
+restarts comes with the plugin's settings (C7). Opening the managed layouts
+in the Device Editor, and the state preview there, are still to come (C6b).
+
 ## Operating-system signals and Teams (`deckpilot-calls::os_signals`)
 
 The `os-signals` provider with its Teams profile is detection only:

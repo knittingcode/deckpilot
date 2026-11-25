@@ -86,6 +86,13 @@ released either. 0.6.0 is the first version intended for publication.
   mute and camera stay unsupported: Microsoft retired the device API. The
   parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
   no build queries the operating system yet.
+- Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
+  `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
+  Settings › Devices gets a Calls section, in English and Polish, shown
+  only while Calls is installed, which no build does yet. It shows the
+  call's state, says plainly that Teams can only be detected, has a switch
+  per device for the overlay, and has *Restore defaults*, which first keeps
+  your version of the layout under a name it tells you.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,

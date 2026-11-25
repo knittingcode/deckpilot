@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { AgentBadge, AgentCompatibilityNotice, AgentStopped, DeviceRow } from "@/components/agent"
 import { GestureDefaultsCard } from "@/components/gesture-editor/gesture-defaults"
 import { SupportedModels } from "@/components/supported-models"
+import { CallsSettings } from "@/settings/calls-settings"
 import { EmptyState, ErrorNotice } from "@/components/page"
 import { SettingsGroup, SettingsRow, SettingsSection } from "@/components/settings-layout"
 import { Button } from "@/components/ui/button"
@@ -91,6 +92,7 @@ export function DevicesSettings() {
         </SettingsSection>
       )}
       <GestureDefaultsCard />
+      <CallsSettings />
       <SupportedModels />
     </>
   )
