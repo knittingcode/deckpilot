@@ -88,6 +88,7 @@ import type {
   Trigger,
   Workflow,
 } from "@/lib/types"
+import type { LabelBox, LabelPosition } from "@/lib/key-labels"
 
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
@@ -98,7 +99,8 @@ import {
   nextSelection,
 } from "./key-look-context"
 import { LabelOutlines } from "./label-outlines"
-import { labelsOf, placedAt, updateLabel, withLabels } from "./labels"
+import { labelMovedTo, nudge } from "./labels"
+import { useExpectedBoxes } from "./use-expected-boxes"
 import { incompleteAction, missingParameters } from "@/lib/action-completeness"
 import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
 import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
@@ -517,7 +519,18 @@ export function LayoutEditor({
   const outlined = selection.controls.length === 1 ? selection.controls[0] : undefined
   const outlinedKey = outlined ? controlKey(outlined) : null
   const outlinedBoxes = outlinedKey ? labelBoxes.get(outlinedKey) : undefined
-  const outlinedLabels = outlined ? labelsOf(shownBinding(draft, pageId, outlined)?.appearance) : []
+  // Nudges and drags start from where a label was moved to, until the
+  // renderer's next boxes arrive (as on the Inspector's stage), and each
+  // move changes the key's labels as they are in the latest draft.
+  const outlinedExpected = useExpectedBoxes(outlinedBoxes ?? NO_BOXES)
+  const canvasLabel =
+    outlinedKey && keyLabelsDrawn && outlinedBoxes?.length && labelSelection?.key === outlinedKey
+      ? labelSelection.id
+      : null
+  const moveCanvasLabel = (id: string, position: LabelPosition) => {
+    if (!outlinedKey) return
+    commands.restyle(labelMovedTo(id, position), `label-move:${outlinedKey}:${id}`)
+  }
   const labelOverlays = useMemo(() => {
     const overlays = new Map<string, ReactNode>()
     if (!outlinedKey || !outlinedBoxes?.length || !keyLabelsDrawn) return overlays
@@ -526,25 +539,36 @@ export function LayoutEditor({
       <LabelOutlines
         compact
         boxes={outlinedBoxes}
+        expected={outlinedExpected}
         selected={labelSelection?.key === outlinedKey ? labelSelection.id : null}
         onSelect={(id) => {
           selectLabel(outlinedKey, id)
+          // The arrows then nudge it: the key under the label takes the
+          // focus (a press on an outline does not move it by itself).
+          document
+            .querySelector<HTMLElement>(
+              `[data-slot=device-canvas] [data-control="${CSS.escape(outlinedKey)}"]`,
+            )
+            ?.focus({ preventScroll: true })
         }}
         onEdit={(id) => {
           selectLabel(outlinedKey, id, true)
         }}
-        onMove={(id, position) => {
-          commands.restyle(
-            withLabels(updateLabel(outlinedLabels, id, placedAt(position))),
-            `label-move:${outlinedKey}:${id}`,
-          )
-        }}
+        onMove={moveCanvasLabel}
       />,
     )
     return overlays
-    // `outlinedLabels` changes with the draft; `commands` with the editor.
+    // `commands` changes with the editor; `outlinedExpected.moved` with its boxes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [outlinedKey, outlinedBoxes, keyLabelsDrawn, labelSelection, draft, pageId])
+  }, [
+    outlinedKey,
+    outlinedBoxes,
+    outlinedExpected.boxes,
+    keyLabelsDrawn,
+    labelSelection,
+    draft,
+    pageId,
+  ])
   // Without the Workflows plugin, graph workflows on keys are kept and not
   // run, and read-only here.
   const workflowsActive = useIsPluginActive(WORKFLOWS_PLUGIN)
@@ -1185,6 +1209,27 @@ export function LayoutEditor({
 
   const onControlKeyDown = (event: KeyboardEvent<HTMLButtonElement>, control: ControlId) => {
     const mod = IS_MAC ? event.metaKey : event.ctrlKey
+    // A label selected on the key: the arrows nudge it (Shift: by 5 units)
+    // instead of moving the key selection, and Escape lets go of it, so
+    // the arrows move between the keys again.
+    if (canvasLabel && outlinedKey === controlKey(control)) {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        event.stopPropagation()
+        selectLabel(outlinedKey, null)
+        return
+      }
+      if (
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        nudge(event, outlinedExpected.boxes, canvasLabel, (id, position) => {
+          moveCanvasLabel(id, position)
+          outlinedExpected.moved(id, position)
+        })
+      )
+        return
+    }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault()
       if (selected.length > 0) commands.clear()
@@ -1602,7 +1647,12 @@ export function LayoutEditor({
                   summaries={summaries}
                   selection={selection.controls}
                   focused={selection.focus}
-                  onSelect={commands.select}
+                  onSelect={(control, mode) => {
+                    // A key chosen (not one of its labels): its labels let go
+                    // of the selection, and the arrows move between keys.
+                    if (labelSelection?.id) selectLabel(labelSelection.key, null)
+                    commands.select(control, mode)
+                  }}
                   onOpen={navigate}
                   onControlKeyDown={onControlKeyDown}
                   droppable
@@ -1978,3 +2028,5 @@ function useResolvedTitles(
 }
 
 const EMPTY_TITLES = new Map<string, string>()
+/** A key without label boxes (stable, for `useExpectedBoxes`). */
+const NO_BOXES: LabelBox[] = []

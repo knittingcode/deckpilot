@@ -67,6 +67,13 @@ released either. 0.6.0 is the first version intended for publication.
   `host:project.repositories` and `host:project.repository`, for DeckPilot's
   own bundled plugins. IPC protocol 18; older apps see these variables as
   JSON. The Projects plugin that declares them follows.
+- Settings › Profiles › a profile: "Saved actions" lists the profile's
+  saved actions by name with how many places use each, and can show only
+  the unused ones. Each can be opened in the action editor; an unused one
+  can also be deleted from its row, after the same confirmation as in the
+  editor (the agent still refuses while anything uses it). Nothing is
+  deleted by itself, and there is no "delete all". Until now a saved
+  action that no key, gesture or workflow used could not be opened.
 
 ### Changed
 
@@ -75,6 +82,10 @@ released either. 0.6.0 is the first version intended for publication.
   offered for new keys, actions or workflow nodes. Saved Open folder
   actions, keys, gestures and workflow steps keep running unchanged with
   their folder icon; nothing is rewritten.
+- Device Editor: a label picked on the Canvas is nudged with the arrow
+  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
+  nudge starts from the last one. Escape or a click on the key lets go of
+  the label, and the arrows move between keys again.
 
 ## [0.15.0] - 2026-11-24
 
