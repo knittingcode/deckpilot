@@ -342,3 +342,34 @@ fn a_managed_action_parameter_edit_changes_only_that_action() {
         Err(StorageError::UnknownLayout)
     ));
 }
+
+/// Several actions change in one transaction: all of them, or none when
+/// one of them is not the layout's.
+#[test]
+fn several_managed_actions_change_together_or_not_at_all() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    let set = ActionParameters::new().with("mode", ParameterValue::Text("set".into()));
+    assert!(matches!(
+        store.set_managed_actions_parameters(
+            OWNER,
+            &mk2(),
+            &[
+                (action_id, set.clone()),
+                (ActionInstanceId::new(), set.clone())
+            ]
+        ),
+        Err(StorageError::Invalid(_))
+    ));
+    let unchanged = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(unchanged.actions, actions, "none changed");
+    store
+        .set_managed_actions_parameters(OWNER, &mk2(), &[(action_id, set.clone())])
+        .unwrap();
+    let changed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(changed.actions[0].parameters, set);
+}

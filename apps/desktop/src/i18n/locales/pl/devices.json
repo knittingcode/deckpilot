@@ -273,7 +273,7 @@
     "back": {
       "title": "Powrót do pracy",
       "description": "Kiedy urządzenie, które wróciło do pracy, znów pokazuje rozmowę. Zmiana tych ustawień jest edycją układu, więc jego nowa wersja nie zastąpi Twojej.",
-      "noKey": "Ten układ Rozmów nie ma klawisza Wróć do pracy, więc nie ma czego ustawiać. Przywrócenie domyślnych przywraca ten klawisz.",
+      "noKey": "Ten układ Rozmów nie ma klawisza Wróć do pracy, więc nie ma czego ustawiać.",
       "mode": "Znów pokazuje rozmowę",
       "modes": {
         "timer": "Po czasie",

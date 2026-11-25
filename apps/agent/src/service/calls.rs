@@ -796,24 +796,29 @@ impl Agent {
             )
             .with_reason(deckpilot_ipc::calls::reason::NO_BACK_TO_WORK));
         }
-        // Every "Back to work" key of the layout gets the settings; each
-        // keeps the parameters these do not name (merged, not replaced).
-        for action in actions {
-            let settings = engine_back(
-                back,
-                deckpilot_calls::driver::settings_of(&action.parameters),
-            );
-            let mut parameters = action.parameters.clone();
-            for (key, value) in deckpilot_calls::driver::parameters_of(&settings).iter() {
-                parameters = parameters.with(key.clone(), value.clone());
-            }
-            store
-                .set_managed_action_parameters(OWNER, model, action.id, &parameters)
-                .map_err(|error| match error {
-                    deckpilot_storage::StorageError::UnknownLayout => no_layout(),
-                    other => IpcError::new(ErrorCode::Failed, other.to_string()),
-                })?;
-        }
+        // Every "Back to work" key of the layout gets the settings, in one
+        // transaction; each keeps the parameters these do not name (merged,
+        // not replaced).
+        let changes: Vec<_> = actions
+            .into_iter()
+            .map(|action| {
+                let settings = engine_back(
+                    back,
+                    deckpilot_calls::driver::settings_of(&action.parameters),
+                );
+                let mut parameters = action.parameters.clone();
+                for (key, value) in deckpilot_calls::driver::parameters_of(&settings).iter() {
+                    parameters = parameters.with(key.clone(), value.clone());
+                }
+                (action.id, parameters)
+            })
+            .collect();
+        store
+            .set_managed_actions_parameters(OWNER, model, &changes)
+            .map_err(|error| match error {
+                deckpilot_storage::StorageError::UnknownLayout => no_layout(),
+                other => IpcError::new(ErrorCode::Failed, other.to_string()),
+            })?;
         // Loaded again from the store (the edited layout is kept as it is).
         if let Some(service) = self.calls.service.as_mut() {
             service.seeded.remove(model);

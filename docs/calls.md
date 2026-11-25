@@ -452,8 +452,14 @@ Each managed layout in `CallsStatus` also carries:
   - `onFailure` and `onCancel` (`resume` or `stay`);
   - `allDevices`.
 
-`setCallsBackToWork { model, back }` sets them, and refuses times out of
-range. They are the parameters of the layout's "Back to work" action, so
+`back` is read from the layout's first bound "Back to work" key (a user
+may have bound it to more keys; the templates bind one), so Settings shows
+that key's settings. `back` is absent when no key is bound (the template of
+a device without displays has none).
+
+`setCallsBackToWork { model, back }` sets them on every bound "Back to
+work" key, in one transaction, each keeping its other parameters. It
+refuses times out of range. They are the parameters of the layout's "Back to work" action, so
 **a change is a user edit of the managed layout**: it counts as edited,
 a template update then never rewrites it, and *Restore defaults* keeps it
 first. The driver uses the new settings from the next press.

@@ -1109,3 +1109,99 @@ async fn observing_only_lists_every_control_as_not_allowed() {
     }
     agent.shutdown().await;
 }
+
+/// Two "Back to work" keys on the managed layout: setting Back to work
+/// writes both, in one go, and each keeps a parameter the settings do not
+/// name.
+#[tokio::test(flavor = "multi_thread")]
+async fn back_to_work_is_written_to_every_key_keeping_other_parameters() {
+    use deckpilot_ipc::calls::{BackToWork, BackToWorkMode};
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let store = deck.agent.store();
+    let mk2 = models::stream_deck_mk2().id;
+    let managed = store
+        .managed_layout("deckpilot.calls", &mk2)
+        .unwrap()
+        .expect("seeded");
+    // A second "Back to work" key, and a parameter of the user's on each.
+    let mut layout = managed.layout.clone();
+    let mut actions = managed.actions.clone();
+    let first = actions
+        .iter_mut()
+        .find(|a| a.action_type.as_str() == "deckpilot.calls.return-to-work")
+        .unwrap();
+    first.parameters = first
+        .parameters
+        .clone()
+        .with("note", ParameterValue::Text("mine".into()));
+    let mut second = first.clone();
+    second.id = deckpilot_core::ActionInstanceId::new();
+    second.parameters = second
+        .parameters
+        .clone()
+        .with("note", ParameterValue::Text("second".into()));
+    let home = layout.home_page;
+    let used: Vec<ControlId> = layout
+        .page(home)
+        .unwrap()
+        .bindings
+        .iter()
+        .map(|b| b.control)
+        .collect();
+    let free = (0..15u16)
+        .map(key)
+        .find(|k| !used.contains(k))
+        .expect("a free key");
+    layout
+        .page_mut(home)
+        .unwrap()
+        .bindings
+        .push(ControlBinding::new(
+            free,
+            Trigger::Press,
+            BindingTarget::action(second.id),
+        ));
+    let ids = [first.id, second.id];
+    actions.push(second);
+    store
+        .seed_managed_layout(
+            "deckpilot.calls",
+            &layout,
+            &actions,
+            &managed.template_version,
+        )
+        .unwrap();
+    // Set a 20 s timer.
+    let timer = BackToWork {
+        mode: BackToWorkMode::Timer { seconds: 20 },
+        ..BackToWork::default()
+    };
+    let Response::CallsStatus { .. } = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: mk2.clone(),
+            back: timer,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    let stored = store
+        .managed_layout("deckpilot.calls", &mk2)
+        .unwrap()
+        .unwrap();
+    for (id, note) in ids.into_iter().zip(["mine", "second"]) {
+        let action = stored.actions.iter().find(|a| a.id == id).unwrap();
+        assert_eq!(action.parameters.text("mode"), Some("timer"), "{id}");
+        assert_eq!(
+            action.parameters.get("seconds"),
+            Some(&ParameterValue::Integer(20)),
+            "{id}"
+        );
+        assert_eq!(action.parameters.text("note"), Some(note), "kept: {id}");
+    }
+    deck.agent.shutdown().await;
+}

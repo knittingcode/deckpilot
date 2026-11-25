@@ -348,18 +348,33 @@ impl SqliteStore {
         action: ActionInstanceId,
         parameters: &deckpilot_core::ActionParameters,
     ) -> Result<()> {
+        self.set_managed_actions_parameters(owner, model, &[(action, parameters.clone())])
+    }
+
+    /// [`SqliteStore::set_managed_action_parameters`] for several actions
+    /// of the layout at once, in one transaction: all of them change, or
+    /// (one is not the layout's, the write fails) none does.
+    pub fn set_managed_actions_parameters(
+        &self,
+        owner: &str,
+        model: &DeviceModelId,
+        changes: &[(ActionInstanceId, deckpilot_core::ActionParameters)],
+    ) -> Result<()> {
         let tx = self.write_transaction()?;
         let Some(row) = row(&tx, owner, model.as_str())? else {
             return Err(StorageError::UnknownLayout);
         };
         let stored = load(&tx, owner, &row)?;
-        let Some(mut changed) = stored.actions.into_iter().find(|a| a.id == action) else {
-            return Err(StorageError::Invalid(
-                "the action is not one of the managed layout's".into(),
-            ));
-        };
-        changed.parameters = parameters.clone();
-        upsert_action(&tx, &changed, now())?;
+        let stamp = now();
+        for (action, parameters) in changes {
+            let Some(mut updated) = stored.actions.iter().find(|a| a.id == *action).cloned() else {
+                return Err(StorageError::Invalid(
+                    "the action is not one of the managed layout's".into(),
+                ));
+            };
+            updated.parameters = parameters.clone();
+            upsert_action(&tx, &updated, stamp)?;
+        }
         tx.commit()?;
         Ok(())
     }
