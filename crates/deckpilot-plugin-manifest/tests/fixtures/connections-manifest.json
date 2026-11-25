@@ -1,0 +1,175 @@
+{
+  "manifestVersion": 1,
+  "id": "deckpilot.git-providers",
+  "name": "Git Providers",
+  "version": "0.1.0",
+  "publisher": { "id": "deckpilot", "name": "DeckPilot" },
+  "description": "Repositories, merge requests and pipelines of the GitHub and GitLab servers you connect.",
+  "license": "Apache-2.0",
+  "engines": { "deckpilot": ">=0.16.0 <1.0.0", "pluginApi": "^1.14", "sdk": "0.2.0" },
+  "runtime": { "kind": "wasm", "abi": 1 },
+  "entry": "src/lib.rs",
+  "icons": { "128": "assets/icon-128.png" },
+  "defaultLocale": "en",
+  "locales": ["en", "pl"],
+  "permissions": [
+    {
+      "kind": "connections",
+      "types": ["github", "gitlab"],
+      "methods": ["GET", "POST", "PUT"],
+      "privateNetwork": true,
+      "justification": "Talks to the GitHub and GitLab servers you connect, each with its own token, and nowhere else."
+    },
+    {
+      "kind": "openUrl",
+      "hosts": [],
+      "connections": true,
+      "justification": "Opens repositories, merge requests and pipelines of your connections in the browser."
+    },
+    {
+      "kind": "dialogs",
+      "justification": "Asks you to confirm before it starts a pipeline from a key."
+    }
+  ],
+  "contributes": {
+    "connectionTypes": [
+      {
+        "id": "github",
+        "label": "t:types.github",
+        "cloud": { "api": "https://api.github.com", "web": "https://github.com" },
+        "selfHosted": { "apiPath": "/api/v3", "label": "t:types.ghes" },
+        "auth": [
+          {
+            "method": "pat",
+            "scheme": "bearer",
+            "setupUrl": {
+              "cloud": "https://github.com/settings/personal-access-tokens/new",
+              "selfHosted": "{web}/settings/tokens/new"
+            }
+          }
+        ],
+        "extensions": ["github.checks", "github.review-requests", "github.workflow-dispatch"]
+      },
+      {
+        "id": "gitlab",
+        "label": "t:types.gitlab",
+        "cloud": { "api": "https://gitlab.com/api/v4", "web": "https://gitlab.com" },
+        "selfHosted": { "apiPath": "/api/v4", "label": "t:types.gitlabSelf" },
+        "auth": [
+          {
+            "method": "pat",
+            "scheme": "header",
+            "headerName": "PRIVATE-TOKEN",
+            "setupUrl": {
+              "cloud": "https://gitlab.com/-/user_settings/personal_access_tokens",
+              "selfHosted": "{web}/-/user_settings/personal_access_tokens"
+            }
+          }
+        ],
+        "extensions": ["gitlab.review-requests", "gitlab.pipeline-variables"]
+      }
+    ],
+    "recordSchemas": [
+      {
+        "id": "repository",
+        "fields": [
+          { "key": "id", "kind": "text" },
+          { "key": "path", "kind": "text" },
+          { "key": "defaultBranch", "kind": "text" },
+          { "key": "webUrl", "kind": "url" }
+        ]
+      },
+      {
+        "id": "pipeline",
+        "fields": [
+          { "key": "id", "kind": "text" },
+          { "key": "state", "kind": "state" },
+          { "key": "ref", "kind": "text" },
+          { "key": "title", "kind": "text", "sensitive": true },
+          { "key": "finishedAt", "kind": "timestamp" }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "list-repositories",
+        "name": "List repositories",
+        "description": "The repositories of a connection.",
+        "category": "Git Providers",
+        "internal": true,
+        "parameters": [
+          {
+            "key": "connection",
+            "label": "Connection",
+            "required": true,
+            "kind": { "type": "connection", "types": ["github", "gitlab"] }
+          },
+          {
+            "key": "search",
+            "label": "Search",
+            "required": false,
+            "kind": { "type": "text", "maxLength": 200 }
+          }
+        ],
+        "node": {
+          "effect": "readOnly",
+          "outputs": [
+            {
+              "key": "items",
+              "label": "Repositories",
+              "kind": "records",
+              "schema": "repository",
+              "always": true
+            },
+            { "key": "count", "label": "Count", "kind": "integer" }
+          ]
+        }
+      },
+      {
+        "id": "pipeline-status",
+        "name": "Pipeline status",
+        "description": "The latest pipeline of a branch.",
+        "category": "Git Providers",
+        "parameters": [
+          {
+            "key": "connection",
+            "label": "Connection",
+            "required": true,
+            "kind": {
+              "type": "connection",
+              "types": ["github", "gitlab"],
+              "capability": "pipelines"
+            }
+          },
+          {
+            "key": "repository",
+            "label": "Repository",
+            "required": true,
+            "kind": { "type": "text", "maxLength": 200 },
+            "options": {
+              "from": "list-repositories",
+              "dependsOn": ["connection"],
+              "value": "id",
+              "label": "path",
+              "search": true
+            }
+          },
+          {
+            "key": "ref",
+            "label": "Branch",
+            "required": false,
+            "kind": { "type": "text", "maxLength": 255 }
+          }
+        ],
+        "node": {
+          "effect": "readOnly",
+          "retrySafe": true,
+          "outputs": [
+            { "key": "state", "label": "State", "kind": "text", "always": true },
+            { "key": "items", "label": "Pipelines", "kind": "records", "schema": "pipeline" }
+          ]
+        }
+      }
+    ]
+  }
+}

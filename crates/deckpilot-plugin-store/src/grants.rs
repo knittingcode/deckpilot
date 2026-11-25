@@ -29,6 +29,9 @@ pub const PRIVATE_NETWORK_KEY: &str = "private-network";
 /// API 1.9, X5; no host has a name without a dot).
 pub const OPEN_URL_FROM_PARAMS_KEY: &str = "from-params";
 
+/// The key of the `calls:control` sub-grant (plugin API 1.16).
+pub const CALLS_CONTROL_KEY: &str = "control";
+
 pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Get,
     HttpMethod::Head,
@@ -38,7 +41,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 15] = [
+const KINDS: [PermissionKind; 17] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -54,6 +57,8 @@ const KINDS: [PermissionKind; 15] = [
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
     PermissionKind::Scripts,
+    PermissionKind::Connections,
+    PermissionKind::Calls,
 ];
 
 pub(crate) fn parse_kind(text: &str) -> Option<PermissionKind> {
@@ -211,6 +216,12 @@ pub enum GrantScope {
         process: bool,
         shell: bool,
     },
+    /// `calls` (plugin API 1.16): the focused call's sanitised state
+    /// (`call.state`), keyed `calls` and shown as `calls:observe`.
+    CallsObserve,
+    /// `calls:control` (plugin API 1.16): asking the host to control the
+    /// focused call (`call.control`), consented to on its own.
+    CallsControl,
 }
 
 /// The consent tier of a grant (architecture section 5.2).
@@ -239,7 +250,10 @@ impl GrantScope {
             | Self::ToolModify
             | Self::ResourceOpen
             | Self::ProjectSelect
-            | Self::Scripts { .. } => Tier::High,
+            | Self::Scripts { .. }
+            // Plugin API 1.16: controlling the user's calls is always
+            // asked for, never derived.
+            | Self::CallsControl => Tier::High,
             Self::Notifications
             | Self::Storage { .. }
             | Self::DeviceState
@@ -255,7 +269,8 @@ impl GrantScope {
             | Self::Resources
             | Self::ResourcePaths
             | Self::OpenUrlFromParams
-            | Self::ProjectRead => Tier::Medium,
+            | Self::ProjectRead
+            | Self::CallsObserve => Tier::Medium,
         }
     }
 
@@ -555,7 +570,13 @@ impl GrantSet {
                 | Permission::Resources { .. }
                 | Permission::ProjectContext { .. }
                 | Permission::HostViews { .. }
-                | Permission::Scripts { .. } => set.insert_privileged(permission),
+                | Permission::Scripts { .. }
+                | Permission::Calls { .. } => set.insert_privileged(permission),
+                // Plugin API 1.14: the grants of connections are per
+                // connection the user creates, which the host side adds;
+                // until then the permission grants nothing (deny by
+                // default).
+                Permission::Connections { .. } => {}
                 Permission::Device { state, icons, .. } => set.insert_device(*state, *icons),
             }
         }
@@ -633,6 +654,18 @@ impl GrantSet {
                     shell: *shell == Some(true),
                 },
             ),
+            Permission::Calls { control, .. } => {
+                self.insert(
+                    GrantKey::new(PermissionKind::Calls, ""),
+                    GrantScope::CallsObserve,
+                );
+                if *control == Some(true) {
+                    self.insert(
+                        GrantKey::new(PermissionKind::Calls, CALLS_CONTROL_KEY),
+                        GrantScope::CallsControl,
+                    );
+                }
+            }
             Permission::OpenUrl {
                 from_params: Some(true),
                 ..
@@ -1182,6 +1215,24 @@ mod tests {
             .expect("a dialogs grant");
         assert_eq!(scope, &GrantScope::Dialogs);
         assert_eq!(scope.tier(), Tier::Medium);
+    }
+
+    /// Plugin API 1.14's `connections` grants nothing until the host side
+    /// adds its per-connection grants: deny by default.
+    #[test]
+    fn the_connections_permission_grants_nothing_yet() {
+        let manifest = Manifest::from_json(include_str!(
+            "../../deckpilot-plugin-manifest/tests/fixtures/connections-manifest.json"
+        ))
+        .unwrap();
+        let set = GrantSet::from_manifest(&manifest);
+        assert!(
+            set.keys().all(|k| k.kind != PermissionKind::Connections
+                && k.kind != PermissionKind::OpenUrl),
+            "{:?}",
+            set.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(parse_kind("connections"), Some(PermissionKind::Connections));
     }
 
     /// Plugin API 1.9's privileged kinds (module-migration.md §7): one key

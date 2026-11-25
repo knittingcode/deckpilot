@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod capability;
+pub mod connections;
 pub mod describe;
 pub mod dialog;
 pub mod frame;
@@ -66,5 +67,8 @@ pub use value::{ActionOutcome, ParamValue, Params, ValidationError};
 /// guest that uses them sends; and the Scripts bridge's operations of
 /// plugin API 1.13 ([`scripts`]), with the optional `script` detail of a
 /// [`CallError`] on their replies only, and the optional `hostCalls` and
-/// `polls` of [`protocol::GuestLimits`].
+/// `polls` of [`protocol::GuestLimits`]; and the capability operations of
+/// plugin API 1.14 ([`connections`]: `connections.get`,
+/// `connections.reportStatus`, `time.sleep`) and the `connection` member
+/// of `http.fetch`, which only a guest that uses them sends.
 pub const ABI_VERSION: u32 = 1;

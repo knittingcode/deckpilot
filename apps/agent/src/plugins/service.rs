@@ -3193,6 +3193,8 @@ fn declares_privileged_kind<'a>(
         PermissionKind::Resources,
         PermissionKind::ProjectContext,
         PermissionKind::HostViews,
+        PermissionKind::Connections,
+        PermissionKind::Calls,
     ]
     .into_iter()
     .filter(|k| k.is_first_party_only())
@@ -3525,6 +3527,18 @@ mod tests {
             [tools.as_slice()].into_iter()
         ));
         assert!(!declares_privileged_kind(&git, std::iter::empty()));
+        // Plugin API 1.16's `calls` is a privileged kind: a bundled id that
+        // declares it is bundled-only. (`deckpilot.calls` joins the bundled
+        // ids with the Calls bundle; until then no copy of it is accepted.)
+        let calls = vec![serde_json::json!({ "kind": "calls", "justification": "x" })];
+        assert!(declares_privileged_kind(
+            &git,
+            [calls.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(
+            &PluginId::parse("deckpilot.calls").unwrap(),
+            [calls.as_slice()].into_iter()
+        ));
     }
 
     #[test]

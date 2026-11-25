@@ -31,7 +31,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use deckpilot_plugin_abi::capability::RunContext;
-use deckpilot_plugin_abi::capability::{Header, HttpAuth, LogLevel, NotifySeverity};
+use deckpilot_plugin_abi::capability::{Header, HttpAuth, HttpFetch, LogLevel, NotifySeverity};
 use deckpilot_plugin_abi::dialog::DialogRequest;
 use deckpilot_plugin_abi::privileged::{
     OpenUrlParam, ProjectCycle, ResourceOpen, ResourceResolve, ToolAccess, ToolRun,
@@ -136,6 +136,10 @@ pub enum DenyReason {
     /// A `tool.run` argument array that does not start with a subcommand
     /// (an option of the tool itself is the host's alone).
     NoSubcommand,
+    /// An operation of a plugin API level this broker knows but the agent
+    /// does not carry out yet (plugin API 1.14's connections and
+    /// `time.sleep`): answered as an unsupported operation, never allowed.
+    NotImplemented,
 }
 
 impl DenyReason {
@@ -144,6 +148,7 @@ impl DenyReason {
         match self {
             Self::RateLimited => CallErrorCode::Throttled,
             Self::TooLarge | Self::ForbiddenHeader => CallErrorCode::BadRequest,
+            Self::NotImplemented => CallErrorCode::UnsupportedOp,
             _ => CallErrorCode::NotPermitted,
         }
     }
@@ -198,6 +203,7 @@ impl fmt::Display for DenyReason {
             Self::NoSubcommand => {
                 f.write_str("the arguments must start with a subcommand, not an option")
             }
+            Self::NotImplemented => f.write_str("not supported by this version of DeckPilot"),
         }
     }
 }
@@ -794,6 +800,16 @@ impl Session {
             return (Decision::Deny(DenyReason::TooLarge), None);
         }
         match request {
+            // Plugin API 1.14 (connections): known, never carried out yet.
+            // A fetch naming a connection is refused as a whole, never
+            // checked as an ordinary fetch.
+            CapabilityRequest::ConnectionGet(_)
+            | CapabilityRequest::ConnectionReportStatus(_)
+            | CapabilityRequest::TimeSleep(_)
+            | CapabilityRequest::HttpFetch(HttpFetch {
+                connection: Some(_),
+                ..
+            }) => (Decision::Deny(DenyReason::NotImplemented), None),
             CapabilityRequest::HttpFetch(f) => {
                 let (url, origin) = match request_url(&grants, &f.url) {
                     Ok(v) => v,

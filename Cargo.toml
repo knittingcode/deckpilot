@@ -13,6 +13,7 @@ members = [
     "crates/deckpilot-portability",
     "crates/deckpilot-keystore",
     "crates/deckpilot-presence",
+    "crates/deckpilot-calls",
     "crates/deckpilot-apps",
     "crates/deckpilot-render",
     "crates/deckpilot-plugin-bundled",
@@ -66,6 +67,7 @@ deckpilot-module-deck = { path = "modules/deck" }
 deckpilot-portability = { path = "crates/deckpilot-portability" }
 deckpilot-keystore = { path = "crates/deckpilot-keystore" }
 deckpilot-presence = { path = "crates/deckpilot-presence" }
+deckpilot-calls = { path = "crates/deckpilot-calls" }
 deckpilot-apps = { path = "crates/deckpilot-apps" }
 deckpilot-render = { path = "crates/deckpilot-render" }
 deckpilot-plugin-bundled = { path = "crates/deckpilot-plugin-bundled" }
