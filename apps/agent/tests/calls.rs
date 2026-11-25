@@ -1405,3 +1405,63 @@ async fn a_preview_never_leaves_a_frame_behind() {
     .await;
     deck.agent.shutdown().await;
 }
+
+/// T-E2E for every class with key displays, not only the MK.2: on an XL
+/// (`grid-large`) and a Plus (`keys+dials`) the overlay comes with the
+/// call, the device draws its "Back to work" key where the class's
+/// template puts it, and the overlay goes with the call.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_overlay_is_drawn_on_every_class_of_device() {
+    for model in [models::stream_deck_xl(), models::stream_deck_plus()] {
+        let f = fixture();
+        let dir = TempDir::new("deckpilot-calls-class");
+        let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+        let mock = MockBackend::new();
+        let device = mock.plug(&model, "CALLS-C");
+        let clock = FakeInstant::default();
+        let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+        agent.unlock().await;
+        agent
+            .handle
+            .install_calls_mock(MockProvider::new(), ActionParameters::new())
+            .await;
+        let deck = Deck {
+            agent,
+            mock,
+            device: device.clone(),
+            clock,
+            _dir: dir,
+        };
+        deck.join().await;
+        // Where the class's template puts "Back to work".
+        let shape = Shape::of(&model.capabilities);
+        let template = builtin_templates()
+            .into_iter()
+            .find(|t| t.shape == shape)
+            .unwrap();
+        let generated = generate(&template, &model.id, &model.capabilities).unwrap();
+        let active = generated.pages[&deckpilot_calls::layouts::Page::Active];
+        let back = generated
+            .layout
+            .page(active)
+            .unwrap()
+            .bindings
+            .iter()
+            .find(|b| generated.action_of(b.target.action_id().unwrap()) == Some("return-to-work"))
+            .map(|b| b.control)
+            .unwrap();
+        let spec = model.capabilities.keys.and_then(|keys| keys.image).unwrap();
+        let face = KeyFace::new(FaceStyle::Action, "Back to work");
+        let image = deckpilot_agent::render::render(&face, spec.width, spec.height);
+        assert!(
+            deck.mock
+                .wait_for(&device, TIMEOUT, |frames, _| frames.get(&back)
+                    == Some(&image)),
+            "{}: the device shows the overlay's Back to work key",
+            model.id
+        );
+        deck.hang_up().await;
+        deck.wait_overlay(false).await;
+        deck.agent.shutdown().await;
+    }
+}

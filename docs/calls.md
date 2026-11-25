@@ -379,7 +379,8 @@ mock through the test hooks (`AgentHandle::install_calls_mock`,
   (`cancelled`) as a cancellation, other errors as failures. An action
   that could not run at all is no completion.
 
-Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
+Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2; the
+overlay is also drawn on an XL and a Plus, every class with key displays):
 
 - the overlay drawn on the device (T-E2E);
 - a workflow's real end (T-R3);
