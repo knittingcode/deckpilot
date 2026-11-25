@@ -257,9 +257,6 @@ impl CallsDriver {
         outcome
     }
 
-    /// The overlay was dismissed on `device`
-    /// ([`deckpilot_core::RuntimeOutcome::OverlayDismissed`]): the runtime
-    /// popped it; the device stays on its own presentation for this call.
     /// Shows `page` of `device`'s managed layout as the editor previews it:
     /// a frame of its own, with faces drawn from a fixed snapshot in that
     /// page's state. The snapshot holds no call: no title, no participant,
@@ -305,12 +302,15 @@ impl CallsDriver {
         snapshot.state = state;
         snapshot.connected = true;
         let faces = faces(generated, page_id, &snapshot, self.locale);
-        self.end_preview(runtime, device);
+        // The new frame first: when the device takes none, the old preview
+        // (if any) stays as it was, still known.
         let session = runtime
             .push_overlay(device, spec)
             .map_err(|_| PreviewError::Refused)?;
         runtime.set_overlay_faces(device, session, faces);
-        self.previews.insert(device.clone(), session);
+        if let Some(old) = self.previews.insert(device.clone(), session) {
+            runtime.pop_overlay(device, old);
+        }
         Ok(())
     }
 
@@ -334,6 +334,9 @@ impl CallsDriver {
         self.previews.keys()
     }
 
+    /// The overlay was dismissed on `device`
+    /// ([`deckpilot_core::RuntimeOutcome::OverlayDismissed`]): the runtime
+    /// popped it; the device stays on its own presentation for this call.
     pub fn dismissed(&mut self, device: &DeviceId, session: OverlaySession) {
         // A preview dismissed on the device: the runtime popped its frame.
         if self.previews.get(device) == Some(&session) {
@@ -550,6 +553,7 @@ impl CallsDriver {
     /// consent withdrawn).
     pub fn clear(&mut self, runtime: &mut Runtime) {
         self.returns.clear();
+        self.end_previews(runtime);
         let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
         for device in devices {
             self.pop(runtime, &device);

@@ -243,6 +243,9 @@
       "active": "W rozmowie"
     },
     "pageLabel": "Strona „{{page}}”",
+    "previewShow": "Pokaż na urządzeniu",
+    "previewEnd": "Zakończ podgląd",
+    "previewFailed": "Nie udało się pokazać strony na urządzeniu",
     "actions": {
       "answer": "Odbierz",
       "reject": "Odrzuć",

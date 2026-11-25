@@ -1306,10 +1306,12 @@ async fn closing_the_connection_ends_the_preview() {
     deck.agent.shutdown().await;
 }
 
-/// Only the configuration app previews: a plugin's (any other client's)
-/// connection is refused, and a protocol 18 one never sends it.
+/// Only a connection declaring the desktop (the configuration app)
+/// previews: any other client kind (a plugin host, the command line) is
+/// refused, and a protocol 18 one never sends it. The kind is declared,
+/// not authenticated: a policy guard behind the token.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_plugin_connection_cannot_preview() {
+async fn a_connection_not_declaring_the_desktop_cannot_preview() {
     use deckpilot_ipc::calls::CallsPageKind;
     use deckpilot_ipc::{AgentClient, ClientError, ClientKind, ErrorCode};
     let f = fixture();

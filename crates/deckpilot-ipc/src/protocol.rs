@@ -442,8 +442,11 @@ pub fn negotiate(client: u32, agent: u32) -> u32 {
     client.min(agent)
 }
 
-/// What kind of program is connecting. Used for diagnostics and to decide
-/// whether the configuration window is already open.
+/// What kind of program is connecting, **as the client itself declares** in
+/// its `hello`. Used for diagnostics, to decide whether the configuration
+/// window is already open, and as a policy guard (only `Desktop` receives
+/// `callsChanged` or may preview a call page). It is not authentication:
+/// the IPC token is, and any holder of the token can declare `Desktop`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ClientKind {
@@ -1054,7 +1057,8 @@ pub enum Request {
     },
     /// The Device Editor's preview of a call page of `device`'s managed
     /// Calls layout: fixed placeholder faces, no call, no provider. Only
-    /// from a desktop connection; refused while locked or while a real call
+    /// from a connection that declares itself a desktop client (a policy
+    /// guard; the token is the access boundary); refused while locked or while a real call
     /// shows, which always wins. Ends with `endCallsPreview`, when the
     /// connection closes, on lock, a real call or the device's disconnect.
     /// Answers [`Response::Ok`]. Since protocol 19.

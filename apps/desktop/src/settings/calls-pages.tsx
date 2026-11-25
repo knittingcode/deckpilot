@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { useInlineNumber } from "@/components/inline-number"
 import { InlineNumberInput } from "@/components/inline-number-input"
@@ -9,6 +9,7 @@ import {
   SettingsSection,
 } from "@/components/settings-layout"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -28,6 +29,8 @@ import {
   OS_SIGNALS_PROVIDER,
   checkSeconds,
 } from "@/lib/calls"
+import { api } from "@/lib/api"
+import { toastFailure } from "@/lib/failure"
 import { controlLabel } from "@/lib/layout-model"
 import type {
   BackToWork,
@@ -35,6 +38,7 @@ import type {
   CallsControl,
   CallsLayout,
   CallsPageKind,
+  DeviceId,
 } from "@/lib/types"
 
 const PAGE_NAMES = {
@@ -59,12 +63,41 @@ export function CallsPagesSection({
   layout,
   provider,
   modelName,
+  devices,
 }: {
   layout: CallsLayout
   provider?: string
   modelName: string
+  /** The connected devices of the layout's model, to preview a page on. */
+  devices: DeviceId[]
 }) {
   const { t } = useTranslation()
+  const [previewing, setPreviewing] = useState<CallsPageKind | null>(null)
+  // The preview is the editor's while it is open: it ends with it.
+  useEffect(
+    () => () => {
+      void api.callsPreviewEnd()
+    },
+    [],
+  )
+  const [device] = devices
+  const togglePreview = (page: CallsPageKind) => {
+    if (!device) return
+    if (previewing === page) {
+      setPreviewing(null)
+      void api.callsPreviewEnd()
+      return
+    }
+    api.callsPreviewBegin(device, page).then(
+      () => {
+        setPreviewing(page)
+      },
+      (e: unknown) => {
+        setPreviewing(null)
+        toastFailure(t("devices:calls.previewFailed"), e)
+      },
+    )
+  }
   if (layout.pages.length === 0) return null
   const actionName = (action: string) => {
     const key = CALL_ACTIONS[action as keyof typeof CALL_ACTIONS] as TranslationKey | undefined
@@ -88,7 +121,22 @@ export function CallsPagesSection({
           <SettingsRow
             label={t("devices:calls.pageLabel", { page: t(PAGE_NAMES[page.page]) })}
             description={page.name === t(PAGE_NAMES[page.page]) ? undefined : page.name}
-          />
+          >
+            {device && (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-pressed={previewing === page.page}
+                onClick={() => {
+                  togglePreview(page.page)
+                }}
+              >
+                {previewing === page.page
+                  ? t("devices:calls.previewEnd")
+                  : t("devices:calls.previewShow")}
+              </Button>
+            )}
+          </SettingsRow>
           {page.controls.map((control) => (
             <SettingsRow
               key={`${control.control.kind}-${String(control.control.index)}`}

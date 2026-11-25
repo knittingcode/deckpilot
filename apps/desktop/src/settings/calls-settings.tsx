@@ -176,6 +176,9 @@ export function CallsSettings() {
             layout={layout}
             provider={status.provider}
             modelName={modelName(layout.model)}
+            devices={status.devices
+              .map((entry) => entry.device)
+              .filter((device) => device.model === layout.model)}
           />
           <BackToWorkSection
             layout={layout}

@@ -500,9 +500,13 @@ snapshot instead (decided 2026-11-25):
   from a provider or a real call except the provider's capabilities, so a
   control it does not support shows disabled with its reason. The keys run
   nothing.
-- **Who may ask:** only an authenticated desktop (editor) connection at
-  protocol 19. Any other client is refused with `Unauthorized`
-  (`callsPreviewDesktopOnly`); a protocol 18 client never sends it.
+- **Who may ask:** only a connection at protocol 19 that declares itself a
+  desktop (editor) client. Any other client is refused with
+  `Unauthorized` (`callsPreviewDesktopOnly`); a protocol 18 client never
+  sends it. The client kind is the client's own declaration in its
+  `hello`, so this is a policy guard, not authentication: the IPC token is
+  the access boundary, and any holder of the token can declare itself a
+  desktop client.
 - **Priority:** a lock and a real call always win:
   - refused while locked;
   - refused while a call shows (`callsPreviewInCall`);
@@ -515,7 +519,14 @@ snapshot instead (decided 2026-11-25):
   - when dismissed on the device.
 
   It never leaves an overlay frame behind.
-- **One per device:** a new preview replaces the old.
+- **One per device:** a new preview replaces the old. The new frame is
+  pushed first, so when the device takes none the old one stays.
+- **In the app:** the preview lives on a connection of its own in the
+  backend (`commands/calls.rs`, `CallsPreview`), one at a time. It is ended
+  with `endCallsPreview` when the Calls settings close, the main window
+  hides, reloads or closes, or the app quits; the connection closing ends
+  it too. A per-meeting capability reason may show on a preview; it is
+  informational only.
 
 The IPC event for the app and the editor (C6, a release blocker) is
 `callsChanged`, above. It carries the managed layouts too, and is sent

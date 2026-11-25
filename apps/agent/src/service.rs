@@ -187,7 +187,6 @@ pub(crate) enum Command {
         request: Request,
         reply: oneshot::Sender<Result<Response, IpcError>>,
     },
-    /// The connection `viewer` closed: its live preview sessions end.
     /// A Calls page preview request of connection `viewer` (`server.rs`).
     CallsPreview {
         viewer: u64,
@@ -198,6 +197,7 @@ pub(crate) enum Command {
     CallsPreviewClosed {
         viewer: u64,
     },
+    /// The connection `viewer` closed: its live preview sessions end.
     LivePreviewClosed {
         viewer: u64,
     },

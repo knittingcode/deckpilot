@@ -288,4 +288,37 @@ describe("Settings › Devices › Calls", () => {
     expect(await screen.findByText(/has no Back to work key/)).toBeInTheDocument()
     expect(screen.queryByRole("combobox", { name: "Shows the call again" })).not.toBeInTheDocument()
   })
+
+  it("shows a page on the device as a preview, and ends it", async () => {
+    const user = userEvent.setup()
+    api.getCallsStatus.mockResolvedValue(status())
+    api.callsPreviewBegin.mockResolvedValue(null)
+    api.callsPreviewEnd.mockResolvedValue(null)
+    const view = renderWithApp(<CallsSettings />, { agent: agent() })
+    const show = await screen.findByRole("button", { name: "Show on the device" })
+    await user.click(show)
+    expect(api.callsPreviewBegin).toHaveBeenCalledWith(device.id, "active")
+    const end = await screen.findByRole("button", { name: "End preview" })
+    expect(end).toHaveAttribute("aria-pressed", "true")
+    await user.click(end)
+    expect(api.callsPreviewEnd).toHaveBeenCalled()
+    // Leaving the page ends any preview.
+    const calls = api.callsPreviewEnd.mock.calls.length
+    view.rerender(<div />)
+    await waitFor(() => {
+      expect(api.callsPreviewEnd.mock.calls.length).toBeGreaterThan(calls)
+    })
+  })
+
+  it("says why a page cannot be shown during a call", async () => {
+    const user = userEvent.setup()
+    api.getCallsStatus.mockResolvedValue(status())
+    api.callsPreviewBegin.mockRejectedValue(new Error("a call shows on the device"))
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
 })

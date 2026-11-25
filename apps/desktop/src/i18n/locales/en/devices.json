@@ -233,6 +233,9 @@
       "active": "In a call"
     },
     "pageLabel": "Page “{{page}}”",
+    "previewShow": "Show on the device",
+    "previewEnd": "End preview",
+    "previewFailed": "The page could not be shown on the device",
     "actions": {
       "answer": "Answer",
       "reject": "Reject",

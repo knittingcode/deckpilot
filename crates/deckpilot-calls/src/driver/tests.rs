@@ -597,4 +597,11 @@ fn a_preview_shows_a_page_and_gives_way_to_a_real_call() {
         .unwrap();
     w.driver.end_preview(&mut w.runtime, &mk2);
     assert_eq!(w.runtime.all_overlays().len(), 0);
+    // Calls cleared (the plugin disabled): a preview goes too.
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Active)
+        .unwrap();
+    w.driver.clear(&mut w.runtime);
+    assert_eq!(w.driver.previews().count(), 0);
+    assert_eq!(w.runtime.all_overlays().len(), 0);
 }
