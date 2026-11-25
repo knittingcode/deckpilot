@@ -163,6 +163,21 @@ impl CallsDriver {
         self.sync(runtime, now);
     }
 
+    /// Every per-device overlay setting the user made (the defaults are
+    /// not listed), to be saved.
+    pub fn device_settings(&self) -> &BTreeMap<DeviceId, bool> {
+        &self.enabled
+    }
+
+    /// Loads saved per-device settings: each one the user has not changed
+    /// since this driver started (an entry already here wins). Devices
+    /// show it from the next sync.
+    pub fn load_device_settings(&mut self, saved: impl IntoIterator<Item = (DeviceId, bool)>) {
+        for (device, on) in saved {
+            self.enabled.entry(device).or_insert(on);
+        }
+    }
+
     /// Whether `device` gets the overlay (its setting, or the default).
     pub fn overlay_enabled(&self, runtime: &Runtime, device: &DeviceId) -> bool {
         self.device_enabled(runtime, device)

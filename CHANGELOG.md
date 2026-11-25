@@ -106,6 +106,9 @@ released either. 0.6.0 is the first version intended for publication.
   to observe and to control calls apply as for the call pages, and
   detection-only Teams refuses every control with the reason. The agent's
   plugin API is not raised yet.
+- Calls (groundwork): the per-device "show calls on this device" setting
+  survives a restart of DeckPilot. It is kept on this computer only, and
+  no export includes it.
 - Calls: the operating-system signals provider reports its connection, so
   a Teams control is refused with its reason (no supported API) instead of
   "not connected".
