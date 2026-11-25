@@ -183,6 +183,11 @@ fn names_are_unique_without_case_and_scripts_are_checked() {
         store.create_script(profile, &Script::new("édition", "y()")),
         Err(StorageError::ScriptNameTaken(_))
     ));
+    // And in another Unicode form of the same name (NFD).
+    assert!(matches!(
+        store.create_script(profile, &Script::new("E\u{0301}dition", "z()")),
+        Err(StorageError::ScriptNameTaken(_))
+    ));
     // An import or a duplicate never passes the profile's limit either.
     for n in 0..deckpilot_core::script::MAX_SCRIPTS - 2 {
         store

@@ -119,6 +119,41 @@ const _: () = assert!(
     "migration 15 is still an empty placeholder: merge the Calls work's migration (#457) first"
 );
 
+/// Migration places held empty for a change that lands before this one
+/// (`MIGRATIONS`); none once it has.
+const EMPTY_PLACES: &[u32] = &[15];
+
+/// The empty migration place an upgrade from `current` to `supported`
+/// would pass, for a database that is not a throwaway one. A database
+/// upgraded past an empty place never runs the migration put there
+/// later, so a (debug) build that holds one refuses to upgrade any
+/// database on disk outside the temporary folder, whatever its data
+/// directory; release builds holding one do not compile at all.
+fn empty_place_passed(current: u32, supported: u32, path: Option<&Path>) -> Option<u32> {
+    let throwaway = path.is_none_or(|p| starts_within(p, &std::env::temp_dir()) || in_scratch(p));
+    if throwaway {
+        return None;
+    }
+    EMPTY_PLACES.iter().copied().find(|&slot| {
+        current < slot && slot <= supported && MIGRATIONS[slot as usize - 1].is_empty()
+    })
+}
+
+/// Whether `path` is inside `dir` (also through the canonical forms, as
+/// macOS's `/var` is `/private/var`).
+fn starts_within(path: &Path, dir: &Path) -> bool {
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let parent = path.parent().map(canonical);
+    path.starts_with(dir)
+        || parent.is_some_and(|p| p.starts_with(canonical(dir)) || p.starts_with(dir))
+}
+
+/// The scratch folders tests use besides the system's temporary folder
+/// (`CARGO_TARGET_TMPDIR`).
+fn in_scratch(path: &Path) -> bool {
+    option_env!("CARGO_TARGET_TMPDIR").is_some_and(|dir| starts_within(path, Path::new(dir)))
+}
+
 /// Runs `step` again while SQLite reports the database busy, for up to
 /// [`BUSY_TIMEOUT`].
 fn retry_busy(mut step: impl FnMut() -> rusqlite::Result<()>) -> Result<()> {
@@ -332,6 +367,15 @@ impl SqliteStore {
         }
         if current == supported {
             return self.verify_unverified_upgrade();
+        }
+        if let Some(slot) = empty_place_passed(current, supported, self.path.as_deref()) {
+            return Err(StorageError::MigrationFailed {
+                reason: format!(
+                    "this build holds migration {slot} empty (another change takes it); it \
+                     upgrades only throwaway databases, never this one"
+                ),
+                backup: None,
+            });
         }
         let backup = if current > 0 {
             self.check_integrity()?;
@@ -2137,6 +2181,20 @@ impl ConfigStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
+    use super::empty_place_passed;
+
+    #[test]
+    fn a_database_on_disk_is_never_upgraded_past_an_empty_place() {
+        let real = std::path::Path::new("/srv/deckpilot/deckpilot.db");
+        assert_eq!(empty_place_passed(14, 16, Some(real)), Some(15));
+        assert_eq!(empty_place_passed(3, 16, Some(real)), Some(15));
+        // Already past it, in memory, or a throwaway database: no refusal.
+        assert_eq!(empty_place_passed(15, 16, Some(real)), None);
+        assert_eq!(empty_place_passed(14, 16, None), None);
+        let scratch = std::env::temp_dir().join("deckpilot-test.db");
+        assert_eq!(empty_place_passed(14, 16, Some(&scratch)), None);
+    }
+
     use super::*;
     use deckpilot_core::{
         ActionInstance, ActionInstanceId, ActionParameters, ActionTypeId, MachineResourceBinding,

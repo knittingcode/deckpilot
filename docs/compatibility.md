@@ -81,7 +81,11 @@ additive, two new, empty tables: `scripts` (portable, with its profile)
 and `script_trust` (machine-local: the trusted source hash and the
 script's grants, never exported). Nothing existing is rewritten. It runs
 after an encrypted backup (`backups/deckpilot-schema15-*.db`, or
-`schema14` when 15 is not there yet). **Older builds refuse a schema 16
+`schema14` when 15 is not there yet). While 15 is still held empty
+(before the Calls work is merged in), a release build does not compile
+(checked in CI), and a debug build refuses to upgrade any database on
+disk outside the temporary folder, so no real database passes the empty
+place; both go away once 15 holds its migration. **Older builds refuse a schema 16
 database** with `UnsupportedSchema` and change nothing; the way back is
 that backup, as above.
 
