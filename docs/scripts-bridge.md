@@ -39,7 +39,7 @@ requests that must be refused; both repositories' tests read it.
 | `project.repositories` | `{project: id \| null}` | `{project, repositories: [Repository]}` | projects |
 | `fs.exists`, `fs.stat`, `fs.list` | `{path}` | `{exists}`, `{stat \| null}`, `{entries}` | fs |
 | `fs.mkdir` | `{path, recursive}` | `{}` | fs |
-| `fs.readFile` | `{path, encoding, maxBytes?, offset?, length?, ifVersion?}` | `{content, bytes, size, eof, version}` | fs |
+| `fs.readFile` | `{path, encoding, maxBytes?, offset?, length?, ifVersion?}` | `{content, bytes, size, eof, version?}` | fs |
 | `fs.writeFile` | `{path, content ≤ 32 KiB, encoding, createOnly}` | `{}` | fs |
 | `fs.write.open` | `{path, createOnly}` | `{handle}` | fs |
 | `fs.write.chunk` | `{handle, content ≤ 32 KiB, encoding}` | `{}` | fs |
@@ -105,13 +105,19 @@ No frame cap of ABI 1 is raised for this plugin:
   needs `length`. In UTF-8 a chunk ends on a character boundary, and the
   agent shortens it further when its JSON escaping would not fit the
   reply cap (text full of control characters or quotes), so `bytes` may
-  be less than asked and the guest reads on from `offset + bytes`. Every
-  chunk after the first names the first chunk's `version` (`ifVersion`):
-  the agent reads it from the very file the first chunk opened, held
-  between the chunks (at most 4 reads at once per run, until `eof`), and
-  refuses with `fileChanged` when the file at the path was replaced or
-  rewritten meanwhile (another file, size or modification time), so a
-  read never joins two versions of a file;
+  be less than asked and the guest reads on from `offset + bytes`. The
+  first chunk takes the whole file (at most 4 MiB) into one snapshot and
+  refuses with `fileChanged` when it changed while being read (its size,
+  or its identity, size or modification time after the read). A reply
+  that did not reach `eof` has a `version`; every later chunk names it
+  (`ifVersion`, required at an offset above 0) and is served from that
+  snapshot (at most 4 reads at once per run, until `eof`), after the
+  path, the grants and the protected folders are checked again, and is
+  refused with `fileChanged` when the file at the path is no longer that
+  file in that state. So the chunks of a read are always one version of
+  the file; what remains is a rewrite during the first chunk's own read
+  that keeps both the size and the modification time, which the
+  snapshot cannot see;
 - a file larger than 32 KiB is written with `fs.write.open`, then
   `fs.write.chunk` (at most 32 KiB of content each, `MAX_WRITE_CHUNK`;
   the guest sizes a chunk by its serialized request, so text that JSON

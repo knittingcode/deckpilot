@@ -505,6 +505,7 @@ fn static_code(code: &str) -> &'static str {
         codes::SCRIPT_MISSING,
         codes::SCRIPT_NEEDS_REVIEW,
         codes::UNAVAILABLE,
+        codes::FILE_CHANGED,
     ];
     ALL.iter()
         .find(|c| **c == code)

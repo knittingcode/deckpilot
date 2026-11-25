@@ -164,7 +164,7 @@ fn requests_stay_within_the_frame_caps_d1() {
         bytes: u64::from(MAX_READ_CHUNK),
         size: MAX_SCRIPT_FILE,
         eof: false,
-        version: "0123456789abcdef0123456789abcdef".into(),
+        version: Some("0123456789abcdef0123456789abcdef".into()),
     };
     let reply = serde_json::to_vec(&CallResult::Ok(serde_json::to_value(reply).unwrap())).unwrap();
     assert!(reply.len() < MAX_HOST_CALL_REPLY, "{}", reply.len());

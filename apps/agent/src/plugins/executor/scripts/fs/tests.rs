@@ -1617,3 +1617,35 @@ fn scripts_fs_a_chunked_read_never_joins_two_versions_of_a_file() {
     let r = call(&mut e, &chunk("a.bin", 4, None));
     assert_eq!(code(&r), "call:BadRequest");
 }
+
+#[test]
+fn scripts_fs_a_rewrite_that_keeps_the_time_still_reads_one_version() {
+    let f = setup(FsAccess::Read);
+    let path = f.path("w/cms/a.bin");
+    std::fs::write(&path, b"AAAABBBB").unwrap();
+    let mut e = f.loaded();
+    let first = ok(&call(&mut e, &chunk("a.bin", 0, None)));
+    assert_eq!(first["content"], "QUFBQQ==");
+    // Same length, same modification time (as `cp -p` or a coarse clock).
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::fs::write(&path, b"CCCCDDDD").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    let second = ok(&call(&mut e, &chunk("a.bin", 4, Some(&first["version"]))));
+    assert_eq!(second["content"], "QkJCQg==", "the first chunk's snapshot");
+    assert!(second.get("version").is_none(), "used up at the end");
+    // A read whole in one chunk needs no version.
+    let whole = ok(&call(
+        &mut e,
+        &op(
+            "fs.readFile",
+            json!({"path": rp("a.bin"), "encoding": "utf8"}),
+        ),
+    ));
+    assert_eq!(whole["content"], "CCCCDDDD");
+    assert!(whole.get("version").is_none());
+}

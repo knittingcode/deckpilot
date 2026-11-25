@@ -848,10 +848,10 @@ impl Fs<'_> {
         // Every link of the way was followed by hand: the file itself is
         // opened without following one.
         options.follow(FollowSymlinks::No);
-        let opened = parent
+        let mut file = parent
             .open_with(&last, &options)
             .map_err(|e| failure(&e, &shown))?;
-        let meta = opened.metadata().map_err(|e| failure(&e, &shown))?;
+        let meta = file.metadata().map_err(|e| failure(&e, &shown))?;
         if !meta.is_file() {
             return Err(fault(
                 codes::INVALID_ARGUMENT,
@@ -859,7 +859,6 @@ impl Fs<'_> {
             ));
         }
         let now = file_state(&meta);
-        let (mut file, version) = self.read_handle(r, &t, opened, now, &shown)?;
         let size = now.size;
         let max = r.max_bytes.unwrap_or(MAX_SCRIPT_FILE).min(MAX_SCRIPT_FILE);
         if size > max {
@@ -884,101 +883,65 @@ impl Fs<'_> {
             }
             None => size,
         };
-        let want = length.min(size - offset);
-        file.seek(std::io::SeekFrom::Start(offset))
-            .map_err(|e| failure(&e, &shown))?;
-        let mut bytes = Vec::with_capacity(usize::try_from(want).unwrap_or(0));
-        (&mut file)
-            .take(want)
-            .read_to_end(&mut bytes)
-            .map_err(|e| failure(&e, &shown))?;
-        let reached_end = offset + bytes.len() as u64 >= size;
-        let content = match r.encoding {
-            Encoding::Base64 => {
-                use base64::Engine as _;
-                base64::engine::general_purpose::STANDARD.encode(&bytes)
-            }
-            Encoding::Utf8 => {
-                let text = utf8_prefix(&bytes, reached_end).ok_or_else(|| {
+        // One read, one snapshot of one file in one state (the Scripts
+        // guest review of plugins #100, and its security review): the
+        // first chunk takes the whole file (at most MAX_SCRIPT_FILE) and
+        // checks it did not change while it was read; the later ones are
+        // served from that snapshot while the file at the path is still
+        // that file, unchanged.
+        let key = key_of(&t);
+        let whole = match &r.if_version {
+            None => snapshot(&mut file, now, &shown)?,
+            Some(version) => {
+                let held = self.call.run.state().reads.take(version).ok_or_else(|| {
                     fault(
                         codes::INVALID_ARGUMENT,
-                        format!("“{shown}” is not UTF-8 text; read it as base64"),
+                        "not a read this run started (or it ended); read again from offset 0",
                     )
                 })?;
-                fit_json(text).to_owned()
+                if held.key != key || held.state != now {
+                    return Err(changed(&shown));
+                }
+                held.bytes
             }
         };
-        let read = match r.encoding {
-            Encoding::Base64 => bytes.len() as u64,
-            Encoding::Utf8 => content.len() as u64,
-        };
+        drop(file);
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(whole.len());
+        let end = usize::try_from(offset.saturating_add(length))
+            .unwrap_or(usize::MAX)
+            .min(whole.len());
+        let bytes = &whole[start..end];
+        let reached_end = end >= whole.len();
+        let (content, read) = encode_chunk(bytes, reached_end, r.encoding, &shown)?;
         notes.add("bytes", read.to_string());
         let eof = offset + read >= size;
-        if !eof {
+        let version = if eof {
+            None
+        } else {
+            let version = match &r.if_version {
+                Some(v) => v.clone(),
+                None => {
+                    random_hex(16).ok_or_else(|| fault(codes::HOST_ERROR, "no random source"))?
+                }
+            };
             self.call.run.state().reads.keep(
                 version.clone(),
                 OpenRead {
-                    file,
-                    key: key_of(&t),
+                    bytes: whole,
+                    key,
                     state: now,
                 },
             );
-        }
+            Some(version)
+        };
         to_value(&FsRead {
             content,
             bytes: read,
             size,
             eof,
             version,
-        })
-    }
-
-    /// The handle a chunk is read from, and the read's version.
-    /// One read, one file in one state (the Scripts guest review of
-    /// plugins #100): the first chunk opens it and gives a version, the
-    /// later ones read the very handle it opened, and the file at the
-    /// path must still be that file, unchanged.
-    fn read_handle(
-        &self,
-        r: &FsReadFile,
-        t: &Target,
-        opened: File,
-        now: FileState,
-        shown: &str,
-    ) -> Result<(File, String), ScriptFault> {
-        Ok(match &r.if_version {
-            None => {
-                let version =
-                    random_hex(16).ok_or_else(|| fault(codes::HOST_ERROR, "no random source"))?;
-                (opened, version)
-            }
-            Some(version) => {
-                let mut state = self.call.run.state();
-                let held = state.reads.take(version).ok_or_else(|| {
-                    fault(
-                        codes::INVALID_ARGUMENT,
-                        "not a read this run started (or it ended); read again from offset 0",
-                    )
-                })?;
-                let unchanged = held.key == key_of(t)
-                    && held.state == now
-                    && held
-                        .file
-                        .metadata()
-                        .is_ok_and(|m| file_state(&m) == held.state);
-                if !unchanged {
-                    return Err(ScriptFault {
-                        path: Some(shown.to_owned()),
-                        ..fault(
-                            codes::FILE_CHANGED,
-                            format!(
-                                "“{shown}” changed between two parts of the read; read it again"
-                            ),
-                        )
-                    });
-                }
-                (held.file, version.clone())
-            }
         })
     }
 
@@ -1787,14 +1750,72 @@ struct FileState {
     modified: u128,
 }
 
-/// A read in progress: the file it opened, held between its chunks.
+/// A read in progress: the snapshot its first chunk took, and the state
+/// of the file then.
 pub(crate) struct OpenRead {
-    file: File,
+    bytes: Vec<u8>,
     key: String,
     state: FileState,
 }
 
-/// Reads one run may have in progress; the oldest is dropped past it.
+/// The whole of `file` (in state `before`), refused when it changed while
+/// it was read: another size, or another state after it.
+fn snapshot(file: &mut File, before: FileState, shown: &str) -> Result<Vec<u8>, ScriptFault> {
+    let mut bytes = Vec::with_capacity(usize::try_from(before.size).unwrap_or(0));
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|e| failure(&e, shown))?;
+    file.take(before.size.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| failure(&e, shown))?;
+    let after = file.metadata().map_err(|e| failure(&e, shown))?;
+    if bytes.len() as u64 != before.size || file_state(&after) != before {
+        return Err(changed(shown));
+    }
+    Ok(bytes)
+}
+
+/// A chunk's `content` and how many bytes of the file it holds: UTF-8 up
+/// to its last whole character (all of it at the end), or base64.
+fn encode_chunk(
+    bytes: &[u8],
+    reached_end: bool,
+    encoding: Encoding,
+    shown: &str,
+) -> Result<(String, u64), ScriptFault> {
+    Ok(match encoding {
+        Encoding::Base64 => {
+            use base64::Engine as _;
+            (
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                bytes.len() as u64,
+            )
+        }
+        Encoding::Utf8 => {
+            let text = utf8_prefix(bytes, reached_end).ok_or_else(|| {
+                fault(
+                    codes::INVALID_ARGUMENT,
+                    format!("“{shown}” is not UTF-8 text; read it as base64"),
+                )
+            })?;
+            let text = fit_json(text).to_owned();
+            let read = text.len() as u64;
+            (text, read)
+        }
+    })
+}
+
+fn changed(shown: &str) -> ScriptFault {
+    ScriptFault {
+        path: Some(shown.to_owned()),
+        ..fault(
+            codes::FILE_CHANGED,
+            format!("“{shown}” changed while it was read; read it again"),
+        )
+    }
+}
+
+/// Reads one run may have in progress (each a snapshot of at most
+/// [`MAX_SCRIPT_FILE`]); the oldest is dropped past it.
 const MAX_OPEN_READS: usize = 4;
 
 /// A run's reads in progress, by version.

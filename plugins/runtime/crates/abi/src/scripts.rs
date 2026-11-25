@@ -430,9 +430,10 @@ pub struct FsReadFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length: Option<u32>,
     /// The `version` the first chunk's reply gave: every later chunk of
-    /// the same read names it, and the agent reads it from the very file
-    /// it opened then, refusing (`fileChanged`) when it was replaced or
-    /// rewritten meanwhile. A chunk at an offset other than 0 needs it.
+    /// the same read names it, and the agent serves it from the snapshot
+    /// the first chunk took, refusing (`fileChanged`) when the file at the
+    /// path was replaced or changed meanwhile. A chunk at an offset other
+    /// than 0 needs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub if_version: Option<String>,
 }
@@ -1157,9 +1158,11 @@ pub struct FsRead {
     pub bytes: u64,
     pub size: u64,
     pub eof: bool,
-    /// The read's version: the later chunks name it (`ifVersion`), so all
-    /// of them come from one file in one state.
-    pub version: String,
+    /// The read's version, when it did not reach the end: the later
+    /// chunks name it (`ifVersion`), so all of them come from one snapshot
+    /// of one file in one state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 /// The `ok` value of `fs.write.open`.
