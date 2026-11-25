@@ -23,6 +23,9 @@ deckpilot-device.workspace = true
 # the built-ins they replaced (tests/contracts.rs, legacy/*.json,
 # docs/marketplace/module-migration.md §5.3).
 deckpilot-plugin-manifest.workspace = true
+# Open keys' automatic icon drawn as the device and the app's previews draw
+# it (tests/open_icon.rs).
+deckpilot-render.workspace = true
 serde_json.workspace = true
 
 [lints]

@@ -702,6 +702,69 @@ pub struct Contributes {
     /// first-party bundled plugins with `hostViews` only, X8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard_cards: Option<Vec<DashboardCard>>,
+    /// Gesture presets (plugin API 1.10): several of the plugin's own
+    /// actions on the gestures of one control at once. Data only: a preset
+    /// grants nothing, and each action keeps its own permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gesture_presets: Option<Vec<GesturePreset>>,
+}
+
+/// The plugin API level that introduced `contributes.gesturePresets`.
+pub const GESTURE_PRESETS_API: ApiLevel = ApiLevel::new(1, 10);
+
+/// Most gesture presets a manifest declares.
+pub const MAX_GESTURE_PRESETS: usize = 16;
+
+/// Most gestures one preset assigns.
+pub const MAX_PRESET_GESTURES: usize = 6;
+
+/// The gestures a preset may assign (`deckpilot_core::PresetGesture`).
+pub const PRESET_GESTURES: [&str; 6] = [
+    "click",
+    "doubleClick",
+    "longPress",
+    "release",
+    "rotateClockwise",
+    "rotateCounterClockwise",
+];
+
+/// `contributes.gesturePresets[]` (plugin API 1.10): one Action Library
+/// entry that assigns several gestures of a control, each to one of the
+/// plugin's own actions with predefined parameters. Registered as
+/// `<plugin id>.<preset id>`. Applying it creates ordinary actions and key
+/// bindings; nothing of the preset runs or is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GesturePreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub category: String,
+    /// Whether a control that cannot produce every gesture still takes the
+    /// others (default `false`: such a control refuses the preset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_partial: Option<bool>,
+    pub gestures: Vec<PresetAssignment>,
+}
+
+/// One gesture of a [`GesturePreset`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresetAssignment {
+    /// One of [`PRESET_GESTURES`].
+    pub gesture: String,
+    /// The id of one of the plugin's own actions (`contributes.actions[].id`).
+    pub action: String,
+    /// Over the action's defaults, checked against its parameters.
+    #[serde(
+        default,
+        deserialize_with = "crate::unique_map::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parameters: Option<BTreeMap<String, ParameterValue>>,
+    /// What the gesture does, in words: the name of the action it creates.
+    pub label: String,
 }
 
 /// A status-bar item the host draws (X8). A closed list: the plugin names
@@ -754,6 +817,11 @@ impl Contributes {
 
     pub fn actions(&self) -> &[Action] {
         self.actions.as_deref().unwrap_or_default()
+    }
+
+    /// `gesturePresets`, empty when absent.
+    pub fn gesture_presets(&self) -> &[GesturePreset] {
+        self.gesture_presets.as_deref().unwrap_or_default()
     }
 
     pub fn variables(&self) -> &[Variable] {
@@ -1133,7 +1201,20 @@ pub struct Action {
     /// data only, the user's own title and look always win.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<ActionTitle>,
+    /// Where the action makes sense (plugin API 1.11): some of
+    /// [`ACTION_CONTEXTS`], each at most once (`docs/action-contexts.md`).
+    /// Absent: all five, as before. Advisory: the app offers the action
+    /// where it belongs, and a use elsewhere is reported, never refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<Vec<String>>,
 }
+
+/// The plugin API level that introduced `contributes.actions[].contexts`.
+pub const ACTION_CONTEXTS_API: ApiLevel = ApiLevel::new(1, 11);
+
+/// The contexts `contributes.actions[].contexts` may name (the core's
+/// `ActionContext`).
+pub const ACTION_CONTEXTS: [&str; 5] = ["key", "gesture", "display", "sequence", "workflow"];
 
 /// The plugin API level that introduced `contributes.actions[].title`.
 pub const TITLE_API: ApiLevel = ApiLevel::new(1, 8);
@@ -1404,6 +1485,28 @@ pub enum VariableValueKind {
     Integer,
     Boolean,
     Json,
+    /// Plugin API 1.12, host sources only: one object of a shape
+    /// (`{"type": "object", "shape": "repository"}`).
+    Object,
+    /// Plugin API 1.12, host sources only: objects of a shape by key
+    /// (`{"type": "map", "of": "repository"}`).
+    Map,
+}
+
+/// The shapes of structured variable values (plugin API 1.12): the
+/// core's closed list (`deckpilot_core::variables::Shape`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableShape {
+    Repository,
+}
+
+impl VariableShape {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Repository => "repository",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1411,7 +1514,29 @@ pub enum VariableValueKind {
 pub struct VariableValueType {
     #[serde(rename = "type")]
     pub kind: VariableValueKind,
+    /// The shape of an `object` (plugin API 1.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<VariableShape>,
+    /// The shape of a `map`'s objects (plugin API 1.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<VariableShape>,
 }
+
+impl VariableValueType {
+    /// Whether the type is `object` or `map`: never published by a
+    /// plugin, only a host source's.
+    pub fn is_structured(&self) -> bool {
+        matches!(
+            self.kind,
+            VariableValueKind::Object | VariableValueKind::Map
+        )
+    }
+}
+
+/// The plugin API level that introduced structured variables and the
+/// repository host sources (`host:project.repositories`,
+/// `host:project.repository`).
+pub const REPOSITORY_VARIABLES_API: ApiLevel = ApiLevel::new(1, 12);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -1451,8 +1576,8 @@ pub struct Variable {
 }
 
 /// Where the host takes a host-published variable's value from (X7):
-/// the id, key or name of the project in the context. Plugin API 1.9 has
-/// only these three.
+/// the id, key or name of the project in the context (plugin API 1.9),
+/// and its repositories (plugin API 1.12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VariableHostSource {
     #[serde(rename = "host:project.id")]
@@ -1461,6 +1586,14 @@ pub enum VariableHostSource {
     ProjectKey,
     #[serde(rename = "host:project.name")]
     ProjectName,
+    /// Every repository of the project, by key (`map<repository>`). Plugin
+    /// API 1.12.
+    #[serde(rename = "host:project.repositories")]
+    ProjectRepositories,
+    /// The project's default repository (`object<repository>`, decision
+    /// OD-3). Plugin API 1.12.
+    #[serde(rename = "host:project.repository")]
+    ProjectRepository,
 }
 
 impl VariableHostSource {
@@ -1469,6 +1602,45 @@ impl VariableHostSource {
             Self::ProjectId => "host:project.id",
             Self::ProjectKey => "host:project.key",
             Self::ProjectName => "host:project.name",
+            Self::ProjectRepositories => "host:project.repositories",
+            Self::ProjectRepository => "host:project.repository",
+        }
+    }
+
+    /// The value type a variable with this source declares.
+    pub fn value_type(self) -> VariableValueType {
+        let (kind, shape, of) = match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => {
+                (VariableValueKind::String, None, None)
+            }
+            Self::ProjectRepositories => (
+                VariableValueKind::Map,
+                None,
+                Some(VariableShape::Repository),
+            ),
+            Self::ProjectRepository => (
+                VariableValueKind::Object,
+                Some(VariableShape::Repository),
+                None,
+            ),
+        };
+        VariableValueType { kind, shape, of }
+    }
+
+    /// The plugin API level that introduced the source.
+    pub fn api(self) -> ApiLevel {
+        match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => PRIVILEGED_API,
+            Self::ProjectRepositories | Self::ProjectRepository => REPOSITORY_VARIABLES_API,
+        }
+    }
+
+    /// How the type is written in a manifest, for messages.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => "a string",
+            Self::ProjectRepositories => "`{\"type\": \"map\", \"of\": \"repository\"}`",
+            Self::ProjectRepository => "`{\"type\": \"object\", \"shape\": \"repository\"}`",
         }
     }
 }

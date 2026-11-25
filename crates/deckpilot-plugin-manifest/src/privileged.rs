@@ -12,9 +12,7 @@
 //! not.
 
 use super::{Checker, Issue, IssueCode, Manifest, ParameterKind, Permission, PermissionKind};
-use crate::model::{
-    PRIVILEGED_API, ToolDeclaration, ToolExecutable, VariableScope, VariableValueKind,
-};
+use crate::model::{PRIVILEGED_API, ToolDeclaration, ToolExecutable, VariableScope};
 use crate::tools::{self, ToolGrant};
 
 /// The sub-grants an action may name in `requiresPermissions` (plugin API
@@ -406,10 +404,13 @@ fn changes_context(c: &mut Checker, m: &Manifest) {
     }
 }
 
-/// Host-published variables (X7): project scope, a string, and only with
-/// the `projectContext` permission, whose values they are.
+/// Host-published variables (X7): project scope, the source's type (a
+/// string; the repositories' `map` and `object` of plugin API 1.12), the
+/// source's API level, and only with the `projectContext` permission,
+/// whose values they are.
 fn host_variables(c: &mut Checker, m: &Manifest) {
     let granted = m.permission(PermissionKind::ProjectContext).is_some();
+    let required = m.engines.plugin_api;
     for (index, variable) in m.contributes.variables().iter().enumerate() {
         let Some(source) = variable.source else {
             continue;
@@ -425,11 +426,24 @@ fn host_variables(c: &mut Checker, m: &Manifest) {
                 ),
             );
         }
-        if variable.value_type.kind != VariableValueKind::String {
+        if required.minimum < source.api() {
+            c.error(
+                format!("{path}.source"),
+                IssueCode::Conflict,
+                format!(
+                    "the host source `{}` needs plugin API {}: set engines.pluginApi to \
+                     `^{}` (it is `{required}`)",
+                    source.as_str(),
+                    source.api(),
+                    source.api()
+                ),
+            );
+        }
+        if variable.value_type != source.value_type() {
             c.error(
                 format!("{path}.valueType"),
                 IssueCode::InvalidValue,
-                format!("`{}` is a string", source.as_str()),
+                format!("`{}` is {}", source.as_str(), source.type_name()),
             );
         }
         if !granted {

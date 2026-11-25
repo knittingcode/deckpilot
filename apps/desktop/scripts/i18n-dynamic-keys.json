@@ -17,6 +17,7 @@
     "errors:agent.*",
     "errors:pluginAction.*",
     "editor:assets.categories.*",
-    "editor:assets.gradients.*"
+    "editor:assets.gradients.*",
+    "actions:gesturePresets.*"
   ]
 }

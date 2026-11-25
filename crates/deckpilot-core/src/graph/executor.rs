@@ -87,6 +87,12 @@ pub use crate::cancel::{CancelReason, CancellationToken};
 #[derive(Clone, Copy, Default)]
 pub struct RunServices<'a> {
     pub variables: Option<&'a dyn VariableResolver>,
+    /// The same resolver for a reader that may not see this computer's
+    /// folder paths: the mappings into the parameters of a plugin action
+    /// without `resources:paths` resolve through it
+    /// ([`crate::ActionRegistry::reads_paths`]). `None`: such mappings
+    /// resolve nothing (`reference-unavailable`).
+    pub variables_without_paths: Option<&'a dyn VariableResolver>,
     /// The device whose control started the run.
     pub device: Option<&'a DeviceId>,
     /// The run, shared by the sub-workflows it calls.
@@ -1394,6 +1400,16 @@ impl Executor<'_> {
     ) -> Result<ActionParameters, MappingError> {
         let mut parameters = overrides.clone();
         let definition = self.registry.definition(&instance.action_type);
+        let hidden;
+        let sources = if self.registry.reads_paths(&instance.action_type) {
+            sources
+        } else {
+            hidden = Sources {
+                variables: self.services.variables_without_paths,
+                ..*sources
+            };
+            &hidden
+        };
         for (key, mapping) in mappings {
             let resolved = resolve_value(mapping, sources).map_err(|error| match error {
                 MappingError::Reference(error) => MappingError::Reference(ReferenceError {

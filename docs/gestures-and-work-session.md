@@ -219,6 +219,59 @@ minimal compatible option:
   If 0.7.0 ships first, they bump to 6.** No database schema change is needed
   for bindings, because they live in the profile document.
 
+### 3.4 Gesture presets
+
+A **gesture preset** (`crates/deckpilot-core/src/gesture_preset.rs`) is one
+Action Library entry that maps several gestures of a control to existing
+action types with predefined parameters, e.g. the deck module's *Brightness
+Control* (`deck.brightness-control`): single press = `deck.brightness`
+dimmer by 10, double press = set 100 %, long press = set 50 %, release
+free. It adds no execution path, trigger or stored shape:
+
+- **Declared** by a feature module (`FeatureModule::gesture_presets`) or a
+  plugin manifest (`contributes.gesturePresets`, plugin API 1.10,
+  [manifest.md](marketplace/sdk/manifest.md#contributesgesturepresets)),
+  which the agent turns into the plugin module's presets. Ids are
+  namespaced like action types (`<module>.<name>`); a preset names only its
+  own module's action types. `ModuleRegistry::register` checks every
+  preset (`GesturePreset::check`: texts, unique gestures, no release next
+  to a double or long press, known action types, parameters the type
+  accepts, a gesture the action can run from, and a gesture whose
+  [context](action-contexts.md) the action declares: `gesture` for a
+  double or long press, `key` otherwise) and lists them in
+  `ModuleInfo.gesturePresets`; `gesture_preset(id)` finds one for
+  diagnostics.
+- **Applied** by the layout editor (`apps/desktop/src/layout-editor/gesture-presets.ts`,
+  mirrored by `GesturePreset::plan` in the core). The control's
+  capabilities from the device descriptor and the actions' declared
+  `controls` decide which gestures fit; nothing assumes a double press,
+  long press, release, dial or touch exists. A double or long press puts
+  the control in gesture mode (single press = `click`); a preset with only
+  a single press and a release stays raw (`press` fires at once,
+  `release`). A gesture that does not fit refuses the whole preset unless
+  `allowPartial` is set; then the rest is applied and the app names what
+  it left out. Every action must be runnable now (module enabled, plugin
+  enabled, permissions granted), or nothing is applied.
+- **Result**: one ordinary action instance per gesture (reused when the
+  profile has one with the same type, parameters and name) and ordinary
+  `ControlBinding`s, committed as one draft change (one undo step). On an
+  empty key the single press is titled with the preset's name; on an
+  occupied key the look, the title and the gestures the preset does not
+  declare stay, and only the declared gestures change target. A preset
+  never switches an occupied raw key to gestures (D2): a raw key with a
+  press refuses a preset that needs a double or long press, and says to
+  switch it in the Inspector first, where the conversion asks; a raw key
+  with a release refuses it too. A preset that keeps the key raw (single
+  press, release) goes on it.
+  Dropped on one gesture card, only that gesture's action is assigned.
+- Nothing of the preset is stored (no schema or document change); every
+  gesture is then edited, replaced or removed on its own. Timing stays in
+  the engine (section 2), and each action runs through the registry's
+  parameter validation and capability checks, and a plugin's permissions,
+  consent and allow-lists, exactly as when it was placed by hand. A
+  disabled or uninstalled plugin's keys keep their bindings and show the
+  missing-plugin state until it is back.
+
 ## 4. Stateful key behaviour
 
 A key whose operation depends on a typed state, with transitions only the
