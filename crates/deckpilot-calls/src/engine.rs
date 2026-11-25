@@ -35,7 +35,7 @@ use crate::snapshot::{CallSnapshot, CallState, EndCause, FailureCode};
 
 #[cfg(test)]
 #[path = "engine/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "engine/proptests.rs"]

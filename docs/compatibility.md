@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 20 | 14 |
+| Current main | see `Cargo.toml` | 20 | 15 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -73,6 +73,17 @@ pre-migration backup: restore it in place of `deckpilot.db`, without its
 backup. Exports with repositories other than the one the role stands for
 are payload version 5, which 0.14.x refuses; other exports keep their
 version.
+
+Current main then moves it to schema 15: the managed layouts of the Calls
+plugin (`docs/calls.md`, "Managed layouts"). The migration is additive: one
+new, empty table (`managed_layouts`); no layout is adopted or rewritten and
+no other table changes. It runs after the same encrypted backup
+(`backups/deckpilot-schema14-*.db`, or `-schema13-` when 14 and 15 run in
+one upgrade). **0.15.x and older refuse a schema 15 database** with
+`UnsupportedSchema` (found 15, supported 13), and a build of schema 14 does
+too (supported 14); they change nothing. The way back is the pre-migration
+backup, as above: restore it in place of `deckpilot.db`, without its `-wal`
+and `-shm` files.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins

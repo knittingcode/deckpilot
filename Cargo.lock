@@ -1153,9 +1153,12 @@ dependencies = [
 name = "deckpilot-calls"
 version = "0.15.0"
 dependencies = [
+ "deckpilot-core",
+ "deckpilot-device",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]

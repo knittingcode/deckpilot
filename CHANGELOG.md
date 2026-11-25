@@ -51,6 +51,16 @@ released either. 0.6.0 is the first version intended for publication.
   "Back to work" return sessions (timer, real completion, or whichever
   comes first, 60 s by default), one per device. Tested on a virtual clock;
   nothing user-visible yet.
+- Calls (groundwork, nothing user-visible yet):
+  - **Per-device overlay.** A device can show the Calls layout without
+    anything of its own presentation changing: profile, page, folder and
+    remembered layouts stay as they were. Keys held during the switch run
+    nothing, Auto Exit pauses underneath, and a protected key always
+    dismisses the overlay.
+  - **Managed Calls layouts.** One per device model, generated for its
+    capability class with stable ids. They are regenerated only while
+    unedited, and "Restore defaults" first keeps your version as a layout
+    of your own. This adds storage schema 15, which is additive.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
