@@ -3,7 +3,8 @@
 // with the plugin's own `list-repositories`, check what will be linked, and
 // confirm. The provider's id comes only from the plugin's record, never
 // from text typed here; only then does the app write the link
-// (`set_repository_remotes`). A plugin never writes it.
+// (`link_repository_remote`, which checks the connection and merges the
+// remote with the stored ones). A plugin never writes it.
 
 import { useEffect, useId, useRef, useState } from "react"
 
@@ -108,7 +109,8 @@ export function LinkRemoteDialog({
     setBusy(true)
     setError(null)
     try {
-      // Only the one remote: the agent merges it with what is stored now.
+      // Only the one remote: the app's backend merges it with what is
+      // stored now.
       const remote = remoteOf(name.trim(), primary, chosen.c.id, picked)
       const saved = await client.linkRepositoryRemote(
         profileId,

@@ -14,8 +14,8 @@
 use deckpilot_core::{
     CatalogError, ProfileId, ProjectId, Repository, RepositoryId, RepositoryRemote,
 };
-use deckpilot_ipc::{Request, Response};
 use deckpilot_ipc::connections::is_connection_id;
+use deckpilot_ipc::{Request, Response};
 use tauri::State;
 
 use super::modify_profile;
@@ -89,7 +89,9 @@ pub(crate) fn merged(
 }
 
 /// The connection type a provider id names (`gh:` GitHub, `gl:` GitLab,
-/// `bb:` Bitbucket).
+/// `bb:` Bitbucket). A convention shared with the Git Providers plugin,
+/// whose connection type ids are `github`, `gitlab` (and later
+/// `bitbucket`); the K2 prefixes are the core's.
 fn provider_type(remote_repository_id: &str) -> Option<&'static str> {
     match remote_repository_id.split_once(':')?.0 {
         "gh" => Some("github"),
@@ -99,11 +101,30 @@ fn provider_type(remote_repository_id: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether every remote that names a link (a connection or a provider id)
+/// is exactly a link stored under that name now: the editor may keep, drop
+/// or reorder links and edit plain remotes, but a new or changed link goes
+/// through [`link_repository_remote`], which checks it (K3: ids only from
+/// the plugin's records).
+fn links_unchanged(stored: &[RepositoryRemote], remotes: &[RepositoryRemote]) -> bool {
+    remotes
+        .iter()
+        .filter(|r| r.connection_id.is_some() || r.remote_repository_id.is_some())
+        .all(|r| {
+            stored.iter().any(|s| {
+                s.name == r.name
+                    && s.connection_id == r.connection_id
+                    && s.remote_repository_id == r.remote_repository_id
+                    && s.remote_url == r.remote_url
+            })
+        })
+}
+
 /// `setRepositoryRemotes` (K3) for the repository editor: the remotes as
-/// the user saved them. Connection ids are checked for their form only, so
-/// a link made on another computer ("connection not on this computer")
-/// can be saved again unchanged; new links go through
-/// [`link_repository_remote`].
+/// the user saved them. Links may only be kept, dropped or reordered
+/// ([`links_unchanged`]), so a link made on another computer ("connection
+/// not on this computer") can be saved again unchanged, and new links go
+/// through [`link_repository_remote`].
 #[tauri::command]
 pub fn set_repository_remotes(
     state: State<'_, AppState>,
@@ -113,8 +134,33 @@ pub fn set_repository_remotes(
     remotes: Vec<RepositoryRemote>,
 ) -> CommandResult<Repository> {
     modify_profile(&state, profile_id, |profile| {
+        let stored = stored_remotes(profile, project_id, repository_id)?;
+        if !links_unchanged(&stored, &remotes) {
+            return Err(refused(
+                "a new or changed link is made with Link remote, which checks it",
+            ));
+        }
         set_remotes(profile, project_id, repository_id, remotes)
     })
+}
+
+/// The remotes stored now (with the derived repository, R3).
+fn stored_remotes(
+    profile: &deckpilot_core::Profile,
+    project_id: ProjectId,
+    repository_id: RepositoryId,
+) -> CommandResult<Vec<RepositoryRemote>> {
+    Ok(profile
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .ok_or(CommandError::NotFound("project"))?
+        .with_derived_repositories()
+        .repositories
+        .into_iter()
+        .find(|r| r.id == repository_id)
+        .ok_or(CommandError::NotFound("repository"))?
+        .remotes)
 }
 
 /// Links one remote the user confirmed (K3): it is added, or replaces the
@@ -158,17 +204,7 @@ pub async fn link_repository_remote(
         Some(_) => {}
     }
     modify_profile(&state, profile_id, |profile| {
-        let current = profile
-            .projects
-            .iter()
-            .find(|p| p.id == project_id)
-            .ok_or(CommandError::NotFound("project"))?
-            .with_derived_repositories()
-            .repositories
-            .into_iter()
-            .find(|r| r.id == repository_id)
-            .ok_or(CommandError::NotFound("repository"))?
-            .remotes;
+        let current = stored_remotes(profile, project_id, repository_id)?;
         set_remotes(profile, project_id, repository_id, merged(&current, remote))
     })
 }
@@ -261,6 +297,33 @@ mod tests {
         assert!(set_remotes(&mut p, ProjectId::new(), repository, Vec::new()).is_err());
         assert!(set_remotes(&mut p, project, RepositoryId::new(), Vec::new()).is_err());
         assert_eq!(p, before);
+    }
+
+    /// The editor keeps, drops or reorders links; it never makes one.
+    #[test]
+    fn the_editor_never_makes_a_link() {
+        let stored = vec![remote("origin"), remote("upstream")];
+        assert!(links_unchanged(
+            &stored,
+            &[remote("upstream"), remote("origin")]
+        ));
+        assert!(links_unchanged(&stored, &[remote("origin")]));
+        let plain = RepositoryRemote {
+            name: "mirror".into(),
+            primary: false,
+            connection_id: None,
+            remote_repository_id: None,
+            remote_url: Some("https://mirror.example.com/app.git".into()),
+            default_branch: None,
+        };
+        assert!(links_unchanged(&stored, &[plain]));
+        let mut other_id = remote("origin");
+        other_id.remote_repository_id = Some("gl:9".into());
+        let mut other_connection = remote("origin");
+        other_connection.connection_id = Some("cn_01JD7Q0000000000000000000C".into());
+        for changed in [other_id, other_connection, remote("new")] {
+            assert!(!links_unchanged(&stored, &[changed]));
+        }
     }
 
     /// One link replaces the remote of its name and keeps one primary.
