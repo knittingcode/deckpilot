@@ -195,6 +195,11 @@ jobs:
       # seeded offline, checked against its pins and run in the host.
       - name: Bundled plugins end to end
         run: cargo test -p deckpilot-agent --features plugins --test plugins_bundled --locked -- --nocapture
+      # Calls: a device that went "back to work" comes back to the call when
+      # the plugin action its key started really ends (the bundled test
+      # fixture in the host, the mock call provider of a test-hooks agent).
+      - name: Calls follow a plugin action to its end
+        run: cargo test -p deckpilot-agent --features plugins --test calls_plugin_action --locked -- --nocapture
       # A built-in module moved to its migration-class bundled plugin: the
       # agent's fixture legacy module and the fixture plugin, consent,
       # restarts mid-migration, health check, retries, drift, the user's

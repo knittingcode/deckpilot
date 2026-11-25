@@ -266,7 +266,8 @@ fn no_other_transition_is_accepted() {
     assert_eq!(h.state(), CallState::Incoming);
     h.see("a", P::Dialing, None);
     assert_eq!(h.state(), CallState::Incoming);
-    // An ended call seen again is a new call, not the old one revived.
+    // An ended call seen again after its end is a new call, not the old
+    // one revived.
     let mut h = Harness::new();
     h.see("a", P::Connected, None);
     h.see(
@@ -277,6 +278,7 @@ fn no_other_transition_is_accepted() {
         None,
     );
     let ended = h.engine.tracks()[0].0;
+    h.at_millis(500);
     h.see("a", P::Connected, None);
     assert_eq!(
         h.engine.track_state(ended),
@@ -454,7 +456,9 @@ fn an_unknown_call_without_evidence_is_lost() {
     assert_eq!(h.ended(), Some(EndCause::Lost));
     // The overlay goes when the call is lost.
     assert_eq!(h.engine.overlay(), OverlayIntent::Hidden);
-    // A reconnect after that starts a new call and a new overlay session.
+    // A reconnect after that starts a new call and a new overlay session
+    // (an observation at the instant it was lost would be late).
+    h.at_millis(15_500);
     h.connect();
     h.see("a", P::Connected, None);
     let OverlayIntent::Shown { session: next, .. } = h.engine.overlay() else {
@@ -1387,4 +1391,37 @@ fn events_are_bounded() {
         );
     }
     assert!(h.engine.drain_events().len() <= MAX_EVENTS);
+}
+
+/// An observation stamped exactly at the end instant is late: a stale,
+/// reordered "connected" does not bring the overlay back. One a moment
+/// later is a new call.
+#[test]
+fn an_observation_at_the_end_instant_is_late() {
+    let mut h = Harness::new();
+    h.at(1);
+    h.see("a", P::Connected, None);
+    h.at(2);
+    h.see(
+        "a",
+        P::Ended {
+            cause: ObservedEnd::Left,
+        },
+        None,
+    );
+    // Same instant as the end, while it lingers and after it went.
+    h.see("a", P::Connected, None);
+    assert_eq!(h.ended(), Some(EndCause::Left));
+    assert!(!matches!(h.engine.overlay(), OverlayIntent::Shown { .. }));
+    h.at(10);
+    h.event(ProviderEvent::Call(observation_at(
+        "a",
+        P::Connected,
+        Instant::from_secs(2),
+    )));
+    assert_eq!(h.state(), CallState::Idle);
+    assert!(!matches!(h.engine.overlay(), OverlayIntent::Shown { .. }));
+    assert_eq!(h.engine.tracks().len(), 0, "the late one started nothing");
+    h.see("a", P::Connected, None);
+    assert_eq!(h.state(), CallState::Active, "after the end: a new call");
 }

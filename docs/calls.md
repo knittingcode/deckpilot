@@ -305,3 +305,131 @@ frames in step. All of it runs on the engine clock.
   started from the restored presentation are reported with `run_started`
   and `run_finished`.
 - The watchdog pops any Calls frame the driver does not hold.
+
+## Mock provider (`deckpilot-calls::testing`, feature `testing`)
+
+The only provider that exercises **full control**: answer, reject, cancel,
+end, microphone and camera. It is deterministic and runs on the engine
+clock:
+
+- a scripted timeline (ring, dial, join, hang up, the call app restarting,
+  a lost connection);
+- configurable capabilities, including a detection-only set like the
+  Teams adapter's;
+- a configurable response per action: confirmed after a delay (the call
+  then shows the change), rejected with a code, never answered, or
+  unknown.
+
+The agent enables `deckpilot-calls/testing` only through its own
+`test-hooks` feature (`apps/agent/Cargo.toml`), which no release build
+has: a shipped agent contains no mock provider.
+
+It never drives a real call app. Its tests (`testing/tests.rs`) run the
+owner's list on the mock, the driver and a real core runtime:
+
+- full control, with confirmed, rejected, unanswered and unknown outcomes;
+- detection only, where nothing is sent;
+- the call app restarting, and a lost provider;
+- *Back to work*:
+  - 20, 30 and 60 s, and a custom time;
+  - after success, failure and cancellation, in each setting;
+  - after a workflow's real end;
+  - navigation counted only when set;
+  - the 60 s maximum, and an early completion winning;
+  - the meeting ending mid-return;
+  - an agent restart;
+  - a device disconnecting and reconnecting;
+  - an incoming call preempting;
+  - other devices, and `returnAllDevices`;
+  - repeated presses with one session and no duplicate timer;
+  - no stale restore;
+  - the folder and page kept;
+  - nothing run during the switch.
+
+## In the agent (`apps/agent/src/service/calls.rs`)
+
+**A locked device never shows a call.** Locking the configuration pops
+every Calls frame at once, so the device draws "Locked", and none is pushed
+while it stays locked, whatever the call does. Return sessions end, because
+nothing resumes behind the lock. The engine keeps following the call, and
+after unlocking a call still going on is shown again at once. Calls
+installed while locked shows nothing until the configuration is unlocked.
+
+A call already going on when its managed layout is seeded (Calls installed
+mid-call, or while the configuration was locked) shows its overlay as soon
+as the layout is stored, not at the call's next change. A layout that
+cannot be stored while the database is busy is tried again after 1 s, then
+after waits doubling up to a minute.
+
+The agent holds the driver and a provider, and does nothing for Calls
+unless a provider is installed. No build installs one today: the
+detection-only Teams adapter and the plugin come later. Tests install the
+mock through the test hooks (`AgentHandle::install_calls_mock`,
+`calls_mock`, `calls_view`).
+
+- **Clock.** The engine clock is the runtime's folder clock. The loop wakes
+  when the driver's next deadline is due, and polls the provider at most
+  every 250 ms. Nothing is spawned.
+- **Overlay keys** go to the driver. A command it lets through goes to the
+  provider, and a refusal goes back to the engine.
+- **Runs of a suspended device** are followed to their real end, next to
+  the folder holds:
+  - an action run in place, and navigation: at once;
+  - a plugin's action: at its `DetachedFinished`;
+  - a workflow: at its `Execution::Finished` (succeeded, failed,
+    cancelled; interrupted counts for nothing).
+- **Connecting.** A device that connects during a call gets the overlay.
+  One that was away past its return deadline comes back to the call.
+- **Consent.** Calls is installed only with the user's consent, taken from
+  the plugin's grants: observing (`calls:observe`), controlling
+  (`calls:control`), the title opt-in. Nothing in the agent assumes it.
+  Only the test-hook path grants it.
+- **Managed layouts** are seeded into the configuration for every model
+  that connects (`managed_layouts`, retried while the configuration is
+  locked). The overlay shows the stored layout, so the user's edits and a
+  restored version are what it shows.
+- **A plugin action's end** counts as it ended: success, a cancellation
+  (`cancelled`) as a cancellation, other errors as failures. An action
+  that could not run at all is no completion.
+
+Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
+
+- the overlay drawn on the device (T-E2E);
+- a workflow's real end (T-R3);
+- the 60 s maximum over a slow run (T-R4);
+- navigation not counting, an action run in place counting (T-R9, T-R2);
+- the meeting ending mid-return (T-R5);
+- unplugged and plugged in again (T-R6);
+- an incoming call preempting (T-R7);
+- the release of "Wróć do pracy" running nothing underneath, and a long
+  press held across the switch running nothing (T-R10);
+- a failed action and a cancelled workflow, for each `onFailure` and
+  `onCancel` value (T-R2);
+- a Multi Action brought back at its last step (T-R3);
+- the stored layout seeded, a user edit shown, and an agent restart
+  without a stale suspension (T-R6).
+
+### A real plugin action, end to end (`tests/calls_plugin_action.rs`)
+
+A spawned agent, the real sandboxed plugin host and the bundled test
+fixture `example-default` built to wasm. Calls runs with the mock
+provider, in a meeting from the start, through the test-only option
+`--test-calls-mock <completion|default>` (the "Back to work" mode).
+
+- **A test-hooks build only.** Only a `test-hooks` build has the option,
+  and it needs `--headless`. A normal build has neither the option nor the
+  mock: `plugins_feature.rs` checks that neither the default build nor
+  `--features plugins` enables `test-hooks` or `deckpilot-calls/testing`.
+- **The test, in mode B** (so no timer can bring the call back):
+  1. "Back to work" shows the user's own key;
+  2. 1.5 s later the device is still back at work;
+  3. the user's key starts the plugin's `greet` action, which runs detached
+     in the host;
+  4. its `DetachedFinished` (Succeeded) brings the overlay back.
+- **Log lines.** The agent logs both steps at `info` ("the device went
+  back to work", "back on the call after a run ended"). They carry the
+  device and the run's end, never a title.
+
+Still to come: a provider in a build (C5); the plugin (C7), whose
+enabling with consent installs Calls; and the IPC event for the editor
+(C6, a release blocker).

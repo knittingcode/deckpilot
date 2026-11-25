@@ -34,6 +34,13 @@ released either. 0.6.0 is the first version intended for publication.
   an action's parameters name. The app's requests to list, create, test,
   rename, turn off and remove connections are IPC protocol 20; the plugin
   store goes to schema 7. No plugin uses them yet.
+- Calls (groundwork): a locked device never shows a call. Locking the
+  configuration takes the Calls overlay off every device, and it comes back
+  after unlocking if the call is still going on.
+- Calls (groundwork, tests): "Back to work" is followed to the end of a
+  real plugin action through a spawned agent and the sandboxed plugin
+  host. A test-only agent option installs the mock call provider; normal
+  builds do not have it, which a test checks.
 - Calls (groundwork, nothing user-visible yet): the provider contract
   with capability discovery, where every capability a provider does not
   offer is explicitly unsupported with a reason; the sanitised call state;
@@ -61,6 +68,18 @@ released either. 0.6.0 is the first version intended for publication.
     capability class with stable ids. They are regenerated only while
     unedited, and "Restore defaults" first keeps your version as a layout
     of your own. This adds storage schema 15, which is additive.
+- Calls (tests): a mock call provider with full control (answer, reject,
+  cancel, end, microphone, camera), used only by tests. It runs the
+  "Back to work" scenarios on a virtual clock. No real call app is
+  driven.
+- Calls (groundwork, off in every build): the agent runs the Calls overlay
+  when a provider is installed. "Back to work" waits for the real end of
+  what a key started: a workflow, a plugin's action, or an action run in
+  place. Agent tests cover this with the mock provider and a simulated
+  Stream Deck.
+  A managed Calls layout that cannot be stored while the database is busy
+  is tried again after 1 s, then after waits doubling up to a minute;
+  other storage errors are not retried.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
