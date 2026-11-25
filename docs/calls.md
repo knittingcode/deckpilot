@@ -320,6 +320,10 @@ clock:
   then shows the change), rejected with a code, never answered, or
   unknown.
 
+The agent enables `deckpilot-calls/testing` only through its own
+`test-hooks` feature (`apps/agent/Cargo.toml`), which no release build
+has: a shipped agent contains no mock provider.
+
 It never drives a real call app. Its tests (`testing/tests.rs`) run the
 owner's list on the mock, the driver and a real core runtime:
 
