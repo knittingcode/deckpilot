@@ -293,6 +293,11 @@ impl State {
                     params,
                 },
             ) => service.invoke(&plugin, &action, &params, reply),
+            // Answered from the plugin's lane when its test finished
+            // (plugin API 1.14).
+            (Some(service), Request::TestPluginConnection { plugin, connection }) => {
+                service.test_connection(&plugin, &connection, reply);
+            }
             (Some(service), request) => {
                 let answer = service.handle(request);
                 // Before the answer: the agent then registers the new

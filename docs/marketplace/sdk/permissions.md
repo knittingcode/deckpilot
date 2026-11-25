@@ -194,14 +194,15 @@ policy that names them. The other additions of the level (parameter
 are first-party only too in 1.14, without being privileged.
 
 **Status:** the manifest model and its validation, the JSON Schema, the
-ABI operations and the SDK are in place. The agent provides plugin
-API 1.10 (`PLUGIN_API`), so it reports a `^1.14` plugin as
-`incompatible`; its broker answers every connection operation and every
-`http.fetch` naming a connection `unsupported-op`, whatever the grants,
-and the plugin store records no grant for the permission. The host side
-(connection storage, per-connection grants and binding, the stricter
-redirect rule, per-connection rate limits) lands separately, and the
-agent's level moves to 1.14 only then.
+ABI operations, the SDK and the host side are in place: connections in the
+plugin store (`plugins.db` schema 7), one high-tier grant `connections`
+(and `openUrl:connections`, medium) that a new type, method or private
+network escalates, a broker grant per connection, the binding of each
+invocation, the stricter redirect rule, per-connection rate limits and the
+app's connection requests (IPC protocol 20). The agent's `PLUGIN_API`
+reports the level it fully provides (1.11 today), so it still reports a
+`^1.14` plugin as `incompatible` until plugin API 1.12 and 1.13 are
+provided too.
 
 | Kind | Fields | Grant | Allows |
 | --- | --- | --- | --- |
@@ -224,9 +225,40 @@ The rules the host enforces once it carries connections out:
 - `https` only; the operating system's trust store, with no option to
   skip verification. Private-network servers only with the connection's
   own consent; loopback and link-local addresses never.
-- The secret is injected by the host in the type's scheme (`bearer`,
-  `basic` or `header`, never in a URL), and redacted from every reply,
-  header and error.
+- The secret is injected by the host in the type's scheme (`bearer` or
+  `header`, never in a URL), and redacted from every reply, header and
+  error. A guest-set header named like the type's `headerName`
+  (`PRIVATE-TOKEN`) is refused (`forbidden-header`), as are
+  `Authorization`, `Cookie` and the other forbidden headers. `basic` is
+  refused for connections until a user name is stored with them.
+- Rate limits: 60 requests a minute on each connection and 180 a minute on
+  all of a plugin's connections together, apart from the plugin's other
+  `http.fetch` (60 a minute).
+- Internal actions (`"internal": true`) are never in the Action Library,
+  on a key, a gesture or a workflow node: the agent leaves them out of the
+  engine and refuses them from it. The app invokes them (a connection's
+  test runs the plugin's internal `probe` action, bound to exactly that
+  connection).
+- A `records` output reaches the app as a list of objects, each checked
+  against its schema (only declared fields, each of its kind, at most 200
+  records and 64 KiB); one that does not fit fails the outcome with
+  `invalid-output`.
+
+**Connections in the app.** The user creates a connection in the app
+(`createPluginConnection`): GitHub.com or GitLab.com at the manifest's own
+addresses, or a server they run, entered as the address they open in the
+browser (`https` only, a port and a path prefix allowed; the type's
+`apiPath` is added for the API). Creating it is the consent to exactly that
+server; a server named by an IP literal or a local name needs the separate
+private-network consent, and `localhost`, loopback, link-local and
+metadata addresses are refused whatever the user says. The token travels
+to the agent once and is kept in the encrypted plugin database (its key
+derived from the configuration database's, protected by the operating
+system's credential store or the password); no answer, log, export, key title or
+device image carries it, and a connection's name is refused when it looks
+like a token. Changing the server is a new connection. Removing one
+deletes its token in the same transaction; uninstalling the plugin keeps or
+deletes connections together with its credentials.
 
 ## Always allowed (no permission)
 

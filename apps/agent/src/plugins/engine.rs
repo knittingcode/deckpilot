@@ -225,9 +225,12 @@ impl FeatureModule for PluginModule {
         // Keys of a plugin whose actions cannot run show no state: they
         // fall back to how the user designed them.
         let runs = self.plugin.unavailable.is_none();
+        // Plugin API 1.14: internal actions are never in the Action
+        // Library, on a key or a workflow node.
         self.plugin
             .actions
             .iter()
+            .filter(|action| !action.is_internal())
             .filter_map(|action| {
                 match PluginActionHandler::new(&self.plugin.id, action, self.invoker.clone()) {
                     Ok(handler) => {
@@ -284,9 +287,22 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
             if let deckpilot_plugin_manifest::ParameterKind::Resource { kinds } = &parameter.kind {
                 return Ok(resource_spec(parameter, kinds));
             }
+            // Plugin API 1.14: a connection is stored as its id, plain text
+            // for the core; the app draws its picker from the manifest.
+            if let deckpilot_plugin_manifest::ParameterKind::Connection { .. } = &parameter.kind {
+                return Ok(connection_spec(parameter));
+            }
             // Through `core_spec`: the kind's constraints (`maxLength`, …)
             // are camel case in the manifest and snake case in the core.
+            // A parameter's `options` (plugin API 1.14) are the app's: the
+            // stored value stays plain text.
             serde_json::to_value(parameter)
+                .map(|mut json| {
+                    if let Some(map) = json.as_object_mut() {
+                        map.remove("options");
+                    }
+                    json
+                })
                 .map_err(|e| e.to_string())
                 .and_then(super::data::core_spec)
                 .map_err(|e| format!("parameter {e}"))
@@ -294,6 +310,7 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         .collect::<Result<Vec<_>, _>>()?;
     let mut node: NodeSpec = match &action.node {
         Some(node) => serde_json::to_value(node)
+            .map(core_outputs)
             .and_then(serde_json::from_value)
             .map_err(|e| format!("node: {e}"))?,
         None => NodeSpec::default(),
@@ -360,6 +377,47 @@ fn action_contexts(names: &[String]) -> Result<deckpilot_core::ActionContexts, S
         })
         .collect::<Result<Vec<_>, _>>()
         .map(deckpilot_core::ActionContexts::of)
+}
+
+/// A `connection` parameter (plugin API 1.14) as the core's: text, the
+/// connection's id, without a default (the app offers the type's default
+/// connection when the key is set up).
+fn connection_spec(
+    parameter: &deckpilot_plugin_manifest::Parameter,
+) -> deckpilot_core::ParameterSpec {
+    deckpilot_core::ParameterSpec {
+        key: parameter.key.clone(),
+        label: parameter.label.clone(),
+        description: parameter.description.clone(),
+        kind: deckpilot_core::ParameterKind::Text {
+            multiline: false,
+            max_length: Some(64),
+        },
+        required: parameter.required,
+        default: None,
+    }
+}
+
+/// A node's outputs as the core's: a `records` output (plugin API 1.14)
+/// is text the core never keeps (`sensitive`), without its schema, which
+/// the agent checks the records against itself.
+fn core_outputs(mut node: serde_json::Value) -> serde_json::Value {
+    if let Some(outputs) = node
+        .get_mut("outputs")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for output in outputs
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            if output.get("kind").and_then(serde_json::Value::as_str) == Some("records") {
+                output.insert("kind".into(), "text".into());
+                output.insert("sensitive".into(), true.into());
+            }
+            output.remove("schema");
+        }
+    }
+    node
 }
 
 /// A `resource` parameter as the core's: one kind for the editor when the
