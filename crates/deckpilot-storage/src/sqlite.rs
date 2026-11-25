@@ -133,7 +133,7 @@ fn empty_place_passed(current: u32, supported: u32, path: Option<&Path>) -> Opti
     // A temporary folder that is empty or a root (a broken `TMPDIR`)
     // counts for nothing.
     let temp = std::env::temp_dir();
-    let usable = temp.parent().is_some() && !temp.as_os_str().is_empty();
+    let usable = temp.is_absolute() && temp.parent().is_some();
     let throwaway = path.is_none_or(|p| usable && starts_within(p, &temp));
     if throwaway {
         return None;

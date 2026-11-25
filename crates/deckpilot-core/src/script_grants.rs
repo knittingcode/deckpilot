@@ -279,6 +279,13 @@ pub const CONTAINER_RUNTIMES: &[&str] = &[
     "singularity",
     "distrobox",
     "toolbox",
+    "kind",
+    "minikube",
+    "k3d",
+    "microk8s",
+    "bwrap",
+    "firejail",
+    "flatpak-spawn",
 ];
 
 /// Programs that act as another user: never grantable.
@@ -329,11 +336,62 @@ pub const PROCESS_SHELLS: &[&str] = &[
 /// tools, package runners): grantable, but each such grant is as broad as
 /// a shell, a container runtime included, and is shown as such.
 pub const RUNS_ANY_PROGRAM: &[&str] = &[
-    "env", "xargs", "nohup", "timeout", "nice", "time", "watch", "find", "parallel", "python",
-    "python3", "node", "deno", "bun", "ruby", "perl", "php", "lua", "tclsh", "java", "dotnet",
-    "make", "cmake", "ninja", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "pipx", "cargo",
-    "go", "gradle", "mvn", "open", "start", "explorer", "rundll32", "mshta", "wscript", "cscript",
-    "ssh", "curl", "wget",
+    "env",
+    "xargs",
+    "nohup",
+    "timeout",
+    "nice",
+    "time",
+    "watch",
+    "find",
+    "parallel",
+    "python",
+    "python3",
+    "node",
+    "deno",
+    "bun",
+    "ruby",
+    "perl",
+    "php",
+    "lua",
+    "tclsh",
+    "java",
+    "dotnet",
+    "make",
+    "cmake",
+    "ninja",
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "pip",
+    "pip3",
+    "uv",
+    "pipx",
+    "cargo",
+    "go",
+    "gradle",
+    "mvn",
+    "open",
+    "start",
+    "explorer",
+    "rundll32",
+    "mshta",
+    "wscript",
+    "cscript",
+    "ssh",
+    "curl",
+    "wget",
+    "arch",
+    "xcrun",
+    "setsid",
+    "stdbuf",
+    "taskset",
+    "chrt",
+    "ionice",
+    "caffeinate",
+    "nix-shell",
+    "just",
 ];
 
 /// What a granted command is, by its file name (without case and a
@@ -494,7 +552,13 @@ impl ScriptGrants {
         let mut commands: Vec<String> = self
             .process
             .iter()
-            .map(|g| g.command.to_lowercase())
+            .map(|g| {
+                if cfg!(any(target_os = "macos", windows)) {
+                    g.command.to_lowercase()
+                } else {
+                    g.command.clone()
+                }
+            })
             .collect();
         commands.sort_unstable();
         if commands.windows(2).any(|w| w[0] == w[1]) {
@@ -652,6 +716,10 @@ mod tests {
             "kvm",
             "apptainer",
             "distrobox",
+            "minikube",
+            "kind",
+            "bwrap",
+            "flatpak-spawn",
         ] {
             assert_eq!(
                 command_class(command),

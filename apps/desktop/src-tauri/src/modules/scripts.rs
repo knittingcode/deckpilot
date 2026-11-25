@@ -248,47 +248,68 @@ fn canonical_folder(path: &std::path::Path) -> CommandResult<std::path::PathBuf>
 }
 
 /// The file a granted command stands for, as the agent's executor finds
-/// it: an absolute path as it is, a bare name on the `PATH` (with `.exe`
-/// and `.com` on Windows); canonical. `None` when it is not found here.
+/// it: an absolute path as it is, a bare name in the absolute `PATH`
+/// entries (with `.exe` and `.com` on Windows unless it has one), a file
+/// that can run; canonical. `None` when it is not found here.
 fn program_file(command: &str) -> Option<std::path::PathBuf> {
     let path = std::path::Path::new(command);
     if path.is_absolute() {
         return std::fs::canonicalize(path).ok();
     }
-    let names: Vec<String> = if cfg!(windows) {
-        vec![
-            command.to_owned(),
-            format!("{command}.exe"),
-            format!("{command}.com"),
-        ]
+    let has_ext = std::path::Path::new(command)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("com"));
+    let names: Vec<String> = if cfg!(windows) && !has_ext {
+        vec![format!("{command}.exe"), format!("{command}.com")]
     } else {
         vec![command.to_owned()]
     };
+    let runnable = |p: &std::path::Path| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            p.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            p.is_file()
+        }
+    };
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
+            .filter(|dir| dir.is_absolute())
             .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
-            .find(|candidate| candidate.is_file())
+            .find(|candidate| runnable(candidate))
             .and_then(|found| std::fs::canonicalize(found).ok())
     })
 }
 
-/// Refuses a program granted twice: by the file each command stands for
-/// here (`make`, `Make` and `/usr/bin/make` alike), or by its name without
-/// case when it is not found here.
+/// Refuses a program granted twice: the same file started under the same
+/// name (`make` and `/usr/bin/make`), or, when it is not found here, the
+/// same name. Names compare without case where the system does (macOS,
+/// Windows). One file under two names (`xz` and `unxz`) is two programs:
+/// many behave by the name they are started as.
 fn no_program_twice(grants: &ScriptGrants) -> CommandResult<()> {
+    let fold = |text: &str| {
+        if cfg!(any(target_os = "macos", windows)) {
+            text.to_lowercase()
+        } else {
+            text.to_owned()
+        }
+    };
     let mut seen: Vec<String> = Vec::new();
     for grant in &grants.process {
-        let key = program_file(&grant.command).map_or_else(
-            || grant.command.to_lowercase(),
-            |file| {
-                let text = file.to_string_lossy().into_owned();
-                if cfg!(any(target_os = "macos", windows)) {
-                    text.to_lowercase()
-                } else {
-                    text
-                }
-            },
-        );
+        let name = std::path::Path::new(&grant.command)
+            .file_name()
+            .map_or_else(
+                || grant.command.clone(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+        let key = match program_file(&grant.command) {
+            Some(file) => format!("{}\0{}", file.display(), fold(&name)),
+            None => fold(&grant.command),
+        };
         if seen.contains(&key) {
             return Err(CommandError::invalid_with(
                 "scriptProgramTwice",
@@ -367,14 +388,31 @@ mod tests {
 
     #[test]
     fn a_program_is_granted_once_however_it_is_named() {
-        // Not found here: by name, without case.
-        assert!(no_program_twice(&grants(&["no-such-tool-x", "NO-SUCH-TOOL-X"])).is_err());
+        // Not found here: by name (without case on macOS and Windows).
+        assert!(no_program_twice(&grants(&["no-such-tool-x", "no-such-tool-x"])).is_err());
+        assert_eq!(
+            no_program_twice(&grants(&["no-such-tool-x", "NO-SUCH-TOOL-X"])).is_err(),
+            cfg!(any(target_os = "macos", windows))
+        );
         assert!(no_program_twice(&grants(&["no-such-tool-x", "no-such-tool-y"])).is_ok());
-        // Found here: by the file it stands for.
+        // Found here: one file under one name is one program, however it
+        // is reached; under another name it is another.
         #[cfg(unix)]
         {
-            let sh = std::fs::canonicalize("/bin/sh").unwrap();
-            assert!(no_program_twice(&grants(&["/bin/sh", &sh.to_string_lossy()])).is_err());
+            let dir = tempfile::tempdir().unwrap();
+            let tool = dir.path().join("tool");
+            std::fs::write(&tool, "#!/bin/sh\n").unwrap();
+            let link_dir = dir.path().join("links");
+            std::fs::create_dir(&link_dir).unwrap();
+            std::os::unix::fs::symlink(&tool, link_dir.join("tool")).unwrap();
+            std::os::unix::fs::symlink(&tool, link_dir.join("other")).unwrap();
+            let via_link = link_dir.join("tool");
+            let other = link_dir.join("other");
+            let direct = tool.to_string_lossy().into_owned();
+            let linked = via_link.to_string_lossy().into_owned();
+            let renamed = other.to_string_lossy().into_owned();
+            assert!(no_program_twice(&grants(&[&direct, &linked])).is_err());
+            assert!(no_program_twice(&grants(&[&direct, &renamed])).is_ok());
         }
     }
 

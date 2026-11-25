@@ -1038,9 +1038,9 @@ mod tests {
 
     /// Plugin API 1.11: `contexts` become the action type's (advisory, as
     /// for the built-ins); without them the legacy default, all five.
-    /// Plugin API 1.13: the core has no `script` kind yet (P7), so the
-    /// `run` action is refused as an action type, never offered with a
-    /// wrong kind; `check`'s `javascript` code is the core's text `code`.
+    /// Plugin API 1.13: `run`'s `script` parameter is the core's script
+    /// kind (an id, never a source), for the Scripts plugin only;
+    /// `check`'s `javascript` code is the core's text `code`.
     #[test]
     fn the_scripts_kinds_become_core_kinds() {
         let manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
