@@ -243,14 +243,41 @@ export function useLayoutEditing(
       change(next)
       setSelection(selectOnly(control))
     },
+    /**
+     * `drop` of something decided after an asynchronous step (an action
+     * created for a dropped type): applied to the latest draft, so edits
+     * made meanwhile stay. A drop the latest draft no longer takes changes
+     * nothing (the drop was checked when it happened).
+     */
+    dropLater: (source: DragSource, over: ControlId) => {
+      setState((s) => {
+        const next = dropOnControl(
+          model,
+          s.present,
+          pageId,
+          source,
+          over,
+          accepts && source.type === "target"
+            ? (control, trigger) => accepts(control, source.target, trigger)
+            : undefined,
+        )
+        return next ? commit(s, next, null) : s
+      })
+      setSelection(selectOnly(over))
+    },
     drop: (source: DragSource, over: ControlId) => {
       if (source.type === "newFolder") {
         commands.newFolder(over)
         return
       }
-      // An action type and a Multi Action are placed by the editor, which
-      // creates the action or the workflow.
-      if (source.type === "actionType" || source.type === "newMultiAction") return
+      // An action type, a Multi Action and a gesture preset are placed by
+      // the editor, which creates the actions or the workflow.
+      if (
+        source.type === "actionType" ||
+        source.type === "newMultiAction" ||
+        source.type === "gesturePreset"
+      )
+        return
       const next = dropOnControl(
         model,
         draft,

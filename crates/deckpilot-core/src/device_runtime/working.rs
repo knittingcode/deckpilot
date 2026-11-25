@@ -96,6 +96,7 @@ impl Runtime {
         self.working
             .insert(device.clone(), WorkingLayout { profile, layout });
         self.refused.clear();
+        self.targets.clear();
         self.repair_navigation(device);
         self.follow_folders(device, true);
         // The live preview wins over an overlay.
@@ -111,6 +112,7 @@ impl Runtime {
             return false;
         }
         self.refused.clear();
+        self.targets.clear();
         self.repair_navigation(device);
         self.follow_folders(device, true);
         self.after_presentation_change(device, before);

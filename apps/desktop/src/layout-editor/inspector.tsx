@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { GestureEditor } from "@/components/gesture-editor/gesture-editor"
+import { GestureEditor, type GestureEditorProps } from "@/components/gesture-editor/gesture-editor"
 import { IncompatibleNote } from "@/components/incompatible-note"
 import { MissingActionNote } from "@/components/missing-action-note"
 import { ContextMigrations, type MigrationOffer } from "@/components/context-migrations"
@@ -97,7 +97,7 @@ interface InspectorProps {
    * Turns what was dragged onto a gesture's slot into the target to
    * assign; see `GestureEditorProps.resolveDrop`.
    */
-  resolveDrop?: (dragged: unknown) => Promise<BindingTarget | null> | BindingTarget | null
+  resolveDrop?: GestureEditorProps["resolveDrop"]
   /** Opens the steps of a Multi Action a gesture runs. */
   onEditWorkflow?: (workflow: string) => void
   /**

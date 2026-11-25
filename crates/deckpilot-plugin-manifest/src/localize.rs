@@ -32,6 +32,42 @@ fn kind_texts(path: &str, kind: &mut ParameterKind, f: &mut dyn FnMut(&str, usiz
     }
 }
 
+/// The labels of `contributes.connectionTypes` (plugin API 1.14).
+fn connection_type_texts(
+    types: &mut Option<Vec<crate::connections::ConnectionType>>,
+    f: &mut dyn FnMut(&str, usize, &mut String),
+) {
+    for (i, kind) in types.iter_mut().flatten().enumerate() {
+        let path = format!("contributes.connectionTypes[{i}]");
+        f(&format!("{path}.label"), 48, &mut kind.label);
+        if let Some(text) = kind.self_hosted.as_mut().and_then(|s| s.label.as_mut()) {
+            f(&format!("{path}.selfHosted.label"), 48, text);
+        }
+    }
+}
+
+/// The texts of `contributes.gesturePresets` (plugin API 1.10).
+fn preset_texts(
+    presets: &mut Option<Vec<crate::model::GesturePreset>>,
+    f: &mut dyn FnMut(&str, usize, &mut String),
+) {
+    for (i, preset) in presets.iter_mut().flatten().enumerate() {
+        let path = format!("contributes.gesturePresets[{i}]");
+        f(&format!("{path}.name"), 48, &mut preset.name);
+        if let Some(text) = &mut preset.description {
+            f(&format!("{path}.description"), 200, text);
+        }
+        f(&format!("{path}.category"), 32, &mut preset.category);
+        for (j, gesture) in preset.gestures.iter_mut().enumerate() {
+            f(
+                &format!("{path}.gestures[{j}].label"),
+                64,
+                &mut gesture.label,
+            );
+        }
+    }
+}
+
 impl Manifest {
     /// Whether the manifest's texts may name translation keys (`t:…`): it
     /// requires plugin API 1.6. For an older manifest `t:…` is plain text.
@@ -103,6 +139,7 @@ impl Manifest {
                 }
             }
         }
+        preset_texts(&mut contributes.gesture_presets, f);
         for (i, variable) in contributes.variables.iter_mut().flatten().enumerate() {
             let path = format!("contributes.variables[{i}]");
             f(&format!("{path}.name"), 48, &mut variable.name);
@@ -150,6 +187,7 @@ impl Manifest {
                 );
             }
         }
+        connection_type_texts(&mut contributes.connection_types, f);
         for (i, entry) in contributes.navigation.iter_mut().flatten().enumerate() {
             f(
                 &format!("contributes.navigation[{i}].label"),

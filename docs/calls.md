@@ -140,7 +140,7 @@ described in the
 [SDK permissions](marketplace/sdk/permissions.md#plugin-api-116-the-bundled-calls-plugin-only).
 They are privileged: only the bundled plugin `deckpilot.calls` declares
 them, with `^1.16`, and a plugin with `calls` has no `network`,
-`credentials`, `openUrl` or `tools`. `Manifest::privileged_usages` lists
+`credentials`, `openUrl`, `tools` or `connections`. `Manifest::privileged_usages` lists
 all three, so the reviewed privileged policy pins them like the 1.9 kinds.
 
 | Grant | Tier | |
@@ -348,6 +348,19 @@ owner's list on the mock, the driver and a real core runtime:
 
 ## In the agent (`apps/agent/src/service/calls.rs`)
 
+**A locked device never shows a call.** Locking the configuration pops
+every Calls frame at once, so the device draws "Locked", and none is pushed
+while it stays locked, whatever the call does. Return sessions end, because
+nothing resumes behind the lock. The engine keeps following the call, and
+after unlocking a call still going on is shown again at once. Calls
+installed while locked shows nothing until the configuration is unlocked.
+
+A call already going on when its managed layout is seeded (Calls installed
+mid-call, or while the configuration was locked) shows its overlay as soon
+as the layout is stored, not at the call's next change. A layout that
+cannot be stored while the database is busy is tried again after 1 s, then
+after waits doubling up to a minute.
+
 The agent holds the driver and a provider, and does nothing for Calls
 unless a provider is installed. No build installs one today: the
 detection-only Teams adapter and the plugin come later. Tests install the
@@ -395,6 +408,27 @@ Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
 - a Multi Action brought back at its last step (T-R3);
 - the stored layout seeded, a user edit shown, and an agent restart
   without a stale suspension (T-R6).
+
+### A real plugin action, end to end (`tests/calls_plugin_action.rs`)
+
+A spawned agent, the real sandboxed plugin host and the bundled test
+fixture `example-default` built to wasm. Calls runs with the mock
+provider, in a meeting from the start, through the test-only option
+`--test-calls-mock <completion|default>` (the "Back to work" mode).
+
+- **A test-hooks build only.** Only a `test-hooks` build has the option,
+  and it needs `--headless`. A normal build has neither the option nor the
+  mock: `plugins_feature.rs` checks that neither the default build nor
+  `--features plugins` enables `test-hooks` or `deckpilot-calls/testing`.
+- **The test, in mode B** (so no timer can bring the call back):
+  1. "Back to work" shows the user's own key;
+  2. 1.5 s later the device is still back at work;
+  3. the user's key starts the plugin's `greet` action, which runs detached
+     in the host;
+  4. its `DetachedFinished` (Succeeded) brings the overlay back.
+- **Log lines.** The agent logs both steps at `info` ("the device went
+  back to work", "back on the call after a run ended"). They carry the
+  device and the run's end, never a title.
 
 ## In the app (IPC protocol 19)
 

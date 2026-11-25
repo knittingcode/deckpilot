@@ -219,11 +219,16 @@ fn plugin_references_parse_without_the_plugin() {
             "{text}"
         );
     }
+    // Past six segments only as a member of a structured variable, which
+    // the registry decides (`split_member`): the text parses, up to nine.
+    let member = reference("plugins.acme.githubPrs.a.b.c.d");
+    assert_eq!(member.to_string(), "plugins.acme.githubPrs.a.b.c.d");
+    assert!(VariableRef::parse("plugins.acme.githubPrs.a.b.c.d.e.f").is_ok());
     for bad in [
-        // No variable, or more than six segments.
+        // No variable, or more than nine segments.
         "plugins.acme.githubPrs",
         "plugins.acme",
-        "plugins.acme.githubPrs.a.b.c.d",
+        "plugins.acme.githubPrs.a.b.c.d.e.f.g",
         // No valid plugin id: publisher or name too short, not camel case
         // of the id grammar.
         "plugins.a.githubPrs.x",
@@ -745,6 +750,10 @@ fn entry(reference: &str, group: VariableGroup, value_type: VariableType) -> Cat
         read_only: false,
         deprecated: None,
         declared_scope: None,
+        members: Vec::new(),
+        map_keys: Vec::new(),
+        members_only: false,
+        member_of: None,
     }
 }
 

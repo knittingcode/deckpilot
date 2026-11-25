@@ -24,6 +24,7 @@
 
 pub mod calls;
 pub mod client;
+pub mod connections;
 pub mod display_templates;
 pub mod endpoint;
 pub mod framing;

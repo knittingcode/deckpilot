@@ -1404,12 +1404,13 @@ fn fresh_installation_has_an_empty_action_library() {
         module("system")["configValues"]["allowCommands"]["value"],
         false
     );
-    // The one deprecated built-in type is Wait, replaced by Delay (the
-    // deprecated `projects.*` types moved to the Projects plugin with the
-    // module, WP-C6): the flag is left out of every other type.
+    // The deprecated built-in types are Wait, replaced by Delay, and Open
+    // folder, replaced by Open (docs/system-actions.md; the deprecated
+    // `projects.*` types moved to the Projects plugin with the module,
+    // WP-C6): the flag is left out of every other type.
     assert!(modules.as_array().unwrap().iter().all(|m| {
         m["actionTypes"].as_array().unwrap().iter().all(|t| {
-            if t["id"] == "general.wait" {
+            if t["id"] == "general.wait" || t["id"] == "system.open-directory" {
                 t["deprecated"] == true
             } else {
                 t.get("deprecated").is_none()
@@ -5155,11 +5156,13 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
         "system.open-app",
         "system.open-url",
         "system.open-file",
-        "system.open-directory",
         "system.close-app",
     ] {
         assert!(ids.contains(&wanted), "{wanted} needs a value: {ids:?}");
     }
+    // Open folder is not offered for new actions (Open opens folders).
+    assert!(!ids.contains(&"system.open-directory"), "{ids:?}");
+
     let mut drafts = std::collections::BTreeMap::new();
     for (id, keys) in &needing {
         let draft = h
@@ -5184,10 +5187,6 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
     );
     assert_eq!(drafts["system.open-url"]["incomplete"], json!(["url"]));
     assert_eq!(
-        drafts["system.open-directory"]["incomplete"],
-        json!(["location"])
-    );
-    assert_eq!(
         drafts["system.open-app"]["incomplete"],
         json!(["application"])
     );
@@ -5196,6 +5195,17 @@ fn types_that_need_a_value_are_saved_as_drafts_until_configured() {
         drafts["system.close-app"]["incomplete"],
         json!(["application"])
     );
+    // A saved Open folder (or one made by an older app) is still a draft
+    // until its folder is chosen.
+    let legacy = h
+        .call(
+            "create_action",
+            json!({ "profileId": profile_id,
+                    "action": { "name": "Open folder", "actionType": "system.open-directory",
+                                "parameters": {} } }),
+        )
+        .unwrap();
+    assert_eq!(legacy["incomplete"], json!(["location"]));
 
     // A wrong type for a value that is there is still refused.
     let refused = h
@@ -5346,4 +5356,135 @@ fn labels_the_agent_knows_never_show_are_refused_on_save_and_import() {
         !refused.contains("hunter2"),
         "a secret in an error: {refused}"
     );
+}
+
+/// Open keys preview the icon of what they open, as the device draws them
+/// (`docs/system-actions.md`, "The key's icon"): the document for a file,
+/// the open folder for a folder, the document when nothing is chosen or it
+/// is gone; the key's own icon over either. The automatic icon is never
+/// saved, and a target is looked at again only after something was saved.
+#[test]
+#[allow(clippy::too_many_lines)] // One key through every target.
+fn open_keys_preview_the_icon_of_what_they_open() {
+    let h = Harness::new();
+    let profile_id = new_profile(&h, "Work");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.pdf");
+    std::fs::write(&file, b"%PDF").unwrap();
+    let folder = dir.path().join("Reports");
+    std::fs::create_dir_all(&folder).unwrap();
+    // As the pickers bind them: a file as `other`, a folder as `directory`.
+    h.ok(
+        "set_resource_binding",
+        json!({ "key": "file.report-pdf-abc123", "kind": "other", "value": file.display().to_string() }),
+    );
+    h.ok(
+        "set_resource_binding",
+        json!({ "key": "folder.reports-abc123", "kind": "directory", "value": folder.display().to_string() }),
+    );
+    let location =
+        |key: &str| json!({ "type": "resource", "value": { "type": "fixed", "key": key } });
+    // A new Open action, as the library makes it: no icon of its own.
+    let action = h.ok(
+        "create_action",
+        json!({ "profileId": profile_id, "action": {
+            "name": "Open", "actionType": "system.open-file", "icon": null,
+            "parameters": { "location": location("file.report-pdf-abc123") } } }),
+    );
+    let mut layout = h.ok(
+        "create_layout",
+        json!({ "profileId": profile_id, "modelId": "elgato.streamdeck.mk2", "name": "Main", "generate": false }),
+    );
+    let page = layout["homePage"].clone();
+    layout["pages"][0]["bindings"] = json!([{
+        "control": { "kind": "key", "index": 0 },
+        "trigger": { "type": "press" },
+        "target": { "type": "action", "action": action["id"] },
+    }]);
+    let preview = |layout: &Value| {
+        h.ok(
+            "preview_layout",
+            json!({ "profileId": profile_id, "layout": layout, "pageId": page, "projectId": null,
+                "render": true }),
+        )[0]
+        .clone()
+    };
+    let symbol = |layout: &Value| preview(layout)["face"]["symbol"].clone();
+    let retarget = |parameters: Value| {
+        let mut edited =
+            h.ok("get_profile", json!({ "profileId": profile_id }))["profile"]["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| a["id"] == action["id"])
+                .unwrap()
+                .clone();
+        edited["parameters"] = parameters;
+        let saved = h.ok(
+            "update_action",
+            json!({ "profileId": profile_id, "action": edited }),
+        );
+        // Never written as the action's icon.
+        assert_eq!(
+            saved.get("icon").cloned().unwrap_or(Value::Null),
+            Value::Null
+        );
+    };
+
+    // A file, then a folder, then the file again.
+    assert_eq!(symbol(&layout), "file");
+    retarget(json!({ "location": location("folder.reports-abc123") }));
+    assert_eq!(symbol(&layout), "folder-open");
+    retarget(json!({ "location": location("file.report-pdf-abc123") }));
+    assert_eq!(symbol(&layout), "file");
+    // Cleared: nothing chosen is the document.
+    retarget(
+        json!({ "location": { "type": "resource", "value": { "type": "projectRole", "role": "" } } }),
+    );
+    assert_eq!(symbol(&layout), "file");
+
+    // The folder is replaced by a file underneath: nothing was saved, so
+    // the preview keeps what it found (no polling) until something is.
+    retarget(json!({ "location": location("folder.reports-abc123") }));
+    assert_eq!(symbol(&layout), "folder-open");
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::fs::write(&folder, b"now a file").unwrap();
+    assert_eq!(symbol(&layout), "folder-open");
+    h.ok(
+        "set_resource_binding",
+        json!({ "key": "file.other-abc123", "kind": "other", "value": file.display().to_string() }),
+    );
+    // The binding says directory, the path is a file: Open would refuse
+    // it, the preview shows what is there.
+    assert_eq!(symbol(&layout), "file");
+    // Gone: the document, never a guess.
+    std::fs::remove_file(&folder).unwrap();
+    retarget(json!({ "location": location("folder.reports-abc123") }));
+    assert_eq!(symbol(&layout), "file");
+
+    // The key's own icon wins over either, and stays when the target
+    // changes; removing it brings the automatic icon back.
+    std::fs::create_dir_all(&folder).unwrap();
+    retarget(json!({ "location": location("folder.reports-abc123") }));
+    let automatic = preview(&layout);
+    assert_eq!(automatic["face"]["symbol"], "folder-open");
+    layout["pages"][0]["bindings"][0]["appearance"] =
+        json!({ "icon": { "id": "deckpilot.house", "fit": "fit" } });
+    let on_folder = preview(&layout);
+    retarget(json!({ "location": location("file.report-pdf-abc123") }));
+    let on_file = preview(&layout);
+    assert_eq!(
+        on_file["face"]["appearance"]["icon"]["id"],
+        "deckpilot.house"
+    );
+    assert_eq!(
+        on_file["image"], on_folder["image"],
+        "the key's icon, not the target's"
+    );
+    assert_ne!(on_folder["image"], automatic["image"]);
+    layout["pages"][0]["bindings"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("appearance");
+    assert_eq!(symbol(&layout), "file");
 }

@@ -81,6 +81,7 @@ At most 64 actions (`MAX_ACTIONS`). Each:
 | `controls` | no | Plugin API 1.3: the controls and inputs the action can be bound to; see [Controls](#controls). Without it: keys only |
 | `editorNavigation` | no | Plugin API 1.7: what running the action does to the page or layout a device shows, for the Device Editor's preview; see [Editor navigation](#editor-navigation) |
 | `title` | no | Plugin API 1.8: suggestions for the action's keys' titles; see [Titles](#titles) |
+| `contexts` | no | Plugin API 1.11: where the action makes sense, 1-5 of `key`, `gesture`, `display`, `sequence`, `workflow`, each once. Without it: all five, as before. `gesture` needs a double click or long press among the `controls`, `key` a press, release, click, rotation or touch, `display` the action's `state`. Advisory: a use elsewhere is reported and still runs ([action-contexts.md](../../action-contexts.md#plugin-actions)) |
 
 ### Titles
 
@@ -163,7 +164,9 @@ shape as `ActionControls` in `deckpilot-core`
 
 `{ "key", "label", "kind"?, "always"?, "sensitive"? }`: `key` camelCase
 `[a-z][A-Za-z0-9]{0,31}`, `label` 1-48, `kind` one of `text` (default),
-`integer`, `boolean`, `path`, `url`, `projectKey`. **The agent keeps only
+`integer`, `boolean`, `path`, `url`, `projectKey`, and from plugin API
+1.14 `records` with a `schema` ([Connections](#plugin-api-114-connections)).
+**The agent keeps only
 declared outputs**: anything else an action returns in `Output::with` is
 dropped (`convert::outcome`, `PluginActionHandler::result`). In workflows
 every output value becomes text (`engine.rs` `text`); `invokePluginAction`
@@ -178,10 +181,10 @@ The plugin's own variables, published with `Context::publish_variable`
 | --- | --- |
 | `id` | Relative path `[a-z][A-Za-z0-9_]{0,31}` with up to two more `.`-separated segments, ≤ 100 characters, unique. Read in workflows as `{{ plugins.<publisherCamel>.<nameCamel>.<id> }}`, e.g. `plugins.acme.developerTools.openPrs` |
 | `name`, `description` | 1-48; ≤ 300 |
-| `valueType` | `{ "type": "string" \| "integer" \| "boolean" \| "json" }`; a published value of another type is refused |
+| `valueType` | `{ "type": "string" \| "integer" \| "boolean" \| "json" }`; a published value of another type is refused. Plugin API 1.12, with a host `source` only: `{ "type": "object", "shape": "repository" }` and `{ "type": "map", "of": "repository" }` (structured values, which a plugin never publishes; [variables.md §2.8](../../variables.md#28-structured-values-and-member-access)) |
 | `scope` | `machine`, `profile` or `project`. **Only `machine` can be published in this version**; the others are refused with `unavailable` |
 | `requires`, `sensitive`, `deprecated` | Optional; `requires` only `["project"]` |
-| `source` | Plugin API 1.9, first-party plugins shipped inside the app with the `projectContext` permission only: `host:project.id`, `host:project.key` or `host:project.name`. DeckPilot computes the value (the project in the context; scope `project`, type `string`) while the plugin is enabled and holds `projectContext`; publishing it is refused (`not-permitted`) |
+| `source` | Plugin API 1.9, first-party plugins shipped inside the app with the `projectContext` permission only: `host:project.id`, `host:project.key` or `host:project.name`. DeckPilot computes the value (the project in the context; scope `project`, type `string`) while the plugin is enabled and holds `projectContext`; publishing it is refused (`not-permitted`). Plugin API 1.12 (`^1.12`) adds `host:project.repositories` (type `map` of `repository`: the project's repositories by key) and `host:project.repository` (type `object` of `repository`: its default repository, none when several have no default). Each source takes exactly its type. A repository's folder `path` reaches only readers that may see paths: never a key, and a plugin's action parameters only with `resources:paths`. That gate covers the references an action's own parameters and mappings make to these variables; a folder that an earlier workflow node (one that may see paths) already read is plain text in that node's output, a workflow variable or a workflow input, and reaches any plugin whose mapping names it ([variables.md §2.8](../../variables.md#28-structured-values-and-member-access)) |
 
 ## `contributes.settings`
 
@@ -326,12 +329,115 @@ and the files with `getPluginIcon` and `asset` (runtime feature
 kept) and gradients rasterised by DeckPilot's renderer, never by CSS;
 nothing is animated.
 
+## Plugin API 1.14: connections
+
+Needs `"engines": { "pluginApi": "^1.14" }` (the validator refuses every
+field below a lower level) and passes only the rules for a first-party
+plugin shipped inside the app ([permissions](permissions.md#plugin-api-114-connections-first-party-bundled-plugins-only)).
+The agent does not provide 1.14 yet: until it does, such a plugin is
+`incompatible`.
+
+```json
+"permissions": [
+  { "kind": "connections", "types": ["github", "gitlab"],
+    "methods": ["GET", "POST", "PUT"], "privateNetwork": true,
+    "justification": "Talks to the GitHub and GitLab servers you connect, each with its own token, and nowhere else." },
+  { "kind": "openUrl", "hosts": [], "connections": true,
+    "justification": "Opens pages of your connections in the browser." }
+],
+"contributes": {
+  "connectionTypes": [
+    { "id": "gitlab", "label": "t:types.gitlab",
+      "cloud": { "api": "https://gitlab.com/api/v4", "web": "https://gitlab.com" },
+      "selfHosted": { "apiPath": "/api/v4", "label": "t:types.gitlabSelf" },
+      "auth": [{ "method": "pat", "scheme": "header", "headerName": "PRIVATE-TOKEN",
+                 "setupUrl": { "cloud": "https://gitlab.com/-/user_settings/personal_access_tokens",
+                               "selfHosted": "{web}/-/user_settings/personal_access_tokens" } }],
+      "extensions": ["gitlab.pipeline-variables"] }
+  ],
+  "recordSchemas": [
+    { "id": "repository", "fields": [
+        { "key": "id", "kind": "text" }, { "key": "path", "kind": "text" },
+        { "key": "description", "kind": "text", "sensitive": true } ] }
+  ]
+}
+```
+
+| Field | Rules |
+| --- | --- |
+| `connectionTypes[]` | 1-8, ids like an action id (≤ 32) and unique; `label` 1-48, translatable; at least one of `cloud` and `selfHosted`; every type is listed in the `connections` permission and needs it |
+| `cloud` | `api`: an `https` URL with an optional path; `web`: an `https` origin without a path; exact hosts, no user name, query or fragment. A cloud connection never has another host |
+| `selfHosted` | `apiPath` (`/api/v4`): one or more segments of letters, digits, `-`, `_`, `.`, `~`, no `.`/`..`, no trailing `/`, ≤ 64; appended to the address the user enters, which may have a port and a path prefix (`https://code.example.com:8443/gitlab` → `…/gitlab/api/v4`); optional `label` |
+| `auth[]` | 1-4; `method` `pat` (a token pasted into the app's own secret field); `scheme` `bearer`, `basic` or `header` (never `query`); `headerName` exactly with `header`, a header token that is not `Authorization`, `Cookie`, `Host`, `Proxy-*`, `Sec-*` or a framing header; `setupUrl.cloud` a page on the cloud web origin, `setupUrl.selfHosted` `{web}/…` on the server the user entered |
+| `extensions` | 1-16 unique `<type id>.<name>`, the name like an action id |
+| `recordSchemas[]` | 1-16, ids unique; `fields` 1-32 with unique camelCase `key`s, `kind` `text`, `integer`, `boolean`, `url`, `timestamp` (Unix ms) or `state` (a closed-set word), `sensitive` for text a person wrote. A schema no output uses is a warning |
+| parameter `{"type": "connection", "types": [...], "capability"?}` | 1-8 types of the permission; the stored value is the connection's id, never a URL, a secret or a dynamic reference; no default (the user's default connection of the type is used) and never a setting. `capability` (camelCase) offers only connections whose last test found it |
+| parameter `options` | On a single-line `text` parameter: `from` (an action of the plugin with `internal: true`, a `readOnly` node and a `records` output with a schema), `value` and optional `label` (fields of that schema), `dependsOn` (0-4 other parameters of the action that the source also has), `search` (the source has a `text` parameter `search`). The stored value stays plain text |
+| action `internal: true` | Not in the Action Library, never on a key or a workflow node: no `controls`, `state`, `title`, `editorNavigation`, `replacedBy`, `contexts` or `node.changesContext`. The app and the plugin's own `options` invoke it |
+| output `{"kind": "records", "schema": ...}` | `schema` is required with `records` and only with it; at most 200 records and 64 KiB; never shown on a key (declare a scalar `count` next to it). ABI 1 outcomes carry no objects, so the module returns it as a list of strings, each the JSON object of one record with the schema's fields (absent fields omitted); the host parses and checks them against the schema |
+
+## `contributes.gesturePresets`
+
+Plugin API 1.10 (needs `"engines": { "pluginApi": "^1.10" }`; the validator
+refuses the field below): Action Library entries that put several of the
+plugin's **own** actions on the gestures of one control at once, each with
+predefined parameters. Data only: no plugin code runs to list or apply a
+preset, nothing of a preset is stored, and a preset grants nothing. Each
+action it names keeps its own permissions, consent, allow-lists and
+availability; the app refuses the whole preset while one of them cannot
+run.
+
+```json
+"gesturePresets": [
+  {
+    "id": "dimmer",
+    "name": "t:presets.dimmer.name",
+    "description": "Dim on a single press, full on a long press.",
+    "category": "Lights",
+    "allowPartial": false,
+    "gestures": [
+      { "gesture": "click", "action": "set-level",
+        "parameters": { "level": { "type": "integer", "value": 30 } },
+        "label": "t:presets.dimmer.click" },
+      { "gesture": "longPress", "action": "set-level",
+        "parameters": { "level": { "type": "integer", "value": 100 } },
+        "label": "t:presets.dimmer.long" }
+    ]
+  }
+]
+```
+
+| Field | Required | Rules |
+|---|---|---|
+| `id` | yes | Like an action id (`[a-z][a-z0-9]*(-[a-z0-9]+)*`, ≤ 48), unique; registered as `<plugin id>.<id>` |
+| `name`, `description`, `category` | name, category | 1-48, ≤ 200, 1-32 characters; translatable (`t:…`, plugin API 1.6 rules and fallback chain). The entry is listed under the category, like actions |
+| `allowPartial` | no | Default `false`: a control that cannot produce every gesture refuses the preset. `true`: the gestures it can take are applied and the app says which were left out |
+| `gestures` | yes | 1-6 entries, each gesture at most once |
+| `gestures[].gesture` | yes | `click` (single press), `doubleClick`, `longPress`, `release`, `rotateClockwise`, `rotateCounterClockwise`. `release` never next to `doubleClick` or `longPress` (a control reacts either to its raw press and release or to gestures) |
+| `gestures[].action` | yes | An id of `contributes.actions`; the action must be able to run from the gesture (its `controls`, else keys with every key input) and, when it declares [contexts](../../action-contexts.md), declare the gesture's: `gesture` for `doubleClick` and `longPress`, `key` for the others. Never an [internal](#plugin-api-114-connections) action (plugin API 1.14): it is never on a key |
+| `gestures[].parameters` | no | Only the action's parameters, each a literal value that fits it (as a `default`); every required parameter without a default must be given. Never a value for a `connection` parameter (plugin API 1.14): a connection has no literal value, the user picks it |
+| `gestures[].label` | yes | 1-64 characters, translatable: what the gesture does ("Dim to 30%"). It names the action the app creates for it |
+
+Applying a preset (dropping it on a key) creates, or reuses, one ordinary
+action per gesture and ordinary key bindings, as one undo step; the device
+descriptor decides which gestures a control has, and gesture timing stays
+DeckPilot's (plugins never time gestures). A key that reacts to its press at once
+is never switched to gestures by a preset; the user does that in the
+Inspector, which asks first. Dropped on a single gesture in
+the Inspector only that gesture's action is assigned. Afterwards every
+gesture is edited or removed on its own. While the plugin is disabled or
+uninstalled the keys keep their bindings and show the missing-plugin
+state; they work again once it is back. The agent lists the presets on
+`PluginSummary.gesturePresets`, in the app's language, as the core's
+`GesturePreset` (ids and action types prefixed with the plugin id); see
+[gestures-and-work-session.md](../../gestures-and-work-session.md) §3.4.
+
 ## Compatibility: `engines` and `platforms`
 
 | Field | Rule | Checked |
 | --- | --- | --- |
 | `engines.deckpilot` | One comparator or a lower and an upper bound separated by one space: `>=`, `>`, `<=`, `<`, `=` (or none, meaning `=`) followed by `MAJOR.MINOR.PATCH` without leading zeros or pre-release, e.g. `">=0.5.0 <1.0.0"`; ≤ 64 characters; must be satisfiable (`VersionRange`). Matching uses semver precedence **including DeckPilot pre-releases**: `0.6.0-alpha.3` satisfies `>=0.5.0 <1.0.0`, and `0.8.0-beta.1` does not satisfy `>=0.8.0` | By the registry client before install (`incompatible`) and by the agent (`HostEnvironment.app_version` = the agent's version) |
-| `engines.pluginApi` | `^MAJOR.MINOR`: same major, at least this minor (`ApiRequirement`). The agent provides **1.8** (`PLUGIN_API` in `apps/agent/src/plugins/service.rs`), so `^1.0` to `^1.8` install; declare `^1.1` only when the plugin cannot work without the time or random bytes, and `^1.2` only when it is useless without key state ([errors-and-versions.md](errors-and-versions.md#versions)). A manifest with `controls`, `navigation` or `views` must declare `^1.3` (the validator refuses a lower level); agents up to 1.2 refuse such a manifest anyway, as they do not know the fields. DeckPilot 0.8.0 is the first release whose agent provides 1.3 (0.6.0 and 0.7.0 provide 1.2), so a plugin declaring `^1.3` should also declare `engines.deckpilot` `">=0.8.0"`. A view's `context`, `dependencies` and `requiresDependencies` need `^1.4`; the first release whose agent provides 1.4 is the one after 0.8.1. The `dialogs` permission needs `^1.5` (the validator refuses it below; [dialogs.md](dialogs.md)); the agent of the release after 0.9.0 is the first to provide 1.5. `locales` and `defaultLocale` need `^1.6` ([localization.md](localization.md)), also the first provided by the agent of the release after 0.9.0. An action's `editorNavigation` needs `^1.7` ([Editor navigation](#editor-navigation)), likewise first provided by the agent of the release after 0.9.0. An action's `title` needs `^1.8` ([Titles](#titles)), likewise first provided by the agent of the release after 0.9.0 | Same |
+| `engines.pluginApi` | `^MAJOR.MINOR`: same major, at least this minor (`ApiRequirement`). The agent provides **1.11** (`PLUGIN_API` in `apps/agent/src/plugins/service.rs`), so `^1.0` to `^1.11` install (1.9's privileged kinds only for DeckPilot's own bundled plugins); declare `^1.1` only when the plugin cannot work without the time or random bytes, and `^1.2` only when it is useless without key state ([errors-and-versions.md](errors-and-versions.md#versions)). A manifest with `controls`, `navigation` or `views` must declare `^1.3` (the validator refuses a lower level); agents up to 1.2 refuse such a manifest anyway, as they do not know the fields. DeckPilot 0.8.0 is the first release whose agent provides 1.3 (0.6.0 and 0.7.0 provide 1.2), so a plugin declaring `^1.3` should also declare `engines.deckpilot` `">=0.8.0"`. A view's `context`, `dependencies` and `requiresDependencies` need `^1.4`; the first release whose agent provides 1.4 is the one after 0.8.1. The `dialogs` permission needs `^1.5` (the validator refuses it below; [dialogs.md](dialogs.md)); the agent of the release after 0.9.0 is the first to provide 1.5. `locales` and `defaultLocale` need `^1.6` ([localization.md](localization.md)), also the first provided by the agent of the release after 0.9.0. An action's `editorNavigation` needs `^1.7` ([Editor navigation](#editor-navigation)), likewise first provided by the agent of the release after 0.9.0. An action's `title` needs `^1.8` ([Titles](#titles)), likewise first provided by the agent of the release after 0.9.0. `contributes.gesturePresets` needs `^1.10` ([Gesture presets](#contributesgesturepresets)); an action's `contexts` needs `^1.11` ([action-contexts.md](../../action-contexts.md#plugin-actions)). The connections of [plugin API 1.14](#plugin-api-114-connections) need `^1.14`; the validator knows the level, the agent does not provide it yet. 1.10 to 1.14 are unreleased: 0.15.0 and older agents provide 1.9 and report a `^1.10` or later version `incompatible` | Same |
 | `engines.sdk` | Informational semver of the SDK used (`deckpilot_plugin_sdk::SDK_VERSION`, 0.1.0) | `testing::manifest_mismatches` only |
 | `platforms` | Omitted means macOS, Windows and Linux | Same; a mismatch is `Incompatibility::Platform` |
 

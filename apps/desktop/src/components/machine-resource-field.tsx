@@ -296,14 +296,19 @@ export function MachineResourceField({
   )
 }
 
-/** A chosen file or folder: its name, its path, and the native dialogs. */
-function LocationRow({
+/**
+ * A chosen file or folder: its name, its path, the native dialogs, and
+ * whether a bound one is still there (`resource_status`). Also the folder
+ * field of a project's repositories.
+ */
+export function LocationRow({
   id,
   resource,
   path,
   folder,
   files,
   busy,
+  showGone = true,
   onBrowse,
 }: {
   id: string
@@ -311,9 +316,14 @@ function LocationRow({
   resource: string | null
   path: string | null
   folder: boolean
-  /** Files can be chosen (Open); otherwise folders only (Open folder). */
+  /**
+   * Files and folders can be chosen (Open); otherwise folders only (the
+   * legacy Open folder, kept for saved keys).
+   */
   files: boolean
   busy: boolean
+  /** Alert when the bound file or folder is gone (off where the caller says so itself). */
+  showGone?: boolean
   onBrowse: (directory: boolean) => void
 }) {
   const { t } = useTranslation()
@@ -339,6 +349,7 @@ function LocationRow({
     }
   }, [checked, resource])
   const gone = checked !== null && status?.for === checked && status.status === "missing"
+  const hintId = useId()
   return (
     <div className="grid gap-1.5">
       <div className="flex min-w-0 items-center gap-2" id={id}>
@@ -363,6 +374,7 @@ function LocationRow({
             variant="outline"
             size="sm"
             disabled={busy}
+            aria-describedby={hintId}
             onClick={() => {
               onBrowse(false)
             }}
@@ -375,6 +387,7 @@ function LocationRow({
           variant="outline"
           size="sm"
           disabled={busy}
+          aria-describedby={files ? hintId : undefined}
           onClick={() => {
             onBrowse(true)
           }}
@@ -382,7 +395,12 @@ function LocationRow({
           <FolderOpen /> {t("actions:system.picker.chooseFolder")}
         </Button>
       </div>
-      {gone && (
+      {files && (
+        <p id={hintId} className="text-xs text-muted-foreground" data-slot="file-or-folder">
+          {t("actions:system.picker.fileOrFolder")}
+        </p>
+      )}
+      {gone && showGone && (
         <p className="text-xs text-destructive" role="alert">
           {t("actions:system.picker.locationGone")}
         </p>

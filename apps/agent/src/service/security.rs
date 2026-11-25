@@ -322,6 +322,8 @@ impl Agent {
             elapsed_ms = started.elapsed().as_millis(),
             "the unlocked configuration is loaded"
         );
+        self.calls_set_locked(false);
+        self.render_all();
         Ok(())
     }
 
@@ -334,6 +336,8 @@ impl Agent {
         self.store = None;
         self.key = None;
         self.plugins.closed();
+        // A locked device never shows a call.
+        self.calls_set_locked(true);
         self.calls_layouts_changed();
         self.security =
             security_state(&self.options.paths.database).unwrap_or(SecurityState::Locked);
@@ -341,9 +345,11 @@ impl Agent {
         self.refresh_protection();
         // No unsaved layout stays on a locked deck.
         self.end_all_live_previews(deckpilot_ipc::live_preview::EndReason::Locked);
+        // The placeholder first: a device never shows the overlay without a
+        // profile and without "Locked" in between.
+        self.runtime.set_placeholder(Some("Locked"));
         self.runtime.set_profile(None, None);
         self.reload_icons();
-        self.runtime.set_placeholder(Some("Locked"));
         self.persisted_project = None;
         info!(?reason, "configuration locked");
         self.after_change();

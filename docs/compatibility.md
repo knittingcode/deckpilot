@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 19 | 15 |
+| Current main | see `Cargo.toml` | 20 | 15 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -229,6 +229,129 @@ plugin with `projectContext.select` only) is another `^1.9` field that an
 older agent refuses as unknown; a `resource.resolve` role is the user's
 role name (up to 1,024 characters, not blank), no longer a parameter key.
 No IPC protocol or document change.
+
+Plugin API 1.10 (unreleased,
+[gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
+additive. `contributes.gesturePresets` validates only with `^1.10`; a
+`^1.9` manifest without it validates exactly as before, and an agent of
+1.9 (0.15.0 and older) reports a `^1.10` version `incompatible`. Presets
+are data only: no capability operation, ABI or permission is added, and
+nothing of a preset is stored, so no document, schema or migration
+changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
+are optional fields, left out when empty, that an older app ignores; an
+older agent sends neither, and the app then lists no presets. No IPC
+protocol change. The SDK's `GESTURE_PRESETS_API_LEVEL` is 1.10 (nothing
+for the guest).
+
+Plugin API 1.11 (unreleased, [action-contexts.md](action-contexts.md#plugin-actions)):
+additive. `contributes.actions[].contexts` validates only with `^1.11`;
+a manifest without it validates exactly as before and its actions keep
+all five contexts. An agent of 1.10 or older reports a `^1.11` version
+`incompatible`. The declaration reaches the app inside the action type
+(`ActionType.contexts`, the optional field 0.14.0's built-in contexts
+already use), so there is no IPC protocol, schema or
+document change; contexts stay advisory (reported on save, warned on
+run, never refused). The SDK's `LATEST_API_LEVEL` is 1.11
+(`ACTION_CONTEXTS_API_LEVEL`, `Action::contexts`).
+
+Plugin API 1.12 (unreleased, [variables.md §2.8](variables.md#28-structured-values-and-member-access)):
+additive. Structured variable types (`valueType` `{"type": "object",
+"shape": "repository"}` and `{"type": "map", "of": "repository"}`) and the
+host sources `host:project.repositories` and `host:project.repository`
+validate only with `^1.12`, only with exactly their source's type, only for
+a bundled first-party plugin with `projectContext` (privileged constructs,
+so the reviewed privileged policy must list them before a plugin may use
+them), and a structured type only with a host source. A `^1.9` manifest
+without them validates exactly as before. The validator knows 1.12; the
+agent's `PLUGIN_API` stays 1.11 until the release that bundles Projects
+0.2.0, so an agent reports a `^1.12` version `incompatible` until then.
+Scalar references, templates and stored `{{ … }}` texts resolve exactly as
+before; text of 7 to 9 segments under a module or plugin root, which was not
+a reference, now parses as a member reference and resolves as unknown. No
+database, document or export change.
+
+IPC protocol 20 (unreleased; 19 is reserved for the Calls event):
+plugin connections (capability `pluginConnections`, plugin API 1.14):
+`listPluginConnections`, `createPluginConnection`,
+`setPluginConnectionSecret`, `updatePluginConnection`,
+`testPluginConnection` and `removePluginConnection`. A client of an older
+protocol never sends them (refused locally) and the agent refuses them from
+such a connection, so a token never reaches an agent that would not keep
+it; nothing older clients receive changes. The plugin store
+(`plugins.db`, separate from the configuration database) goes from schema 6
+to 7: `plugin_connections` and `plugin_connection_secrets`, additive. An
+older agent refuses a schema 7 `plugins.db` with `UnsupportedSchema` before
+writing anything and runs without plugins; going back means restoring the
+`plugins-schema6-…` backup written before the upgrade. The configuration
+database, documents and exports do not change: connections and their
+tokens are machine-local and never exported. The agent's `PLUGIN_API`
+stays 1.11, so `^1.14` plugins are still reported `incompatible`.
+
+IPC protocol 18 (unreleased): structured variables (capability
+`structuredVariables`). `CatalogEntry.valueType` may be `object` or `map`
+with the shape's `members` and, for a map, its keys in the context's
+project (`mapKeys`); each structured variable is listed once and the app
+composes its member entries (`memberOf`), so a catalog stays within one
+message with up to 256 repositories. The title picker's catalog marks a
+structured variable listed for its display-safe members only
+(`membersOnly`). A preview of a whole structured value is `structured` (a
+count, never a member), and the reasons `unknownMember`,
+`repositoryNotInProject` and `noDefaultRepository` are new. An agent of 18
+answers an older client with structured types as `json` without members
+or keys, no members-only entries, a structured preview as `redacted` JSON
+and the nearest older reasons
+(`Response::for_protocol`); no request changes, so an app of 18 works with
+an agent of 17 as before (without repository variables).
+
+Plugin API 1.13 (unreleased, [scripts-bridge.md](scripts-bridge.md)), the
+Scripts host bridge, part 1 of 4: the ABI and the host engine. The
+operations `script.*`, `project.repositories`, `fs.*`, `process.run`,
+`shell.run` and `shell.available` are compatible additions within ABI 1:
+a guest that does not use them never sends them, an older host answers
+`unsupported-op`, and this agent's broker still refuses all of them to
+every plugin (the `scripts` permission and the executor follow). A
+`CallError` may carry the optional `script` detail, which the host keeps
+only on those operations' replies, so no existing guest receives it.
+`GuestLimits` gains the optional `hostCalls` and `polls`, which the
+supervisor sends to its own host only (they ship together); without them
+a guest keeps its 256 calls per invocation. One rule changes for every
+guest: a reply the host gives itself (a malformed request, a call refused
+inside `dp_init` or a state call) no longer resets the continuous-CPU
+deadline; such replies are immediate, so no guest that waits on the
+agent is affected. No frame cap, IPC protocol, schema, document or
+export change, and `PLUGIN_API` stays 1.11.
+
+Part 2 adds the `scripts` permission to the broker (the ceiling, for
+`deckpilot.scripts` only) and the agent's executor for the run's own
+operations, the projects and the file system. No manifest can declare
+`scripts` yet (part 4), and the agent keeps no scripts yet (P7), so
+nothing changes for an installed plugin. The agent gains the `cap-std` and
+`cap-fs-ext` dependencies (Apache-2.0 WITH LLVM-exception, Apache-2.0 or
+MIT). No IPC protocol, schema, document or export change.
+
+Part 3 adds the agent's executor for processes (`process.run`,
+`shell.run`, `shell.available`) through the tools runner of `tool.run`;
+the runner gains stdin and a stream cap per call, which `tool.run` does
+not use. No IPC protocol, schema, document or export change.
+
+Part 4, the manifest at plugin API 1.13: the validator knows the
+`scripts` permission (`fs`, `process`, `shell`; high tier), the `script`
+parameter kind, the `javascript` language of a `code` parameter, the
+`scripts` view (a host view, with `hostViews`), and the runtime
+constructs `runtime.limits.continuousMs` (250 to 10,000 ms) and
+`runtime.hostCalls` (1 to 4,096). Each needs `^1.13`; all but the
+language are privileged (first-party bundled plugins only), and the
+permission and the runtime constructs are for `deckpilot.scripts` only,
+which cannot also declare `network`, `credentials` or `openUrl`. The
+plugin store records the `scripts` grant and the agent passes it to the
+broker; the supervisor gives `deckpilot.scripts` its deadline and call
+budget (with the poll budget always beside it) and no other plugin a
+budget. Both schema copies change alike. The agent's `PLUGIN_API` stays
+1.11 (P8 moves it to 1.13), so a `^1.13` plugin is `incompatible` until
+then; a `script` parameter has no core kind yet (P7) and its action
+refuses to load as an action type (`javascript` code is the core's text
+`code` kind). No IPC protocol, database, document or
+export change.
 
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
@@ -468,7 +591,9 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | protocol 12 app or agent with a protocol 13 peer (the app's language) | IPC test `a_protocol_12_agent_is_never_told_the_locale`; agent test `a_protocol_12_app_never_sets_the_language` (`tests/locale.rs`); IPC test `the_locale_is_protocol_13_and_only_a_tag` | the client does not send `setLocale` below protocol 13 and refuses it locally; the agent refuses it from an older connection; the status of an older agent has no `locale`; keys and plugin texts stay English; everything else works as before |
 | protocol 13 app or agent with a protocol 14 peer (simulated presses) | IPC test `a_protocol_13_agent_is_never_asked_to_simulate_a_press`; agent test `a_protocol_13_app_cannot_simulate` (`tests/simulate_press.rs`); IPC test `simulated_presses_are_protocol_14`; desktop test `simulated_presses_answer_ran_confirmation_or_refused` | the client does not send `simulatePress` below protocol 14 and refuses it locally (the app answers `refused` with code `unsupported`); the agent refuses it from an older connection; nothing is pressed; everything else works as before |
 | protocol 15 app or agent with a protocol 16 peer (live preview) | IPC test `a_protocol_15_agent_is_never_asked_for_a_live_preview`; agent test `a_protocol_15_connection_cannot_preview` (`tests/live_preview.rs`); IPC test `live_preview_is_protocol_16`; frontend `use-live-preview.test.tsx` | the client does not send the live preview requests below protocol 16 and refuses them locally; the agent refuses them from an older connection; the editor says changes reach the device when saved; everything else works as before |
+| protocol 17 app or agent with a protocol 18 peer (structured variables) | IPC tests `structured_variables_need_protocol_18` (`protocol.rs`) and `a_protocol_17_agent_has_no_structured_variables` (`tests/peers.rs`) | an older app receives structured types as `json` without members or keys, no members-only entries, structured previews as `redacted` and the nearest older missing reasons; nothing it sends changes; a newer app with an older agent sees no repository variables |
 | protocol 18 app or agent with a protocol 19 peer (Calls) | IPC test `a_protocol_18_agent_is_never_asked_about_calls` (`tests/peers.rs`); agent test `a_protocol_18_connection_cannot_ask_about_calls` (`tests/calls.rs`); IPC test `calls_need_protocol_19_and_carry_no_private_text` | the client does not send `getCallsStatus`, `setCallsOverlay` or `restoreCallsLayout` below protocol 19 and refuses them locally; the agent refuses them from an older connection and sends it no `callsChanged`; the app's Calls settings stay hidden; everything else works as before |
+| protocol 18 app or agent with a protocol 20 peer (plugin connections) | IPC tests `a_protocol_18_agent_is_never_sent_a_connection_or_its_token` (`tests/peers.rs`) and `requests_are_checked_and_never_show_the_token` (`connections.rs`) | the client does not send the connection requests below protocol 20 and refuses them locally, so no token leaves the app; the agent refuses them from an older connection; an older app shows no Connections settings; everything else works as before |
 | protocol 16 app or agent with a protocol 17 peer (variables in key titles, key labels) | IPC test `a_protocol_16_agent_is_never_asked_to_resolve_display_templates` (`tests/peers.rs`) | the client does not send `listDisplayVariables` or `resolveDisplayTemplates` below protocol 17 and refuses them locally; the app shows titles resolved by the core alone; labels travel only as optional fields that an older peer ignores; everything else works as before |
 | agent temporarily unavailable | desktop tests (`stopped` state), connect timeouts (`deckpilot-ipc`) | stopped state; no request hangs |
 | agent restarted during a running workflow | agent test `runs_of_a_stopped_agent_are_recorded_as_interrupted` | run recorded as interrupted; history kept |

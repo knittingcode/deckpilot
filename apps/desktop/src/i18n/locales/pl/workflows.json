@@ -217,7 +217,8 @@
       "profile": "Wybierz profil.",
       "resource": "Wprowadź klucz zasobu lub rolę projektu.",
       "json": "Wprowadź prawidłowy JSON.",
-      "credential": "Wybierz zapisane poświadczenie."
+      "credential": "Wybierz zapisane poświadczenie.",
+      "structured": "Wartości złożone dostarcza tylko DeckPilot."
     },
     "shown": {
       "redacted": "Ukryta",
@@ -228,7 +229,8 @@
       "unknownProfile": "Nieznany profil",
       "resource": "Zasób {{key}}",
       "projectRole": "Rola projektu {{role}}",
-      "credential": "Poświadczenie {{name}}"
+      "credential": "Poświadczenie {{name}}",
+      "structured": "Wartość złożona"
     },
     "slot": {
       "global": "Globalnie",

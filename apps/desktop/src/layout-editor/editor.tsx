@@ -76,6 +76,9 @@ import type {
   ActionType,
   BindingTarget,
   ControlId,
+  Gesture,
+  GestureAssignment,
+  GesturePreset,
   DeviceInfo,
   DeviceLayout,
   DeviceModel,
@@ -85,6 +88,7 @@ import type {
   Trigger,
   Workflow,
 } from "@/lib/types"
+import type { LabelBox, LabelPosition } from "@/lib/key-labels"
 
 import { defaultAppearanceOf, effectiveUsage, shownBinding } from "./appearance"
 import type { IconState } from "./icon-library"
@@ -95,7 +99,8 @@ import {
   nextSelection,
 } from "./key-look-context"
 import { LabelOutlines } from "./label-outlines"
-import { labelsOf, placedAt, updateLabel, withLabels } from "./labels"
+import { labelMovedTo, nudge } from "./labels"
+import { useExpectedBoxes } from "./use-expected-boxes"
 import { incompleteAction, missingParameters } from "@/lib/action-completeness"
 import { MAX_DISPLAY_TEMPLATES, resolveDisplayTemplates, shownOnKey } from "@/lib/display-templates"
 import { useDisplayRefresh } from "@/components/variable-picker/use-variables"
@@ -126,7 +131,18 @@ import { Inspector } from "./inspector"
 import { InspectorKeyPreview } from "./key-appearance-editor"
 import { escapeEffect } from "./escape"
 import { LibraryDock } from "./library-dock"
-import { LibraryPanel, type PresetEntry } from "./library-panel"
+import { LibraryPanel, type LibraryGesturePreset, type PresetEntry } from "./library-panel"
+import {
+  applyPreset,
+  gestureList,
+  gesturePresetEntries,
+  planPreset,
+  presetAction,
+  presetGestureLabel,
+  presetName,
+  presetSummary,
+  presetUnavailable,
+} from "./gesture-presets"
 import { useSavedActionTools } from "./saved-actions"
 import { useActionGrants } from "@/plugins/use-action-grants"
 import { dragLook } from "./drag-look"
@@ -296,6 +312,11 @@ export function LayoutEditor({
   // A binding's saved action in the Inspector: Edit (the Action Library's
   // editor, which says when it changes every place) and Usages.
   const savedActionTools = useSavedActionTools({ profileId, view })
+  // Gesture presets of the modules and plugins (layout-editor/gesture-presets.ts).
+  const gesturePresetsById = useMemo(
+    () => new Map(gesturePresetEntries(modules).map((e) => [e.preset.id, e.preset] as const)),
+    [modules],
+  )
   // The profile's other layouts for this model, as "Switch to …" entries.
   const switchType = typeById.get(SWITCH_LAYOUT)
   const presets = useMemo((): PresetEntry[] => {
@@ -498,7 +519,18 @@ export function LayoutEditor({
   const outlined = selection.controls.length === 1 ? selection.controls[0] : undefined
   const outlinedKey = outlined ? controlKey(outlined) : null
   const outlinedBoxes = outlinedKey ? labelBoxes.get(outlinedKey) : undefined
-  const outlinedLabels = outlined ? labelsOf(shownBinding(draft, pageId, outlined)?.appearance) : []
+  // Nudges and drags start from where a label was moved to, until the
+  // renderer's next boxes arrive (as on the Inspector's stage), and each
+  // move changes the key's labels as they are in the latest draft.
+  const outlinedExpected = useExpectedBoxes(outlinedBoxes ?? NO_BOXES)
+  const canvasLabel =
+    outlinedKey && keyLabelsDrawn && outlinedBoxes?.length && labelSelection?.key === outlinedKey
+      ? labelSelection.id
+      : null
+  const moveCanvasLabel = (id: string, position: LabelPosition) => {
+    if (!outlinedKey) return
+    commands.restyle(labelMovedTo(id, position), `label-move:${outlinedKey}:${id}`)
+  }
   const labelOverlays = useMemo(() => {
     const overlays = new Map<string, ReactNode>()
     if (!outlinedKey || !outlinedBoxes?.length || !keyLabelsDrawn) return overlays
@@ -507,25 +539,36 @@ export function LayoutEditor({
       <LabelOutlines
         compact
         boxes={outlinedBoxes}
+        expected={outlinedExpected}
         selected={labelSelection?.key === outlinedKey ? labelSelection.id : null}
         onSelect={(id) => {
           selectLabel(outlinedKey, id)
+          // The arrows then nudge it: the key under the label takes the
+          // focus (a press on an outline does not move it by itself).
+          document
+            .querySelector<HTMLElement>(
+              `[data-slot=device-canvas] [data-control="${CSS.escape(outlinedKey)}"]`,
+            )
+            ?.focus({ preventScroll: true })
         }}
         onEdit={(id) => {
           selectLabel(outlinedKey, id, true)
         }}
-        onMove={(id, position) => {
-          commands.restyle(
-            withLabels(updateLabel(outlinedLabels, id, placedAt(position))),
-            `label-move:${outlinedKey}:${id}`,
-          )
-        }}
+        onMove={moveCanvasLabel}
       />,
     )
     return overlays
-    // `outlinedLabels` changes with the draft; `commands` with the editor.
+    // `commands` changes with the editor; `outlinedExpected.moved` with its boxes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [outlinedKey, outlinedBoxes, keyLabelsDrawn, labelSelection, draft, pageId])
+  }, [
+    outlinedKey,
+    outlinedBoxes,
+    outlinedExpected.boxes,
+    keyLabelsDrawn,
+    labelSelection,
+    draft,
+    pageId,
+  ])
   // Without the Workflows plugin, graph workflows on keys are kept and not
   // run, and read-only here.
   const workflowsActive = useIsPluginActive(WORKFLOWS_PLUGIN)
@@ -572,6 +615,32 @@ export function LayoutEditor({
     presets,
     (id) => typeById.get(id),
   )
+  // Gesture presets in the library: unavailable while an action they need
+  // cannot run, not for the selected control when it cannot take them.
+  const libraryGesturePresets: LibraryGesturePreset[] = [...gesturePresetsById.values()].map(
+    (preset) => {
+      const unavailable = presetUnavailable(modules, preset, (id) => typeById.get(id))
+      const plan = libraryControl
+        ? planPreset({
+            preset,
+            model,
+            layout: draft,
+            pageId,
+            control: libraryControl,
+            typeOf: (id) => typeById.get(id),
+          })
+        : null
+      return {
+        id: preset.id,
+        label: presetName(preset),
+        summary: presetSummary(preset),
+        category: preset.category,
+        icon: preset.icon ?? null,
+        ...(unavailable ? { unavailable } : {}),
+        ...(plan && !plan.ok ? { incompatible: plan.reason } : {}),
+      }
+    },
+  )
 
   /**
    * Why what is dragged cannot be dropped on `control`, in words; `null`
@@ -610,6 +679,14 @@ export function LayoutEditor({
       const type = typeById.get(source.actionType)
       return type ? onKey(type) : null
     }
+    if (source.type === "gesturePreset") {
+      const preset = gesturePresetsById.get(source.preset)
+      if (!preset) return t("editor:gesturePreset.unknownAction")
+      const unavailable = presetUnavailable(modules, preset, (id) => typeById.get(id))
+      if (unavailable) return unavailable
+      const plan = planPreset({ ...presetContext(control), preset })
+      return plan.ok ? null : plan.reason
+    }
     if (source.type === "target") {
       // A stateful key (the Work Session controller) needs gestures: it
       // goes on a gesture card in the Inspector.
@@ -643,6 +720,10 @@ export function LayoutEditor({
       return { item: targetLabel(source.target, actions, workflows, draft) }
     }
     if (source?.type === "control") return { item: controlLabel(source.control) }
+    if (source?.type === "gesturePreset") {
+      const preset = gesturePresetsById.get(source.preset)
+      return { item: preset ? presetName(preset) : source.name }
+    }
     return "this"
   }
   /** "… cannot go on <control>. <why>", for the announcement. */
@@ -743,7 +824,115 @@ export function LayoutEditor({
 
   const placeType = async (typeId: string, control: ControlId, preset?: ActionPreset) => {
     const target = await actionOfType(typeId, preset)
-    if (target) commands.drop({ type: "target", target }, control)
+    // On the latest draft: edits made while the action was being created stay.
+    if (target) commands.dropLater({ type: "target", target }, control)
+  }
+
+  /** What planning a gesture preset for `control` reads of the editor. */
+  const presetContext = (control: ControlId) => ({
+    model,
+    layout: draft,
+    pageId,
+    control,
+    typeOf: (id: string) => typeById.get(id),
+  })
+
+  /**
+   * The actions `assignments` of `preset` stand for, in order: the
+   * profile's that are exactly them, else new ones saved to the profile
+   * (a key can only run a saved action). `null`, with the reason shown,
+   * when one cannot be made: then nothing is put anywhere.
+   */
+  const presetTargets = async (
+    preset: GesturePreset,
+    assignments: GestureAssignment[],
+    control: ControlId,
+  ): Promise<BindingTarget[] | null> => {
+    const targets: BindingTarget[] = []
+    let known = actions
+    let made = false
+    try {
+      for (const assignment of assignments) {
+        const type = typeById.get(assignment.action)
+        if (!type) throw new Error(t("editor:gesturePreset.unknownAction"))
+        const found = presetAction(known, preset, assignment, type)
+        let action: ActionInstance
+        if ("existing" in found) {
+          action = found.existing
+        } else {
+          action = await api.createAction(profileId, found.input)
+          const fresh = action
+          known = [...known, fresh]
+          made = true
+          setCreated((current) => [...current, fresh])
+        }
+        targets.push({ type: "action", action: action.id })
+      }
+      return targets
+    } catch (e) {
+      toast.error(
+        t("editor:gesturePreset.failed", {
+          name: presetName(preset),
+          control: controlLabel(control),
+        }),
+        { description: errorMessage(e) },
+      )
+      return null
+    } finally {
+      if (made) refresh()
+    }
+  }
+
+  /**
+   * Puts a gesture preset on `control`: every gesture the control takes,
+   * as one change of the draft (one undo step), or nothing. Its look is
+   * kept; only the gestures the preset declares change.
+   */
+  const placeGesturePreset = async (id: string, control: ControlId) => {
+    const preset = gesturePresetsById.get(id)
+    if (!preset) return
+    const plan = planPreset({ ...presetContext(control), preset })
+    if (!plan.ok) {
+      reject(control, { type: "gesturePreset", preset: id, name: presetName(preset) }, plan.reason)
+      return
+    }
+    const targets = await presetTargets(
+      preset,
+      plan.items.map((item) => item.assignment),
+      control,
+    )
+    if (!targets) return
+    // Applied to the latest draft: edits made while the actions were being
+    // created stay. The preset is planned again there and applied only if
+    // the control still takes the same gestures; otherwise nothing changes.
+    const planned = plan.items.map((item) => `${item.assignment.gesture}:${item.trigger.type}`)
+    commands.update((latest) => {
+      const again = planPreset({ ...presetContext(control), layout: latest, preset })
+      if (!again.ok) return latest
+      const same =
+        again.items.length === planned.length &&
+        again.items.every(
+          (item, index) => `${item.assignment.gesture}:${item.trigger.type}` === planned[index],
+        )
+      return same
+        ? applyPreset(latest, pageId, control, again, targets, presetName(preset))
+        : latest
+    })
+    commands.select(control, "only")
+    if (plan.skipped.length > 0) {
+      toast.warning(
+        t("editor:gesturePreset.applied", {
+          name: presetName(preset),
+          control: controlLabel(control),
+        }),
+        {
+          description: t("editor:gesturePreset.skipped", {
+            control: controlLabel(control),
+            gestures: gestureList(plan.skipped.map((s) => s.gesture)),
+          }),
+        },
+      )
+    }
   }
 
   /**
@@ -854,8 +1043,12 @@ export function LayoutEditor({
    * or a page as it is, an action type as its action. Keys and "New
    * folder" belong on keys.
    */
-  const resolveSlotDrop = async (dragged: unknown): Promise<BindingTarget | null> => {
+  const resolveSlotDrop = async (
+    dragged: unknown,
+    gesture: Gesture | "release",
+  ): Promise<BindingTarget | null> => {
     const source = dragged as DragSource | undefined
+    if (source?.type === "gesturePreset") return presetGestureTarget(source.preset, gesture)
     if (source?.type === "actionType") return actionOfType(source.actionType, source.preset)
     if (source?.type === "newMultiAction") return multiAction()
     if (source?.type === "target") {
@@ -866,6 +1059,38 @@ export function LayoutEditor({
       description: t("editor:shell.gestureDrop.description"),
     })
     return null
+  }
+
+  /**
+   * What a gesture preset dropped on one gesture's card assigns: that
+   * gesture's action only, created or reused; refused when the preset has
+   * nothing for the gesture. The card then assigns it as any action.
+   */
+  const presetGestureTarget = async (
+    id: string,
+    gesture: Gesture | "release",
+  ): Promise<BindingTarget | null> => {
+    const preset = gesturePresetsById.get(id)
+    const control = selection.focus
+    if (!preset || !control) return null
+    const assignment = preset.gestures.find((a) => a.gesture === gesture)
+    const why = !assignment
+      ? t("editor:gesturePreset.noGestureDetail")
+      : presetUnavailable(modules, { ...preset, gestures: [assignment] }, (type) =>
+          typeById.get(type),
+        )
+    if (!assignment || why) {
+      toast.error(
+        t("editor:gesturePreset.noGesture", {
+          name: presetName(preset),
+          gesture: presetGestureLabel(gesture).toLowerCase(),
+        }),
+        { description: why ?? undefined },
+      )
+      return null
+    }
+    const targets = await presetTargets(preset, [assignment], control)
+    return targets?.[0] ?? null
   }
 
   useEffect(() => {
@@ -977,12 +1202,34 @@ export function LayoutEditor({
       return
     }
     if (source.type === "actionType") void placeType(source.actionType, target, source.preset)
+    else if (source.type === "gesturePreset") void placeGesturePreset(source.preset, target)
     else if (source.type === "newMultiAction") void placeMultiAction(target)
     else commands.drop(source, target)
   }
 
   const onControlKeyDown = (event: KeyboardEvent<HTMLButtonElement>, control: ControlId) => {
     const mod = IS_MAC ? event.metaKey : event.ctrlKey
+    // A label selected on the key: the arrows nudge it (Shift: by 5 units)
+    // instead of moving the key selection, and Escape lets go of it, so
+    // the arrows move between the keys again.
+    if (canvasLabel && outlinedKey === controlKey(control)) {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        event.stopPropagation()
+        selectLabel(outlinedKey, null)
+        return
+      }
+      if (
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        nudge(event, outlinedExpected.boxes, canvasLabel, (id, position) => {
+          moveCanvasLabel(id, position)
+          outlinedExpected.moved(id, position)
+        })
+      )
+        return
+    }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault()
       if (selected.length > 0) commands.clear()
@@ -1400,7 +1647,12 @@ export function LayoutEditor({
                   summaries={summaries}
                   selection={selection.controls}
                   focused={selection.focus}
-                  onSelect={commands.select}
+                  onSelect={(control, mode) => {
+                    // A key chosen (not one of its labels): its labels let go
+                    // of the selection, and the arrows move between keys.
+                    if (labelSelection?.id) selectLabel(labelSelection.key, null)
+                    commands.select(control, mode)
+                  }}
                   onOpen={navigate}
                   onControlKeyDown={onControlKeyDown}
                   droppable
@@ -1643,6 +1895,7 @@ export function LayoutEditor({
               .filter((group) => group.entries.length > 0)}
             presets={keyLib.presets}
             displays={{ options: [], catalog: keyLib.displays.catalog.map(withGrant) }}
+            gesturePresets={libraryGesturePresets}
             multiAction
             variant="plain"
             compatibility={{
@@ -1775,3 +2028,5 @@ function useResolvedTitles(
 }
 
 const EMPTY_TITLES = new Map<string, string>()
+/** A key without label boxes (stable, for `useExpectedBoxes`). */
+const NO_BOXES: LabelBox[] = []

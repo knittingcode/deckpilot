@@ -214,6 +214,94 @@ pub fn action_entries(
         .collect()
 }
 
+/// The gesture presets of `manifest` (plugin API 1.10,
+/// `contributes.gesturePresets`) as the core's: ids and actions prefixed
+/// with the plugin id, texts as the manifest has them (the caller passes
+/// the manifest in the app's language). A preset the core would refuse
+/// for the plugin's action types (`GesturePreset::check`) is left out with
+/// a warning, so it never keeps the plugin's actions from registering.
+/// Presets grant nothing: every action they name keeps its own checks.
+pub fn gesture_presets(manifest: &Manifest) -> Vec<deckpilot_core::GesturePreset> {
+    let plugin = manifest.id.to_string();
+    let Ok(module) = deckpilot_core::ModuleId::new(plugin.clone()) else {
+        return Vec::new();
+    };
+    let types: Vec<deckpilot_core::ActionType> = manifest
+        .contributes
+        .actions()
+        .iter()
+        .filter_map(|action| super::engine::action_type(&plugin, action).ok())
+        .collect();
+    let icon = |action: &str| {
+        types
+            .iter()
+            .find(|t| t.id.as_str() == action)
+            .and_then(|t| t.node.icon.clone())
+    };
+    manifest
+        .contributes
+        .gesture_presets()
+        .iter()
+        .filter_map(|declared| {
+            let converted = core_preset(&plugin, declared);
+            let preset = match converted {
+                Ok(mut preset) => {
+                    preset.icon = preset
+                        .gestures
+                        .first()
+                        .and_then(|g| icon(g.action.as_str()));
+                    preset
+                }
+                Err(problem) => {
+                    tracing::warn!(%plugin, preset = %declared.id, %problem,
+                        "a gesture preset cannot be offered");
+                    return None;
+                }
+            };
+            if let Err(issues) = preset.check(&module, &types) {
+                tracing::warn!(%plugin, preset = %declared.id, ?issues,
+                    "a gesture preset cannot be offered");
+                return None;
+            }
+            Some(preset)
+        })
+        .collect()
+}
+
+fn core_preset(
+    plugin: &str,
+    declared: &deckpilot_plugin_manifest::GesturePreset,
+) -> Result<deckpilot_core::GesturePreset, String> {
+    let gestures = declared
+        .gestures
+        .iter()
+        .map(|g| {
+            let gesture = serde_json::from_value(serde_json::Value::String(g.gesture.clone()))
+                .map_err(|e| format!("gesture `{}`: {e}", g.gesture))?;
+            let parameters = serde_json::to_value(g.parameters.clone().unwrap_or_default())
+                .and_then(serde_json::from_value)
+                .map_err(|e| format!("parameters: {e}"))?;
+            Ok(deckpilot_core::GestureAssignment {
+                gesture,
+                action: deckpilot_core::ActionTypeId::new(format!("{plugin}.{}", g.action))
+                    .map_err(|e| e.to_string())?,
+                parameters,
+                label: g.label.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(deckpilot_core::GesturePreset {
+        id: deckpilot_core::GesturePresetId::new(format!("{plugin}.{}", declared.id))
+            .map_err(|e| e.to_string())?,
+        name: declared.name.clone(),
+        description: declared.description.clone().unwrap_or_default(),
+        category: declared.category.clone(),
+        icon: None,
+        allow_partial: declared.allow_partial.unwrap_or(false),
+        gestures,
+    })
+}
+
 pub fn summary(record: &PluginRecord, stored: &[StoredGrant]) -> ipc::PluginSummary {
     let active = record.active();
     let manifest = active.map(|v| &v.manifest);
@@ -257,6 +345,9 @@ pub fn summary(record: &PluginRecord, stored: &[StoredGrant]) -> ipc::PluginSumm
             .filter(|_| enabled)
             .map(|m| names(m.contributes.dashboard_cards()))
             .unwrap_or_default(),
+        // Whatever the plugin's state, like its actions: the app shows them
+        // unavailable while the actions cannot run.
+        gesture_presets: manifest.map(gesture_presets).unwrap_or_default(),
     }
 }
 
@@ -731,7 +822,7 @@ pub fn params(values: &BTreeMap<String, serde_json::Value>) -> Result<Params, St
         .collect()
 }
 
-fn json(value: &ParamValue) -> serde_json::Value {
+pub(super) fn json(value: &ParamValue) -> serde_json::Value {
     match value {
         ParamValue::Bool(b) => serde_json::Value::Bool(*b),
         ParamValue::Integer(i) => serde_json::Value::from(*i),
@@ -833,10 +924,16 @@ pub fn approved_with(
                 PermissionKind::Tools
                 | PermissionKind::Resources
                 | PermissionKind::ProjectContext
-                | PermissionKind::Profile,
+                | PermissionKind::Profile
+                | PermissionKind::Scripts
+                // Plugin API 1.14: passed as the user's connections
+                // themselves (`connections.rs`), each within these grants.
+                | PermissionKind::Connections,
                 _,
             )
             | (PermissionKind::OpenUrl, GrantScope::OpenUrlFromParams) => {}
+            (PermissionKind::OpenUrl, GrantScope::OpenUrl)
+                if key.key == deckpilot_plugin_store::OPEN_URL_CONNECTIONS_KEY => {}
             (PermissionKind::Network, GrantScope::Host { methods }) => match origin_of(&key.key) {
                 Some(origin) => out.push(ApprovedPermission::Network {
                     origin,
@@ -920,6 +1017,16 @@ fn privileged(effective: &[(GrantKey, GrantScope)]) -> Vec<ApprovedPermission> {
     }
     if has(&GrantScope::OpenUrlFromParams) {
         out.push(ApprovedPermission::OpenUrlFromParams {});
+    }
+    // Plugin API 1.13: the Scripts bridge's ceiling.
+    for (_, scope) in effective {
+        if let GrantScope::Scripts { fs, process, shell } = scope {
+            out.push(ApprovedPermission::Scripts {
+                fs: *fs,
+                process: *process,
+                shell: *shell,
+            });
+        }
     }
     if has(&GrantScope::ProjectRead) {
         out.push(ApprovedPermission::ProjectContext {
@@ -1008,6 +1115,66 @@ mod tests {
         assert_eq!(icon_chunk_of(&png, &expected, 1), None);
         assert_eq!(icon_chunk_of(&png, &expected, png.len() as u64), None);
         assert_eq!(icon_chunk_of(&png, &digest(b"other"), 0), None);
+    }
+
+    /// Plugin API 1.10: the manifest's gesture presets become the core's,
+    /// in the plugin's namespace, over its own actions; one the core would
+    /// refuse is left out instead of keeping the plugin from registering.
+    #[test]
+    fn gesture_presets_become_the_cores() {
+        let mut value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../plugins/examples/hello-weather/manifest.json"
+        ))
+        .unwrap();
+        value["engines"]["pluginApi"] = serde_json::json!("^1.10");
+        let greet = |style: &str| serde_json::json!({ "type": "text", "value": style });
+        value["contributes"]["gesturePresets"] = serde_json::json!([
+            {
+                "id": "greetings",
+                "name": "Greetings",
+                "category": "Weather",
+                "allowPartial": true,
+                "gestures": [
+                    { "gesture": "click", "action": "greet",
+                      "parameters": { "name": greet("Ada") }, "label": "Greet Ada" },
+                    { "gesture": "longPress", "action": "greet",
+                      "parameters": { "name": greet("Bob"),
+                                      "style": { "type": "choice", "value": "excited" } },
+                      "label": "Greet Bob loudly" }
+                ]
+            }
+        ]);
+        let manifest = Manifest::parse_and_validate(&value.to_string()).unwrap();
+        let presets = gesture_presets(&manifest);
+        assert_eq!(presets.len(), 1);
+        let preset = &presets[0];
+        assert_eq!(preset.id.as_str(), "acme.hello-weather.greetings");
+        assert!(preset.allow_partial);
+        assert_eq!(
+            preset.gestures[0].gesture,
+            deckpilot_core::PresetGesture::Click
+        );
+        assert_eq!(
+            preset.gestures[1].action.as_str(),
+            "acme.hello-weather.greet"
+        );
+        assert_eq!(
+            preset.gestures[1].parameters.get("style"),
+            Some(&deckpilot_core::ParameterValue::Choice("excited".into()))
+        );
+        // Not validated (an older agent's record, say): a preset the core
+        // refuses is dropped, the plugin's actions are not affected.
+        value["contributes"]["gesturePresets"][0]["gestures"][0]["parameters"] =
+            serde_json::json!({});
+        let unchecked = Manifest::from_json(&value.to_string()).unwrap();
+        assert_eq!(gesture_presets(&unchecked), Vec::new());
+        // Without presets: none.
+        value["contributes"]
+            .as_object_mut()
+            .unwrap()
+            .remove("gesturePresets");
+        let plain = Manifest::from_json(&value.to_string()).unwrap();
+        assert_eq!(gesture_presets(&plain), Vec::new());
     }
 
     /// A plugin API 1.3 manifest with two navigation entries: one with a
