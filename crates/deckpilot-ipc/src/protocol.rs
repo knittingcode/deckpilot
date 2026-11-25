@@ -26,8 +26,8 @@ use deckpilot_core::{
 use deckpilot_device::{ConnectionState, ControlId, ControlInput, DeviceDescriptor, DeviceId};
 
 use crate::plugin_dialogs::check_answer_ids;
-use crate::plugins;
 use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessionSummary};
+use crate::{connections, plugins};
 
 /// Protocol spoken by this build.
 ///
@@ -173,7 +173,39 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// Also version 17: key labels (capability `keyLabels`). Labels travel in
 /// layouts (`KeyAppearance.labels`) and faces (`KeyFace.labels`), optional
 /// fields older peers ignore; no request changes.
-pub const PROTOCOL_VERSION: u32 = 17;
+///
+/// Version 18: structured variables (capability `structuredVariables`,
+/// `docs/variables.md` §2.8): a project's repositories
+/// (`projects.current.repositories`, `map<repository>`) and its default
+/// repository (`projects.current.repository`, `object<repository>`), read
+/// member by member (`….repositories.cms.name`). `CatalogEntry.valueType`
+/// may be `object` or `map` with its shape, with the shape's `members`
+/// and, for a map, its keys in the context's project (`mapKeys`). Each
+/// structured variable is listed once: a client composes the member
+/// references (`<reference>.<key>.<member>`,
+/// `deckpilot_core::variables::expand_members`), so a catalog grows by one
+/// key per repository and fits one message. The title picker's catalog
+/// lists a structured variable for its display-safe members only
+/// (`membersOnly`). Previews summarise a whole structured value
+/// (`structured`: how many objects, never a member); the reasons
+/// `unknownMember`, `repositoryNotInProject` and `noDefaultRepository` are
+/// new. A client of protocol 17 or older receives structured types as
+/// `json` without members or keys, no members-only entries, a structured
+/// preview as `redacted` JSON and the nearest older reason
+/// ([`Response::for_protocol`]); no request changes.
+///
+/// Version 20 (19 is the Calls event's): plugin connections (capability
+/// `pluginConnections`, [`crate::connections`], plugin API 1.14):
+/// `listPluginConnections`, `createPluginConnection`,
+/// `setPluginConnectionSecret`, `updatePluginConnection`,
+/// `testPluginConnection` and `removePluginConnection`. A token goes from
+/// the app to the agent only; no answer carries one. A client of protocol
+/// 19 or older never sends them (refused locally, and by the agent from
+/// such a connection); nothing older clients receive changes.
+pub const PROTOCOL_VERSION: u32 = CONNECTIONS_PROTOCOL;
+
+/// The protocol of plugin connections ([`Capability::PluginConnections`]).
+pub const CONNECTIONS_PROTOCOL: u32 = 20;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -365,10 +397,19 @@ pub enum Capability {
     /// still saved) and the editor says the agent needs an update.
     /// Protocol 17.
     KeyLabels,
+    /// Structured variables: `object` and `map` value types with their
+    /// members, member entries in catalogs, `structured` previews.
+    /// Protocol 18.
+    StructuredVariables,
+    /// Plugin connections (plugin API 1.14): `listPluginConnections` and
+    /// the requests that create, test and remove them. Without it the app
+    /// shows no Connections settings. Protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    PluginConnections,
 }
 
 impl Capability {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -387,6 +428,8 @@ impl Capability {
         Self::LivePreview,
         Self::DisplayTemplates,
         Self::KeyLabels,
+        Self::StructuredVariables,
+        Self::PluginConnections,
     ];
 
     /// The protocol that introduced the capability.
@@ -408,6 +451,8 @@ impl Capability {
             Self::RestoreBundled => 15,
             Self::LivePreview => 16,
             Self::DisplayTemplates | Self::KeyLabels => 17,
+            Self::StructuredVariables => 18,
+            Self::PluginConnections => CONNECTIONS_PROTOCOL,
         }
     }
 
@@ -903,6 +948,73 @@ pub enum Request {
         plugin: String,
         setting: String,
     },
+    /// A plugin's connections and the connection types it declares (plugin
+    /// API 1.14). Answers `pluginConnections`. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    ListPluginConnections {
+        plugin: String,
+    },
+    /// Creates a connection: the user's consent to exactly the server
+    /// `url` names (the address they open in the browser; ignored for the
+    /// cloud), and, only with `private_network`, to reach it on a private
+    /// network. It reads until `allow_changes`. `secret`, the token, is
+    /// stored with it and never sent back. Answers `pluginConnection`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`].
+    #[serde(rename_all = "camelCase")]
+    CreatePluginConnection {
+        plugin: String,
+        connection_type: String,
+        deployment: connections::ConnectionDeployment,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        display_name: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        allow_changes: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        private_network: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<plugins::PluginSecret>,
+    },
+    /// Stores (or replaces: reconnect) a connection's token; the id,
+    /// consent and references stay, and it is untested again. Answers
+    /// `pluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
+    SetPluginConnectionSecret {
+        plugin: String,
+        connection: String,
+        secret: plugins::PluginSecret,
+    },
+    /// Renames a connection, turns it off or on, lets it make changes or
+    /// only read, or makes it the default of its type. The server cannot
+    /// change: that is a new connection. Answers `pluginConnection`. Since
+    /// protocol [`CONNECTIONS_PROTOCOL`].
+    #[serde(rename_all = "camelCase")]
+    UpdatePluginConnection {
+        plugin: String,
+        connection: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allow_changes: Option<bool>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        make_default: bool,
+    },
+    /// Tests a connection: the plugin checks the server and the token, and
+    /// the state, account and capabilities it found are stored. Answers
+    /// `pluginConnectionTested` once the plugin is done. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    TestPluginConnection {
+        plugin: String,
+        connection: String,
+    },
+    /// Deletes a connection and its token. Saved actions that name it stay
+    /// as they are and show it as removed. Answers `pluginConnections`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`].
+    RemovePluginConnection {
+        plugin: String,
+        connection: String,
+    },
     /// Answers a plugin dialog this connection received
     /// ([`plugins::PluginEvent::DialogOpened`]). Only on a connection that
     /// announced [`plugin_dialogs::FEATURE`](crate::plugin_dialogs::FEATURE);
@@ -1102,6 +1214,12 @@ impl Request {
             | Self::InstallPluginPlan { .. }
             | Self::PlanPluginRemoval { .. }
             | Self::RemovePlugin { .. } => plugins::check_request(self),
+            Self::ListPluginConnections { .. }
+            | Self::CreatePluginConnection { .. }
+            | Self::SetPluginConnectionSecret { .. }
+            | Self::UpdatePluginConnection { .. }
+            | Self::TestPluginConnection { .. }
+            | Self::RemovePluginConnection { .. } => connections::check_request(self),
             Self::InstallPlugin { source, consent } => {
                 source.check()?;
                 plugins::check_consent(consent)
@@ -1428,6 +1546,25 @@ pub enum Response {
         plugin: String,
         credentials: Vec<plugins::PluginCredentialSlot>,
     },
+    /// Answer to `listPluginConnections` and `removePluginConnection`.
+    /// Never a secret. Since protocol [`CONNECTIONS_PROTOCOL`].
+    PluginConnections {
+        connections: Box<connections::PluginConnections>,
+    },
+    /// Answer to `createPluginConnection`, `setPluginConnectionSecret` and
+    /// `updatePluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
+    PluginConnection {
+        plugin: String,
+        connection: Box<connections::PluginConnection>,
+    },
+    /// Answer to `testPluginConnection`: the connection as it stands after
+    /// the test, and what the test found. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    PluginConnectionTested {
+        plugin: String,
+        connection: Box<connections::PluginConnection>,
+        outcome: connections::ConnectionTestOutcome,
+    },
     /// Answer to `listModuleMigrations`. Since protocol 10.
     ModuleMigrations {
         migrations: Vec<plugins::ModuleMigrationInfo>,
@@ -1474,6 +1611,9 @@ impl Response {
     /// variable registry (before protocol 9).
     #[must_use]
     pub fn for_protocol(mut self, protocol: u32) -> Self {
+        if protocol < 18 {
+            self = self.without_structured(protocol);
+        }
         if protocol < 10 {
             self = self.without_plugins();
         }
@@ -1546,6 +1686,48 @@ impl Response {
                     })
                     .collect(),
             },
+            other => other,
+        }
+    }
+
+    /// Nothing of structured variables (protocol 18) for an older client:
+    /// structured types as `json` without members, no member entries,
+    /// structured previews as redacted JSON, and the nearest older reasons
+    /// where a reference is missing or unresolved on a key.
+    fn without_structured(self, protocol: u32) -> Self {
+        use deckpilot_core::variables::UnresolvedReason;
+        match self {
+            Self::Variables { entries } => Self::Variables {
+                entries: entries
+                    .into_iter()
+                    .filter_map(|entry| entry.for_protocol(protocol))
+                    .collect(),
+            },
+            Self::ReferencePreviews { previews } => Self::ReferencePreviews {
+                previews: previews
+                    .into_iter()
+                    .map(|preview| ReferencePreview {
+                        status: preview.status.for_protocol(protocol),
+                        ..preview
+                    })
+                    .collect(),
+            },
+            Self::DisplayTemplates { mut texts } => {
+                for text in &mut texts {
+                    for unresolved in &mut text.display.unresolved {
+                        unresolved.reason = match unresolved.reason.clone() {
+                            UnresolvedReason::Missing { missing } => UnresolvedReason::Missing {
+                                missing: missing.for_protocol(protocol),
+                            },
+                            UnresolvedReason::NotText { found } => UnresolvedReason::NotText {
+                                found: found.for_protocol(protocol),
+                            },
+                            other => other,
+                        };
+                    }
+                }
+                Self::DisplayTemplates { texts }
+            }
             other => other,
         }
     }
@@ -1772,6 +1954,12 @@ impl Request {
             | Self::EndLivePreview { .. }
             | Self::InspectMockDevice { .. } => 16,
             Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
+            Self::ListPluginConnections { .. }
+            | Self::CreatePluginConnection { .. }
+            | Self::SetPluginConnectionSecret { .. }
+            | Self::UpdatePluginConnection { .. }
+            | Self::TestPluginConnection { .. }
+            | Self::RemovePluginConnection { .. } => CONNECTIONS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices
@@ -2445,6 +2633,10 @@ mod tests {
                 read_only: true,
                 deprecated: None,
                 declared_scope: None,
+                members: Vec::new(),
+                map_keys: Vec::new(),
+                members_only: false,
+                member_of: None,
             }
         };
         let builtin = entry("projects");
@@ -2572,6 +2764,160 @@ mod tests {
         );
     }
 
+    /// Protocol 18: structured variables reach only clients that know
+    /// them; an older client gets `json` without members, no member
+    /// entries, a redacted preview and the nearest older reasons.
+    #[test]
+    #[allow(clippy::too_many_lines)] // one response of each kind
+    fn structured_variables_need_protocol_18() {
+        use deckpilot_core::variables::{
+            CatalogEntry, CatalogMember, DisplayText, MissingReason, ReferenceAvailability,
+            ReferencePreview, ReferenceStatus, Shape, UnresolvedReason, UnresolvedReference,
+            ValueSource, VariableGroup, VariableRef, VariableType,
+        };
+        assert!(!Capability::of_protocol(17).contains(&Capability::StructuredVariables));
+        assert!(Capability::of_protocol(18).contains(&Capability::StructuredVariables));
+        assert_eq!(
+            serde_json::to_value(Capability::StructuredVariables).unwrap(),
+            "structuredVariables"
+        );
+        let map = VariableType::Map {
+            of: Shape::Repository,
+        };
+        let entry = |reference: &str, value_type, member_of: Option<&str>| CatalogEntry {
+            reference: VariableRef::parse(reference).unwrap(),
+            label: reference.into(),
+            description: String::new(),
+            group: VariableGroup::Module,
+            value_type,
+            scope: None,
+            module: None,
+            sensitive: false,
+            dynamic: true,
+            availability: ReferenceAvailability::Available,
+            owner: None,
+            read_only: true,
+            deprecated: None,
+            declared_scope: None,
+            members: if member_of.is_none() {
+                CatalogMember::of(Shape::Repository)
+            } else {
+                Vec::new()
+            },
+            map_keys: Vec::new(),
+            members_only: false,
+            member_of: member_of.map(str::to_owned),
+        };
+        let repositories = "projects.current.repositories";
+        let variables = Response::Variables {
+            entries: vec![
+                // The configuration catalog's form: members and keys once.
+                CatalogEntry {
+                    map_keys: vec!["cms".into(), "api".into()],
+                    ..entry(repositories, map, None)
+                },
+                // The title picker's: for its members only.
+                CatalogEntry {
+                    map_keys: vec!["cms".into()],
+                    members_only: true,
+                    ..entry("projects.current.repository", map, None)
+                },
+                // Never sent by an agent; a client composes it.
+                entry(
+                    "projects.current.repositories.cms.name",
+                    VariableType::String,
+                    Some(repositories),
+                ),
+            ],
+        };
+        let json = serde_json::to_value(variables.clone().for_protocol(18)).unwrap();
+        assert_eq!(
+            json["entries"][0]["valueType"],
+            serde_json::json!({"type": "map", "of": "repository"})
+        );
+        assert_eq!(json["entries"][0]["members"][0]["path"], "id");
+        assert_eq!(
+            json["entries"][0]["mapKeys"],
+            serde_json::json!(["cms", "api"])
+        );
+        assert!(json["entries"][0].get("membersOnly").is_none());
+        assert_eq!(json["entries"][1]["membersOnly"], true);
+        assert_eq!(json["entries"][2]["memberOf"], repositories);
+        let Response::Variables { entries } = variables.for_protocol(17) else {
+            panic!("variables");
+        };
+        // Protocol 17: the map as JSON, without members or keys; the
+        // members-only entry and the member entry left out.
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].value_type, VariableType::Json);
+        assert_eq!(entries[0].members, Vec::new());
+        let json = serde_json::to_value(&entries[0]).unwrap();
+        for field in ["members", "mapKeys", "membersOnly", "memberOf"] {
+            assert!(json.get(field).is_none(), "{field}");
+        }
+
+        let previews = Response::ReferencePreviews {
+            previews: vec![
+                ReferencePreview {
+                    reference: repositories.into(),
+                    status: ReferenceStatus::Structured {
+                        value_type: map,
+                        entries: 2,
+                        source: ValueSource::System,
+                    },
+                },
+                ReferencePreview {
+                    reference: "projects.current.repository.name".into(),
+                    status: ReferenceStatus::Missing {
+                        reason: MissingReason::NoDefaultRepository,
+                    },
+                },
+            ],
+        };
+        let Response::ReferencePreviews { previews } = previews.for_protocol(17) else {
+            panic!("previews");
+        };
+        assert_eq!(
+            previews[0].status,
+            ReferenceStatus::Redacted {
+                value_type: VariableType::Json,
+                source: ValueSource::System,
+            }
+        );
+        assert_eq!(
+            previews[1].status,
+            ReferenceStatus::Missing {
+                reason: MissingReason::NoValue
+            }
+        );
+
+        let shown = Response::DisplayTemplates {
+            texts: vec![crate::display_templates::ResolvedDisplayTemplate {
+                template: "{{ projects.current.repositories.web.name }}".into(),
+                display: DisplayText {
+                    text: "-".into(),
+                    unresolved: vec![UnresolvedReference {
+                        reference: "projects.current.repositories.web.name".into(),
+                        reason: UnresolvedReason::Missing {
+                            missing: MissingReason::RepositoryNotInProject,
+                        },
+                    }],
+                    ..DisplayText::default()
+                },
+            }],
+        };
+        let Response::DisplayTemplates { texts } = shown.clone().for_protocol(17) else {
+            panic!("texts");
+        };
+        assert_eq!(
+            texts[0].display.unresolved[0].reason,
+            UnresolvedReason::Missing {
+                missing: MissingReason::NoValue
+            }
+        );
+        assert_eq!(shown.clone().for_protocol(18), shown);
+    }
+
     #[test]
     fn the_variable_registry_needs_protocol_9() {
         use deckpilot_core::variables::{
@@ -2584,7 +2930,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 17);
+        assert_eq!(PROTOCOL_VERSION, 20);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),
@@ -2606,6 +2952,10 @@ mod tests {
                 since: "0.6.0".into(),
             }),
             declared_scope: Some(deckpilot_core::variables::DeclaredScope::Project),
+            members: Vec::new(),
+            map_keys: Vec::new(),
+            members_only: false,
+            member_of: None,
         };
         let canonical = CatalogEntry {
             reference: VariableRef::parse("projects.current.key").unwrap(),

@@ -78,6 +78,32 @@ struct Args {
     usb: bool,
     level: LevelFilter,
     plugins: deckpilot_agent::plugins::PluginSettings,
+    /// Test only (feature `test-hooks`): Calls with the mock provider in a
+    /// meeting from the start, and "Back to work" with these parameters.
+    #[cfg(feature = "test-hooks")]
+    calls_mock: Option<deckpilot_core::ActionParameters>,
+}
+
+/// Test only (feature `test-hooks`): `--test-calls-mock <mode>` installs
+/// Calls with the mock provider (`deckpilot-calls::testing`), already in a
+/// meeting, so that an end-to-end test of a spawned agent can go "back to
+/// work" and follow a real plugin action to its end. `<mode>` is the "Back
+/// to work" mode: `completion` (mode B) or `default` (mode C). A build
+/// without `test-hooks` has neither the option nor the mock
+/// (`tests/plugins_feature.rs`). Headless only.
+#[cfg(feature = "test-hooks")]
+const TEST_CALLS_MOCK: &str = "--test-calls-mock";
+
+#[cfg(feature = "test-hooks")]
+fn calls_mock_back(mode: Option<&str>) -> Result<deckpilot_core::ActionParameters, String> {
+    use deckpilot_core::{ActionParameters, ParameterValue};
+    match mode {
+        Some("completion") => {
+            Ok(ActionParameters::new().with("mode", ParameterValue::Choice("completion".into())))
+        }
+        Some("default") => Ok(ActionParameters::new()),
+        _ => Err(format!("{TEST_CALLS_MOCK} needs completion or default")),
+    }
 }
 
 fn mock_models(list: &str) -> Result<Vec<DeviceModel>, String> {
@@ -127,6 +153,8 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
         usb: true,
         level: LevelFilter::INFO,
         plugins: deckpilot_agent::plugins::PluginSettings::from_env(),
+        #[cfg(feature = "test-hooks")]
+        calls_mock: None,
     };
     let path = |args: &mut ArgIter, name: &str| {
         args.next()
@@ -203,6 +231,11 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
                 println!("{USAGE}");
                 return Err(ExitCode::SUCCESS);
             }
+            #[cfg(feature = "test-hooks")]
+            TEST_CALLS_MOCK => match calls_mock_back(args.next().as_deref()) {
+                Ok(back) => parsed.calls_mock = Some(back),
+                Err(message) => return Ok(Err(message)),
+            },
             "autostart" => return Err(autostart_command(args.next().as_deref())),
             other => return Ok(Err(format!("unknown argument `{other}`"))),
         }
@@ -306,6 +339,13 @@ fn main() -> ExitCode {
         }
     };
     let options = default_options(paths, &args.mock_models, args.usb);
+    #[cfg(feature = "test-hooks")]
+    if args.calls_mock.is_some() && !args.headless {
+        eprintln!("{TEST_CALLS_MOCK} needs --headless");
+        return ExitCode::from(2);
+    }
+    #[cfg(feature = "test-hooks")]
+    let calls_mock = args.calls_mock;
 
     if args.headless {
         let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -322,6 +362,17 @@ fn main() -> ExitCode {
         let plugins = args.plugins;
         let result = runtime.block_on(async {
             let agent = Agent::start(options, lock)?.with_plugins(plugins);
+            #[cfg(feature = "test-hooks")]
+            if let Some(back) = calls_mock {
+                // Queued before the loop runs; answered once it does.
+                let handle = agent.handle();
+                tokio::spawn(async move {
+                    let mut mock = deckpilot_calls::testing::MockProvider::new();
+                    mock.join(deckpilot_calls::clock::Instant::ZERO, "meeting");
+                    handle.install_calls_mock(mock, back).await;
+                    info!("Calls installed with the mock provider (test hooks)");
+                });
+            }
             // Boxed: with Calls the loop's future is large.
             Box::pin(agent.run(deckpilot_agent::service::shutdown_signal())).await
         });

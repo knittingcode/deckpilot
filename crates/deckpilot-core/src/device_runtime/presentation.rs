@@ -174,9 +174,13 @@ impl Runtime {
     // ------------------------------------------------------------ reading
 
     /// The frame `device` shows, by index, if it shows one: the highest
-    /// that is not suspended. None while the editor previews the device.
+    /// that is not suspended. None while the editor previews the device,
+    /// and none while the runtime shows its placeholder ("Locked"): a
+    /// locked device shows no overlay and its keys hand no overlay action
+    /// to an owner, whatever frames are still stacked (defence in depth:
+    /// Calls also pops its frames on lock).
     fn visible_frame(&self, device: &DeviceId) -> Option<usize> {
-        if self.working.contains_key(device) {
+        if self.working.contains_key(device) || self.shows_placeholder() {
             return None;
         }
         self.presentation
@@ -423,7 +427,7 @@ impl Runtime {
         self.shown_session(device)
     }
 
-    fn shown_session(&self, device: &DeviceId) -> Option<(OverlaySession, PageId)> {
+    pub(super) fn shown_session(&self, device: &DeviceId) -> Option<(OverlaySession, PageId)> {
         let index = self.visible_frame(device)?;
         let frame = &self.presentation.frames[device][index];
         Some((frame.session, frame.page()))
@@ -715,6 +719,8 @@ impl Runtime {
                         Some(capabilities),
                         &recorder,
                         &self.workflow_scope,
+                        // The overlay's own profile, no project (as above).
+                        &self.targets.on(&self.machine, None),
                     );
                     (faces, ())
                 });

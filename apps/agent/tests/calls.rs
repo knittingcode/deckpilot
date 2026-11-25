@@ -567,6 +567,77 @@ async fn the_stored_managed_layout_is_seeded_and_survives_a_restart() {
     deck.agent.shutdown().await;
 }
 
+/// T-R7 at agent level, with two MK.2s in the meeting: one going back to
+/// work leaves the other on the call; with `returnAllDevices` both go.
+#[tokio::test(flavor = "multi_thread")]
+async fn other_devices_stay_on_the_call_unless_all_devices_is_set() {
+    for all in [false, true] {
+        let f = fixture();
+        let back = ActionParameters::new().with("returnAllDevices", ParameterValue::Boolean(all));
+        let deck = start_with(&f, back).await;
+        let second = deck.mock.plug(&models::stream_deck_mk2(), "CALLS-2");
+        deck.join().await;
+        let shows = async |device: &DeviceId| {
+            let view = deck.agent.handle.calls_view().await.unwrap();
+            view.devices
+                .iter()
+                .any(|(d, shown, _)| d == device && *shown)
+        };
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        while !shows(&second).await {
+            assert!(
+                tokio::time::Instant::now() <= deadline,
+                "the second device shows the call"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        deck.back_to_work().await;
+        assert!(!shows(&deck.device).await);
+        assert_eq!(
+            shows(&second).await,
+            !all,
+            "returnAllDevices {all}: the other device"
+        );
+        deck.agent.shutdown().await;
+    }
+}
+
+/// Calls installed while the configuration is locked, with a meeting
+/// already going on: the managed layout can be seeded only once unlocked,
+/// and the overlay is shown then, not at the call's next change.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_going_on_before_the_layout_is_seeded_shows_the_overlay_once_it_is() {
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-locked");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let device = mock.plug(&models::stream_deck_mk2(), "CALLS-1");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    let mut provider = MockProvider::new();
+    provider.join(deckpilot_calls::clock::Instant::ZERO, "meeting");
+    agent
+        .handle
+        .install_calls_mock(provider, ActionParameters::new())
+        .await;
+    let deck = Deck {
+        agent,
+        mock,
+        device,
+        clock,
+        _dir: dir,
+    };
+    deck.advance(1).await;
+    assert_eq!(
+        deck.agent.handle.calls_view().await.unwrap().state,
+        CallState::Active
+    );
+    assert!(!deck.shows_overlay().await, "locked: no layout yet");
+    deck.agent.unlock().await;
+    deck.wait_overlay(true).await;
+    deck.agent.shutdown().await;
+}
+
 /// A seed that fails while the database is busy is tried again, after a
 /// wait that doubles (1 s, then 2 s), never before: nothing is stored
 /// meanwhile, the first seed that goes through is the only write, and the
@@ -631,5 +702,81 @@ async fn a_busy_seed_is_tried_again_with_a_growing_wait_and_stored_once() {
     deck.join().await;
     let view = deck.agent.handle.calls_view().await.unwrap();
     assert_eq!(view.layouts, std::slice::from_ref(&first.layout.name));
+    deck.agent.shutdown().await;
+}
+
+/// A locked device never shows call content: the overlay on screen goes
+/// when the configuration is locked, and the device itself draws "Locked"
+/// (its frames, not only the runtime's view). Nothing comes back while
+/// locked even as a second call rings, which the engine still sees. After
+/// unlocking, the device has exactly one Calls frame, on the page of the
+/// call that has the focus then (the ringing one).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_locked_device_never_shows_the_call() {
+    use deckpilot_ipc::Request;
+    let f = fixture();
+    let deck = start(&f).await;
+    deck.join().await;
+    let spec = models::stream_deck_mk2()
+        .capabilities
+        .keys
+        .and_then(|keys| keys.image)
+        .unwrap();
+    let render = |face: KeyFace| deckpilot_agent::render::render(&face, spec.width, spec.height);
+    let locked = render(KeyFace::new(FaceStyle::Notice, "Locked"));
+    let blank = render(KeyFace::empty());
+    let back = key(Deck::back_to_work_key());
+    let back_face = render(KeyFace::new(FaceStyle::Action, "Back to work"));
+    assert!(
+        deck.mock
+            .wait_for(&deck.device, TIMEOUT, |frames, _| frames.get(&back)
+                == Some(&back_face)),
+        "the overlay is on the device"
+    );
+    deck.agent.request(Request::Lock).await.unwrap();
+    // The device draws "Locked" on its first key and nothing of the call.
+    let shows_locked = |frames: &std::collections::BTreeMap<ControlId, _>| {
+        frames.get(&key(0)) == Some(&locked)
+            && frames
+                .iter()
+                .filter(|(control, _)| **control != key(0))
+                .all(|(_, frame)| *frame == blank)
+    };
+    assert!(
+        deck.mock
+            .wait_for(&deck.device, TIMEOUT, |frames, _| shows_locked(frames)),
+        "the locked device draws Locked and nothing else"
+    );
+    // A second call rings while locked: the engine sees it, the device
+    // still shows only "Locked".
+    deck.agent
+        .handle
+        .calls_mock(|mock, now| mock.ring(now, "second"))
+        .await;
+    for _ in 0..3 {
+        deck.advance(20).await;
+        assert_eq!(
+            deck.agent.handle.calls_view().await.unwrap().state,
+            CallState::Incoming,
+            "the ringing call is seen while locked"
+        );
+        assert!(
+            shows_locked(&deck.mock.frames(&deck.device)),
+            "call content on a locked device"
+        );
+    }
+    // Unlocked: exactly one Calls frame, on the ringing call's page.
+    deck.agent.unlock().await;
+    deck.wait_overlay(true).await;
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!(view.frames, 1, "exactly one Calls frame: {view:?}");
+    assert_eq!(view.devices.len(), 1, "{view:?}");
+    assert_eq!(view.devices[0].0, deck.device);
+    assert_eq!(view.devices[0].2.as_deref(), Some("Incoming call"));
+    assert!(
+        deck.mock
+            .wait_for(&deck.device, TIMEOUT, |frames, _| !shows_locked(frames)),
+        "the device no longer shows Locked"
+    );
     deck.agent.shutdown().await;
 }

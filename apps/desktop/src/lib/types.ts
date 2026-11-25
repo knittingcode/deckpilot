@@ -412,6 +412,29 @@ export interface Project {
   key: string
   name: string
   resources: Record<string, string>
+  /** In order; left out when there are none (docs/data-model.md, "Repositories"). */
+  repositories?: Repository[]
+  defaultRepository?: string
+}
+
+/** A repository of a project; its folder is the machine binding of `resource`. */
+export interface Repository {
+  id: string
+  key: string
+  name: string
+  resource: string
+  description?: string
+  /** Written only by the app (Git Providers); kept by every save. */
+  remotes?: RepositoryRemote[]
+}
+
+export interface RepositoryRemote {
+  name: string
+  primary?: boolean
+  connectionId?: string
+  remoteRepositoryId?: string
+  remoteUrl?: string
+  defaultBranch?: string
 }
 
 export type TouchGesture = "tap" | "longPress" | "swipe"
@@ -436,6 +459,42 @@ export type Trigger =
   | { type: "click" }
   | { type: "doubleClick" }
   | { type: "longPress" }
+
+/**
+ * A gesture a preset assigns (`deckpilot_core::PresetGesture`). A single
+ * press is a raw `press` on a key without double or long press, a `click`
+ * otherwise; `release` never goes next to a double or long press.
+ */
+export type PresetGesture =
+  "click" | "doubleClick" | "longPress" | "release" | "rotateClockwise" | "rotateCounterClockwise"
+
+/** What one gesture of a preset does: an action type with set parameters. */
+export interface GestureAssignment {
+  gesture: PresetGesture
+  /** An action type of the module (or plugin) that declares the preset. */
+  action: string
+  parameters: ActionParameters
+  /** What the gesture does in words: the name of the action it creates. */
+  label: string
+}
+
+/**
+ * A library item that puts several existing actions on the gestures of one
+ * control at once (`deckpilot_core::GesturePreset`,
+ * docs/gestures-and-work-session.md §3.4). Applying it makes ordinary
+ * actions and bindings; nothing of the preset is stored.
+ */
+export interface GesturePreset {
+  /** `<module>.<name>`, e.g. `deck.brightness-control`. */
+  id: string
+  name: string
+  description: string
+  category: string
+  icon?: string | null
+  /** Whether a control may take the gestures it supports and skip the others. */
+  allowPartial: boolean
+  gestures: GestureAssignment[]
+}
 
 export type BindingTarget =
   /** `overrides` replace some of the instance's parameters for this binding only. */
@@ -1098,6 +1157,12 @@ export interface ModuleInfo {
   /** Read-only variables the module declares, in its own namespace. */
   variables?: VariableDeclaration[]
   /**
+   * Gesture presets of the module (`ModuleInfo::gesture_presets`), or of a
+   * plugin module (`PluginSummary.gesturePresets`, plugin API 1.10); absent
+   * when none.
+   */
+  gesturePresets?: GesturePreset[]
+  /**
    * Set only on a module that stands for an installed plugin
    * (experimental builds with `VITE_DECKPILOT_PLUGINS=1`; see
    * `lib/plugin-actions.ts`). Never sent by the backend's `list_modules`.
@@ -1484,6 +1549,8 @@ export type AgentCapability =
   | "livePreview"
   | "displayTemplates"
   | "keyLabels"
+  /** `object`/`map` value types, member entries, `structured` previews (protocol 18). */
+  | "structuredVariables"
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */
 export type AgentReload =
@@ -1809,6 +1876,19 @@ export type VariableType =
   | { type: "json" }
   /** The name of a stored credential, never the secret. */
   | { type: "secretRef" }
+  /**
+   * One object of a shape (protocol 18). Never text: read its members
+   * (`….repository.name`), or pass it whole to a JSON parameter.
+   */
+  | { type: "object"; shape: Shape }
+  /** Objects of a shape by key, in order (protocol 18). Never text. */
+  | { type: "map"; of: Shape }
+
+/** The shapes of structured values (docs/variables.md §2.8). */
+export type Shape = "repository"
+
+/** Scalar members of a structured value, by name; groups (`remote`) nest. */
+export type Members = { [name: string]: string | number | boolean | null | Members }
 
 export type VariableValue =
   | { type: "string"; value: string }
@@ -1819,6 +1899,8 @@ export type VariableValue =
   | { type: "resource"; value: ResourceRef }
   | { type: "json"; value: unknown }
   | { type: "secretRef"; value: string }
+  | { type: "object"; value: { shape: Shape; members: Members } }
+  | { type: "map"; value: { shape: Shape; entries: { key: string; members: Members }[] } }
 
 /** Most specific first: execution, project, profile, global. */
 export type VariableScope = "global" | "profile" | "project" | "execution"
@@ -1872,11 +1954,19 @@ export type MissingReason =
   | "noExecution"
   | "noOutput"
   | "otherProfile"
+  /** Protocol 18: the structured variable has no such member. */
+  | "unknownMember"
+  /** Protocol 18: the project has no repository with that key. */
+  | "repositoryNotInProject"
+  /** Protocol 18: several repositories and none is the default. */
+  | "noDefaultRepository"
 
 /** What the agent's resolver reports for one reference. */
 export type ReferenceStatus =
   | { status: "resolved"; value: VariableValue; source: ValueSource }
   | { status: "redacted"; valueType: VariableType; source: ValueSource }
+  /** A structured value, summarised: how many objects, never a member (protocol 18). */
+  | { status: "structured"; valueType: VariableType; entries: number; source: ValueSource }
   | { status: "unavailableUntilRuntime" }
   | { status: "missing"; reason: MissingReason }
   | { status: "typeMismatch"; found: VariableType }
@@ -1929,6 +2019,27 @@ export interface CatalogEntry {
   deprecated?: Deprecation
   /** For core and module variables: what the value depends on (protocol 9). */
   declaredScope?: DeclaredScope
+  /** For a structured variable: the scalar members of its shape (protocol 18). */
+  members?: CatalogMember[]
+  /** For a map: its keys in the context's project, in order (protocol 18). */
+  mapKeys?: string[]
+  /** Listed for its members only; never offered itself (protocol 18). */
+  membersOnly?: boolean
+  /**
+   * For one member of a structured variable: that variable's reference
+   * (protocol 18). Composed by the desktop app from `members` and `mapKeys`.
+   */
+  memberOf?: string
+}
+
+/** One scalar member of a shape (protocol 18). */
+export interface CatalogMember {
+  path: string
+  label: string
+  valueType: VariableType
+  nullable?: boolean
+  /** May be shown on a key; ids and folder paths never are. */
+  displaySafe?: boolean
 }
 
 // The unified variable registry (deckpilot_core::variables::registry).

@@ -213,7 +213,8 @@
       "profile": "Choose a profile.",
       "resource": "Enter a resource key or a project role.",
       "json": "Enter valid JSON.",
-      "credential": "Choose a stored credential."
+      "credential": "Choose a stored credential.",
+      "structured": "Only DeckPilot provides structured values."
     },
     "shown": {
       "redacted": "Redacted",
@@ -224,7 +225,8 @@
       "unknownProfile": "Unknown profile",
       "resource": "Resource {{key}}",
       "projectRole": "Project role {{role}}",
-      "credential": "Credential {{name}}"
+      "credential": "Credential {{name}}",
+      "structured": "Structured value"
     },
     "slot": {
       "global": "Global",

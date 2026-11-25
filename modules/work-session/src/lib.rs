@@ -158,6 +158,8 @@ mod tests {
             profile: &profile,
             os: Os::Linux,
             live: &live,
+            machine: None,
+            private_paths: true,
         };
         let resolve = |registry: &ModuleRegistry, id: &str| {
             registry

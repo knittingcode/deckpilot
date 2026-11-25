@@ -130,7 +130,37 @@ pub struct Runtime {
     /// The plugin ABI version the module implements (`deckpilot_v1`
     /// imports, `dp_*` exports). Only [`WASM_ABI_VERSION`] exists.
     pub abi: u64,
+    /// Plugin API 1.13, `deckpilot.scripts` only (a privileged construct):
+    /// the continuous-CPU deadline between two host calls that wait on
+    /// the agent, in place of the default 250 ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<RuntimeLimits>,
+    /// Plugin API 1.13, `deckpilot.scripts` only (a privileged construct):
+    /// host calls per invocation (`script.poll` counted apart), in place of
+    /// the default 256.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_calls: Option<u32>,
 }
+
+/// `runtime.limits` (plugin API 1.13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeLimits {
+    /// Milliseconds, [`MIN_CONTINUOUS_MS`] to [`MAX_CONTINUOUS_MS`].
+    pub continuous_ms: u64,
+}
+
+/// The bounds of `runtime.limits.continuousMs` (design §5.4: at most
+/// 10 s) and `runtime.hostCalls` (at most 4,096).
+pub const MIN_CONTINUOUS_MS: u64 = 250;
+pub const MAX_CONTINUOUS_MS: u64 = 10_000;
+pub const MAX_RUNTIME_HOST_CALLS: u32 = 4_096;
+
+/// Plugin API 1.13: the Scripts plugin's kinds (`docs/scripts-bridge.md`).
+pub const SCRIPTS_API: ApiLevel = ApiLevel::new(1, 13);
+/// The only plugin that may declare the `scripts` permission, the
+/// `runtime.limits` and `runtime.hostCalls` constructs.
+pub const SCRIPTS_PLUGIN: &str = "deckpilot.scripts";
 
 /// Kinds of executable artifact. A JavaScript plugin of the future is also
 /// a `wasm` module (`QuickJS` and the bundle compiled into one ABI module),
@@ -209,10 +239,12 @@ pub enum ProfileScope {
 
 /// One declared permission (architecture section 5.2).
 ///
-/// Only these kinds exist in plugin API 1. File system, process execution
-/// or inspection, clipboard, raw device access, workflow triggering and
-/// custom UI are never grantable, so they have no variant: a manifest that
-/// names them does not parse.
+/// Only these kinds exist in plugin API 1. General file system, process
+/// execution or inspection, clipboard, raw device access, workflow
+/// triggering and custom UI are never grantable, so they have no variant:
+/// a manifest that names them does not parse. The one exception is the
+/// `scripts` ceiling of plugin API 1.13, for `deckpilot.scripts` only,
+/// whose file and process operations each script's own grant decides.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Permission {
@@ -282,6 +314,11 @@ pub enum Permission {
         /// names the URL. `hosts` may then be empty.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from_params: Option<bool>,
+        /// Plugin API 1.14, with the `connections` permission: pages on the
+        /// web origin of a connection the invocation is bound to may be
+        /// opened too. `hosts` may then be empty.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connections: Option<bool>,
         justification: String,
     },
     /// Timers while the plugin is active.
@@ -337,6 +374,19 @@ pub enum Permission {
     /// `contributes.statusItems` and `contributes.dashboardCards` the app
     /// draws from core data. Placement only, no data. Low tier.
     HostViews { justification: String },
+    /// Plugin API 1.13, `deckpilot.scripts` only: the Scripts host
+    /// bridge's ceiling (`docs/scripts-bridge.md`). `fs` the file system
+    /// operations, `process` `process.run`, `shell` `shell.run`; what one
+    /// script may do is that script's own machine-local grant. High tier.
+    Scripts {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fs: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        process: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shell: Option<bool>,
+        justification: String,
+    },
     /// Plugin API 1.16, the bundled Calls plugin (`deckpilot.calls`) only
     /// (`docs/calls.md`): the state of the user's calls and meetings as the
     /// host's providers observe it (`call.state`, `calls:observe`, medium),
@@ -350,6 +400,78 @@ pub enum Permission {
         control: Option<bool>,
         justification: String,
     },
+    /// Plugin API 1.14, first-party bundled plugins only (connections):
+    /// the plugin may be offered connections of the listed
+    /// `contributes.connectionTypes`, each one created, consented to and
+    /// signed in by the user in the app, with its own server, secret and
+    /// status. The host makes every request; the secret never reaches the
+    /// plugin. High tier, never derived.
+    #[serde(rename_all = "camelCase")]
+    Connections {
+        /// Ids of `contributes.connectionTypes`, every declared type.
+        types: Vec<String>,
+        /// The most a connection may be allowed; a new connection gets
+        /// `GET` only until the user allows changes. Absent: `GET`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        methods: Option<Vec<HttpMethod>>,
+        /// Whether the user may connect a server on a private network
+        /// (each such connection consented to on its own); loopback and
+        /// link-local addresses are never reachable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_network: Option<bool>,
+        justification: String,
+    },
+}
+
+impl Permission {
+    /// The methods of a `connections` permission (`GET` when absent);
+    /// empty for every other kind.
+    pub fn connection_methods(&self) -> Vec<HttpMethod> {
+        match self {
+            Self::Connections { methods, .. } => {
+                methods.clone().unwrap_or_else(|| vec![HttpMethod::Get])
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether an `openUrl` permission names `connections` at all (`true`
+    /// or `false`): a plugin API 1.14 field, gated like the other
+    /// constructs of the level.
+    pub fn names_connections(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                connections: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Whether an `openUrl` permission names `fromParams` at all: a plugin
+    /// API 1.9 field, gated like the other privileged constructs.
+    pub fn names_from_params(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                from_params: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Whether an `openUrl` permission declares `connections` (plugin API
+    /// 1.14): pages on the web origin of a connection the invocation is
+    /// bound to.
+    pub fn opens_connections(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                connections: Some(true),
+                ..
+            }
+        )
+    }
 }
 
 /// One executable of the `tools` permission, with the subcommands and
@@ -554,6 +676,8 @@ pub enum PermissionKind {
     Resources,
     ProjectContext,
     HostViews,
+    Scripts,
+    Connections,
     Calls,
 }
 
@@ -575,16 +699,25 @@ impl PermissionKind {
             Self::Resources => "resources",
             Self::ProjectContext => "projectContext",
             Self::HostViews => "hostViews",
+            Self::Scripts => "scripts",
+            Self::Connections => "connections",
             Self::Calls => "calls",
         }
     }
 
-    /// Whether the kind is privileged (plugin API 1.9's kinds and 1.16's
-    /// `calls`), which only first-party bundled plugins may declare (X12).
+    /// Whether the kind is one of the privileged kinds only first-party
+    /// bundled plugins may declare: plugin API 1.9's (X12), 1.14's
+    /// `connections` and 1.16's `calls`.
     pub fn is_first_party_only(self) -> bool {
         matches!(
             self,
-            Self::Tools | Self::Resources | Self::ProjectContext | Self::HostViews | Self::Calls
+            Self::Tools
+                | Self::Resources
+                | Self::ProjectContext
+                | Self::HostViews
+                | Self::Scripts
+                | Self::Connections
+                | Self::Calls
         )
     }
 }
@@ -606,6 +739,8 @@ impl Permission {
             Self::Resources { .. } => PermissionKind::Resources,
             Self::ProjectContext { .. } => PermissionKind::ProjectContext,
             Self::HostViews { .. } => PermissionKind::HostViews,
+            Self::Scripts { .. } => PermissionKind::Scripts,
+            Self::Connections { .. } => PermissionKind::Connections,
             Self::Calls { .. } => PermissionKind::Calls,
         }
     }
@@ -632,6 +767,8 @@ impl Permission {
             | Self::Tools { justification, .. }
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
+            | Self::Scripts { justification, .. }
+            | Self::Connections { justification, .. }
             | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
@@ -653,6 +790,8 @@ impl Permission {
             | Self::Tools { justification, .. }
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
+            | Self::Scripts { justification, .. }
+            | Self::Connections { justification, .. }
             | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
@@ -730,6 +869,76 @@ pub struct Contributes {
     /// per connected model from them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_templates: Option<Vec<crate::calls::LayoutTemplate>>,
+    /// The kinds of server the user can connect (plugin API 1.14,
+    /// first-party bundled plugins with `connections` only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_types: Option<Vec<crate::connections::ConnectionType>>,
+    /// The shapes of the plugin's `records` outputs (plugin API 1.14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_schemas: Option<Vec<crate::connections::RecordSchema>>,
+    /// Gesture presets (plugin API 1.10): several of the plugin's own
+    /// actions on the gestures of one control at once. Data only: a preset
+    /// grants nothing, and each action keeps its own permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gesture_presets: Option<Vec<GesturePreset>>,
+}
+
+/// The plugin API level that introduced `contributes.gesturePresets`.
+pub const GESTURE_PRESETS_API: ApiLevel = ApiLevel::new(1, 10);
+
+/// Most gesture presets a manifest declares.
+pub const MAX_GESTURE_PRESETS: usize = 16;
+
+/// Most gestures one preset assigns.
+pub const MAX_PRESET_GESTURES: usize = 6;
+
+/// The gestures a preset may assign (`deckpilot_core::PresetGesture`).
+pub const PRESET_GESTURES: [&str; 6] = [
+    "click",
+    "doubleClick",
+    "longPress",
+    "release",
+    "rotateClockwise",
+    "rotateCounterClockwise",
+];
+
+/// `contributes.gesturePresets[]` (plugin API 1.10): one Action Library
+/// entry that assigns several gestures of a control, each to one of the
+/// plugin's own actions with predefined parameters. Registered as
+/// `<plugin id>.<preset id>`. Applying it creates ordinary actions and key
+/// bindings; nothing of the preset runs or is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GesturePreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub category: String,
+    /// Whether a control that cannot produce every gesture still takes the
+    /// others (default `false`: such a control refuses the preset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_partial: Option<bool>,
+    pub gestures: Vec<PresetAssignment>,
+}
+
+/// One gesture of a [`GesturePreset`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresetAssignment {
+    /// One of [`PRESET_GESTURES`].
+    pub gesture: String,
+    /// The id of one of the plugin's own actions (`contributes.actions[].id`).
+    pub action: String,
+    /// Over the action's defaults, checked against its parameters.
+    #[serde(
+        default,
+        deserialize_with = "crate::unique_map::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parameters: Option<BTreeMap<String, ParameterValue>>,
+    /// What the gesture does, in words: the name of the action it creates.
+    pub label: String,
 }
 
 /// A status-bar item the host draws (X8). A closed list: the plugin names
@@ -784,6 +993,11 @@ impl Contributes {
         self.actions.as_deref().unwrap_or_default()
     }
 
+    /// `gesturePresets`, empty when absent.
+    pub fn gesture_presets(&self) -> &[GesturePreset] {
+        self.gesture_presets.as_deref().unwrap_or_default()
+    }
+
     pub fn variables(&self) -> &[Variable] {
         self.variables.as_deref().unwrap_or_default()
     }
@@ -797,6 +1011,16 @@ impl Contributes {
 
     pub fn credentials(&self) -> &[Credential] {
         self.credentials.as_deref().unwrap_or_default()
+    }
+
+    /// `connectionTypes`, empty when absent.
+    pub fn connection_types(&self) -> &[crate::connections::ConnectionType] {
+        self.connection_types.as_deref().unwrap_or_default()
+    }
+
+    /// `recordSchemas`, empty when absent.
+    pub fn record_schemas(&self) -> &[crate::connections::RecordSchema] {
+        self.record_schemas.as_deref().unwrap_or_default()
     }
 }
 
@@ -815,6 +1039,8 @@ pub enum CodeLanguage {
     Text,
     Yaml,
     Markdown,
+    /// Plugin API 1.13: a script's source (the Scripts plugin's `check`).
+    Javascript,
 }
 
 /// The value a parameter accepts: `deckpilot-core`'s `ParameterKind` minus
@@ -875,11 +1101,26 @@ pub enum ParameterKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         no_secrets: Option<bool>,
     },
+    /// Plugin API 1.13, `deckpilot.scripts` only: a script of the active
+    /// profile, by id; the editor offers the profile's scripts.
+    Script {},
     #[serde(rename_all = "camelCase")]
     Code {
         language: CodeLanguage,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_length: Option<u64>,
+    },
+    /// Plugin API 1.14, first-party bundled plugins with `connections`
+    /// only: one of the user's connections of one of `types`, picked in
+    /// the app. The stored value is the connection's id, never a URL or a
+    /// secret, and never a dynamic reference; the host binds the
+    /// invocation to exactly that connection.
+    Connection {
+        types: Vec<String>,
+        /// Only connections whose last test found this capability (a key
+        /// of what the plugin reports for the connection) are offered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability: Option<String>,
     },
 }
 
@@ -978,6 +1219,10 @@ pub struct Parameter {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<ParameterValue>,
+    /// Plugin API 1.14: a picker of values one of the plugin's read-only
+    /// internal actions lists (text parameters only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<crate::connections::ParameterOptions>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1024,6 +1269,11 @@ pub enum OutputKind {
     Path,
     Url,
     ProjectKey,
+    /// Plugin API 1.14: a list of records of `schema` (at most
+    /// [`MAX_RECORDS`](crate::MAX_RECORDS) and
+    /// [`MAX_RECORDS_BYTES`](crate::MAX_RECORDS_BYTES)). Never shown on a
+    /// key.
+    Records,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1037,6 +1287,10 @@ pub struct Output {
     pub always: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensitive: Option<bool>,
+    /// For a `records` output (plugin API 1.14): the id of one of
+    /// `contributes.recordSchemas`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1161,7 +1415,33 @@ pub struct Action {
     /// data only, the user's own title and look always win.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<ActionTitle>,
+    /// Where the action makes sense (plugin API 1.11): some of
+    /// [`ACTION_CONTEXTS`], each at most once (`docs/action-contexts.md`).
+    /// Absent: all five, as before. Advisory: the app offers the action
+    /// where it belongs, and a use elsewhere is reported, never refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<Vec<String>>,
+    /// Plugin API 1.14: not in the Action Library, never on a key or a
+    /// workflow node. The app (the plugin's screen, its pickers, a
+    /// connection test) and the plugin's own parameter `options` invoke
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internal: Option<bool>,
 }
+
+impl Action {
+    /// `internal` (plugin API 1.14).
+    pub fn is_internal(&self) -> bool {
+        self.internal == Some(true)
+    }
+}
+
+/// The plugin API level that introduced `contributes.actions[].contexts`.
+pub const ACTION_CONTEXTS_API: ApiLevel = ApiLevel::new(1, 11);
+
+/// The contexts `contributes.actions[].contexts` may name (the core's
+/// `ActionContext`).
+pub const ACTION_CONTEXTS: [&str; 5] = ["key", "gesture", "display", "sequence", "workflow"];
 
 /// The plugin API level that introduced `contributes.actions[].title`.
 pub const TITLE_API: ApiLevel = ApiLevel::new(1, 8);
@@ -1355,6 +1635,9 @@ pub enum ViewKind {
     Workflows,
     /// The app's Projects screen (plugin API 1.9, `hostViews`, X8).
     Projects,
+    /// The app's Scripts page (plugin API 1.13, `hostViews`,
+    /// `deckpilot.scripts` only).
+    Scripts,
 }
 
 impl ViewKind {
@@ -1366,13 +1649,14 @@ impl ViewKind {
             Self::Settings => "settings",
             Self::Workflows => "workflows",
             Self::Projects => "projects",
+            Self::Scripts => "scripts",
         }
     }
 
     /// Whether the view is one of the app's own screens a first-party
     /// plugin activates (`hostViews`).
     pub fn is_host_view(self) -> bool {
-        matches!(self, Self::Workflows | Self::Projects)
+        matches!(self, Self::Workflows | Self::Projects | Self::Scripts)
     }
 }
 
@@ -1432,6 +1716,28 @@ pub enum VariableValueKind {
     Integer,
     Boolean,
     Json,
+    /// Plugin API 1.12, host sources only: one object of a shape
+    /// (`{"type": "object", "shape": "repository"}`).
+    Object,
+    /// Plugin API 1.12, host sources only: objects of a shape by key
+    /// (`{"type": "map", "of": "repository"}`).
+    Map,
+}
+
+/// The shapes of structured variable values (plugin API 1.12): the
+/// core's closed list (`deckpilot_core::variables::Shape`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableShape {
+    Repository,
+}
+
+impl VariableShape {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Repository => "repository",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1439,7 +1745,29 @@ pub enum VariableValueKind {
 pub struct VariableValueType {
     #[serde(rename = "type")]
     pub kind: VariableValueKind,
+    /// The shape of an `object` (plugin API 1.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<VariableShape>,
+    /// The shape of a `map`'s objects (plugin API 1.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<VariableShape>,
 }
+
+impl VariableValueType {
+    /// Whether the type is `object` or `map`: never published by a
+    /// plugin, only a host source's.
+    pub fn is_structured(&self) -> bool {
+        matches!(
+            self.kind,
+            VariableValueKind::Object | VariableValueKind::Map
+        )
+    }
+}
+
+/// The plugin API level that introduced structured variables and the
+/// repository host sources (`host:project.repositories`,
+/// `host:project.repository`).
+pub const REPOSITORY_VARIABLES_API: ApiLevel = ApiLevel::new(1, 12);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -1479,8 +1807,8 @@ pub struct Variable {
 }
 
 /// Where the host takes a host-published variable's value from (X7):
-/// the id, key or name of the project in the context. Plugin API 1.9 has
-/// only these three.
+/// the id, key or name of the project in the context (plugin API 1.9),
+/// and its repositories (plugin API 1.12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VariableHostSource {
     #[serde(rename = "host:project.id")]
@@ -1489,6 +1817,14 @@ pub enum VariableHostSource {
     ProjectKey,
     #[serde(rename = "host:project.name")]
     ProjectName,
+    /// Every repository of the project, by key (`map<repository>`). Plugin
+    /// API 1.12.
+    #[serde(rename = "host:project.repositories")]
+    ProjectRepositories,
+    /// The project's default repository (`object<repository>`, decision
+    /// OD-3). Plugin API 1.12.
+    #[serde(rename = "host:project.repository")]
+    ProjectRepository,
 }
 
 impl VariableHostSource {
@@ -1497,6 +1833,45 @@ impl VariableHostSource {
             Self::ProjectId => "host:project.id",
             Self::ProjectKey => "host:project.key",
             Self::ProjectName => "host:project.name",
+            Self::ProjectRepositories => "host:project.repositories",
+            Self::ProjectRepository => "host:project.repository",
+        }
+    }
+
+    /// The value type a variable with this source declares.
+    pub fn value_type(self) -> VariableValueType {
+        let (kind, shape, of) = match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => {
+                (VariableValueKind::String, None, None)
+            }
+            Self::ProjectRepositories => (
+                VariableValueKind::Map,
+                None,
+                Some(VariableShape::Repository),
+            ),
+            Self::ProjectRepository => (
+                VariableValueKind::Object,
+                Some(VariableShape::Repository),
+                None,
+            ),
+        };
+        VariableValueType { kind, shape, of }
+    }
+
+    /// The plugin API level that introduced the source.
+    pub fn api(self) -> ApiLevel {
+        match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => PRIVILEGED_API,
+            Self::ProjectRepositories | Self::ProjectRepository => REPOSITORY_VARIABLES_API,
+        }
+    }
+
+    /// How the type is written in a manifest, for messages.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Self::ProjectId | Self::ProjectKey | Self::ProjectName => "a string",
+            Self::ProjectRepositories => "`{\"type\": \"map\", \"of\": \"repository\"}`",
+            Self::ProjectRepository => "`{\"type\": \"object\", \"shape\": \"repository\"}`",
         }
     }
 }

@@ -415,6 +415,13 @@ opens a next page (“More”) and the first key of following pages goes back.
   `indicator`, `progress`, `toggle` (see
   [Button state](modules.md#button-state)).
 
+- **Gesture presets** – not stored. A `GesturePreset` (`ModuleInfo.gesturePresets`,
+  `PluginSummary.gesturePresets`) is a library item mapping gestures of
+  one control to action types with parameters; applying it saves ordinary
+  action instances and `ControlBinding`s like a manual assignment, so
+  layouts and documents carry no preset id and need no migration
+  (see [gestures-and-work-session.md](gestures-and-work-session.md) §3.4).
+
 ### Pages and folders
 
 A layout's pages form a tree: every page except the home page may be in a

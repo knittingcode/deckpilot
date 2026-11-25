@@ -91,11 +91,20 @@ pub(crate) struct CatalogPlugin {
     /// project's roles (`resource.resolve`, X2) even without a `resource`
     /// parameter, so its module reads the profile and the bindings.
     pub resources: bool,
+    /// It holds `resources:paths` (plugin API 1.9) and can run: only then
+    /// do its actions' parameters carry this computer's folder paths (a
+    /// repository's `path`, plugin API 1.12); otherwise they read `null`
+    /// (`ActionRegistry::reads_paths`).
+    pub resource_paths: bool,
     /// Its `wrapAround` setting while it holds `projectContext`: how the
     /// app's and the tray's project cycling (`cycleProject`) steps past
     /// the ends, as the plugin's own `cycle` does. `None` for every other
     /// plugin.
     pub wrap_around: Option<bool>,
+    /// Its gesture presets (plugin API 1.10), as the core's, in the app's
+    /// language; those the core would refuse are already left out
+    /// (`convert::gesture_presets`).
+    pub gesture_presets: Vec<deckpilot_core::GesturePreset>,
 }
 
 impl CatalogPlugin {
@@ -216,9 +225,12 @@ impl FeatureModule for PluginModule {
         // Keys of a plugin whose actions cannot run show no state: they
         // fall back to how the user designed them.
         let runs = self.plugin.unavailable.is_none();
+        // Plugin API 1.14: internal actions are never in the Action
+        // Library, on a key or a workflow node.
         self.plugin
             .actions
             .iter()
+            .filter(|action| !action.is_internal())
             .filter_map(|action| {
                 match PluginActionHandler::new(&self.plugin.id, action, self.invoker.clone()) {
                     Ok(handler) => {
@@ -239,6 +251,14 @@ impl FeatureModule for PluginModule {
 
     fn variable_source(&self) -> Option<Arc<dyn VariableSource>> {
         self.source.clone()
+    }
+
+    fn gesture_presets(&self) -> Vec<deckpilot_core::GesturePreset> {
+        self.plugin.gesture_presets.clone()
+    }
+
+    fn reads_paths(&self) -> bool {
+        self.plugin.unavailable.is_none() && self.plugin.resource_paths
     }
 
     fn unavailable_reason(&self) -> Option<String> {
@@ -267,9 +287,22 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
             if let deckpilot_plugin_manifest::ParameterKind::Resource { kinds } = &parameter.kind {
                 return Ok(resource_spec(parameter, kinds));
             }
+            // Plugin API 1.14: a connection is stored as its id, plain text
+            // for the core; the app draws its picker from the manifest.
+            if let deckpilot_plugin_manifest::ParameterKind::Connection { .. } = &parameter.kind {
+                return Ok(connection_spec(parameter));
+            }
             // Through `core_spec`: the kind's constraints (`maxLength`, …)
             // are camel case in the manifest and snake case in the core.
+            // A parameter's `options` (plugin API 1.14) are the app's: the
+            // stored value stays plain text.
             serde_json::to_value(parameter)
+                .map(|mut json| {
+                    if let Some(map) = json.as_object_mut() {
+                        map.remove("options");
+                    }
+                    json
+                })
                 .map_err(|e| e.to_string())
                 .and_then(super::data::core_spec)
                 .map_err(|e| format!("parameter {e}"))
@@ -277,6 +310,7 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         .collect::<Result<Vec<_>, _>>()?;
     let mut node: NodeSpec = match &action.node {
         Some(node) => serde_json::to_value(node)
+            .map(core_outputs)
             .and_then(serde_json::from_value)
             .map_err(|e| format!("node: {e}"))?,
         None => NodeSpec::default(),
@@ -302,10 +336,14 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         .transpose()?;
     let title = action.title.as_ref().map(action_title);
     Ok(ActionType {
-        // A manifest cannot declare contexts yet (planned for plugin API
-        // 1.11, after 1.10; `docs/action-contexts.md`): every plugin
-        // action keeps the legacy default, all five contexts.
-        contexts: None,
+        // The manifest's `contexts` (plugin API 1.11), as declared and
+        // validated; without them the legacy default, all five
+        // (`docs/action-contexts.md`). Advisory, as for the built-ins.
+        contexts: action
+            .contexts
+            .as_deref()
+            .map(action_contexts)
+            .transpose()?,
         editor_navigation,
         title,
         id,
@@ -323,6 +361,63 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         }),
         node,
     })
+}
+
+/// A manifest's `contexts` as the core's. The validator has accepted only
+/// the five names, so an unknown one is a bug, refused like a bad
+/// parameter rather than dropped.
+fn action_contexts(names: &[String]) -> Result<deckpilot_core::ActionContexts, String> {
+    names
+        .iter()
+        .map(|name| {
+            serde_json::from_value::<deckpilot_core::ActionContext>(serde_json::Value::String(
+                name.clone(),
+            ))
+            .map_err(|_| format!("contexts: unknown context `{name}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(deckpilot_core::ActionContexts::of)
+}
+
+/// A `connection` parameter (plugin API 1.14) as the core's: text, the
+/// connection's id, without a default (the app offers the type's default
+/// connection when the key is set up).
+fn connection_spec(
+    parameter: &deckpilot_plugin_manifest::Parameter,
+) -> deckpilot_core::ParameterSpec {
+    deckpilot_core::ParameterSpec {
+        key: parameter.key.clone(),
+        label: parameter.label.clone(),
+        description: parameter.description.clone(),
+        kind: deckpilot_core::ParameterKind::Text {
+            multiline: false,
+            max_length: Some(64),
+        },
+        required: parameter.required,
+        default: None,
+    }
+}
+
+/// A node's outputs as the core's: a `records` output (plugin API 1.14)
+/// is text the core never keeps (`sensitive`), without its schema, which
+/// the agent checks the records against itself.
+fn core_outputs(mut node: serde_json::Value) -> serde_json::Value {
+    if let Some(outputs) = node
+        .get_mut("outputs")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for output in outputs
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            if output.get("kind").and_then(serde_json::Value::as_str) == Some("records") {
+                output.insert("kind".into(), "text".into());
+                output.insert("sensitive".into(), true.into());
+            }
+            output.remove("schema");
+        }
+    }
+    node
 }
 
 /// A `resource` parameter as the core's: one kind for the editor when the
@@ -444,6 +539,11 @@ pub(crate) struct PluginActionHandler {
     /// names is missing or disabled. It then fails at once, never reaching
     /// the plugin.
     unmet: Option<String>,
+    /// The keys of its `connection` parameters (plugin API 1.14): their
+    /// values must be what the user chose, never a mapped or referenced
+    /// value, so no workflow input or other plugin's value can steer the
+    /// action onto another of the user's connections.
+    connections: Vec<String>,
 }
 
 impl PluginActionHandler {
@@ -458,6 +558,17 @@ impl PluginActionHandler {
             invoker,
             state: None,
             unmet: None,
+            connections: action
+                .parameters
+                .iter()
+                .filter(|p| {
+                    matches!(
+                        p.kind,
+                        deckpilot_plugin_manifest::ParameterKind::Connection { .. }
+                    )
+                })
+                .map(|p| p.key.clone())
+                .collect(),
         })
     }
 
@@ -581,6 +692,18 @@ impl PluginActionHandler {
     }
 
     fn run(&self, parameters: &ActionParameters, context: &ExecutionContext<'_>) -> ActionResult {
+        if let Some(key) = self.connections.iter().find(|key| {
+            parameters.get(key).is_some()
+                && !context.provenance().is_some_and(|p| p.is_literal(key))
+        }) {
+            return ActionResult::error(
+                "invalid-parameters",
+                format!(
+                    "`{key}` must be a connection chosen in the action's settings, never a \
+                     mapped or referenced value"
+                ),
+            );
+        }
         let params = match params(parameters) {
             Ok(params) => params,
             Err(problem) => return ActionResult::error("invalid-parameters", problem),
@@ -989,6 +1112,52 @@ mod tests {
         );
     }
 
+    /// Plugin API 1.11: `contexts` become the action type's (advisory, as
+    /// for the built-ins); without them the legacy default, all five.
+    /// Plugin API 1.13: the core has no `script` kind yet (P7), so the
+    /// `run` action is refused as an action type, never offered with a
+    /// wrong kind; `check`'s `javascript` code is the core's text `code`.
+    #[test]
+    fn script_kinds_wait_for_the_core() {
+        let manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/scripts-manifest.json"
+        ))
+        .unwrap();
+        let actions = manifest.contributes.actions();
+        assert!(
+            action_type("deckpilot.scripts", &actions[0]).is_err(),
+            "run"
+        );
+        let check = action_type("deckpilot.scripts", &actions[1]).unwrap();
+        assert!(matches!(
+            &check.parameters[0].kind,
+            deckpilot_core::ParameterKind::Code { language, .. } if language == "javascript"
+        ));
+    }
+
+    #[test]
+    fn contexts_become_the_action_types() {
+        use deckpilot_core::{ActionContext, ActionContexts};
+        let manifest = sample();
+        let mut action = manifest.contributes.actions()[0].clone();
+        let legacy = action_type("acme.hello-weather", &action).unwrap();
+        assert_eq!(legacy.contexts, None);
+        assert_eq!(*legacy.effective_contexts(), ActionContexts::legacy());
+        action.contexts = Some(vec!["workflow".into(), "sequence".into()]);
+        let declared = action_type("acme.hello-weather", &action).unwrap();
+        assert_eq!(
+            declared.contexts,
+            Some(ActionContexts::of([
+                ActionContext::Sequence,
+                ActionContext::Workflow
+            ]))
+        );
+        // The validator has refused an unknown name; here it is an error,
+        // never a silent "all five".
+        action.contexts = Some(vec!["everywhere".into()]);
+        assert!(action_type("acme.hello-weather", &action).is_err());
+    }
+
     /// Plugin API 1.8: `title` becomes the action type's, data only; the
     /// manifest's names are the core's.
     #[test]
@@ -1197,6 +1366,67 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// Plugin API 1.14: a `connection` parameter takes only the value the
+    /// user chose (T8): a mapped, referenced or templated value, or one of
+    /// unknown origin, never reaches the plugin.
+    #[test]
+    fn a_connection_is_never_a_mapped_or_referenced_value() {
+        use deckpilot_core::resolution::{Provenance, Provenances};
+        use deckpilot_core::{MachineConfig, ParameterValue, Profile};
+        let manifest = deckpilot_plugin_manifest::Manifest::from_json(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/connections-manifest.json"
+        ))
+        .unwrap();
+        let action = manifest
+            .contributes
+            .actions()
+            .iter()
+            .find(|a| a.id == "pipeline-status")
+            .unwrap();
+        let handler = PluginActionHandler::new(
+            manifest.id.as_str(),
+            action,
+            super::super::worker::Invoker::detached(),
+        )
+        .unwrap();
+        let parameters = ActionParameters::new()
+            .with(
+                "connection",
+                ParameterValue::Text("cn_01JD7Q0000000000000000000A".into()),
+            )
+            .with("repository", ParameterValue::Text("gl:4711".into()));
+        let profile = Profile::new("P");
+        let machine = MachineConfig::new(deckpilot_core::Os::Linux);
+        let base = ExecutionContext::new(&profile, None, &machine);
+        let code = |provenance: Option<Provenance>| {
+            let provenances =
+                Provenances::from_entries(provenance.map(|p| ("connection".to_owned(), p)));
+            let context = match provenance {
+                Some(_) => base.with_provenance(&provenances),
+                None => base,
+            };
+            handler.run(&parameters, &context).code
+        };
+        // A literal one passes the check (the worker is gone here).
+        assert_eq!(
+            code(Some(Provenance::Literal)).as_deref(),
+            Some("plugin-unavailable")
+        );
+        for provenance in [
+            None,
+            Some(Provenance::Mapped),
+            Some(Provenance::Reference),
+            Some(Provenance::Template),
+            Some(Provenance::Default),
+        ] {
+            assert_eq!(
+                code(provenance).as_deref(),
+                Some("invalid-parameters"),
+                "{provenance:?}"
+            );
+        }
     }
 
     #[test]

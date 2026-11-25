@@ -615,3 +615,87 @@ fn a_gesture_pressed_before_a_switch_is_stale_when_it_fires() {
     runtime.set_overlay_faces(&deck, session, []);
     assert_eq!(runtime.presentation_generation_of(&deck), suspended);
 }
+
+/// A locked runtime (no profile, the "Locked" placeholder) draws
+/// "Locked" even with an overlay frame still stacked, and a press on the
+/// overlay's key hands no action to its owner; unlocked, the frame shows
+/// again.
+#[test]
+fn a_locked_runtime_shows_no_overlay_and_hands_out_no_overlay_action() {
+    let f = fixture();
+    let (mut runtime, _, deck) = started(&f);
+    let o = overlay();
+    let session = runtime.push_overlay(&deck, o.spec).unwrap();
+    assert!(runtime.shows_overlay(&deck));
+    runtime.set_profile(None, None);
+    runtime.set_placeholder(Some("Locked"));
+    assert!(runtime.shows_placeholder());
+    assert!(!runtime.shows_overlay(&deck));
+    assert!(runtime.overlay_page(&deck).is_none());
+    let faces = runtime.faces(&deck);
+    assert_eq!(faces[0].1.title, "Locked", "{faces:?}");
+    assert!(
+        faces.iter().skip(1).all(|(_, face)| face.title.is_empty()),
+        "nothing of the overlay: {faces:?}"
+    );
+    for edge in [ControlInput::Press, ControlInput::Release] {
+        let outcome = runtime.handle_event(&DeviceEvent::Input {
+            device: deck.clone(),
+            control: key(0),
+            input: edge,
+        });
+        assert!(
+            !matches!(outcome, Ok(RuntimeOutcome::OverlayAction { .. })),
+            "{outcome:?}"
+        );
+    }
+    // Unlocked: the frame is still there and shows again.
+    runtime.set_placeholder(None);
+    runtime.set_profile(Some(f.profile.clone()), None);
+    assert!(runtime.shows_overlay(&deck));
+    assert!(matches!(
+        tap(&mut runtime, &deck, 0),
+        RuntimeOutcome::OverlayAction { session: got, .. } if got == session
+    ));
+}
+
+/// A key held down when the configuration is locked, and released after it
+/// is unlocked, finishes on nothing: the lock and the unlock change what the
+/// device presents (the placeholder, then the overlay again), so the key is
+/// fenced even when an overlay frame survived the lock.
+#[test]
+fn a_press_before_a_lock_never_releases_into_the_overlay_after_the_unlock() {
+    let f = fixture();
+    let (mut runtime, _, deck) = started(&f);
+    let mut o = overlay();
+    // Key 6 of the overlay acts on its release.
+    let active = o.active;
+    let mic = o.mic;
+    o.spec.layout.page_mut(active).unwrap().bindings.push(bind(
+        6,
+        Trigger::Release,
+        BindingTarget::action(mic),
+    ));
+    runtime.push_overlay(&deck, o.spec).unwrap();
+    press(&mut runtime, &deck, 6);
+    // Locked (as the agent locks: the placeholder first), then unlocked.
+    runtime.set_placeholder(Some("Locked"));
+    runtime.set_profile(None, None);
+    runtime.set_placeholder(None);
+    runtime.set_profile(Some(f.profile.clone()), None);
+    assert!(
+        runtime.shows_overlay(&deck),
+        "the frame survived (on purpose)"
+    );
+    let released = release(&mut runtime, &deck, 6);
+    assert!(
+        !matches!(released, RuntimeOutcome::OverlayAction { .. }),
+        "{released:?}"
+    );
+    // Not fenced any more: a full press and release hands the action out.
+    press(&mut runtime, &deck, 6);
+    assert!(matches!(
+        release(&mut runtime, &deck, 6),
+        RuntimeOutcome::OverlayAction { .. }
+    ));
+}

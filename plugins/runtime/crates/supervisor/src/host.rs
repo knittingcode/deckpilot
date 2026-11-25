@@ -55,6 +55,15 @@ pub trait CapabilityExecutor {
     fn run_context(&self) -> Option<&RunContext> {
         None
     }
+
+    /// The connections the invocation this executor serves is bound to
+    /// (plugin API 1.14): those its parameters named, or the one the app
+    /// named for its own query. The broker refuses every connection
+    /// operation on another id. The default, none, binds nothing.
+    fn bound_connections(&self) -> &std::collections::BTreeSet<String> {
+        static NONE: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        &NONE
+    }
 }
 
 /// Why a running capability call should stop: its invocation's
@@ -718,12 +727,16 @@ impl PluginHost {
                         // A state call only reads, whatever the host
                         // relays.
                         let decision = match ask {
-                            Ask::Action => {
-                                self.session.authorize_in(&request, executor.run_context())
-                            }
-                            Ask::State => self
-                                .session
-                                .authorize_state_in(&request, executor.run_context()),
+                            Ask::Action => self.session.authorize_bound(
+                                &request,
+                                executor.run_context(),
+                                executor.bound_connections(),
+                            ),
+                            Ask::State => self.session.authorize_state_bound(
+                                &request,
+                                executor.run_context(),
+                                executor.bound_connections(),
+                            ),
                         };
                         match decision {
                             Decision::Allow(allowed) => {
