@@ -2424,3 +2424,80 @@ export type SimulatePressResult =
   | { status: "ran"; dispatched: SimulatedTrigger[] }
   | { status: "confirmationRequired"; actionNames: string[]; reason: string }
   | { status: "refused"; code: SimulationRefusal; message: string }
+
+// --- Scripts (docs/data-model.md, "Scripts") --------------------------------
+
+/** A script's own settings (deckpilot_core::script::ScriptSettings). */
+export interface ScriptSettings {
+  timeoutMs: number
+  stopOnError: boolean
+  memoryMiB: number
+  description: string
+}
+
+/** One script of a profile (deckpilot_core::script::Script). */
+export interface Script {
+  id: string
+  name: string
+  source: string
+  settings: ScriptSettings
+  revision: number
+}
+
+export type ScriptTrustState = "trusted" | "needsReview"
+
+/** A script on the Scripts page (deckpilot_storage::scripts::StoredScript). */
+export interface StoredScript {
+  script: Script
+  trust: ScriptTrustState
+  /** Its grants (dormant while it is not trusted); `null`: none. */
+  grants: ScriptGrants | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type ScriptFsAccess = "read" | "write" | "delete"
+export type ScriptFsRoot = { repository: string } | { directory: { path: string; label: string } }
+
+export interface ScriptFsScope {
+  root: ScriptFsRoot
+  access: ScriptFsAccess
+  rootDestructive?: boolean
+}
+
+export interface ScriptProcessGrant {
+  command: string
+  cwd?: "repositories" | "fsScopes" | "any"
+  env?: "none" | "allowed"
+  unrestrictedArgs?: boolean
+}
+
+/** A script's machine-local grants (deckpilot_core::script_grants::ScriptGrants). */
+export interface ScriptGrants {
+  projectsRead?: boolean
+  repositoriesPaths?: boolean
+  fs?: ScriptFsScope[]
+  process?: ScriptProcessGrant[]
+  shell?: { shells: string[] } | null
+  destructive?: "ask" | "allow"
+  limits?: { timeoutMs?: number; memoryMiB?: number; maxOutputKiB?: number }
+}
+
+/** What a command a grant names is (deckpilot_core::script_grants::CommandClass). */
+export type ScriptCommandClass =
+  "containerRuntime" | "elevation" | "shell" | "runsAnyProgram" | "plain"
+
+/** What the review shows before "Trust this script". */
+export interface ScriptReview {
+  script: Script
+  trust: ScriptTrustState
+  sourceSha256: string
+  grants: ScriptGrants
+}
+
+/** An action that runs a script, with its uses (deckpilot_storage::scripts::ScriptUsage). */
+export interface ScriptUsage {
+  action: string
+  actionName: string
+  references: ActionReference[]
+}

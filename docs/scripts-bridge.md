@@ -21,8 +21,19 @@ Status:
 - in place (P7, parts 2 and 3): scripts in exports and imports (never
   their trust or grants), and the agent's script store as the bridge's
   host, with the repositories' remotes (K4);
-- next: the Scripts page (P7), the agent's `PLUGIN_API` 1.13 and the
-  bundled plugin (P8).
+- in place (P7, part 4a): the Scripts page (`apps/desktop/src/modules/
+  scripts/`, shown while the Scripts plugin is enabled and lists the
+  `scripts` view): the profile's scripts, a CodeMirror 6 editor (parser
+  diagnostics only, nothing runs while typing; completion of the
+  `deckpilot` API; invisible and direction-changing characters drawn as
+  marks), the script's settings, rename, duplicate (no trust), the
+  guarded delete (its uses listed; clearing the keys is opt-in), and the
+  review of a script that is not trusted: its code read only, a warning
+  for hidden characters, the permissions that come back, and "Trust this
+  script", which names exactly the hash and permissions shown;
+- next (P7, part 4b): the Permissions tab, running from the page, and
+  the Action Library's Scripts section; then the agent's `PLUGIN_API`
+  1.13 and the bundled plugin (P8).
 
 ## Operations
 

@@ -4,6 +4,13 @@ import type { IncompleteUse, SavedAction } from "./action-completeness"
 import { errorCode, rawErrorMessage } from "./backend-error"
 
 import type {
+  Script,
+  ScriptCommandClass,
+  ScriptGrants,
+  ScriptReview,
+  ScriptSettings,
+  ScriptUsage,
+  StoredScript,
   ActionInstance,
   ContextIssue,
   ActionReference,
@@ -318,6 +325,34 @@ export const api = {
     invoke<null>("clear_execution_history", { workflowId }),
   runWorkflow: (profileId: string, workflowId: string) =>
     invoke<WorkflowReport>("run_workflow", { profileId, workflowId }),
+
+  listScripts: (profileId: string) => invoke<StoredScript[]>("list_scripts", { profileId }),
+  /** A new script: trusted (made here), with no permissions. */
+  createScript: (
+    profileId: string,
+    script: { name: string; source?: string; settings?: ScriptSettings },
+  ) => invoke<Script>("create_script", { profileId, script }),
+  /** The editor's save, from `script.revision`; refused when it is older. */
+  saveScript: (profileId: string, script: Script) =>
+    invoke<Script>("save_script", { profileId, script }),
+  /** A copy with a new id and no trust or permissions. */
+  duplicateScript: (profileId: string, scriptId: string) =>
+    invoke<Script>("duplicate_script", { profileId, scriptId }),
+  scriptUsages: (profileId: string, scriptId: string) =>
+    invoke<ScriptUsage[]>("script_usages_of", { profileId, scriptId }),
+  deleteScript: (profileId: string, scriptId: string, clearKeys: boolean) =>
+    invoke<null>("delete_script", { profileId, scriptId, clearKeys }),
+  reviewScript: (profileId: string, scriptId: string) =>
+    invoke<ScriptReview>("review_script", { profileId, scriptId }),
+  /** Names the hash of the source and the permissions the review showed. */
+  trustScript: (profileId: string, scriptId: string, sourceSha256: string, grants: ScriptGrants) =>
+    invoke<null>("trust_script", { profileId, scriptId, sourceSha256, grants }),
+  setScriptGrants: (profileId: string, scriptId: string, grants: ScriptGrants) =>
+    invoke<null>("set_script_grants", { profileId, scriptId, grants }),
+  revokeScriptGrants: (profileId: string, scriptId: string) =>
+    invoke<null>("revoke_script_grants", { profileId, scriptId }),
+  scriptCommandClass: (command: string) =>
+    invoke<ScriptCommandClass>("script_command_class", { command }),
 
   createProject: (profileId: string, project: ProjectInput) =>
     invoke<Project>("create_project", { profileId, project }),

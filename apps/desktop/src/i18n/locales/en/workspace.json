@@ -472,5 +472,106 @@
       "secretHint": "A token, or user:password for basic authentication.",
       "submit": "Store credential"
     }
+  },
+  "scripts": {
+    "page": {
+      "title": "Scripts",
+      "description": "Scripts of this profile. A script runs from a key, a trigger or a workflow only while you trust it, and only with the permissions you give it on this computer."
+    },
+    "list": {
+      "label": "Scripts",
+      "search": "Search scripts",
+      "new": "New script",
+      "empty": "No scripts yet",
+      "emptyHint": "Create a script, then put it on a key from the Action Library.",
+      "choose": "Choose a script to edit it."
+    },
+    "trust": {
+      "trusted": "Trusted",
+      "needsReview": "Needs review"
+    },
+    "create": {
+      "title": "New script",
+      "description": "A script you write here is trusted, with no permissions. Saving never grants anything.",
+      "submit": "Create",
+      "name": "Name",
+      "failed": "The script could not be saved"
+    },
+    "rename": {
+      "title": "Rename script",
+      "description": "Keys and workflows keep running it: they name the script, not its name.",
+      "submit": "Rename"
+    },
+    "unsaved": {
+      "title": "Discard unsaved changes?",
+      "description": "The script has changes you have not saved. They are lost if you open another script.",
+      "discard": "Discard changes"
+    },
+    "item": {
+      "rename": "Rename {{name}}",
+      "duplicate": "Duplicate {{name}}",
+      "duplicateTooltip": "A copy with no trust and no permissions: review it before it runs.",
+      "duplicateFailed": "“{{name}}” could not be duplicated",
+      "delete": "Delete {{name}}"
+    },
+    "tabs": {
+      "code": "Code",
+      "settings": "Settings"
+    },
+    "editor": {
+      "label": "Code of {{name}}",
+      "syntaxError": "Syntax error",
+      "hiddenChars": "This code holds invisible or direction-changing characters (marked in red). They can make code read other than it runs.",
+      "unsaved": "Unsaved changes",
+      "save": "Save",
+      "saved": "“{{name}}” saved",
+      "saveFailed": "“{{name}}” could not be saved"
+    },
+    "settings": {
+      "timeout": "Time limit (seconds)",
+      "timeoutHint": "At most 600 seconds; the permissions can set a lower limit.",
+      "memory": "Memory (MiB)",
+      "stopOnError": "Stop at the first error",
+      "description": "Description",
+      "invalid": "The time limit is 1 to 600 seconds, the memory 16 to 128 MiB, and the description at most 500 characters.",
+      "save": "Save settings"
+    },
+    "review": {
+      "title": "Review this script before it runs",
+      "description": "This script came from elsewhere (an import or a copy) or changed outside this editor. It runs nothing, from a key, a trigger or here, until you read its code and trust it.",
+      "hiddenTitle": "Invisible characters",
+      "hiddenDescription": "The code holds invisible or direction-changing characters, marked in red. Code can read other than it runs: make sure you understand every marked line.",
+      "codeLabel": "Code of {{name}} to review",
+      "grantsTitle": "Permissions that come back when you trust it",
+      "noGrants": "None: it runs with no permissions until you give it some.",
+      "trust": "Trust this script",
+      "trusted": "“{{name}}” is trusted",
+      "failed": "“{{name}}” could not be trusted"
+    },
+    "grants": {
+      "projectsRead": "Read the projects and their repositories",
+      "repositoriesPaths": "See the folders of the repositories",
+      "everyRepository": "every repository of the project",
+      "repository": "the repository {{key}}",
+      "folder": "the folder “{{label}}”",
+      "fs": {
+        "read": "Read files in {{where}}",
+        "write": "Read and change files in {{where}}",
+        "delete": "Read, change and delete files in {{where}}"
+      },
+      "process": "Run {{command}}",
+      "shell": "Run shell code with {{shells}}",
+      "destructiveAllow": "Delete files without asking"
+    },
+    "delete": {
+      "title": "Delete “{{name}}”?",
+      "unused": "Nothing uses this script.",
+      "used_one": "It is used in {{count}} place. Those keys and steps stay and show that the script is missing, unless you clear the keys.",
+      "used_other": "It is used in {{count}} places. Those keys and steps stay and show that the script is missing, unless you clear the keys.",
+      "uses": "Uses of the script",
+      "clearKeys": "Also clear the keys that run it",
+      "confirm": "Delete script",
+      "failed": "“{{name}}” could not be deleted"
+    }
   }
 }

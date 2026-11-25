@@ -232,6 +232,8 @@ impl SqliteStore {
     /// review: its dormant grants are shown before "Trust this script".
     pub fn script_trust(&self, profile: ProfileId, id: ScriptId) -> Result<Option<ScriptTrust>> {
         trust_of(self.connection(), profile, id)
+    }
+
     /// The grants of a run that loaded the source with hash `loaded`:
     /// `None` unless that is the source the user trusted (now), without
     /// reading or hashing the source again. A trusted record that does not

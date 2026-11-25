@@ -111,6 +111,13 @@ released either. 0.6.0 is the first version intended for publication.
   is trusted; its permissions are read again at every step. Scripts see
   each repository's remotes, with the connection and the provider's
   repository they are linked to.
+- A Scripts page (while the Scripts plugin is on, not usable yet): write
+  and edit the profile's scripts in a code editor with JavaScript
+  highlighting, checks and completion, rename, duplicate and delete them
+  (a script's uses are listed first), and review a script that came from
+  elsewhere before trusting it: its code is shown read only, with
+  invisible characters marked, and with the permissions it would get
+  back.
 
 ### Changed
 
