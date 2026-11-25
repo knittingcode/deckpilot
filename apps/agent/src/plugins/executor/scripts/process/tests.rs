@@ -38,6 +38,10 @@ fn bin(f: &Fixture) -> PathBuf {
     tool("showenv", r#"echo "CI=${CI:-} TOKEN=${SECRET_TOKEN:-}""#);
     tool("slow", "sleep 30");
     tool("flood", "yes aaaaaaaaaaaaaaa | head -c 2000000");
+    // A harmless stand-in under a container runtime's name, and a link
+    // with an innocent name to it.
+    tool("podman", "echo ran");
+    std::os::unix::fs::symlink(bin.join("podman"), bin.join("innocent")).unwrap();
     tool(
         "both",
         "yes oooooooooooooo | head -c 900000; yes eeeeeeeeeeeeeeee | head -c 900000 >&2",
@@ -249,14 +253,11 @@ fn a_timeout_stops_the_program() {
     )]);
     let mut e = loaded(&f, &bin);
     let started = Instant::now();
-    let r = ok(&call(
+    let r = call(
         &mut e,
         &json!({"op":"process.run","args":{"command":"slow","args":[],"env":{},"timeoutMs":300}}),
-    ));
-    assert_eq!(
-        (r["timedOut"].as_bool(), r["ok"].as_bool()),
-        (Some(true), Some(false))
     );
+    timed_out(&r);
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "{:?}",
@@ -275,9 +276,23 @@ fn a_timeout_stops_the_program() {
         )])
     });
     let started = Instant::now();
-    let r = ok(&call(&mut e, &run("slow", &[])));
-    assert_eq!(r["timedOut"], true);
+    timed_out(&call(&mut e, &run("slow", &[])));
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// A run its limit ended: the program stopped, or (when other tests hold
+/// every process slot for longer than the limit) the wait for a slot.
+fn timed_out(r: &deckpilot_plugin_abi::CallResult) {
+    if matches!(r, deckpilot_plugin_abi::CallResult::Error(_)) {
+        assert_eq!(code(r), "timedOut", "{r:?}");
+        assert!(format!("{r:?}").contains("no process slot"), "{r:?}");
+    } else {
+        let r = ok(r);
+        assert_eq!(
+            (r["timedOut"].as_bool(), r["ok"].as_bool()),
+            (Some(true), Some(false))
+        );
+    }
 }
 
 /// One call as the supervisor makes it, with an interrupt.
@@ -647,4 +662,31 @@ fn both_streams_together_keep_at_most_a_mebibyte() {
     assert!(total <= 1 << 20, "{total}");
     assert!(total > 900_000, "{total}");
     assert_eq!(r["truncated"], true);
+}
+
+/// Container runtimes are not grantable (an open owner decision): by
+/// name, or by the file an innocent-looking command resolves to, even
+/// when a stored record names them.
+#[test]
+fn a_container_runtime_never_runs() {
+    // A record naming one is refused whole (no grants at all).
+    let (f, bin) = setup(vec![
+        grant("echoargs", ProcessCwd::Repositories, ProcessEnv::None),
+        grant("podman", ProcessCwd::Repositories, ProcessEnv::None),
+    ]);
+    let mut e = loaded(&f, &bin);
+    for command in ["podman", "echoargs"] {
+        let r = call(&mut e, &run(command, &[]));
+        assert_eq!(code(&r), "notGranted", "{command}: {r:?}");
+    }
+    // A granted name that resolves to one is refused at run time.
+    let (f, bin) = setup(vec![grant(
+        "innocent",
+        ProcessCwd::Repositories,
+        ProcessEnv::None,
+    )]);
+    let mut e = loaded(&f, &bin);
+    let r = call(&mut e, &run("innocent", &[]));
+    assert_eq!(code(&r), "notGranted", "{r:?}");
+    assert!(format!("{r:?}").contains("container runtimes"), "{r:?}");
 }

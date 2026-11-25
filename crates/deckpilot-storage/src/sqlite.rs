@@ -101,6 +101,12 @@ const MIGRATIONS: &[&str] = &[
     // `repository` role stands for (`repositories::migrate`). Additive:
     // roles, resources and bindings are not rewritten.
     crate::repositories::SCHEMA,
+    // 15 is the Calls work's (managed layouts, #457), ahead of this one
+    // in the merge queue: its migration takes this place when it lands.
+    "",
+    // Scripts: two new, empty tables (`scripts::SCHEMA`), the portable
+    // scripts of a profile and their machine-local trust. Additive.
+    crate::scripts::SCHEMA,
 ];
 
 /// Runs `step` again while SQLite reports the database busy, for up to
@@ -2974,6 +2980,7 @@ mod tests {
                      DROP TABLE work_session_transitions; DROP TABLE work_session_reviews;
                      DROP TABLE work_session_intervals; DROP TABLE work_sessions;
                      DROP TABLE work_session_settings;
+                     DROP TABLE script_trust; DROP TABLE scripts;
                      ALTER TABLE projects DROP COLUMN default_repository;
                      ALTER TABLE projects DROP COLUMN repositories;
                      PRAGMA user_version = 4;",

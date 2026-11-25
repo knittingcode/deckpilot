@@ -43,6 +43,7 @@ pub mod registry;
 pub mod resolution;
 pub mod resource;
 pub mod runtime;
+pub mod script;
 pub mod script_grants;
 pub mod shared_layouts;
 pub mod stateful;
@@ -128,8 +129,8 @@ pub use history::{
     safe_event, safe_report,
 };
 pub use id::{
-    ActionInstanceId, ExecutionId, IconId, LayoutId, PageId, ProfileId, ProjectId, VerificationId,
-    WorkSessionId, WorkflowId,
+    ActionInstanceId, ExecutionId, IconId, LayoutId, PageId, ProfileId, ProjectId, ScriptId,
+    VerificationId, WorkSessionId, WorkflowId,
 };
 pub use layout::{
     BindingTarget, ControlBinding, DeviceLayout, IncompatibleBinding, LayoutIssue, LayoutPage,

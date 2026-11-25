@@ -94,8 +94,8 @@ pub enum FsAccess {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessGrant {
-    /// `git`, `docker`, another bare name, or an absolute path picked with
-    /// the native file picker.
+    /// `git`, another bare name, or an absolute path picked with the native
+    /// file picker. Never a container runtime ([`CONTAINER_RUNTIMES`]).
     pub command: String,
     /// Where it may run.
     #[serde(default)]
@@ -213,6 +213,47 @@ pub enum GrantsError {
     Command,
     #[error("an unknown shell")]
     Shell,
+    /// Container runtimes are not grantable until the owner decides how
+    /// (they are effectively root on most machines).
+    #[error("container runtimes are not available to scripts yet")]
+    ContainerRuntime,
+}
+
+/// Container runtimes and their tools: never grantable to a script in this
+/// version (the owner's open decision; the safest default). A command is
+/// one when its file name, without `.exe` and case, is one of these or
+/// starts with `docker-` or `podman-` (their plugins and helpers).
+pub const CONTAINER_RUNTIMES: &[&str] = &[
+    "docker",
+    "dockerd",
+    "docker-compose",
+    "podman",
+    "podman-remote",
+    "nerdctl",
+    "colima",
+    "lima",
+    "limactl",
+    "containerd",
+    "ctr",
+    "crictl",
+    "runc",
+    "crun",
+    "buildah",
+    "finch",
+    "rancher-desktop",
+    "rdctl",
+];
+
+/// Whether `command` (a bare name or a path) names a container runtime
+/// ([`CONTAINER_RUNTIMES`]).
+pub fn is_container_runtime(command: &str) -> bool {
+    let name = command
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(command)
+        .to_ascii_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    CONTAINER_RUNTIMES.contains(&name) || name.starts_with("docker-") || name.starts_with("podman-")
 }
 
 /// The shells a grant may name.
@@ -255,6 +296,9 @@ impl ScriptGrants {
                 && !c.starts_with('-')
                 && !c.contains(['/', '\\', '\0'])
                 && !c.chars().any(|ch| ch.is_whitespace() || ch.is_control());
+            if is_container_runtime(c) {
+                return Err(GrantsError::ContainerRuntime);
+            }
             if !bare && !std::path::Path::new(c).is_absolute() {
                 return Err(GrantsError::Command);
             }
@@ -349,6 +393,43 @@ mod tests {
             }),
             ..ScriptGrants::default()
         }));
+    }
+
+    #[test]
+    fn container_runtimes_are_never_grantable() {
+        for command in [
+            "docker",
+            "Docker.exe",
+            "podman",
+            "nerdctl",
+            "colima",
+            "lima",
+            "limactl",
+            "docker-compose",
+            "docker-buildx",
+            "/usr/local/bin/docker",
+            "C:\\Program Files\\Docker\\docker.exe",
+            "/opt/homebrew/bin/podman-remote",
+        ] {
+            assert!(is_container_runtime(command), "{command}");
+            let grants = ScriptGrants {
+                process: vec![ProcessGrant {
+                    command: command.into(),
+                    cwd: ProcessCwd::Repositories,
+                    env: ProcessEnv::None,
+                    unrestricted_args: false,
+                }],
+                ..ScriptGrants::default()
+            };
+            assert_eq!(
+                grants.validate(),
+                Err(GrantsError::ContainerRuntime),
+                "{command}"
+            );
+        }
+        for command in ["git", "npm", "dock", "/usr/bin/make", "mydocker"] {
+            assert!(!is_container_runtime(command), "{command}");
+        }
     }
 
     #[test]

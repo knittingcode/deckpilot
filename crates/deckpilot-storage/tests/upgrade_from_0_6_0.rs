@@ -73,9 +73,9 @@ fn copy() -> Copy {
 fn upgrading_keeps_every_kind_of_data() {
     let copy = copy();
     let store = copy.open().unwrap();
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(store.schema_version().unwrap(), 16);
     let upgrade = store.migration_history().unwrap().pop().unwrap();
-    assert_eq!((upgrade.from_version, upgrade.to_version), (7, 14));
+    assert_eq!((upgrade.from_version, upgrade.to_version), (7, 16));
     assert_eq!(upgrade.result, "ok");
 
     let mut profiles: Vec<_> = store
@@ -217,15 +217,15 @@ fn a_newer_database_is_refused_by_a_build_that_supports_less() {
     let store = copy.open().unwrap();
     store
         .connection_for_tests()
-        .pragma_update(None, "user_version", 15)
+        .pragma_update(None, "user_version", 17)
         .unwrap();
     drop(store);
     let before = std::fs::read(copy.database()).unwrap();
     assert!(matches!(
         copy.open(),
         Err(StorageError::UnsupportedSchema {
-            found: 15,
-            supported: 14
+            found: 17,
+            supported: 16
         })
     ));
     assert!(

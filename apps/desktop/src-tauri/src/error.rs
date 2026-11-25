@@ -198,6 +198,7 @@ impl CommandError {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "one arm per storage error, exhaustive")]
 fn storage_code(error: &StorageError) -> (String, Params) {
     use StorageError as E;
     let (kind, values): (&str, Params) = match error {
@@ -293,8 +294,27 @@ fn storage_code(error: &StorageError) -> (String, Params) {
         E::WorkSessionActive => ("workSessionActive", Params::new()),
         E::VariableInUse(uses) => ("variableInUse", params([("count", uses.len().into())])),
         E::ActionInUse(uses) => ("actionInUse", params([("count", uses.len().into())])),
+        E::UnknownScript
+        | E::ScriptNameTaken(_)
+        | E::ScriptRevision(_)
+        | E::ScriptChanged
+        | E::ScriptNotTrusted => script_code(error),
     };
     (format!("storage.{kind}"), values)
+}
+
+/// The script errors of [`storage_code`].
+fn script_code(error: &StorageError) -> (&'static str, Params) {
+    use StorageError as E;
+    match error {
+        E::ScriptNameTaken(name) => ("scriptNameTaken", params([("name", name.clone().into())])),
+        E::ScriptRevision(revision) => {
+            ("scriptRevision", params([("revision", (*revision).into())]))
+        }
+        E::ScriptChanged => ("scriptChanged", Params::new()),
+        E::ScriptNotTrusted => ("scriptNotTrusted", Params::new()),
+        _ => ("unknownScript", Params::new()),
+    }
 }
 
 fn crypto_kind(error: &CryptoError) -> &'static str {

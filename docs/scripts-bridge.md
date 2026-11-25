@@ -15,9 +15,13 @@ Status:
   broker; the agent's executor for the run's own operations, the
   projects, the file system and processes; the manifest's kinds at
   plugin API 1.13 (validator, store grant, supervisor limits);
-- next: the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8), and
-  the script store and Scripts page (P7; until then the agent keeps no
-  scripts and every run ends with `scriptMissing`).
+- in place (P7, part 1): the script store (schema 16) with its
+  machine-local trust and grants, and the trust lifecycle
+  (`docs/data-model.md`, "Scripts");
+- next: portability of scripts, the agent's script host, the Scripts
+  page (P7), the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8);
+  until the agent's script host lands every run ends with
+  `scriptMissing`.
 
 ## Operations
 
@@ -350,8 +354,8 @@ the run is stopped (`cancelled`), or the grant it used is revoked
 runs of the plugin at once.
 
 - **The command** must be one the script was granted, by the same name
-  or path. `git` and `docker` are the user's configured tools
-  (`gitUnavailable`, `dockerUnavailable` when not found); another bare
+  or path. `git` is the user's configured tool (`gitUnavailable` when
+  not found); another bare
   name is looked up on the agent's `PATH` (with `PATHEXT`, `.exe` and
   `.com`, on Windows); an absolute grant must exist
   (`commandNotFound`). The file found is canonicalized and is never a
@@ -386,9 +390,21 @@ runs of the plugin at once.
   Restricted git still runs the repository's own hooks and filters (the
   user's repository); with `unrestrictedArgs` a git grant runs any
   program the user could, and is shown as such.
-- **docker** has no argument limits: a docker grant can start containers
-  with the host's folders mounted, so it is effectively full access to
-  the computer, and is shown as such.
+- **Container runtimes are not available to scripts** in this version
+  (an open owner decision, kept at the safest option): `docker`,
+  `podman`, `nerdctl`, `colima`, `lima`/`limactl`, `containerd`/`ctr`,
+  `runc`/`crun`, `buildah`, `finch`, Rancher Desktop's tools, and every
+  `docker-*` or `podman-*` helper (`deckpilot_core::script_grants::
+  CONTAINER_RUNTIMES`). A grant naming one is refused when it is saved,
+  a stored record naming one grants nothing, and a granted command
+  whose name or resolved file is one is refused at run time
+  (`notGranted`, "container runtimes are not available to scripts
+  yet"). A container runtime can start containers with the host's
+  folders mounted, so it is effectively full access to the computer;
+  when the owner decides, it becomes a high-risk consent or stays off.
+  A `shell.run` grant (high, off by default) can still start any
+  program the user could, a container runtime included: it is shown as
+  such.
 - **`cwd`** follows the grant's rule: `repositories` (a repository of the
   run's project), `fsScopes` (one of the script's scopes) or `any` (an
   existing folder, never one of DeckPilot's private folders). It is

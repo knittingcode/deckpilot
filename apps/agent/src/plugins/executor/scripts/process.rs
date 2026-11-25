@@ -39,6 +39,7 @@ use std::time::{Duration, Instant};
 
 use deckpilot_core::script_grants::{
     FsAccess, FsRoot, FsScope, ProcessCwd, ProcessEnv, ProcessGrant, ScriptGrants,
+    is_container_runtime,
 };
 use deckpilot_plugin_abi::privileged::Tool;
 use deckpilot_plugin_abi::scripts::{
@@ -311,18 +312,25 @@ impl Executor {
             command: Some(grant.command.clone()),
             ..fault(code, format!("{what} was not found on this computer"))
         };
+        let container = || ScriptFault {
+            command: Some(grant.command.clone()),
+            ..fault(
+                codes::NOT_GRANTED,
+                "container runtimes are not available to scripts yet",
+            )
+        };
+        // Not grantable in this version (an open owner decision), whatever
+        // a stored record says, by name or by the file it resolves to.
+        if is_container_runtime(&grant.command) {
+            return Err(container());
+        }
         let (code, path) = match grant.command.as_str() {
-            "git" | "docker" => {
-                let (tool, code) = if grant.command == "git" {
-                    (Tool::Git, codes::GIT_UNAVAILABLE)
-                } else {
-                    (Tool::Docker, codes::DOCKER_UNAVAILABLE)
-                };
+            "git" => {
                 let path = self
                     .tools
-                    .executable(tool)
-                    .map_err(|_| not_found(code, &grant.command))?;
-                (code, path)
+                    .executable(Tool::Git)
+                    .map_err(|_| not_found(codes::GIT_UNAVAILABLE, &grant.command))?;
+                (codes::GIT_UNAVAILABLE, path)
             }
             command if Path::new(command).is_absolute() => {
                 (codes::COMMAND_NOT_FOUND, PathBuf::from(command))
@@ -334,6 +342,11 @@ impl Executor {
             ),
         };
         let real = canonical(&path).map_err(|_| not_found(code, &grant.command))?;
+        if is_container_runtime(&path.to_string_lossy())
+            || is_container_runtime(&real.to_string_lossy())
+        {
+            return Err(container());
+        }
         if !real.is_file() || !runnable(&real) {
             return Err(not_found(code, &grant.command));
         }

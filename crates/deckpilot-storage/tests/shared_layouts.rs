@@ -566,6 +566,7 @@ fn identifiers_two_profiles_shared_before_get_new_ones_in_the_later_profile() {
                  DROP TABLE library_icons; DROP TABLE layout_actions;
                  DROP TABLE profile_actions; DROP TABLE library_actions;
                  DROP TABLE profile_layouts; DROP TABLE layouts;
+                 DROP TABLE script_trust; DROP TABLE scripts;
                  ALTER TABLE projects DROP COLUMN default_repository;
                  ALTER TABLE projects DROP COLUMN repositories;
                  PRAGMA user_version = 9;",

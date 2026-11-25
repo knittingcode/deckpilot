@@ -96,6 +96,12 @@ released either. 0.6.0 is the first version intended for publication.
   file a script reads in parts comes from one snapshot of the file, so
   its parts never mix two versions; a file replaced or changed between
   them fails the read.
+- Storage (schema 16, not usable yet): the scripts of a profile, and on
+  this computer only whether each is trusted and what it may do. A
+  script made in the editor is trusted with nothing granted; an imported
+  or duplicated one is never trusted and never runs until reviewed. A
+  script can never be granted a container runtime (Docker, Podman and
+  the like) in this version.
 
 ### Changed
 

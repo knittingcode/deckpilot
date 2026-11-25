@@ -63,7 +63,7 @@ const V0_8_1: Fixture = Fixture {
 };
 const FIXTURES: [Fixture; 4] = [V0_5_0, V0_6_0, SCHEMA_8, V0_8_1];
 /// The schema this build upgrades to.
-const CURRENT: u32 = 14;
+const CURRENT: u32 = 16;
 /// The tables schema 10 adds (shared layouts). `device_layouts` starts
 /// empty; the others hold what the profile documents held.
 const SCHEMA_10_TABLES: [&str; 9] = [
@@ -340,6 +340,8 @@ fn every_row_is_kept(fixture: Fixture) {
         .map(String::as_str)
         .collect();
     let mut expected = BTreeSet::from(SCHEMA_10_TABLES);
+    // Migration 16: the scripts tables, empty.
+    expected.extend(["script_trust", "scripts"]);
     if fixture.version < 9 {
         expected.extend(SCHEMA_9_TABLES);
     }
