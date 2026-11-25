@@ -338,6 +338,7 @@ impl Agent {
         self.plugins.closed();
         // A locked device never shows a call.
         self.calls_set_locked(true);
+        self.calls_layouts_changed();
         self.security =
             security_state(&self.options.paths.database).unwrap_or(SecurityState::Locked);
         self.lock_reason = (self.security == SecurityState::Locked).then_some(reason);

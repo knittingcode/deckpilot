@@ -80,6 +80,13 @@ released either. 0.6.0 is the first version intended for publication.
   A managed Calls layout that cannot be stored while the database is busy
   is tried again after 1 s, then after waits doubling up to a minute;
   other storage errors are not retried.
+- Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
+  `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
+  Settings › Devices gets a Calls section, in English and Polish, shown
+  only while Calls is installed, which no build does yet. It shows the
+  call's state, says plainly that Teams can only be detected, has a switch
+  per device for the overlay, and has *Restore defaults*, which first keeps
+  your version of the layout under a name it tells you.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,

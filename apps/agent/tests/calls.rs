@@ -567,6 +567,285 @@ async fn the_stored_managed_layout_is_seeded_and_survives_a_restart() {
     deck.agent.shutdown().await;
 }
 
+/// Protocol 19: the app reads Calls, gets `callsChanged` when the call
+/// changes, turns a device's overlay off and restores a managed layout,
+/// keeping the user's version. No title or process ever travels.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_app_reads_and_changes_calls_over_ipc() {
+    use deckpilot_ipc::{AgentEvent, Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let Response::CallsStatus { status } =
+        deck.agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(status.installed);
+    assert_eq!(status.state, "idle");
+    assert!(status.controls, "the mock controls calls");
+    assert!(
+        status
+            .devices
+            .iter()
+            .any(|d| d.device == deck.device && d.overlay && !d.shown)
+    );
+    let layout = status
+        .layouts
+        .first()
+        .expect("the MK.2's managed layout")
+        .clone();
+    assert!(!layout.edited);
+    let json = serde_json::to_string(&status).unwrap();
+    assert!(
+        !json.contains("title") && !json.contains("process"),
+        "{json}"
+    );
+
+    deck.join().await;
+    let changed = loop {
+        match tokio::time::timeout(TIMEOUT, events.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            AgentEvent::CallsChanged { status } if status.state == "active" => break status,
+            _ => {}
+        }
+    };
+    assert!(
+        changed
+            .devices
+            .iter()
+            .any(|d| d.device == deck.device && d.shown)
+    );
+
+    // The device's overlay off: it goes at once, the call goes on.
+    let Response::CallsStatus { status } = deck
+        .agent
+        .request(Request::SetCallsOverlay {
+            device: deck.device.clone(),
+            on: false,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(
+        status
+            .devices
+            .iter()
+            .any(|d| d.device == deck.device && !d.overlay && !d.shown)
+    );
+    assert_eq!(status.state, "active");
+    assert!(!deck.shows_overlay().await);
+
+    // Restore defaults keeps an edited layout as the user's own.
+    deck.agent
+        .store()
+        .rename_shared_layout(layout.layout.parse().unwrap(), "Edited")
+        .unwrap();
+    let Response::CallsLayoutRestored { copy } = deck
+        .agent
+        .request(Request::RestoreCallsLayout {
+            model: layout.model.clone(),
+            copy_name: "Rozmowy (moja wersja)".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("restored")
+    };
+    let copy = copy.expect("the user's version is kept");
+    let kept = deck
+        .agent
+        .store()
+        .shared_layout(copy.parse().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.layout.name, "Rozmowy (moja wersja)");
+    let Response::CallsStatus { status } =
+        deck.agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(status.layouts.iter().all(|l| !l.edited), "regenerated");
+    deck.agent.shutdown().await;
+}
+
+/// A connection of protocol 18 is never asked, and never told, about
+/// Calls: the client refuses the requests before they leave, the agent
+/// refuses them from such a connection when they are sent anyway, and its
+/// subscription gets no `callsChanged` while a protocol 19 one does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_protocol_18_connection_cannot_ask_about_calls() {
+    use deckpilot_ipc::framing::{read_message, write_message};
+    use deckpilot_ipc::{AgentClient, ClientError, ClientKind, Request};
+    use deckpilot_ipc::{AgentEvent, ErrorCode, ServerMessage, SharedStream};
+    use serde_json::json;
+    use tokio::io::BufReader;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut old = AgentClient::connect_with_protocol(&deck.agent.paths, ClientKind::Desktop, 18)
+        .await
+        .unwrap();
+    for request in [
+        Request::GetCallsStatus,
+        Request::SetCallsOverlay {
+            device: deck.device.clone(),
+            on: false,
+        },
+        Request::RestoreCallsLayout {
+            model: deck.device.model.clone(),
+            copy_name: "Mine".into(),
+        },
+    ] {
+        let refused = old.request(request).await;
+        assert!(
+            matches!(refused, Err(ClientError::Unsupported { needs: 19, .. })),
+            "{refused:?}"
+        );
+    }
+    assert!(!deck.shows_overlay().await);
+
+    // A raw protocol 18 desktop connection, subscribed.
+    let token = std::fs::read_to_string(&deck.agent.paths.token_file).unwrap();
+    let stream = SharedStream::new(deck.agent.paths.endpoint().connect().await.unwrap());
+    let mut reader = BufReader::new(stream.clone());
+    let mut writer = stream;
+    let receive = async move |reader: &mut BufReader<SharedStream>| {
+        tokio::time::timeout(
+            Duration::from_millis(300),
+            read_message::<_, ServerMessage>(reader),
+        )
+        .await
+        .ok()
+        .and_then(|m| m.ok().flatten())
+    };
+    write_message(
+        &mut writer,
+        &json!({"type":"hello","protocol":18,"token":token.trim(),"client":"desktop"}),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        receive(&mut reader).await,
+        Some(ServerMessage::Welcome { .. })
+    ));
+    write_message(
+        &mut writer,
+        &json!({"type":"request","id":1,"request":{"type":"subscribe"}}),
+    )
+    .await
+    .unwrap();
+    let mut current = deck.agent.events().await;
+    deck.join().await;
+    // The protocol 19 subscription is told.
+    loop {
+        if let AgentEvent::CallsChanged { .. } = tokio::time::timeout(TIMEOUT, current.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            break;
+        }
+    }
+    // Sent anyway at protocol 18: refused by the agent.
+    write_message(
+        &mut writer,
+        &json!({"type":"request","id":2,"request":{"type":"getCallsStatus"}}),
+    )
+    .await
+    .unwrap();
+    let mut refused = None;
+    while let Some(message) = receive(&mut reader).await {
+        match message {
+            ServerMessage::Event {
+                event: AgentEvent::CallsChanged { .. },
+            } => panic!("a protocol 18 connection was told about Calls"),
+            ServerMessage::Error { id: Some(2), error } => refused = Some(error.code),
+            _ => {}
+        }
+    }
+    assert_eq!(refused, Some(ErrorCode::Unsupported));
+    deck.agent.shutdown().await;
+}
+
+/// The managed layouts are read from the store once, not on every tick of
+/// a call; a configuration reload reads them again and tells the app that
+/// the user edited one; a device that is not connected is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_status_reads_layouts_once_and_follows_edits() {
+    use deckpilot_ipc::{AgentEvent, ClientError, ErrorCode, Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let Response::CallsStatus { status } =
+        deck.agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    let layout = status.layouts.first().expect("the MK.2's layout").clone();
+    deck.join().await;
+    let reads = deck.agent.handle.calls_view().await.unwrap().layouts_reads;
+    assert!(reads >= 1);
+    for _ in 0..20 {
+        deck.advance(1).await;
+    }
+    deck.agent.request(Request::GetCallsStatus).await.unwrap();
+    assert_eq!(
+        deck.agent.handle.calls_view().await.unwrap().layouts_reads,
+        reads,
+        "not read again on the tick"
+    );
+
+    // Edited in the app, then the configuration is reloaded.
+    deck.agent
+        .store()
+        .rename_shared_layout(layout.layout.parse().unwrap(), "Edited")
+        .unwrap();
+    deck.agent
+        .request(Request::ReloadConfiguration)
+        .await
+        .unwrap();
+    loop {
+        match tokio::time::timeout(TIMEOUT, events.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            AgentEvent::CallsChanged { status } if status.layouts.iter().any(|l| l.edited) => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // A device that is not connected.
+    let refused = deck
+        .agent
+        .request(Request::SetCallsOverlay {
+            device: deckpilot_device::DeviceId {
+                model: deck.device.model.clone(),
+                serial: "NOT-HERE".into(),
+            },
+            on: false,
+        })
+        .await;
+    match refused {
+        Err(ClientError::Agent(error)) => {
+            assert_eq!(error.code, ErrorCode::NotFound);
+            assert_eq!(
+                error.reason.as_deref(),
+                Some(deckpilot_ipc::calls::reason::UNKNOWN_DEVICE)
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    deck.agent.shutdown().await;
+}
+
 /// T-R7 at agent level, with two MK.2s in the meeting: one going back to
 /// work leaves the other on the call; with `returnAllDevices` both go.
 #[tokio::test(flavor = "multi_thread")]
