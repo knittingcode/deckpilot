@@ -44,6 +44,8 @@ test-hooks = [
 # never in the agent.
 plugins = [
     "dep:base64",
+    "dep:cap-fs-ext",
+    "dep:cap-std",
     "dep:deckpilot-plugin-abi",
     "dep:deckpilot-plugin-bundled",
     "dep:deckpilot-plugin-broker",
@@ -93,6 +95,10 @@ tray-icon.workspace = true
 # Feature `plugins` only.
 # Installed plugin icons as data URLs (`PluginDetails.icon`).
 base64 = { workspace = true, optional = true }
+# The Scripts bridge's file system operations, beneath an opened scope
+# root (plugin API 1.13, plugins/executor/scripts/fs).
+cap-fs-ext = { workspace = true, optional = true }
+cap-std = { workspace = true, optional = true }
 deckpilot-plugin-abi = { workspace = true, optional = true }
 deckpilot-plugin-broker = { workspace = true, optional = true }
 # The bundled first-party plugins: pins compiled in (DECKPILOT_BUNDLED_PINS

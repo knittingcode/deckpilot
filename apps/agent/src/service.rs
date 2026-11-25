@@ -1565,7 +1565,13 @@ impl Agent {
             | Request::InstallPluginPlan { .. }
             | Request::PlanPluginRemoval { .. }
             | Request::RemovePlugin { .. }
-            | Request::RestoreBundledPlugin { .. } => {
+            | Request::RestoreBundledPlugin { .. }
+            | Request::ListPluginConnections { .. }
+            | Request::CreatePluginConnection { .. }
+            | Request::SetPluginConnectionSecret { .. }
+            | Request::UpdatePluginConnection { .. }
+            | Request::TestPluginConnection { .. }
+            | Request::RemovePluginConnection { .. } => {
                 unreachable!("plugin requests are handled by handle_command")
             }
             Request::Unlock { .. }

@@ -36,6 +36,8 @@ mod connections;
 mod gesture_presets;
 #[path = "privileged.rs"]
 mod privileged;
+#[path = "scripts.rs"]
+mod scripts;
 pub use privileged::OPTIONAL_PERMISSIONS;
 pub(crate) use privileged::first_party_only;
 
@@ -397,6 +399,7 @@ pub(crate) fn check(manifest: &Manifest) -> Checker {
     needs_project(&mut c, manifest);
     dependencies(&mut c, manifest);
     privileged::check(&mut c, manifest);
+    scripts::check(&mut c, manifest);
     calls_rules::check(&mut c, manifest);
     connections::check(&mut c, manifest);
     c
@@ -713,7 +716,10 @@ fn permissions(c: &mut Checker, m: &Manifest) {
             | Permission::HostViews { .. }
             | Permission::Calls { .. } => privileged::permission(c, &path, permission),
             Permission::Connections { .. } => connections::permission(c, &path, permission),
-            Permission::Notifications { routing: None, .. } | Permission::Dialogs { .. } => {}
+            // Plugin API 1.13: checked in `scripts.rs`.
+            Permission::Notifications { routing: None, .. }
+            | Permission::Dialogs { .. }
+            | Permission::Scripts { .. } => {}
         }
     }
 }
@@ -1003,7 +1009,10 @@ fn parameter_kind(c: &mut Checker, path: &str, kind: &ParameterKind) {
             c.unique(&field, kinds.iter().map(|k| k.as_str()));
         }
         ParameterKind::Connection { .. } => connections::parameter_kind(c, path, kind),
-        ParameterKind::Integer { .. } | ParameterKind::Boolean {} | ParameterKind::Project {} => {}
+        ParameterKind::Integer { .. }
+        | ParameterKind::Boolean {}
+        | ParameterKind::Project {}
+        | ParameterKind::Script {} => {}
     }
 }
 
@@ -1018,6 +1027,7 @@ fn kind_name(kind: &ParameterKind) -> &'static str {
         ParameterKind::Lines { .. } => "lines",
         ParameterKind::Pairs { .. } => "pairs",
         ParameterKind::Code { .. } => "code",
+        ParameterKind::Script {} => "script",
         ParameterKind::Connection { .. } => "connection",
     }
 }

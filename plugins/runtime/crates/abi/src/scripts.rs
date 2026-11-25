@@ -429,7 +429,17 @@ pub struct FsReadFile {
     pub offset: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length: Option<u32>,
+    /// The `version` the first chunk's reply gave: every later chunk of
+    /// the same read names it, and the agent serves it from the snapshot
+    /// the first chunk took, refusing (`fileChanged`) when the file at the
+    /// path was replaced or changed meanwhile. A chunk at an offset other
+    /// than 0 needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_version: Option<String>,
 }
+
+/// Longest read `version` token, in bytes (the agent's are 32 hex digits).
+pub const MAX_READ_VERSION: usize = 64;
 
 /// `fs.writeFile`: a whole file of at most [`MAX_WRITE_CHUNK`] bytes in
 /// one request. A larger one is written with `fs.write.*`.
@@ -831,6 +841,17 @@ impl FsReadFile {
         if self.offset.is_some() && self.length.is_none() {
             return Err(RequestError::Invalid("length"));
         }
+        if self
+            .if_version
+            .as_deref()
+            .is_some_and(|v| !is_opaque(v, MAX_READ_VERSION))
+        {
+            return Err(RequestError::Invalid("ifVersion"));
+        }
+        // A later chunk belongs to a read: it names its version.
+        if self.offset.is_some_and(|o| o > 0) && self.if_version.is_none() {
+            return Err(RequestError::Invalid("ifVersion"));
+        }
         if self.length.is_some_and(|l| l == 0 || l > MAX_READ_CHUNK) {
             return Err(RequestError::TooLarge("length"));
         }
@@ -1010,6 +1031,8 @@ pub mod codes {
     pub const PROTECTED_PATH: &str = "protectedPath";
     pub const SYMLINK_ESCAPE: &str = "symlinkEscape";
     pub const NOT_FOUND: &str = "notFound";
+    /// A file changed (replaced or rewritten) between the chunks of a read.
+    pub const FILE_CHANGED: &str = "fileChanged";
     pub const EXISTS: &str = "exists";
     pub const TOO_LARGE: &str = "tooLarge";
     pub const COMMAND_NOT_FOUND: &str = "commandNotFound";
@@ -1070,6 +1093,8 @@ pub struct ScriptLoaded {
     pub settings: ScriptSettings,
     pub grants: Value,
     pub run: ScriptRunInfo,
+    /// The run's time left when it starts, in milliseconds.
+    pub remaining_ms: u64,
     pub now_us: u64,
 }
 
@@ -1133,6 +1158,11 @@ pub struct FsRead {
     pub bytes: u64,
     pub size: u64,
     pub eof: bool,
+    /// The read's version, when it did not reach the end: the later
+    /// chunks name it (`ifVersion`), so all of them come from one snapshot
+    /// of one file in one state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 /// The `ok` value of `fs.write.open`.

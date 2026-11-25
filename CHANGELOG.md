@@ -17,6 +17,23 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Plugins: connections (plugin API 1.14, host side). A plugin that
+  declares connection types (DeckPilot's own bundled plugins only) can be
+  connected to several servers, each with its own address, consent, token
+  and status: GitHub.com and GitLab.com at their own addresses, GitHub
+  Enterprise Server and self-managed GitLab at the address the user opens
+  in the browser (`https` only, with a port or a path). Tokens are kept in
+  the encrypted plugin database, protected like the configuration (its key
+  derives from the configuration's), are never sent back to the app, logged, exported or handed to
+  the plugin, and are injected by the agent only into requests to their
+  own server, and only to a connection the user chose for the action (never
+  one a workflow maps in); a redirect off that server ends the request, certificates
+  are checked against the system's trust store with no way to skip it,
+  and a server on a private network needs its own consent (this computer
+  and link-local addresses never). A plugin reaches only the connections
+  an action's parameters name. The app's requests to list, create, test,
+  rename, turn off and remove connections are IPC protocol 20; the plugin
+  store goes to schema 7. No plugin uses them yet.
 - Calls (groundwork): a locked device never shows a call. Locking the
   configuration takes the Calls overlay off every device, and it comes back
   after unlocking if the call is still going on.
@@ -136,7 +153,20 @@ released either. 0.6.0 is the first version intended for publication.
   existing message size limits. The Scripts plugin alone can be given a
   larger budget of calls per run, and its polling and logging never
   extend its continuous CPU limit, so a busy script is still stopped
-  after 2 seconds.
+  after 2 seconds. The agent checks every file operation of a script
+  against that script's own folders and access, never follows a link
+  out of them, never changes a `.git` folder, the home folder, system
+  folders or DeckPilot's own, and asks before it deletes or replaces
+  files, showing what it computed itself. A script runs only the
+  programs granted to it, with an argument list and never a shell (a
+  shell only with its own grant), in its granted folders, with a clean
+  environment, and the program is stopped when the script is stopped,
+  runs out of time or loses its grant. Plugin manifests know the
+  Scripts plugin's permission, its script parameter, its page and its
+  limits (plugin API 1.13), for DeckPilot's own Scripts plugin only. A
+  file a script reads in parts comes from one snapshot of the file, so
+  its parts never mix two versions; a file replaced or changed between
+  them fails the read.
 
 ### Changed
 

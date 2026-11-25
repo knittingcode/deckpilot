@@ -287,6 +287,12 @@ pub(crate) fn is_plugin_request(request: &Request) -> bool {
             | Request::PlanPluginRemoval { .. }
             | Request::RemovePlugin { .. }
             | Request::RestoreBundledPlugin { .. }
+            | Request::ListPluginConnections { .. }
+            | Request::CreatePluginConnection { .. }
+            | Request::SetPluginConnectionSecret { .. }
+            | Request::UpdatePluginConnection { .. }
+            | Request::TestPluginConnection { .. }
+            | Request::RemovePluginConnection { .. }
     )
 }
 
