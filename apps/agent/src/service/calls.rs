@@ -271,6 +271,8 @@ pub(crate) struct AgentCalls {
     /// (`plugin_calls.rs`).
     #[cfg(feature = "plugins")]
     pub(super) waiting: super::plugin_calls::WaitingControls,
+    /// The provider sessions started so far (one per install).
+    sessions: u64,
     /// The device whose key is being handled.
     scope: Option<DeviceId>,
     /// Workflow runs that count for a return session, by execution.
@@ -342,11 +344,19 @@ impl Agent {
         consent: ConsentState,
         templates: Vec<Template>,
     ) {
+        // A new engine: what waited for the old one's confirmation never
+        // gets it (its command tokens could repeat in the new one).
+        #[cfg(feature = "plugins")]
+        self.calls.waiting.abandon("Calls was started again");
         if !consent.observe {
             info!("calls not installed: no consent to observe calls");
             return;
         }
         let now = Instant::ZERO;
+        // A new provider session per install, so no command token of an
+        // earlier install is ever reused.
+        self.calls.sessions += 1;
+        let session = ProviderSession(self.calls.sessions);
         let discovery = provider.discover(now);
         let id = provider.id();
         let mut engine = Engine::default();
@@ -356,10 +366,7 @@ impl Agent {
         if self.store.is_none() {
             driver.set_hidden(&mut self.runtime, true, Instant::ZERO);
         }
-        if let Err(error) = provider.connect(&ProviderCx {
-            consent,
-            session: ProviderSession(1),
-        }) {
+        if let Err(error) = provider.connect(&ProviderCx { consent, session }) {
             warn!(%error, "the Calls provider did not connect");
         }
         info!(provider = %id, "calls installed");

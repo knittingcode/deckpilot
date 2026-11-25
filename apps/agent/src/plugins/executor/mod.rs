@@ -607,6 +607,9 @@ pub(super) struct Executor {
     /// Calls (plugin API 1.16, `calls.rs`); without it the `call.*`
     /// operations are `calls-provider-offline`.
     calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
+    /// The `call.control`s of this invocation (at most
+    /// [`calls::MAX_CONTROLS`]).
+    call_controls: std::sync::atomic::AtomicU32,
 }
 
 /// One audit record of a plugin API 1.9 operation the executor carried
@@ -730,6 +733,7 @@ impl Executor {
             scripts: None,
             connections: std::collections::BTreeSet::new(),
             calls: None,
+            call_controls: std::sync::atomic::AtomicU32::new(0),
         }
     }
 

@@ -261,3 +261,27 @@ fn an_agent_without_calls_says_so() {
     assert_eq!(code, CallErrorCode::Unavailable);
     assert!(message.starts_with("calls-provider-offline: "), "{message}");
 }
+
+#[test]
+fn one_run_controls_at_most_twice() {
+    let f = Fixture::new(r#"[{"kind":"calls","control":true}]"#);
+    let mut executor = f.executor(key(), true);
+    let request: CapabilityRequest = serde_json::from_value(control("end")).unwrap();
+    let session = f.broker.session(f.plugin.clone());
+    let mut answers = Vec::new();
+    for _ in 0..3 {
+        let Decision::Allow(allowed) = session.authorize_in(&request, executor.run_context())
+        else {
+            panic!("allowed by the broker")
+        };
+        answers.push(refused(&executor.execute(&f.plugin, &allowed)).1);
+    }
+    assert_eq!(answers[0], "calls-unsupported: provider-has-no-api");
+    assert_eq!(answers[1], "calls-unsupported: provider-has-no-api");
+    assert!(
+        answers[2].starts_with("calls-consent: at most 2"),
+        "{}",
+        answers[2]
+    );
+    assert_eq!(f.reached(), 2, "the third never reached the agent");
+}

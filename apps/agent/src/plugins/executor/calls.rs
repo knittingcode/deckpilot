@@ -25,6 +25,11 @@ use tracing::warn;
 use super::{Executor, PrivilegedRecord};
 use crate::service::plugin_calls::{CallsAnswer, CallsCall, CallsHost, CallsRefusal};
 
+/// Most `call.control`s one invocation may make: a press asks for one
+/// action (a set that toggles is still one), so a run the user started
+/// cannot keep controlling calls that come later.
+pub(super) const MAX_CONTROLS: u32 = 2;
+
 impl Executor {
     /// The executor of an invocation that reaches Calls through `calls`.
     pub fn with_calls(mut self, calls: Option<Arc<dyn CallsHost>>) -> Self {
@@ -64,6 +69,16 @@ impl Executor {
             Err(CallsRefusal::new(
                 codes::CONSENT,
                 "only the Calls plugin may use calls",
+            ))
+        } else if control
+            && self
+                .call_controls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                >= MAX_CONTROLS
+        {
+            Err(CallsRefusal::new(
+                codes::CONSENT,
+                format!("at most {MAX_CONTROLS} call actions per run"),
             ))
         } else if control && !self.run.is_user_initiated() {
             // The broker refuses it already: checked again so that nothing

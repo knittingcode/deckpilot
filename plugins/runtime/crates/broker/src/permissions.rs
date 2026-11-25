@@ -185,8 +185,8 @@ pub enum ApprovedPermission {
     /// state (`calls`, shown as `calls:observe`); with `control`,
     /// `call.control` (`calls:control`, consented to on its own). Never
     /// together with a way out of the agent (`network`, a credential,
-    /// `openUrl`, a user origin, a tool), so what the plugin learns of a
-    /// call cannot leave.
+    /// `openUrl`, a user origin, a tool, `resources`), so what the plugin
+    /// learns of a call cannot leave.
     Calls {
         #[serde(default)]
         control: bool,
@@ -656,6 +656,7 @@ impl Grants {
                 || !g.open_url.is_empty()
                 || !g.user_origins.is_empty()
                 || !g.tools.is_empty()
+                || g.resources.is_some()
                 || g.open_url_from_params)
         {
             return Err(GrantError::CallsWithWayOut);
@@ -785,7 +786,8 @@ pub enum GrantError {
     /// A connection record whose id is not a connection id.
     ConnectionId,
     /// `calls` (plugin API 1.16) together with a way out of the agent
-    /// (`network`, a credential, `openUrl`, a user origin or a tool).
+    /// (`network`, a credential, `openUrl`, a user origin, a tool, or
+    /// `resources`, whose `resource.open` takes a path the guest chose).
     CallsWithWayOut,
 }
 
@@ -814,7 +816,7 @@ impl fmt::Display for GrantError {
             Self::ConnectionId => f.write_str("invalid connection id"),
             Self::CallsWithWayOut => f.write_str(
                 "calls cannot be granted together with network, credentials, openUrl, a user \
-                 origin or a tool",
+                 origin, a tool or resources",
             ),
         }
     }
