@@ -79,8 +79,8 @@ Current main speaks IPC protocol 19, which adds Calls (capability `calls`,
 `restoreCallsLayout` and the `callsChanged` event. Older clients never send
 these requests: they are refused locally and by the agent. Older clients
 receive no `callsChanged` events, and an older agent leaves the app's Calls
-settings hidden. (Protocol 18 is the Projects' change; if it lands later
-than this one, the two are numbered in merge order.)
+settings hidden. Protocol 18, the step before it, is typed repository
+variables.
 
 Current main then moves it to schema 15: the managed layouts of the Calls
 plugin (`docs/calls.md`, "Managed layouts"). The migration is additive: one

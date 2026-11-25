@@ -178,8 +178,8 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// `getCallsStatus`, `setCallsOverlay`, `restoreCallsLayout` and the
 /// `callsChanged` event. A client of protocol 18 or older never sends them
 /// (refused locally, and by the agent from such a connection) and receives
-/// no `callsChanged` events. (Version 18 is the Projects' change; if it
-/// lands later, the two are numbered in merge order.)
+/// no `callsChanged` events. (Version 18, typed repository variables, is
+/// the step before it.)
 pub const PROTOCOL_VERSION: u32 = 19;
 
 /// The protocol of Calls ([`Capability::Calls`]).
