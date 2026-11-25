@@ -243,6 +243,52 @@ pub const MIGRATIONS: &[&str] = &[
         updated_at INTEGER NOT NULL
     ) STRICT;
     ",
+    // 7: connections (plugin API 1.14, `docs/marketplace/sdk/permissions.md`
+    // "Connections"): servers the user connects a plugin to, each with its
+    // own origin consent, status and secret. Additive. No foreign keys, as
+    // `plugin_credentials`: an uninstall that keeps the credentials keeps
+    // them (`Retention`). Secrets live only in `plugin_connection_secrets`
+    // of this encrypted file; never exported, never logged, never returned
+    // over IPC.
+    r"
+    CREATE TABLE plugin_connections (
+        plugin_id         TEXT NOT NULL,
+        connection_id     TEXT NOT NULL CHECK (length(connection_id) = 29
+                              AND substr(connection_id, 1, 3) = 'cn_'),
+        type_id           TEXT NOT NULL CHECK (length(type_id) BETWEEN 1 AND 32),
+        display_name      TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 64),
+        deployment        TEXT NOT NULL CHECK (deployment IN ('cloud', 'selfHosted')),
+        origin            TEXT NOT NULL CHECK (substr(origin, 1, 8) = 'https://'),
+        path_prefix       TEXT CHECK (path_prefix IS NULL OR substr(path_prefix, 1, 1) = '/'),
+        web_origin        TEXT NOT NULL CHECK (substr(web_origin, 1, 8) = 'https://'),
+        auth_method       TEXT NOT NULL CHECK (auth_method IN ('pat')),
+        methods_json      TEXT NOT NULL,
+        private_network   INTEGER NOT NULL CHECK (private_network IN (0, 1)),
+        enabled           INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        status            TEXT NOT NULL,
+        status_detail     TEXT,
+        capabilities_json TEXT,
+        account_label     TEXT,
+        is_default        INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+        profiles_json     TEXT,
+        legacy_source     TEXT,
+        consent_by        TEXT NOT NULL,
+        consent_at        INTEGER NOT NULL,
+        created_at        INTEGER NOT NULL,
+        updated_at        INTEGER NOT NULL,
+        PRIMARY KEY (plugin_id, connection_id)
+    ) STRICT;
+    CREATE UNIQUE INDEX plugin_connections_default
+        ON plugin_connections (plugin_id, type_id) WHERE is_default = 1;
+
+    CREATE TABLE plugin_connection_secrets (
+        plugin_id     TEXT NOT NULL,
+        connection_id TEXT NOT NULL,
+        secret        TEXT NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        PRIMARY KEY (plugin_id, connection_id)
+    ) STRICT;
+    ",
 ];
 
 /// Encrypted backups of the plugin database written before a schema

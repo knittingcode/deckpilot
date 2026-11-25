@@ -138,6 +138,34 @@ pub enum ApprovedPermission {
     },
     /// `profile.read` (X9) with the declared scopes.
     Profile { read: BTreeSet<ProfileScope> },
+    /// Plugin API 1.14 (first-party bundled plugins only, which the agent
+    /// alone decides): one connection the user created and consented to,
+    /// passed only while the plugin's `connections` grant holds. Requests
+    /// naming it go to exactly `origin` within `path_prefix` with
+    /// `methods`; its secret is injected by the agent with the type's
+    /// scheme, under `header_name` for the header scheme. A disabled
+    /// connection is passed too, so its refusal can say so.
+    #[serde(rename_all = "camelCase")]
+    Connection {
+        id: String,
+        origin: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path_prefix: Option<String>,
+        /// The pages' origin (`openUrl.connections`).
+        web_origin: String,
+        methods: BTreeSet<HttpMethod>,
+        #[serde(default)]
+        private_network: bool,
+        #[serde(default)]
+        enabled: bool,
+        /// Pages on `web_origin` may be opened (`openUrl:connections`).
+        #[serde(default)]
+        open_url: bool,
+        /// The header the secret goes in (`PRIVATE-TOKEN`): a guest may
+        /// never set it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        header_name: Option<String>,
+    },
 }
 
 /// What `profile.read` may return.
@@ -249,7 +277,49 @@ pub struct Grants {
     /// not in [`Grants::credentials`] at all: it is unusable until the
     /// network grant is back.
     pub(crate) suspended: BTreeMap<String, BTreeSet<Origin>>,
+    /// Plugin API 1.14: the user's connections, by id.
+    pub(crate) connections: BTreeMap<String, ConnectionGrant>,
 }
+
+/// One connection the user created (plugin API 1.14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionGrant {
+    /// The API's origin and path prefix.
+    pub(crate) api: UserOrigin,
+    /// Where its pages are.
+    pub(crate) web: Origin,
+    pub(crate) methods: BTreeSet<HttpMethod>,
+    pub(crate) private_network: bool,
+    pub(crate) enabled: bool,
+    pub(crate) open_url: bool,
+    /// Lower case.
+    pub(crate) header_name: Option<String>,
+}
+
+impl ConnectionGrant {
+    pub fn api(&self) -> &UserOrigin {
+        &self.api
+    }
+
+    pub fn web(&self) -> &Origin {
+        &self.web
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn private_network(&self) -> bool {
+        self.private_network
+    }
+
+    pub fn methods(&self) -> impl Iterator<Item = HttpMethod> + '_ {
+        self.methods.iter().copied()
+    }
+}
+
+/// Most connections one plugin may be granted (the store's limit).
+pub const MAX_CONNECTION_GRANTS: usize = 32;
 
 /// One granted user-entered origin (G2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -435,6 +505,64 @@ impl Grants {
                     }
                     g.profile.clone_from(read);
                 }
+                ApprovedPermission::Connection {
+                    id,
+                    origin,
+                    path_prefix,
+                    web_origin,
+                    methods,
+                    private_network,
+                    enabled,
+                    open_url,
+                    header_name,
+                } => {
+                    if !deckpilot_plugin_abi::connections::is_connection_id(id) {
+                        return Err(GrantError::ConnectionId);
+                    }
+                    if methods.is_empty() {
+                        return Err(GrantError::NoMethods);
+                    }
+                    let text = format!("{origin}{}", path_prefix.as_deref().unwrap_or(""));
+                    let api = UserOrigin::parse(&text).map_err(GrantError::Origin)?;
+                    if api.to_string() != text {
+                        return Err(GrantError::Origin(OriginError::NotAnOrigin));
+                    }
+                    if api.private_host() && !private_network {
+                        return Err(GrantError::PrivateNetworkNotGranted);
+                    }
+                    let web = UserOrigin::parse(web_origin).map_err(GrantError::Origin)?;
+                    if web.path_prefix().is_some() || web.to_string() != *web_origin {
+                        return Err(GrantError::Origin(OriginError::NotAnOrigin));
+                    }
+                    if web.private_host() && !private_network {
+                        return Err(GrantError::PrivateNetworkNotGranted);
+                    }
+                    let header_name = match header_name {
+                        Some(name)
+                            if !name.is_empty()
+                                && name.len() <= 64
+                                && name.bytes().all(|b| {
+                                    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+                                }) =>
+                        {
+                            Some(name.to_ascii_lowercase())
+                        }
+                        Some(_) => return Err(GrantError::Malformed),
+                        None => None,
+                    };
+                    let grant = ConnectionGrant {
+                        api,
+                        web: web.origin().clone(),
+                        methods: methods.clone(),
+                        private_network: *private_network,
+                        enabled: *enabled,
+                        open_url: *open_url,
+                        header_name,
+                    };
+                    if g.connections.insert(id.clone(), grant).is_some() {
+                        return Err(GrantError::Duplicate);
+                    }
+                }
                 ApprovedPermission::Storage { quota_kb } => {
                     let bytes = quota_kb.saturating_mul(1024);
                     if bytes <= DEFAULT_STORAGE_QUOTA_BYTES || bytes > MAX_STORAGE_QUOTA_BYTES {
@@ -449,6 +577,7 @@ impl Grants {
         if g.network.len() > MAX_ORIGINS
             || g.open_url.len() > MAX_ORIGINS
             || g.user_origins.len() > MAX_USER_ORIGINS
+            || g.connections.len() > MAX_CONNECTION_GRANTS
         {
             return Err(GrantError::TooManyOrigins);
         }
@@ -505,6 +634,11 @@ impl Grants {
     /// no network grant for them, by slot key. A slot whose every origin
     /// is withheld is not granted at all ([`Grants::credential`] is
     /// `None`).
+    /// One of the user's connections (plugin API 1.14).
+    pub fn connection(&self, id: &str) -> Option<&ConnectionGrant> {
+        self.connections.get(id)
+    }
+
     pub fn suspended_credentials(&self) -> &BTreeMap<String, BTreeSet<Origin>> {
         &self.suspended
     }
@@ -581,6 +715,8 @@ pub enum GrantError {
     ToolSubGrant,
     /// A kind of plugin API 1.9 granted twice.
     Duplicate,
+    /// A connection record whose id is not a connection id.
+    ConnectionId,
 }
 
 impl fmt::Display for GrantError {
@@ -605,6 +741,7 @@ impl fmt::Display for GrantError {
                 f.write_str("tool sub-grant on the wrong tool (network is git's, modify docker's)")
             }
             Self::Duplicate => f.write_str("permission granted twice"),
+            Self::ConnectionId => f.write_str("invalid connection id"),
         }
     }
 }

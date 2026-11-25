@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 18 | 14 |
+| Current main | see `Cargo.toml` | 20 | 14 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -249,6 +249,23 @@ Scalar references, templates and stored `{{ … }}` texts resolve exactly as
 before; text of 7 to 9 segments under a module or plugin root, which was not
 a reference, now parses as a member reference and resolves as unknown. No
 database, document or export change.
+
+IPC protocol 20 (unreleased; 19 is reserved for the Calls event):
+plugin connections (capability `pluginConnections`, plugin API 1.14):
+`listPluginConnections`, `createPluginConnection`,
+`setPluginConnectionSecret`, `updatePluginConnection`,
+`testPluginConnection` and `removePluginConnection`. A client of an older
+protocol never sends them (refused locally) and the agent refuses them from
+such a connection, so a token never reaches an agent that would not keep
+it; nothing older clients receive changes. The plugin store
+(`plugins.db`, separate from the configuration database) goes from schema 6
+to 7: `plugin_connections` and `plugin_connection_secrets`, additive. An
+older agent refuses a schema 7 `plugins.db` with `UnsupportedSchema` before
+writing anything and runs without plugins; going back means restoring the
+`plugins-schema6-…` backup written before the upgrade. The configuration
+database, documents and exports do not change: connections and their
+tokens are machine-local and never exported. The agent's `PLUGIN_API`
+stays 1.11, so `^1.14` plugins are still reported `incompatible`.
 
 IPC protocol 18 (unreleased): structured variables (capability
 `structuredVariables`). `CatalogEntry.valueType` may be `object` or `map`
@@ -523,6 +540,7 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | protocol 13 app or agent with a protocol 14 peer (simulated presses) | IPC test `a_protocol_13_agent_is_never_asked_to_simulate_a_press`; agent test `a_protocol_13_app_cannot_simulate` (`tests/simulate_press.rs`); IPC test `simulated_presses_are_protocol_14`; desktop test `simulated_presses_answer_ran_confirmation_or_refused` | the client does not send `simulatePress` below protocol 14 and refuses it locally (the app answers `refused` with code `unsupported`); the agent refuses it from an older connection; nothing is pressed; everything else works as before |
 | protocol 15 app or agent with a protocol 16 peer (live preview) | IPC test `a_protocol_15_agent_is_never_asked_for_a_live_preview`; agent test `a_protocol_15_connection_cannot_preview` (`tests/live_preview.rs`); IPC test `live_preview_is_protocol_16`; frontend `use-live-preview.test.tsx` | the client does not send the live preview requests below protocol 16 and refuses them locally; the agent refuses them from an older connection; the editor says changes reach the device when saved; everything else works as before |
 | protocol 17 app or agent with a protocol 18 peer (structured variables) | IPC tests `structured_variables_need_protocol_18` (`protocol.rs`) and `a_protocol_17_agent_has_no_structured_variables` (`tests/peers.rs`) | an older app receives structured types as `json` without members or keys, no members-only entries, structured previews as `redacted` and the nearest older missing reasons; nothing it sends changes; a newer app with an older agent sees no repository variables |
+| protocol 18 app or agent with a protocol 20 peer (plugin connections) | IPC tests `a_protocol_18_agent_is_never_sent_a_connection_or_its_token` (`tests/peers.rs`) and `requests_are_checked_and_never_show_the_token` (`connections.rs`) | the client does not send the connection requests below protocol 20 and refuses them locally, so no token leaves the app; the agent refuses them from an older connection; an older app shows no Connections settings; everything else works as before |
 | protocol 16 app or agent with a protocol 17 peer (variables in key titles, key labels) | IPC test `a_protocol_16_agent_is_never_asked_to_resolve_display_templates` (`tests/peers.rs`) | the client does not send `listDisplayVariables` or `resolveDisplayTemplates` below protocol 17 and refuses them locally; the app shows titles resolved by the core alone; labels travel only as optional fields that an older peer ignores; everything else works as before |
 | agent temporarily unavailable | desktop tests (`stopped` state), connect timeouts (`deckpilot-ipc`) | stopped state; no request hangs |
 | agent restarted during a running workflow | agent test `runs_of_a_stopped_agent_are_recorded_as_interrupted` | run recorded as interrupted; history kept |
