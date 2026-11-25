@@ -287,10 +287,14 @@ impl Protected {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for path in &self.private {
-            if known.contains_key(path) {
+            let now = folder_id(path);
+            // A folder removed and made again has another identity: the
+            // cached one is dropped, never trusted.
+            if known.get(path).is_some_and(|(id, _)| Some(*id) == now) {
                 continue;
             }
-            if let Some(id) = folder_id(path) {
+            known.remove(path);
+            if let Some(id) = now {
                 let holders = canonical(path)
                     .map(|real| real.ancestors().skip(1).filter_map(folder_id).collect())
                     .unwrap_or_default();
