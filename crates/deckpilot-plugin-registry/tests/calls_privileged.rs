@@ -254,27 +254,25 @@ fn the_fixture_is_valid_bundled_with_three_privileged_usages() {
 #[test]
 fn this_build_refuses_the_calls_plugin_on_every_release_path() {
     let dir = PluginDir::new(|_| {});
-    let packaged = dir.package(PrivilegedGate::compiled());
-    assert!(packaged.is_err(), "packaged: {packaged:?}");
+    // The compiled record has no Calls entry: every path says so.
+    const NOT_COVERED: &str = "the review does not cover this plugin";
+    let packaged = dir.package(PrivilegedGate::compiled()).unwrap_err();
+    assert!(packaged.contains(NOT_COVERED), "packaged: {packaged}");
     let bytes = dir.bundled_rules_package();
-    assert!(
-        preflight_with_gate(&bytes, id(CALLS), v(VERSION), PrivilegedGate::compiled()).is_err(),
-        "preflight"
-    );
-    let verified = verify(&bytes, PrivilegedGate::compiled());
-    assert!(
-        matches!(
-            verified,
-            Err(PublisherError::PrivilegedGateClosed { .. }
-                | PublisherError::PrivilegedNotReviewed { .. })
-        ),
-        "{verified:?}"
-    );
-    if let Err(PublisherError::PrivilegedNotReviewed { reason, .. }) = &verified {
-        assert!(
-            reason.contains("does not cover this plugin"),
-            "the compiled record has no Calls entry: {reason}"
-        );
+    let preflight = preflight_with_gate(&bytes, id(CALLS), v(VERSION), PrivilegedGate::compiled())
+        .unwrap_err()
+        .to_string();
+    assert!(preflight.contains(NOT_COVERED), "preflight: {preflight}");
+    match verify(&bytes, PrivilegedGate::compiled()) {
+        Err(PublisherError::PrivilegedNotReviewed {
+            id,
+            version,
+            reason,
+        }) => {
+            assert_eq!((id.as_str(), version.as_str()), (CALLS, VERSION));
+            assert!(reason.contains(NOT_COVERED), "verify: {reason}");
+        }
+        other => panic!("verify: {other:?}"),
     }
 }
 
@@ -307,7 +305,13 @@ fn a_reviewed_calls_entry_still_needs_the_owners_id_list() {
         "{packaged}"
     );
     let bytes = dir.bundled_rules_package();
-    assert!(preflight_with_gate(&bytes, id(CALLS), v(VERSION), gate).is_err());
+    let preflight = preflight_with_gate(&bytes, id(CALLS), v(VERSION), gate)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        preflight.contains("is not one of DeckPilot's privileged plugins"),
+        "preflight: {preflight}"
+    );
     match verify(&bytes, gate) {
         Err(PublisherError::PrivilegedNotReviewed { reason, .. }) => {
             assert!(
@@ -387,10 +391,13 @@ fn the_calls_kinds_are_bundled_only_and_pinned_to_the_plugin() {
         &dir.dir.path().join("module.wasm"),
         false,
         PrivilegedGate::Closed,
-    );
+    )
+    .map(drop)
+    .unwrap_err()
+    .to_string();
     assert!(
-        public_package.is_err(),
-        "a public package of the Calls plugin"
+        public_package.contains("only for DeckPilot's own plugins shipped inside the app"),
+        "a public package of the Calls plugin: {public_package}"
     );
 }
 
