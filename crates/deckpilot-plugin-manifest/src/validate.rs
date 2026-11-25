@@ -28,6 +28,8 @@ use crate::{MANIFEST_VERSION, path_rules};
 
 #[path = "action_contexts.rs"]
 mod action_contexts;
+#[path = "calls_rules.rs"]
+mod calls_rules;
 #[path = "connections_check.rs"]
 mod connections;
 #[path = "gesture_presets.rs"]
@@ -395,6 +397,7 @@ pub(crate) fn check(manifest: &Manifest) -> Checker {
     needs_project(&mut c, manifest);
     dependencies(&mut c, manifest);
     privileged::check(&mut c, manifest);
+    calls_rules::check(&mut c, manifest);
     connections::check(&mut c, manifest);
     c
 }
@@ -707,7 +710,8 @@ fn permissions(c: &mut Checker, m: &Manifest) {
             Permission::Tools { .. }
             | Permission::Resources { .. }
             | Permission::ProjectContext { .. }
-            | Permission::HostViews { .. } => privileged::permission(c, &path, permission),
+            | Permission::HostViews { .. }
+            | Permission::Calls { .. } => privileged::permission(c, &path, permission),
             Permission::Connections { .. } => connections::permission(c, &path, permission),
             Permission::Notifications { routing: None, .. } | Permission::Dialogs { .. } => {}
         }

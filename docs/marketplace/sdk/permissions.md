@@ -266,6 +266,33 @@ like a token. Changing the server is a new connection. Removing one
 deletes its token in the same transaction; uninstalling the plugin keeps or
 deletes connections together with its credentials.
 
+## Plugin API 1.16: the bundled Calls plugin only
+
+`calls`, `contributes.callOverlay` and `contributes.layoutTemplates`
+([calls.md](../../calls.md)) need `"engines": { "pluginApi": "^1.16" }`,
+pass only `Manifest::validate_bundled` like the 1.9 kinds above, and only
+for the plugin `deckpilot.calls`. The manifest rules know the level; no
+DeckPilot provides it yet (the agent's plugin API stays at its current
+level until the Calls bundle lands), so no such plugin can be installed
+today.
+
+| Kind | Fields | Grant keys and tiers | Allows |
+| --- | --- | --- | --- |
+| `calls` | `control` (boolean) | `calls` (medium, shown as `calls:observe`); `calls:control` (**high**, optional when actions name it in `requiresPermissions`) | `call.state`: the focused call's sanitised state (no participants, numbers, meeting links or ids; a title only with the user's opt-in); with `control`, `call.control`: one action on the focused call, after the host's gate, answered with the **confirmed** outcome |
+
+- `callOverlay` (`{"pages": ["incoming", "outgoing", "active"]}`, 1 to 3
+  unique) and `layoutTemplates` (one per device shape: `grid-small`,
+  `grid`, `grid-large`, `keys-dials`, `no-display`) are data: the host
+  decides when a device shows the overlay, generates one layout per
+  connected model from the template of its shape, and draws every face.
+  Both need `calls`; the templates need `callOverlay`, and their pages
+  are pages of it.
+- A template control places one of the plugin's own actions on a key,
+  dial or touch zone the shape has, with parameters the action declares.
+- A plugin with `calls` declares no `network`, `credentials`, `openUrl`,
+  `tools` or `connections`: what it learns about calls leaves it only
+  through the host's faces.
+
 ## Always allowed (no permission)
 
 For an **enabled** plugin whose grants the broker accepted:

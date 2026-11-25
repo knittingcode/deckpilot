@@ -342,6 +342,19 @@ pub enum Permission {
     /// `contributes.statusItems` and `contributes.dashboardCards` the app
     /// draws from core data. Placement only, no data. Low tier.
     HostViews { justification: String },
+    /// Plugin API 1.16, the bundled Calls plugin (`deckpilot.calls`) only
+    /// (`docs/calls.md`): the state of the user's calls and meetings as the
+    /// host's providers observe it (`call.state`, `calls:observe`, medium),
+    /// and with `control` asking the host to answer, reject, end, mute or
+    /// switch the camera of the focused call (`call.control`,
+    /// `calls:control`, high, asked for on its own). The plugin never sees
+    /// provider traffic, process names or tokens; a meeting title only with
+    /// the user's opt-in.
+    Calls {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control: Option<bool>,
+        justification: String,
+    },
     /// Plugin API 1.14, first-party bundled plugins only (connections):
     /// the plugin may be offered connections of the listed
     /// `contributes.connectionTypes`, each one created, consented to and
@@ -619,6 +632,7 @@ pub enum PermissionKind {
     ProjectContext,
     HostViews,
     Connections,
+    Calls,
 }
 
 impl PermissionKind {
@@ -640,12 +654,13 @@ impl PermissionKind {
             Self::ProjectContext => "projectContext",
             Self::HostViews => "hostViews",
             Self::Connections => "connections",
+            Self::Calls => "calls",
         }
     }
 
     /// Whether the kind is one of the privileged kinds only first-party
-    /// bundled plugins may declare: plugin API 1.9's (X12) and 1.14's
-    /// `connections`.
+    /// bundled plugins may declare: plugin API 1.9's (X12), 1.14's
+    /// `connections` and 1.16's `calls`.
     pub fn is_first_party_only(self) -> bool {
         matches!(
             self,
@@ -654,6 +669,7 @@ impl PermissionKind {
                 | Self::ProjectContext
                 | Self::HostViews
                 | Self::Connections
+                | Self::Calls
         )
     }
 }
@@ -676,6 +692,7 @@ impl Permission {
             Self::ProjectContext { .. } => PermissionKind::ProjectContext,
             Self::HostViews { .. } => PermissionKind::HostViews,
             Self::Connections { .. } => PermissionKind::Connections,
+            Self::Calls { .. } => PermissionKind::Calls,
         }
     }
 
@@ -702,6 +719,7 @@ impl Permission {
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
             | Self::Connections { justification, .. }
+            | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -723,6 +741,7 @@ impl Permission {
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
             | Self::Connections { justification, .. }
+            | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -789,6 +808,16 @@ pub struct Contributes {
     /// first-party bundled plugins with `hostViews` only, X8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard_cards: Option<Vec<DashboardCard>>,
+    /// The Calls presentation overlay (plugin API 1.16, the bundled Calls
+    /// plugin with the `calls` permission only): the pages the host shows
+    /// on a device during a call. Placement only: the host decides when.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_overlay: Option<crate::calls::CallOverlay>,
+    /// The managed Calls layouts, per device capability class (plugin API
+    /// 1.16, with `callOverlay`). Data only: the host generates one layout
+    /// per connected model from them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_templates: Option<Vec<crate::calls::LayoutTemplate>>,
     /// The kinds of server the user can connect (plugin API 1.14,
     /// first-party bundled plugins with `connections` only).
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -33,6 +33,8 @@ pub const OPEN_URL_FROM_PARAMS_KEY: &str = "from-params";
 /// (plugin API 1.14): pages on the web origin of a connection the
 /// invocation is bound to. No host has a name without a dot.
 pub const OPEN_URL_CONNECTIONS_KEY: &str = "connections";
+/// The key of the `calls:control` sub-grant (plugin API 1.16).
+pub const CALLS_CONTROL_KEY: &str = "control";
 
 pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Get,
@@ -43,7 +45,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 15] = [
+const KINDS: [PermissionKind; 16] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -59,6 +61,7 @@ const KINDS: [PermissionKind; 15] = [
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
     PermissionKind::Connections,
+    PermissionKind::Calls,
 ];
 
 pub(crate) fn parse_kind(text: &str) -> Option<PermissionKind> {
@@ -222,6 +225,12 @@ pub enum GrantScope {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         private_network: bool,
     },
+    /// `calls` (plugin API 1.16): the focused call's sanitised state
+    /// (`call.state`), keyed `calls` and shown as `calls:observe`.
+    CallsObserve,
+    /// `calls:control` (plugin API 1.16): asking the host to control the
+    /// focused call (`call.control`), consented to on its own.
+    CallsControl,
 }
 
 /// The consent tier of a grant (architecture section 5.2).
@@ -251,7 +260,10 @@ impl GrantScope {
             | Self::ResourceOpen
             | Self::ProjectSelect
             // Plugin API 1.14: every connection is a server and a secret.
-            | Self::Connections { .. } => Tier::High,
+            | Self::Connections { .. }
+            // Plugin API 1.16: controlling the user's calls is always
+            // asked for, never derived.
+            | Self::CallsControl => Tier::High,
             Self::Notifications
             | Self::Storage { .. }
             | Self::DeviceState
@@ -267,7 +279,8 @@ impl GrantScope {
             | Self::Resources
             | Self::ResourcePaths
             | Self::OpenUrlFromParams
-            | Self::ProjectRead => Tier::Medium,
+            | Self::ProjectRead
+            | Self::CallsObserve => Tier::Medium,
         }
     }
 
@@ -577,7 +590,8 @@ impl GrantSet {
                 Permission::Tools { .. }
                 | Permission::Resources { .. }
                 | Permission::ProjectContext { .. }
-                | Permission::HostViews { .. } => set.insert_privileged(permission),
+                | Permission::HostViews { .. }
+                | Permission::Calls { .. } => set.insert_privileged(permission),
                 // Plugin API 1.14: one grant for being offered connections;
                 // each connection is then the user's own consent to its
                 // server (`plugin_connections`), passed to the broker
@@ -670,6 +684,18 @@ impl GrantSet {
                 GrantKey::new(PermissionKind::HostViews, ""),
                 GrantScope::HostViews,
             ),
+            Permission::Calls { control, .. } => {
+                self.insert(
+                    GrantKey::new(PermissionKind::Calls, ""),
+                    GrantScope::CallsObserve,
+                );
+                if *control == Some(true) {
+                    self.insert(
+                        GrantKey::new(PermissionKind::Calls, CALLS_CONTROL_KEY),
+                        GrantScope::CallsControl,
+                    );
+                }
+            }
             Permission::OpenUrl {
                 from_params: Some(true),
                 ..

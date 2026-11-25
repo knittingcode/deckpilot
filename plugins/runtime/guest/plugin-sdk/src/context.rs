@@ -1573,6 +1573,7 @@ mod tests {
                 code: CallErrorCode::NotPermitted,
                 message: "origin not granted".into(),
                 kind: None,
+                script: None,
             },
         )
         .with_target(Some("https://evil.net".into()));
@@ -1592,6 +1593,7 @@ mod tests {
                 code: CallErrorCode::Throttled,
                 message: "rate limited".into(),
                 kind: None,
+                script: None,
             },
         ));
         assert_eq!(t.code(), codes::THROTTLED);
@@ -1607,6 +1609,7 @@ mod tests {
                     code: CallErrorCode::Failed,
                     message: "the failure".into(),
                     kind,
+                    script: None,
                 },
             )
             .with_target(Some("https://api.example.com".into()))
@@ -1658,6 +1661,7 @@ mod tests {
                 message: "a redirect was refused by the permission broker (too many redirects)"
                     .into(),
                 kind: Some(NetworkErrorKind::TooManyRedirects),
+                script: None,
             },
         );
         assert!(refused.is_denied());
@@ -1673,6 +1677,7 @@ mod tests {
                     code: CallErrorCode::NotPermitted,
                     message: "plugin has no grants".into(),
                     kind: None,
+                    script: None,
                 },
             )
             .to_string()

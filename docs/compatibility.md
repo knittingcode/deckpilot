@@ -283,6 +283,24 @@ and the nearest older reasons
 (`Response::for_protocol`); no request changes, so an app of 18 works with
 an agent of 17 as before (without repository variables).
 
+Plugin API 1.13 (unreleased, [scripts-bridge.md](scripts-bridge.md)), the
+Scripts host bridge, part 1 of 4: the ABI and the host engine. The
+operations `script.*`, `project.repositories`, `fs.*`, `process.run`,
+`shell.run` and `shell.available` are compatible additions within ABI 1:
+a guest that does not use them never sends them, an older host answers
+`unsupported-op`, and this agent's broker still refuses all of them to
+every plugin (the `scripts` permission and the executor follow). A
+`CallError` may carry the optional `script` detail, which the host keeps
+only on those operations' replies, so no existing guest receives it.
+`GuestLimits` gains the optional `hostCalls` and `polls`, which the
+supervisor sends to its own host only (they ship together); without them
+a guest keeps its 256 calls per invocation. One rule changes for every
+guest: a reply the host gives itself (a malformed request, a call refused
+inside `dp_init` or a state call) no longer resets the continuous-CPU
+deadline; such replies are immediate, so no guest that waits on the
+agent is affected. No frame cap, IPC protocol, schema, document or
+export change, and `PLUGIN_API` stays 1.11.
+
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
 `host_settings` table, after the usual encrypted backup in

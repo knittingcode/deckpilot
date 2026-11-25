@@ -1468,4 +1468,18 @@ mod tests {
         assert_eq!(skipped, ["hostViews"]);
         deckpilot_plugin_broker::Grants::derive(&approved).unwrap();
     }
+
+    /// Plugin API 1.16's `calls` and `calls:control` approve nothing in the
+    /// broker: no operation exists for them yet (the Calls bundle adds
+    /// them, pinned to `deckpilot.calls`).
+    #[test]
+    fn calls_grants_approve_nothing_in_the_broker() {
+        let key = |text: &str| text.parse::<GrantKey>().unwrap();
+        let (approved, skipped) = approved(&[
+            (key("calls"), GrantScope::CallsObserve),
+            (key("calls:control"), GrantScope::CallsControl),
+        ]);
+        assert!(approved.0.is_empty(), "{:?}", approved.0);
+        assert_eq!(skipped, ["calls", "calls:control"]);
+    }
 }
