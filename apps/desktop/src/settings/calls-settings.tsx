@@ -57,8 +57,15 @@ export function CallsSettings() {
   const instance = agent?.status ? `${agent.status.pid}:${agent.status.startedAt}` : null
   const [status, setStatus] = useState<CallsStatus | null>(null)
   const [restoring, setRestoring] = useState<CallsLayout | null>(null)
-  // The one preview the app holds (the backend has one at a time).
-  const [preview, setPreview] = useState<{ model: string; page: CallsPageKind } | null>(null)
+  // The one preview the app holds (the backend has one at a time): the
+  // device it shows on, the page, and whether the agent's status confirmed
+  // it. Every new preview starts unconfirmed, so a confirmation of an
+  // earlier preview (of the same page too) never carries over.
+  const [preview, setPreview] = useState<{
+    device: DeviceId
+    page: CallsPageKind
+    confirmed: boolean
+  } | null>(null)
   const [pending, setPending] = useState(false)
   // The latest preview request: a result of an older one is ignored.
   const request = useRef(0)
@@ -70,32 +77,32 @@ export function CallsSettings() {
     },
     [],
   )
+  const shows = (next: CallsStatus | null, device: DeviceId, page: CallsPageKind) =>
+    next?.devices.some(
+      (entry) =>
+        entry.device.model === device.model &&
+        entry.device.serial === device.serial &&
+        entry.preview === page,
+    ) === true
   // The agent ended the preview by itself (a lock, a call, a disconnect,
   // a dismiss, a restart): once its status named the preview, it no longer
-  // does.
-  const previewModel = preview?.model
-  const previewPage = preview?.page
-  const shownByAgent =
-    status?.devices.some(
-      (entry) => entry.device.model === previewModel && entry.preview === previewPage,
-    ) === true
-  // Which preview the agent's status confirmed ("model/page"), followed
-  // while rendering.
-  const [confirmed, setConfirmed] = useState<string | null>(null)
-  const previewKey =
-    previewModel !== undefined && previewPage !== undefined
-      ? `${previewModel}/${previewPage}`
-      : null
-  if (previewKey !== null && shownByAgent && confirmed !== previewKey) {
-    setConfirmed(previewKey)
-  } else if (previewKey !== null && !shownByAgent && confirmed === previewKey) {
-    setConfirmed(null)
-    setPreview(null)
+  // does. Followed while rendering.
+  if (preview !== null) {
+    const shown = shows(status, preview.device, preview.page)
+    if (shown && !preview.confirmed) {
+      setPreview({ ...preview, confirmed: true })
+    } else if (!shown && preview.confirmed) {
+      setPreview(null)
+    }
   }
-  const togglePreview = (model: string, device: DeviceId, page: CallsPageKind) => {
+  const togglePreview = (device: DeviceId, page: CallsPageKind) => {
     request.current += 1
     const mine = request.current
-    if (preview?.model === model && preview.page === page) {
+    if (
+      preview?.device.model === device.model &&
+      preview.device.serial === device.serial &&
+      preview.page === page
+    ) {
       setPreview(null)
       void api.callsPreviewEnd()
       return
@@ -105,7 +112,18 @@ export function CallsSettings() {
       () => {
         if (mine !== request.current) return
         setPending(false)
-        setPreview({ model, page })
+        setPreview({ device, page, confirmed: false })
+        // The agent answers in order: a status asked for now is the one
+        // after the begin. If it does not show the preview, the agent ended
+        // it already (before the app could see it), and the app follows.
+        api.getCallsStatus().then(
+          (next) => {
+            if (mine !== request.current) return
+            setStatus(next)
+            if (!shows(next, device, page)) setPreview(null)
+          },
+          () => undefined,
+        )
       },
       (e: unknown) => {
         if (mine !== request.current) return
@@ -243,10 +261,10 @@ export function CallsSettings() {
             devices={status.devices
               .map((entry) => entry.device)
               .filter((device) => device.model === layout.model)}
-            previewing={preview?.model === layout.model ? preview.page : null}
+            previewing={preview?.device.model === layout.model ? preview.page : null}
             pending={pending}
             onTogglePreview={(device, page) => {
-              togglePreview(layout.model, device, page)
+              togglePreview(device, page)
             }}
           />
           <BackToWorkSection

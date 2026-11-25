@@ -2845,6 +2845,36 @@ mod tests {
             keys,
             ["controls", "devices", "installed", "layouts", "state"]
         );
+        // Nor does a device's entry: with a preview it adds only the page
+        // kind, without one the field is left out.
+        let entry = |preview| crate::calls::CallsDevice {
+            device: deckpilot_device::DeviceId {
+                model: deckpilot_device::DeviceModelId::new("elgato.mk2"),
+                serial: "A1".into(),
+            },
+            overlay: true,
+            shown: false,
+            suspended: false,
+            preview,
+        };
+        let keys = |value: serde_json::Value| -> Vec<String> {
+            value.as_object().unwrap().keys().cloned().collect()
+        };
+        let with = serde_json::to_value(entry(Some(crate::calls::CallsPageKind::Active))).unwrap();
+        assert_eq!(
+            keys(with.clone()),
+            ["device", "overlay", "preview", "shown", "suspended"]
+        );
+        assert_eq!(with["preview"], "active");
+        assert_eq!(keys(with["device"].clone()), ["model", "serial"]);
+        let without = serde_json::to_value(entry(None)).unwrap();
+        assert_eq!(
+            keys(without.clone()),
+            ["device", "overlay", "shown", "suspended"]
+        );
+        // An entry from an agent without the field reads as no preview.
+        let old: crate::calls::CallsDevice = serde_json::from_value(without).unwrap();
+        assert_eq!(old, entry(None));
     }
 
     #[test]

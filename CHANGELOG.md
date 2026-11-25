@@ -75,7 +75,11 @@ released either. 0.6.0 is the first version intended for publication.
 - Calls (groundwork): Settings › Devices › Calls can show a call page on
   the device ("Show on the device", "End preview"). The preview ends when
   the settings close, when the window hides or closes, or when the app
-  quits.
+  quits. The settings follow the agent: `callsChanged` names the page each
+  device previews, so a preview the agent ended by itself (a lock, a real
+  call, the dismiss key, a disconnect) shows as ended. A device that takes
+  no preview frame refuses it (`callsPreviewRefused`), and the preview
+  already there stays.
 - Calls (groundwork): Settings › Devices lists the call pages of each Calls
   layout. A control the call app does not support stays listed, disabled,
   with the reason (for Teams: Microsoft retired its device API). The

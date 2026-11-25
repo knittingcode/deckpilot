@@ -410,8 +410,10 @@ configuration reload or a lock, never on the Calls tick.
 - whether Calls is installed;
 - the call's state name and the provider id;
 - whether any control is possible;
-- per connected device: the overlay setting, whether it shows the call, and
-  whether it went back to work;
+- per connected device: the overlay setting, whether it shows the call,
+  whether it went back to work, and the call page it shows as the editor's
+  preview (`preview`: `incoming`, `outgoing` or `active`; left out when
+  there is none, so an older agent's status reads as no preview);
 - per model: the managed layout's id, name, edited flag and template
   version.
 
@@ -485,7 +487,9 @@ pl):
 
 The per-device setting is kept by the running agent; saving it across
 restarts comes with the plugin's settings (C7). Opening the managed layouts
-in the Device Editor, and the state preview there, are still to come (C6b).
+in the Device Editor's layout chooser is left out for now (it needs a
+non-profile load and save path, an owner decision); the preview of a call
+page is below.
 
 ### The editor's preview of a call page (C6b)
 
@@ -511,6 +515,8 @@ snapshot instead (decided 2026-11-25):
 - **Priority:** a lock and a real call always win:
   - refused while locked;
   - refused while a call shows (`callsPreviewInCall`);
+  - refused when the device takes no preview frame
+    (`callsPreviewRefused`); a preview already there stays;
   - ended when a call comes.
 - **When it ends:**
   - on the end request;
@@ -519,7 +525,9 @@ snapshot instead (decided 2026-11-25):
   - on the device's disconnect;
   - when dismissed on the device.
 
-  It never leaves an overlay frame behind.
+  It never leaves an overlay frame behind. Whichever way it ends,
+  `callsChanged` no longer names it on the device's entry (a disconnected
+  device leaves the list).
 - **One per device:** a new preview replaces the old. The new frame is
   pushed first, so when the device takes none the old one stays.
 - **In the app:** the preview lives on a connection of its own in the
@@ -528,6 +536,15 @@ snapshot instead (decided 2026-11-25):
   hides, reloads or closes, or the app quits; the connection closing ends
   it too. A per-meeting capability reason may show on a preview; it is
   informational only.
+- **The app follows the agent:** the settings hold one preview (the device,
+  the page, and whether the agent confirmed it). A new preview starts
+  unconfirmed. Once `begin` answers, the app asks `getCallsStatus`; the
+  agent answers in order, so that status is the one after the begin. If it
+  shows the preview on that device, it is confirmed; if not, the agent
+  ended it already and the app shows it ended. A confirmed preview that a
+  later `callsChanged` no longer names (a lock, a call, a dismiss, a
+  disconnect, a restart) is shown ended too. A status that names the page
+  on another device of the same model is not this preview.
 
 The IPC event for the app and the editor (C6, a release blocker) is
 `callsChanged`, above. It carries the managed layouts too, and is sent

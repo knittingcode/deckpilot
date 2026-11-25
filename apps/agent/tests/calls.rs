@@ -1466,51 +1466,141 @@ async fn the_overlay_is_drawn_on_every_class_of_device() {
     }
 }
 
+/// Waits for a `callsChanged` in which `device` previews `page` (`None`:
+/// none) and `also` holds.
+async fn wait_preview(
+    events: &mut deckpilot_ipc::AgentClient,
+    device: &deckpilot_device::DeviceId,
+    page: Option<deckpilot_ipc::calls::CallsPageKind>,
+    also: impl Fn(&deckpilot_ipc::calls::CallsStatus) -> bool,
+    what: &str,
+) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = tokio::time::timeout(left, events.next_event())
+            .await
+            .unwrap_or_else(|_| panic!("no callsChanged: {what}"))
+            .unwrap();
+        if let deckpilot_ipc::AgentEvent::CallsChanged { status } = event {
+            let shown = status
+                .devices
+                .iter()
+                .find(|d| &d.device == device)
+                .and_then(|d| d.preview);
+            if shown == page && also(&status) {
+                return;
+            }
+        }
+    }
+}
+
 /// The app follows the agent's previews: `callsChanged` names the page a
-/// device previews, and drops it when the agent ends the preview by itself
-/// (here a real call).
+/// device previews, and drops it on every way a preview ends: the end
+/// request, the editor's connection closing, a lock, the dismiss key, the
+/// device's disconnect and a real call.
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_changed_follows_the_preview() {
-    use deckpilot_ipc::AgentEvent;
+    use deckpilot_ipc::Request;
     use deckpilot_ipc::calls::CallsPageKind;
+    let any = |_: &deckpilot_ipc::calls::CallsStatus| true;
     let f = fixture();
     let deck = start(&f).await;
     let mut events = deck.agent.events().await;
     let mut editor = deck.agent.client().await;
+    let device = deck.device.clone();
+    let shown = Some(CallsPageKind::Outgoing);
+
+    // The end request.
     editor
         .request(preview(&deck, CallsPageKind::Outgoing))
         .await
         .unwrap();
-    let preview_of = |status: &deckpilot_ipc::calls::CallsStatus| {
-        status
-            .devices
-            .iter()
-            .find(|d| d.device == deck.device)
-            .and_then(|d| d.preview)
-    };
-    loop {
-        if let AgentEvent::CallsChanged { status } =
-            tokio::time::timeout(TIMEOUT, events.next_event())
-                .await
-                .unwrap()
-                .unwrap()
-            && preview_of(&status) == Some(CallsPageKind::Outgoing)
-        {
-            break;
-        }
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    editor
+        .request(Request::EndCallsPreview {
+            device: device.clone(),
+        })
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, None, any, "the end request").await;
+
+    // The editor's connection closes.
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    drop(editor);
+    wait_preview(&mut events, &device, None, any, "the connection closed").await;
+    let mut editor = deck.agent.client().await;
+
+    // The dismiss key (the model's last key).
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    let keys = models::stream_deck_mk2().capabilities.keys.unwrap();
+    deck.tap(keys.key_count() - 1);
+    wait_preview(&mut events, &device, None, any, "the dismiss key").await;
+
+    // A lock.
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    wait_preview(&mut events, &device, None, any, "the lock").await;
+    deck.agent.unlock().await;
+
+    // The device's disconnect: it is gone from the list (no preview named).
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .is_err()
+    {
+        assert!(tokio::time::Instant::now() <= deadline, "unlocked again");
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    deck.mock.unplug(&deck.device);
+    wait_preview(
+        &mut events,
+        &device,
+        None,
+        |s| s.devices.iter().all(|d| d.device != device),
+        "the disconnect",
+    )
+    .await;
+    deck.mock
+        .plug(&models::stream_deck_mk2(), &deck.device.serial);
+    deck.advance(1).await;
+
+    // A real call.
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .is_err()
+    {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the device came back"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    wait_preview(&mut events, &device, shown, any, "shown").await;
     deck.join().await;
-    loop {
-        if let AgentEvent::CallsChanged { status } =
-            tokio::time::timeout(TIMEOUT, events.next_event())
-                .await
-                .unwrap()
-                .unwrap()
-            && status.state == "active"
-            && preview_of(&status).is_none()
-        {
-            break;
-        }
-    }
+    wait_preview(
+        &mut events,
+        &device,
+        None,
+        |s| s.state == "active",
+        "the real call",
+    )
+    .await;
     deck.agent.shutdown().await;
 }
