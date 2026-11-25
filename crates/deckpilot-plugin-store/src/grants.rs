@@ -41,7 +41,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 15] = [
+const KINDS: [PermissionKind; 16] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -56,6 +56,7 @@ const KINDS: [PermissionKind; 15] = [
     PermissionKind::Resources,
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
+    PermissionKind::Connections,
     PermissionKind::Calls,
 ];
 
@@ -546,6 +547,11 @@ impl GrantSet {
                 | Permission::ProjectContext { .. }
                 | Permission::HostViews { .. }
                 | Permission::Calls { .. } => set.insert_privileged(permission),
+                // Plugin API 1.14: the grants of connections are per
+                // connection the user creates, which the host side adds;
+                // until then the permission grants nothing (deny by
+                // default).
+                Permission::Connections { .. } => {}
                 Permission::Device { state, icons, .. } => set.insert_device(*state, *icons),
             }
         }
@@ -1174,6 +1180,24 @@ mod tests {
             .expect("a dialogs grant");
         assert_eq!(scope, &GrantScope::Dialogs);
         assert_eq!(scope.tier(), Tier::Medium);
+    }
+
+    /// Plugin API 1.14's `connections` grants nothing until the host side
+    /// adds its per-connection grants: deny by default.
+    #[test]
+    fn the_connections_permission_grants_nothing_yet() {
+        let manifest = Manifest::from_json(include_str!(
+            "../../deckpilot-plugin-manifest/tests/fixtures/connections-manifest.json"
+        ))
+        .unwrap();
+        let set = GrantSet::from_manifest(&manifest);
+        assert!(
+            set.keys().all(|k| k.kind != PermissionKind::Connections
+                && k.kind != PermissionKind::OpenUrl),
+            "{:?}",
+            set.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(parse_kind("connections"), Some(PermissionKind::Connections));
     }
 
     /// Plugin API 1.9's privileged kinds (module-migration.md §7): one key

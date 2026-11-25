@@ -182,6 +182,10 @@ function MaybeForm({
       noValidate
       onSubmit={(event) => {
         event.preventDefault()
+        // A dialog opened from inside another one (a confirmation in a
+        // form) is portaled, but React still bubbles its submit to the
+        // outer form, which would submit that form too.
+        event.stopPropagation()
         // Enter in a field submits even while the button is disabled or
         // busy; the shell ignores it then, so nothing runs twice.
         if (primary?.loading || primary?.disabled) return

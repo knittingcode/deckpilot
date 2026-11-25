@@ -92,6 +92,7 @@ import { type FlowNode, type NodeRun, NodeView } from "./node-view"
 import { TriggersEditor } from "./triggers-editor"
 import { VariablesEditor } from "./variables-editor"
 import { WorkflowInterfaceEditor } from "./workflow-interface"
+import { newActionIcon } from "@/lib/system-actions"
 
 const NODE_TYPES = { workflow: NodeView }
 
@@ -443,7 +444,7 @@ function Builder({
         actionType: type.id,
         parameters,
         description: "",
-        icon: type.node?.icon ?? null,
+        icon: newActionIcon(type),
         label: null,
       })
       .then(async (action) => {

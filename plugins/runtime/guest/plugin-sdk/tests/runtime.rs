@@ -141,7 +141,19 @@ fn logging_is_best_effort_and_bounded() {
 fn versions_are_exposed() {
     assert_eq!(deckpilot_plugin_sdk::ABI_VERSION, 1);
     assert_eq!(deckpilot_plugin_sdk::API_LEVEL.to_string(), "1.0");
-    assert_eq!(deckpilot_plugin_sdk::LATEST_API_LEVEL.to_string(), "1.9");
+    assert_eq!(deckpilot_plugin_sdk::LATEST_API_LEVEL.to_string(), "1.14");
+    assert_eq!(
+        deckpilot_plugin_sdk::ACTION_CONTEXTS_API_LEVEL.to_string(),
+        "1.11"
+    );
+    assert_eq!(
+        deckpilot_plugin_sdk::GESTURE_PRESETS_API_LEVEL.to_string(),
+        "1.10"
+    );
+    assert_eq!(
+        deckpilot_plugin_sdk::CONNECTIONS_API_LEVEL,
+        deckpilot_plugin_sdk::LATEST_API_LEVEL
+    );
     assert_eq!(
         deckpilot_plugin_sdk::PRIVILEGED_API_LEVEL.to_string(),
         "1.9"
@@ -271,7 +283,9 @@ fn a_plugin_declares_the_api_level_it_needs() {
     assert_eq!(level(1, 3).to_string(), "1.3");
     assert_eq!(level(1, 5).to_string(), "1.5");
     assert_eq!(level(1, 6).to_string(), "1.6");
-    assert_eq!(level(1, 9), LATEST_API_LEVEL);
+    assert_eq!(level(1, 9).to_string(), "1.9");
+    assert_eq!(level(1, 10).to_string(), "1.10");
+    assert_eq!(level(1, 14), LATEST_API_LEVEL);
     assert_eq!(level(1, 99), LATEST_API_LEVEL);
     assert_eq!(level(2, 0), LATEST_API_LEVEL);
 }
@@ -528,5 +542,66 @@ fn the_locale_and_translations_reach_the_host_as_plain_requests() {
     assert_eq!(
         ctx.text("greeting").unwrap_err().kind(),
         CapabilityErrorKind::Unsupported
+    );
+}
+
+/// An action's contexts (plugin API 1.11): refused below 1.11 and when
+/// empty, and compared with the manifest's as a set.
+#[test]
+fn an_action_declares_its_contexts() {
+    use deckpilot_plugin_sdk::testing::manifest_mismatches;
+    use deckpilot_plugin_sdk::{
+        ACTION_CONTEXTS_API_LEVEL, ActionContext, ApiLevel, DefinitionError,
+    };
+    fn noop(_: &mut Context<'_>, _: &Args<'_>) -> ActionResult {
+        Ok(Output::ok())
+    }
+    let action =
+        || Action::new("check", noop).contexts([ActionContext::Workflow, ActionContext::Sequence]);
+    let plugin = |level| {
+        Plugin::new("acme.check", "1.0.0")
+            .requires_api(level)
+            .action(action())
+    };
+    assert_eq!(plugin(ACTION_CONTEXTS_API_LEVEL).validate(), Ok(()));
+    assert_eq!(
+        plugin(ApiLevel {
+            major: 1,
+            minor: 10
+        })
+        .validate(),
+        Err(DefinitionError::ContextsNeedApi("check".into()))
+    );
+    let empty = Plugin::new("acme.check", "1.0.0")
+        .requires_api(ACTION_CONTEXTS_API_LEVEL)
+        .action(Action::new("check", noop).contexts([]));
+    assert_eq!(
+        empty.validate(),
+        Err(DefinitionError::NoContexts("check".into()))
+    );
+    assert_eq!(
+        action()
+            .declared_contexts()
+            .map(|set| set.iter().map(|c| c.as_str()).collect::<Vec<_>>()),
+        Some(vec!["sequence", "workflow"])
+    );
+    assert_eq!(Action::new("plain", noop).declared_contexts(), None);
+
+    let manifest = |contexts: serde_json::Value| {
+        json!({"id": "acme.check", "version": "1.0.0", "engines": {"pluginApi": "^1.11"},
+               "contributes": {"actions": [{"id": "check", "parameters": [], "contexts": contexts}]}})
+    };
+    let declared = plugin(ACTION_CONTEXTS_API_LEVEL);
+    // Any order in the manifest.
+    assert!(manifest_mismatches(&declared, &manifest(json!(["workflow", "sequence"]))).is_empty());
+    let found = manifest_mismatches(&declared, &manifest(json!(["workflow"]))).join("\n");
+    assert!(
+        found.contains("check: contexts is [\"workflow\"] in the manifest"),
+        "{found}"
+    );
+    let found = manifest_mismatches(&declared, &manifest(serde_json::Value::Null)).join("\n");
+    assert!(
+        found.contains("check: contexts is null in the manifest"),
+        "{found}"
     );
 }

@@ -278,6 +278,130 @@ session faces) and emits `projectChanged`, `profileChanged` and
 `sharedVariablesChanged`. Pickers and the Variables page refresh previews
 on those events; there is no polling.
 
+### 2.8 Structured values and member access
+
+Plugin API 1.12, IPC protocol 18. Some values are not one scalar but an
+object of a closed, versioned list of **shapes** (`Shape`, today only
+`repository`), or an ordered **map** of such objects by key:
+
+| Type | Written | Example |
+| ---- | ------- | ------- |
+| `object<shape>` | `{"type": "object", "shape": "repository"}` | `projects.current.repository`: the project's default repository |
+| `map<shape>` | `{"type": "map", "of": "repository"}` | `projects.current.repositories`: every repository of the project, by key, in the user's order |
+
+**Member access.** A reference reads one scalar member of a structured
+variable: `{{ projects.current.repository.name }}`,
+`{{ projects.current.repositories.cms.path }}`,
+`{{ projects.current.repositories.cms.remote.defaultBranch }}`. A member path
+has 1 to 3 segments (a map key, a group such as `remote`, a member), so a
+reference has at most 9 segments (6 for the id). The parser keeps the whole
+dotted text; where the id ends is decided by the registry
+(`VariableRegistry::split_member`): at the longest prefix that names a
+declared structured variable, or a legacy spelling of one. A reference
+whose id is declared, or that names nothing structured, resolves exactly as
+before; text of 7 to 9 segments, which was not a reference before, now
+parses and, naming nothing, resolves as unknown.
+
+**Members of `repository`** (`Shape::members()`):
+
+| Member | Type | On keys | Notes |
+| ------ | ---- | ------- | ----- |
+| `id` | string | never | an identifier |
+| `key` | string | yes | the map key, `cms` |
+| `name` | string | yes | |
+| `description` | string or null | yes | |
+| `isDefault` | boolean | yes | |
+| `path` | string or null | **never** (OD-4) | this computer's folder, the binding of the repository's resource; `null` for every reader that may not see paths (below) |
+| `exists` | boolean | yes | whether that folder exists |
+| `remote.name`, `remote.url`, `remote.defaultBranch` | string or null | `name` and `defaultBranch` yes, `url` never | the primary remote (decision K1) |
+
+A Git Providers connection id and the provider's repository id are never
+members (decision K4). A group (`remote`) is read member by member; the group
+itself is an unknown member.
+
+**The default repository** (decision OD-3): `projects.current.repository` is
+the repository marked as default; without one, the only repository when
+there is exactly one; otherwise it has no value (`noDefaultRepository`,
+`-` on a key). Never the first by position: reordering must not change what
+a key does.
+
+**Never text.** `render_text` gives nothing for structured values: they are
+never interpolated into a template, a title or a text parameter (a type
+mismatch). A whole value fills only a `Code` parameter of language `json`
+(serialized; a map as an object by key) and graph nodes that take JSON.
+Shared variables cannot be structured (`DefinitionIssue::Structured`), and a
+plugin cannot publish a structured value (`variables.publish` refuses it):
+the shape is always the host's statement.
+
+**Resolution.** Missing values have reasons of their own:
+`unknownMember`, `repositoryNotInProject` (a key the context's project does
+not have; a key of another project is not in this one) and
+`noDefaultRepository`. Profile isolation is unchanged: a context of another
+profile, or a project of another profile, is `otherProfile` before anything
+is read.
+
+**Private paths.** Whoever reads a value tells whether it may see this
+computer's folders (`VariableEnvironment::private_paths`):
+
+- the configuration app's previews: yes, as Settings › Resources shows them;
+- DeckPilot's own actions: yes;
+- a plugin's action, through its parameters or graph mappings into them:
+  only with `resources:paths` (`ActionRegistry::reads_paths`), otherwise
+  `path` is `null` (a template that uses it fails as missing);
+- key titles: never.
+
+The host source leaves the folder out for such a reader, and the registry
+removes it again from whatever a source returns (`read_member`, `checked`),
+so no source can hand a path to a reader that may not see it.
+
+*Limit of the plugin gate.* It applies to the variable references a
+plugin action's own parameters and mappings make. A value is not marked
+with where it came from: once a node that may see paths has read a folder
+(a Set variable node, DeckPilot's own action, a plugin with
+`resources:paths`), it is that node's output, plain text, and a plugin
+without `resources:paths` whose mapping names it receives it:
+`{{ steps.<node>.output.… }}`, a workflow variable
+(`{{ steps.vars.output.… }}`) or a workflow's input
+(`{{ steps.start.output.… }}`) that its caller filled from a path. Only a
+mapping the workflow's author wrote passes it on; nothing reaches such a
+plugin without one. Pinned by
+`a_folder_passed_on_by_an_earlier_node_reaches_a_plugin_without_paths`
+(`crates/deckpilot-core/src/graph/tests/references.rs`).
+
+**Filesystem access.** The only one is `exists`, a directory check of the
+repository's folder (`FolderProbe`). A read of one member builds only what
+it needs (`VariableSource::resolve_member`): the one repository it names,
+and its folder is looked at only when `exists` itself is read (or a whole
+object or map), so a key that shows a name never waits on an unmounted
+network volume.
+
+**Catalog and previews (protocol 18).** `listVariables` lists a structured
+variable once, with its shape's `members` and, for a map, the keys of the
+context's project's repositories in the user's order (`mapKeys`). The agent
+never lists one entry per member: the app composes them
+(`expand_members`, in the desktop app's `list_variables` command), one per
+member (`….repository.name`) and for a map one per key and member
+(`….repositories.cms.name`), each naming its variable (`memberOf`). So a
+catalog grows by one key per repository (at most 32 characters, at most
+256 repositories) and always fits one IPC message (64 KiB); a search
+(`CatalogFilter`) lists a structured variable when it or one of its
+members matches, and the app keeps only the matching ones.
+`listDisplayVariables` lists a structured variable for its display-safe
+members only (`membersOnly`, §3.2); the variable itself is never offered. A
+preview of a whole structured value is `structured`: how many objects,
+never a member. A client of protocol 17 or older receives structured types
+as `json` without members or keys, no members-only entries, a structured
+preview as `redacted` JSON, and `noValue` or `unknownVariable` for the new
+reasons.
+
+**Legacy spellings.** `projects.current.repositories` and
+`projects.current.repository` are module variable aliases of
+`plugins.deckpilot.projects.current.repositories` and `….repository`
+(`MODULE_VARIABLE_ALIASES`, `moved: false`: no module ever had them). They
+are declared by Projects 0.2.0 (`^1.12`) with the host sources
+`host:project.repositories` and `host:project.repository`; until it is
+bundled they resolve as unavailable with the plugin.
+
 ## 3. Variables in key titles
 
 Key titles are **display templates**: plain text with references in the
@@ -325,6 +449,8 @@ picker, `listDisplayVariables`):
 | Shared variables | when not sensitive and of string, integer or boolean type |
 | Sensitive values (declared, or marked so by their source when resolved), secret references (credentials), `steps.…`, `workflow.…`, `system.device.…`, the work session | never |
 | Ids: `system.project.current.id`, `projects.current.id`, `plugins.deckpilot.projects.current.id`, any plugin variable with a `host:project.id` source (`VariableDeclaration::identifier`), `workSession.id`/`.projectId` | never |
+| Members of a structured variable (§2.8): `….repository.name`, `….repositories.cms.key`, `….remote.defaultBranch`, `….exists` | when the shape marks them display-safe, under the rules of their variable above |
+| A whole structured value (`projects.current.repositories`, `….repository`, `….repositories.cms`), a repository's `id`, `path` or `remote.url` | never (`notDisplayable`); a folder path never reaches a key (OD-4) |
 
 A refused reference is never resolved where its declaration already says so;
 a shared variable is dropped as soon as its resolution says it is sensitive.

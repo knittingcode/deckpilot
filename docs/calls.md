@@ -141,7 +141,7 @@ described in the
 [SDK permissions](marketplace/sdk/permissions.md#plugin-api-116-the-bundled-calls-plugin-only).
 They are privileged: only the bundled plugin `deckpilot.calls` declares
 them, with `^1.16`, and a plugin with `calls` has no `network`,
-`credentials`, `openUrl` or `tools`. `Manifest::privileged_usages` lists
+`credentials`, `openUrl`, `tools` or `connections`. `Manifest::privileged_usages` lists
 all three, so the reviewed privileged policy pins them like the 1.9 kinds.
 
 | Grant | Tier | |

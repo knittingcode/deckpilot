@@ -7,7 +7,7 @@
 //! [`ProjectCatalog::copy_project_to`] is the only way to bring a project into
 //! another profile, and it creates an independent copy with a new id.
 
-use crate::{Profile, Project, ProjectId};
+use crate::{Profile, Project, ProjectId, RepositoryError};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -22,13 +22,16 @@ pub enum CatalogError {
     IdInUse,
     #[error("source and target are the same profile")]
     SameProfile,
+    #[error(transparent)]
+    Repository(#[from] RepositoryError),
 }
 
 /// Project management for a [`Profile`].
 pub trait ProjectCatalog {
     /// Adds a project at the end of the order unless its key is taken.
     fn add_project(&mut self, project: Project) -> Result<ProjectId, CatalogError>;
-    /// Replaces a project's key, name and resources, keeping its position.
+    /// Replaces a project's key, name, resources and repositories, keeping
+    /// its position.
     fn update_project(&mut self, project: Project) -> Result<(), CatalogError>;
     /// Moves a project to `index` in the order (clamped to the end).
     fn move_project(&mut self, id: ProjectId, index: usize) -> Result<(), CatalogError>;
@@ -60,6 +63,7 @@ impl ProjectCatalog for Profile {
         if self.project(project.id).is_some() {
             return Err(CatalogError::IdInUse);
         }
+        project.validate_repositories()?;
         let id = project.id;
         self.projects.push(project);
         Ok(id)
@@ -69,6 +73,7 @@ impl ProjectCatalog for Profile {
         if key_taken(self, project.key.as_str(), Some(project.id)) {
             return Err(CatalogError::DuplicateKey(project.key.to_string()));
         }
+        project.validate_repositories()?;
         let slot = self
             .projects
             .iter_mut()
@@ -125,8 +130,8 @@ impl ProjectCatalog for Profile {
             return Err(CatalogError::SameProfile);
         }
         let source = self.project(id).ok_or(CatalogError::NotFound)?;
-        let mut copy = Project::new(source.key.clone(), source.name.clone());
-        copy.resources.clone_from(&source.resources);
+        // Key, name, roles and repositories (with ids of the copy's own).
+        let copy = source.copy_with_id(ProjectId::new());
         target.add_project(copy)
     }
 }
@@ -228,6 +233,50 @@ mod tests {
     }
 
     #[test]
+    fn repositories_are_validated_and_copied_with_ids_of_their_own() {
+        use crate::{Repository, RepositoryId, RepositoryKey};
+        let repository = |key: &str| Repository {
+            id: RepositoryId::new(),
+            key: RepositoryKey::new(key).unwrap(),
+            name: key.to_owned(),
+            resource: ResourceKey::new(format!("shop.{key}")).unwrap(),
+            description: None,
+            remotes: Vec::new(),
+        };
+        let mut work = work();
+        let mut shop = work.projects[0].clone();
+        shop.repositories = vec![repository("api"), repository("api")];
+        assert!(matches!(
+            work.update_project(shop.clone()),
+            Err(CatalogError::Repository(
+                crate::RepositoryError::DuplicateKey(_)
+            ))
+        ));
+        shop.repositories[1] = repository("cms");
+        shop.default_repository = Some(shop.repositories[1].id);
+        work.update_project(shop.clone()).unwrap();
+        let mut bad = project("NEW");
+        bad.default_repository = Some(RepositoryId::new());
+        assert!(matches!(
+            work.add_project(bad),
+            Err(CatalogError::Repository(_))
+        ));
+
+        let mut home = Profile::new("Home");
+        let copy = work.copy_project_to(shop.id, &mut home).unwrap();
+        let copied = home.project(copy).unwrap();
+        assert_eq!(copied.repositories.len(), 2);
+        for (a, b) in copied.repositories.iter().zip(&shop.repositories) {
+            assert_ne!(a.id, b.id);
+            assert_eq!((&a.key, &a.resource), (&b.key, &b.resource));
+        }
+        assert_eq!(copied.default_repository, Some(copied.repositories[1].id));
+        // The two profiles never share a repository id.
+        home.projects[0].repositories[0].name = "changed".into();
+        assert_eq!(work.projects[0].repositories[0].name, "api");
+    }
+
+    #[test]
     fn copying_creates_an_independent_project() {
         let mut work = work();
         work.projects[0]
@@ -240,6 +289,11 @@ mod tests {
         assert_ne!(copy, shop);
         assert_eq!(keys(&home), ["SHOP"]);
         assert_eq!(home.projects[0].resources, work.projects[0].resources);
+        // The derived repository follows the copy's id (profile isolation).
+        assert_eq!(
+            home.projects[0].derived_repository().unwrap().id,
+            crate::RepositoryId::derived(copy)
+        );
 
         // Changing the copy leaves the original untouched.
         home.projects[0].name = "Home shop".into();

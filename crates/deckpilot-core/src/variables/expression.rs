@@ -19,6 +19,13 @@
 //!
 //! `steps.` references are parsed by [`crate::graph::Reference::parse`], so
 //! every template valid today parses to the same references.
+//!
+//! A module reference may go on past a structured variable into its members
+//! (`projects.current.repositories.cms.path`, `docs/variables.md` §2.8):
+//! up to [`super::registry::MAX_REFERENCE_SEGMENTS`] segments in all. The
+//! parser keeps the whole dotted text; where the variable's id ends and the
+//! member begins is decided by the registry, which knows the declared
+//! structured variables ([`super::VariableRegistry::split_member`]).
 
 use std::fmt;
 
@@ -178,7 +185,8 @@ pub enum VariableRef {
     /// [`PLUGIN_ROOT`] (`plugins.<publisherCamel>.<nameCamel>.<path>`, a
     /// plugin's variable). While the module is disabled, unsupported or (a
     /// plugin) not installed the reference stays readable and resolves as
-    /// unavailable.
+    /// unavailable. The id is as written, and may name a member of a
+    /// structured variable ([`VariableId::reference`]).
     Module(VariableId),
 }
 
@@ -212,13 +220,13 @@ impl VariableRef {
                 .ok_or_else(invalid),
             // A known module's namespace; whether the variable exists and
             // its module is available is decided when it is resolved.
-            root if MODULE_NAMESPACES.contains(&root) => VariableId::new(trimmed)
+            root if MODULE_NAMESPACES.contains(&root) => VariableId::reference(trimmed)
                 .map(Self::Module)
                 .map_err(|_| invalid()),
             // A plugin's namespace, without consulting a list: the reference
             // parses on every computer, whether or not the plugin was ever
             // installed there, and resolves as unavailable without it.
-            PLUGIN_ROOT => VariableId::new(trimmed)
+            PLUGIN_ROOT => VariableId::reference(trimmed)
                 .ok()
                 .filter(|id| id.plugin_owner().is_some())
                 .map(Self::Module)
@@ -229,7 +237,8 @@ impl VariableRef {
 
     /// The canonical id of a registered variable: a core or module
     /// variable, or the canonical id of an alias. `None` for shared
-    /// variables and node outputs.
+    /// variables and node outputs. A module reference gives its id as
+    /// written, a member path of a structured variable included.
     pub fn registered_id(&self) -> Option<VariableId> {
         match self {
             Self::System(variable) => Some(variable.canonical()),

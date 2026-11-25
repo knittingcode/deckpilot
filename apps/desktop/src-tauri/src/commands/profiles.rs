@@ -177,6 +177,13 @@ pub fn get_profile(
         .map(|w| (w.id, profile.workflow_references_with(w.id, &session)))
         .collect();
     let workflow_entries = workflow_entries(&profile, &workflow_references, &actions);
+    // A project with the `repository` role and no stored repositories is
+    // shown with the repository that role stands for (R3); it is stored
+    // when the project is saved with its repositories.
+    let mut profile = profile;
+    for project in &mut profile.projects {
+        project.materialize_repositories();
+    }
     Ok(ProfileView {
         incomplete_actions,
         incomplete_uses,

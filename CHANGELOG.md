@@ -34,6 +34,83 @@ released either. 0.6.0 is the first version intended for publication.
   "Back to work" return sessions (timer, real completion, or whichever
   comes first, 60 s by default), one per device. Tested on a virtual clock;
   nothing user-visible yet.
+- System actions: an Open key shows what it opens, the document icon for
+  a file and the open folder for a folder, on the Canvas, in the key
+  preview, in layout previews and on the Stream Deck alike. Nothing chosen,
+  a missing file or folder, or a target that cannot be told (a variable,
+  an application, a network path) shows the document icon. A key's own
+  icon or image, and an icon chosen for the action, always win; the
+  automatic icon is never saved. The target is looked at by its file
+  metadata only, never opened or run, and again when an action, a
+  resource binding, the profile or the layout changes, never on a timer.
+- Projects: a project can list several repositories, each with a key
+  (`cms`, unique in the project), a name, a description, the folder's
+  resource (bound on each computer, never exported) and a default. An
+  existing project with a `repository` role gets that one as its
+  repository `main` when the configuration is upgraded (schema 14); its
+  roles, resources and folder bindings are not changed. Marking a default
+  repository also points the `repository` role at it. Removing a
+  repository never removes its folder binding, and a missing folder is
+  shown, never removed. An export carries the repositories (format 5)
+  only when a project has more than that one.
+- Projects: the project editor has a Repositories section. Add a
+  repository by choosing its folder in the system's folder dialog (its key
+  and name are proposed from the folder name), then rename, describe,
+  reorder, choose another folder, mark the default or remove it. A
+  removal asks first and lists what else uses the folder. Keys are checked
+  as they are typed, a folder that is gone is marked "Folder not found",
+  and folders are set on this computer when the project is saved. The
+  resource role pairs move into a collapsed advanced part.
+- Action Library: **gesture presets**, one entry that puts several actions
+  on the gestures of a key at once. *Brightness Control* (Device) dims by
+  10% on a single press, sets 100% on a double click and 50% on a long
+  press. Dropped on a key it creates ordinary actions and gesture bindings
+  in one undo step (keeping an occupied key's look and its other
+  gestures), or nothing when the key cannot take it. A key that acts on
+  its press at once is never switched to gestures by a preset: switch it
+  in the Inspector first, which asks; dropped on one
+  gesture card only that gesture changes. Every gesture stays editable on
+  its own; nothing of the preset is stored.
+- Plugin API 1.11: `contributes.actions[].contexts` lets a plugin declare
+  where each action makes sense (key, gesture, display, sequence,
+  workflow), with `Action::contexts` in the SDK. Advisory like the
+  built-ins' contexts: a use elsewhere is reported and still runs. Without
+  the field an action keeps all five.
+- Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
+  presets over its own actions, with localized texts and `allowPartial`.
+  Presets grant nothing; each action keeps its permissions and checks.
+- Variables: structured values, read member by member.
+  `{{ projects.current.repositories.cms.path }}` is a repository's folder,
+  `{{ projects.current.repository.name }}` the default repository's name
+  (the one marked as default, else the only one; with several and none
+  marked there is no value, never the first). A whole value fills only a
+  JSON parameter and never becomes text. Keys show names and keys only:
+  a folder path, an id or a remote URL shows `-`, and the title picker never
+  offers them. A plugin's action receives a folder path only with
+  `resources:paths`. Plugin API 1.12 (manifest validation only for now):
+  the types `object` and `map` of `repository` and the host sources
+  `host:project.repositories` and `host:project.repository`, for DeckPilot's
+  own bundled plugins. IPC protocol 18; older apps see these variables as
+  JSON. The Projects plugin that declares them follows.
+- Settings › Profiles › a profile: "Saved actions" lists the profile's
+  saved actions by name with how many places use each, and can show only
+  the unused ones. Each can be opened in the action editor; an unused one
+  can also be deleted from its row, after the same confirmation as in the
+  editor (the agent still refuses while anything uses it). Nothing is
+  deleted by itself, and there is no "delete all". Until now a saved
+  action that no key, gesture or workflow used could not be opened.
+
+### Changed
+
+- System actions: the Action Library offers one Open for files and
+  folders (Choose file… or Choose folder…); Open folder is no longer
+  offered for new keys, actions or workflow nodes. Saved Open folder
+  actions, keys, gestures and workflow steps keep running unchanged with
+  their folder icon; nothing is rewritten.
+- Device Editor: a label picked on the Canvas is nudged with the arrow
+  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
+  nudge starts from the last one. Escape or a click on the key lets go of
+  the label, and the arrows move between keys again.
 
 ## [0.15.0] - 2026-11-24
 

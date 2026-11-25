@@ -86,6 +86,19 @@ export interface ProjectInput {
   key: string
   name: string
   resources: Record<string, string>
+  /** Left out: the stored repositories are kept as they are. */
+  repositories?: RepositoryInput[]
+  defaultRepository?: string | null
+}
+
+/** A repository as the form saves it; remotes are kept by the backend. */
+export interface RepositoryInput {
+  id?: string
+  key: string
+  name: string
+  /** Left out for a new one: the backend makes a key no binding uses. */
+  resource?: string
+  description?: string
 }
 
 /** Typed wrappers around the backend commands. */
@@ -327,6 +340,9 @@ export const api = {
     invoke<null>("move_project", { profileId, projectId, index }),
   deleteProject: (profileId: string, projectId: string) =>
     invoke<null>("delete_project", { profileId, projectId }),
+  /** Marks the default repository and points the `repository` role at it (R2). */
+  setDefaultRepository: (profileId: string, projectId: string, repositoryId: string | null) =>
+    invoke<Project>("set_default_repository", { profileId, projectId, repositoryId }),
   copyProject: (profileId: string, projectId: string, targetProfileId: string) =>
     invoke<Project>("copy_project", { profileId, projectId, targetProfileId }),
   cycleProject: (profileId: string, direction: "next" | "previous") =>

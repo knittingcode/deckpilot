@@ -11,11 +11,13 @@
     "errors:engine.*",
     "errors:module.*",
     "errors:catalog.*",
+    "errors:repository.*",
     "errors:profile.*",
     "errors:projectContext.*",
     "errors:agent.*",
     "errors:pluginAction.*",
     "editor:assets.categories.*",
-    "editor:assets.gradients.*"
+    "editor:assets.gradients.*",
+    "actions:gesturePresets.*"
   ]
 }

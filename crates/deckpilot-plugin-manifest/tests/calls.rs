@@ -215,6 +215,10 @@ fn a_calls_plugin_has_no_way_out_but_the_host() {
             json!({"kind": "tools", "tools": [{"executable": "git",
                    "subcommands": [{"name": "status"}]}], "justification": "x"}),
         ),
+        (
+            "connections",
+            json!({"kind": "connections", "types": ["github"], "justification": "x"}),
+        ),
     ] {
         let mut value = calls();
         value["permissions"]
