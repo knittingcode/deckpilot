@@ -89,10 +89,12 @@ const INVALID_PARAMETERS: &str = "invalid-parameters";
 /// items and dashboard cards; `docs/marketplace/module-migration.md` §7)
 /// and their capability operations: `resource` parameters and
 /// `resource.resolve` are carried out, the others refused as not
-/// implemented until their host side lands (WP-A4 to WP-A6), and 1.10
-/// `contributes.gesturePresets` (data only; `convert::gesture_presets`).
+/// implemented until their host side lands (WP-A4 to WP-A6), 1.10
+/// `contributes.gesturePresets` (data only; `convert::gesture_presets`)
+/// and 1.11 `contributes.actions[].contexts` (advisory metadata,
+/// `engine::action_type`; `docs/action-contexts.md`).
 /// A plugin whose manifest asks for a higher minor is `incompatible`.
-const PLUGIN_API: ApiLevel = ApiLevel::new(1, 10);
+const PLUGIN_API: ApiLevel = ApiLevel::new(1, 11);
 /// Longest any invocation may take, whatever the manifest says.
 const MAX_INVOCATION: Duration = Duration::from_secs(600);
 /// Where the registry's verified state is kept (outside `plugins/`,

@@ -310,10 +310,14 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         .transpose()?;
     let title = action.title.as_ref().map(action_title);
     Ok(ActionType {
-        // A manifest cannot declare contexts yet (planned for plugin API
-        // 1.11, after 1.10; `docs/action-contexts.md`): every plugin
-        // action keeps the legacy default, all five contexts.
-        contexts: None,
+        // The manifest's `contexts` (plugin API 1.11), as declared and
+        // validated; without them the legacy default, all five
+        // (`docs/action-contexts.md`). Advisory, as for the built-ins.
+        contexts: action
+            .contexts
+            .as_deref()
+            .map(action_contexts)
+            .transpose()?,
         editor_navigation,
         title,
         id,
@@ -331,6 +335,22 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         }),
         node,
     })
+}
+
+/// A manifest's `contexts` as the core's. The validator has accepted only
+/// the five names, so an unknown one is a bug, refused like a bad
+/// parameter rather than dropped.
+fn action_contexts(names: &[String]) -> Result<deckpilot_core::ActionContexts, String> {
+    names
+        .iter()
+        .map(|name| {
+            serde_json::from_value::<deckpilot_core::ActionContext>(serde_json::Value::String(
+                name.clone(),
+            ))
+            .map_err(|_| format!("contexts: unknown context `{name}`"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(deckpilot_core::ActionContexts::of)
 }
 
 /// A `resource` parameter as the core's: one kind for the editor when the
@@ -995,6 +1015,31 @@ mod tests {
                 "encoder": ["rotate-clockwise", "rotate-counter-clockwise"],
                 "touchZone": ["swipe"]})
         );
+    }
+
+    /// Plugin API 1.11: `contexts` become the action type's (advisory, as
+    /// for the built-ins); without them the legacy default, all five.
+    #[test]
+    fn contexts_become_the_action_types() {
+        use deckpilot_core::{ActionContext, ActionContexts};
+        let manifest = sample();
+        let mut action = manifest.contributes.actions()[0].clone();
+        let legacy = action_type("acme.hello-weather", &action).unwrap();
+        assert_eq!(legacy.contexts, None);
+        assert_eq!(*legacy.effective_contexts(), ActionContexts::legacy());
+        action.contexts = Some(vec!["workflow".into(), "sequence".into()]);
+        let declared = action_type("acme.hello-weather", &action).unwrap();
+        assert_eq!(
+            declared.contexts,
+            Some(ActionContexts::of([
+                ActionContext::Sequence,
+                ActionContext::Workflow
+            ]))
+        );
+        // The validator has refused an unknown name; here it is an error,
+        // never a silent "all five".
+        action.contexts = Some(vec!["everywhere".into()]);
+        assert!(action_type("acme.hello-weather", &action).is_err());
     }
 
     /// Plugin API 1.8: `title` becomes the action type's, data only; the
