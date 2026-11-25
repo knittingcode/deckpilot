@@ -66,6 +66,14 @@ released either. 0.6.0 is the first version intended for publication.
   A managed Calls layout that cannot be stored while the database is busy
   is tried again after 1 s, then after waits doubling up to a minute;
   other storage errors are not retried.
+- Calls (groundwork): Settings › Devices lists the call pages of each Calls
+  layout. A control the call app does not support stays listed, disabled,
+  with the reason (for Teams: Microsoft retired its device API). The
+  *Back to work* settings can be changed there: a 20, 30 or 60 s or
+  custom timer, when what you started ends, or that with a maximum (the
+  default, 60 s), plus what a failure or cancellation does and whether
+  every device goes back to work. A change counts as an edit of the Calls
+  layout. IPC 19 gains `setCallsBackToWork`.
 - Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
   `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
   Settings › Devices gets a Calls section, in English and Polish, shown

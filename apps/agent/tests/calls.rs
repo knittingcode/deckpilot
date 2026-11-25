@@ -912,3 +912,125 @@ async fn a_busy_seed_is_tried_again_with_a_growing_wait_and_stored_once() {
     assert_eq!(view.layouts, std::slice::from_ref(&first.layout.name));
     deck.agent.shutdown().await;
 }
+
+/// C7 over IPC: each managed layout's call pages with their controls and
+/// whether the provider supports them; *Back to work* read (the default:
+/// completion or 60 s) and set (a 20 s timer the device then follows, the
+/// layout counting as edited); out-of-range times refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_call_pages_and_back_to_work_over_ipc() {
+    use deckpilot_ipc::calls::{BackToWork, BackToWorkMode, CallsPageKind};
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let status = async || match deck.agent.request(Request::GetCallsStatus).await.unwrap() {
+        Response::CallsStatus { status } => status,
+        other => panic!("{other:?}"),
+    };
+    let layout = status().await.layouts[0].clone();
+    let kinds: Vec<CallsPageKind> = layout.pages.iter().map(|p| p.page).collect();
+    assert_eq!(
+        kinds,
+        [
+            CallsPageKind::Incoming,
+            CallsPageKind::Outgoing,
+            CallsPageKind::Active
+        ]
+    );
+    let active = &layout.pages[2];
+    let control = |action: &str| {
+        active
+            .controls
+            .iter()
+            .find(|c| c.action == action)
+            .unwrap_or_else(|| panic!("{action} on {active:?}"))
+            .clone()
+    };
+    assert!(control("mic-toggle").supported, "the mock controls calls");
+    assert!(control("return-to-work").supported);
+    assert_eq!(layout.back, BackToWork::default());
+    assert_eq!(
+        layout.back.mode,
+        BackToWorkMode::CompletionOrMax { max_seconds: 60 }
+    );
+
+    // A 20 s timer.
+    let timer = BackToWork {
+        mode: BackToWorkMode::Timer { seconds: 20 },
+        ..BackToWork::default()
+    };
+    let Response::CallsStatus { status: set } = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: layout.model.clone(),
+            back: timer,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert_eq!(set.layouts[0].back, timer);
+    assert!(set.layouts[0].edited, "a Back to work change is an edit");
+    // The device follows it: back after 20 s, not before.
+    deck.join().await;
+    deck.back_to_work().await;
+    deck.advance(19).await;
+    assert!(!deck.shows_overlay().await, "not before 20 s");
+    deck.advance(1).await;
+    deck.wait_overlay(true).await;
+
+    // Out of range: refused, nothing changes.
+    let refused = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: layout.model.clone(),
+            back: BackToWork {
+                mode: BackToWorkMode::Timer { seconds: 3 },
+                ..BackToWork::default()
+            },
+        })
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(status().await.layouts[0].back, timer);
+    deck.agent.shutdown().await;
+}
+
+/// With a detection-only provider (like Teams) every call control of the
+/// pages is unsupported, with the reason; "Back to work" still works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_detection_only_provider_lists_its_controls_as_unsupported() {
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-detect");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let _device = mock.plug(&models::stream_deck_mk2(), "CALLS-D");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::detection_only(), ActionParameters::new())
+        .await;
+    let Response::CallsStatus { status } = agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(!status.controls);
+    let controls: Vec<_> = status.layouts[0]
+        .pages
+        .iter()
+        .flat_map(|p| p.controls.iter())
+        .collect();
+    assert_ne!(controls.len(), 0);
+    for control in controls {
+        if control.action == "return-to-work" {
+            assert!(control.supported);
+        } else {
+            assert!(!control.supported, "{control:?}");
+            assert_eq!(control.reason.as_deref(), Some("provider-has-no-api"));
+        }
+    }
+    agent.shutdown().await;
+}

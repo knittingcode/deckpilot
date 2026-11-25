@@ -434,6 +434,48 @@ has the capability and Calls is installed. The section has:
   confirmation names the copy that keeps the user's version
   ("Calls (my version, <date>)").
 
+### Call pages and *Back to work* (C7)
+
+Each managed layout in `CallsStatus` also carries:
+
+- **`pages`:** its call pages (incoming, outgoing, active), and each one's
+  controls with their Calls action. Each control says whether the provider
+  supports it now (`supported`), and if not, why (`reason`, a stable code
+  such as `provider-has-no-api`). The support is worked out from the
+  provider's capabilities whenever the status is built, so it is never
+  cached with the layout. "Back to work" is always supported.
+- **`back`:** its *Back to work* settings:
+  - `mode`, one of:
+    - `timer { seconds }` (5–600; presets 20, 30, 60);
+    - `completion`;
+    - `completionOrMax { maxSeconds }` (10–1800; the default, with 60);
+  - `onFailure` and `onCancel` (`resume` or `stay`);
+  - `allDevices`.
+
+`setCallsBackToWork { model, back }` sets them, and refuses times out of
+range. They are the parameters of the layout's "Back to work" action, so
+**a change is a user edit of the managed layout**: it counts as edited,
+a template update then never rewrites it, and *Restore defaults* keeps it
+first. The driver uses the new settings from the next press.
+
+In Settings › Devices, each managed layout gets two more sections (en and
+pl):
+
+- **Call pages:** every control of every page, with "Supported" or "Not
+  supported" and the reason. A disabled control stays listed, so muscle
+  memory does not move. For the detection-only Teams adapter, the reason
+  says Microsoft retired the Teams device API on 30 June 2026. Nothing
+  claims a Teams control works.
+- **Back to work:**
+  - the mode;
+  - for the timer, 20, 30 or 60 s or a custom time;
+  - for the default mode, the maximum;
+  - what a failed or cancelled run does;
+  - all devices.
+
+  Each change is applied at once. A time out of range is shown as such and
+  not saved.
+
 The per-device setting is kept by the running agent; saving it across
 restarts comes with the plugin's settings (C7). Opening the managed layouts
 in the Device Editor, and the state preview there, are still to come (C6b).

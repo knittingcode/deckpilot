@@ -448,7 +448,11 @@ impl Agent {
                 // until the next agent start (the overlay is not shown on
                 // the model meanwhile).
                 Err(error) => {
-                    warn!(model = %model.id, %error, "the Calls layout could not be stored");
+                    warn!(
+                        model = %model.id,
+                        %error,
+                        "the Calls layout could not be stored; not tried again until the agent restarts"
+                    );
                     service.retries.remove(&model_id);
                     service.seeded.insert(model_id.clone());
                 }
