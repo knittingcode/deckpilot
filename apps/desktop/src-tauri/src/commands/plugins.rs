@@ -243,7 +243,7 @@ pub(crate) async fn feature_connection(
 /// Sends one plugin request over a connection of its own. Every request
 /// but `getPluginRuntime` is preceded by `getPluginRuntime` on the same
 /// connection and refused unless the agent reports plugins as available.
-async fn plugin_request(state: &AppState, request: Request) -> PluginResult<Response> {
+pub(crate) async fn plugin_request(state: &AppState, request: Request) -> PluginResult<Response> {
     let gated = !matches!(request, Request::GetPluginRuntime);
     let mut connection = connect(state, gated).await?;
     Ok(connection.client.request(request).await?)

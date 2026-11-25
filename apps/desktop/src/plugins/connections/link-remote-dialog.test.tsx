@@ -79,6 +79,10 @@ function client(): ConnectionsClient {
       ]),
     ),
     setRepositoryRemotes: vi.fn(() => Promise.resolve(null)),
+    linkRepositoryRemote: vi.fn(
+      (_p: string, _pr: string, _r: string, _plugin: string, remote: RepositoryRemote) =>
+        Promise.resolve({ remotes: [remote] }),
+    ),
   }
 }
 
@@ -123,22 +127,53 @@ describe("linking a repository to a remote one", () => {
     expect(dialog.getByTestId("link-summary")).toHaveTextContent(
       "group/app (gl:4711) on Work GitLab will be linked.",
     )
-    expect(c.setRepositoryRemotes).not.toHaveBeenCalled()
-    await user.click(link)
-    const expected: RepositoryRemote[] = [
-      {
-        name: "origin",
-        primary: true,
-        connectionId: CONNECTION,
-        remoteRepositoryId: "gl:4711",
-        remoteUrl: "https://code.example.com/group/app.git",
-        defaultBranch: "main",
-      },
-    ]
+    // Enter in the search field searches again; it never links.
+    await user.type(dialog.getByLabelText("Find a repository"), "{Enter}")
     await waitFor(() => {
-      expect(c.setRepositoryRemotes).toHaveBeenCalledWith("p1", "pr1", "r1", expected)
+      expect(c.listRepositories).toHaveBeenCalledTimes(2)
     })
-    expect(onLinked).toHaveBeenCalledWith(expected)
+    expect(c.linkRepositoryRemote).not.toHaveBeenCalled()
+    await user.click(
+      within(dialog.getByRole("list", { name: "Repositories found" })).getByRole("button", {
+        name: "group/app",
+      }),
+    )
+    await user.click(link)
+    const expected: RepositoryRemote = {
+      name: "origin",
+      primary: true,
+      connectionId: CONNECTION,
+      remoteRepositoryId: "gl:4711",
+      remoteUrl: "https://code.example.com/group/app.git",
+      defaultBranch: "main",
+    }
+    // Only the one remote: the app merges it with what is stored now.
+    await waitFor(() => {
+      expect(c.linkRepositoryRemote).toHaveBeenCalledWith("p1", "pr1", "r1", PLUGIN, expected)
+    })
+    expect(c.setRepositoryRemotes).not.toHaveBeenCalled()
+    expect(onLinked).toHaveBeenCalledWith([expected])
+  })
+
+  it("cannot switch connections while a search runs", async () => {
+    const { c, user } = setup()
+    let answer: (records: never[]) => void = () => {}
+    vi.mocked(c.listRepositories).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve
+        }),
+    )
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Link App to a remote repository" }),
+    )
+    const choice = await dialog.findByRole("radio", { name: "Work GitLab (code.example.com)" })
+    await user.click(choice)
+    await user.click(dialog.getByRole("button", { name: "Find" }))
+    expect(choice).toBeDisabled()
+    answer([])
+    expect(await dialog.findByText("No repository found.")).toBeInTheDocument()
+    expect(choice).toBeEnabled()
   })
 
   it("writes nothing when cancelled", async () => {
@@ -149,6 +184,7 @@ describe("linking a repository to a remote one", () => {
     await user.click(dialog.getByRole("button", { name: "Cancel" }))
     expect(onClose).toHaveBeenCalled()
     expect(c.setRepositoryRemotes).not.toHaveBeenCalled()
+    expect(c.linkRepositoryRemote).not.toHaveBeenCalled()
   })
 })
 

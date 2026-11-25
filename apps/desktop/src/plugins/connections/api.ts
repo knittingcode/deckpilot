@@ -145,7 +145,18 @@ export interface ConnectionsClient {
     connection: string,
     search: string,
   ) => Promise<RemoteRepositoryRecord[]>
-  /** `set_repository_remotes`: the link the user confirmed (K3). */
+  /**
+   * `link_repository_remote`: one remote the user confirmed (K3), merged by
+   * name with the remotes stored now; the agent checks its connection.
+   */
+  linkRepositoryRemote: (
+    profileId: string,
+    projectId: string,
+    repositoryId: string,
+    plugin: string,
+    remote: RepositoryRemote,
+  ) => Promise<{ remotes?: RepositoryRemote[] }>
+  /** `set_repository_remotes`: the remotes as the user saved them (K3). */
   setRepositoryRemotes: (
     profileId: string,
     projectId: string,
@@ -216,6 +227,8 @@ export function createTauriConnectionsClient(): ConnectionsClient {
       const items = outcome.data?.items
       return Array.isArray(items) ? (items as RemoteRepositoryRecord[]) : []
     },
+    linkRepositoryRemote: (profileId, projectId, repositoryId, plugin, remote) =>
+      call("link_repository_remote", { profileId, projectId, repositoryId, plugin, remote }),
     setRepositoryRemotes: (profileId, projectId, repositoryId, remotes) =>
       call("set_repository_remotes", { profileId, projectId, repositoryId, remotes }),
   }
@@ -297,14 +310,14 @@ export async function loadConnectionPlugins(
  * `remotes` with the chosen repository as the remote `name`: it replaces a
  * remote of that name, and as the primary one it makes no other primary.
  */
-export function withLink(
-  remotes: RepositoryRemote[],
+/** The remote `name` for the plugin's repository `record`. */
+export function remoteOf(
   name: string,
   primary: boolean,
   connectionId: string,
   record: RemoteRepositoryRecord,
-): RepositoryRemote[] {
-  const linked: RepositoryRemote = {
+): RepositoryRemote {
+  return {
     name,
     primary,
     connectionId,
@@ -312,6 +325,16 @@ export function withLink(
     ...(record.httpUrl ? { remoteUrl: record.httpUrl } : {}),
     ...(record.defaultBranch ? { defaultBranch: record.defaultBranch } : {}),
   }
+}
+
+export function withLink(
+  remotes: RepositoryRemote[],
+  name: string,
+  primary: boolean,
+  connectionId: string,
+  record: RemoteRepositoryRecord,
+): RepositoryRemote[] {
+  const linked = remoteOf(name, primary, connectionId, record)
   const others = remotes
     .filter((r) => r.name !== name)
     .map((r) => (primary ? { ...r, primary: false } : r))

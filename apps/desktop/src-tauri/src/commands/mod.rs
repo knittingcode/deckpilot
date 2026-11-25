@@ -230,6 +230,7 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         plugins::set_plugin_credential,
         plugins::delete_plugin_credential,
         repositories::set_repository_remotes,
+        repositories::link_repository_remote,
         plugins::list_plugin_connections,
         plugins::create_plugin_connection,
         plugins::set_plugin_connection_secret,

@@ -5,7 +5,7 @@
 // from text typed here; only then does the app write the link
 // (`set_repository_remotes`). A plugin never writes it.
 
-import { useEffect, useId, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 
 import { ModalShell } from "@/components/modal-shell"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,7 @@ import {
   connectionHost,
   isRemoteRepositoryId,
   loadConnectionPlugins,
+  remoteOf,
   useConnectionsClient,
   withLink,
 } from "./api"
@@ -56,6 +57,9 @@ export function LinkRemoteDialog({
   const [primary, setPrimary] = useState(!remotes.some((r) => r.primary))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Which search's answer may be shown: a late answer for another
+  // connection is dropped, never attached to the one chosen now.
+  const searchRef = useRef(0)
 
   useEffect(() => {
     let active = true
@@ -83,17 +87,19 @@ export function LinkRemoteDialog({
 
   const find = async () => {
     if (!chosen) return
+    const ticket = ++searchRef.current
     setBusy(true)
     setError(null)
     setPicked(null)
     try {
       const found = await client.listRepositories(chosen.plugin, chosen.c.id, search)
+      if (ticket !== searchRef.current) return
       // Only records with an immutable id can be linked (K2).
       setRecords(found.filter((r) => isRemoteRepositoryId(r.id)))
     } catch (e) {
-      setError(errorText(e))
+      if (ticket === searchRef.current) setError(errorText(e))
     } finally {
-      setBusy(false)
+      if (ticket === searchRef.current) setBusy(false)
     }
   }
 
@@ -102,9 +108,16 @@ export function LinkRemoteDialog({
     setBusy(true)
     setError(null)
     try {
-      const next = withLink(remotes, name.trim(), primary, chosen.c.id, picked)
-      await client.setRepositoryRemotes(profileId, projectId, repositoryId, next)
-      onLinked(next)
+      // Only the one remote: the agent merges it with what is stored now.
+      const remote = remoteOf(name.trim(), primary, chosen.c.id, picked)
+      const saved = await client.linkRepositoryRemote(
+        profileId,
+        projectId,
+        repositoryId,
+        chosen.plugin,
+        remote,
+      )
+      onLinked(saved.remotes ?? withLink(remotes, name.trim(), primary, chosen.c.id, picked))
       onClose()
     } catch (e) {
       setError(errorText(e))
@@ -144,7 +157,9 @@ export function LinkRemoteDialog({
               variant="outline"
               aria-labelledby={`${id}-connection`}
               value={choice}
+              disabled={busy}
               onValueChange={(value) => {
+                searchRef.current += 1
                 setChoice(value)
                 setRecords(null)
                 setPicked(null)
@@ -173,6 +188,13 @@ export function LinkRemoteDialog({
                 onChange={(e) => {
                   setSearch(e.target.value)
                 }}
+                // Enter searches; it never confirms the link.
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void find()
+                }}
               />
               <Button type="button" variant="outline" disabled={busy} onClick={() => void find()}>
                 {t("plugins:connections.link.find")}
@@ -196,7 +218,7 @@ export function LinkRemoteDialog({
                           setPicked(r)
                         }}
                       >
-                        {r.path}
+                        {r.path || r.name || r.id}
                       </Button>
                     </li>
                   ))}

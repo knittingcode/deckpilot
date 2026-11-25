@@ -172,14 +172,19 @@ pub struct ConnectionTestOutcome {
     pub message: Option<String>,
 }
 
-pub(crate) fn check_connection_id(id: &str) -> Result<(), String> {
-    let ok = id.strip_prefix("cn_").is_some_and(|body| {
+/// Whether `id` is a connection id: `cn_` and 26 characters of Crockford
+/// base32 (digits and upper-case letters without `I`, `L`, `O`, `U`).
+pub fn is_connection_id(id: &str) -> bool {
+    id.strip_prefix("cn_").is_some_and(|body| {
         body.len() == 26
             && body
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b.is_ascii_uppercase() && !b"ILOU".contains(&b)))
-    });
-    if ok {
+    })
+}
+
+pub(crate) fn check_connection_id(id: &str) -> Result<(), String> {
+    if is_connection_id(id) {
         Ok(())
     } else {
         Err("connection must be a connection id".into())
