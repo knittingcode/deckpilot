@@ -253,9 +253,9 @@ fn the_fixture_is_valid_bundled_with_three_privileged_usages() {
 /// sign`'s preflight and `release verify` with two distinct keys.
 #[test]
 fn this_build_refuses_the_calls_plugin_on_every_release_path() {
+    const NOT_COVERED: &str = "the review does not cover this plugin";
     let dir = PluginDir::new(|_| {});
     // The compiled record has no Calls entry: every path says so.
-    const NOT_COVERED: &str = "the review does not cover this plugin";
     let packaged = dir.package(PrivilegedGate::compiled()).unwrap_err();
     assert!(packaged.contains(NOT_COVERED), "packaged: {packaged}");
     let bytes = dir.bundled_rules_package();
