@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 17 | 13 |
+| Current main | see `Cargo.toml` | 17 | 14 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -58,6 +58,21 @@ the app sends only to an agent that announces the feature (against an
 older agent the app's storefront commands answer `null`). The agent caches
 a verified storefront under `<state>/storefront/` and its media under
 `<state>/media/`; an older agent does not read them.
+
+Current main (after 0.15.0) moves the configuration database to schema
+14: projects get their repositories (`docs/data-model.md`,
+"Repositories"). The migration is additive. It adds two columns to
+`projects` and stores, for every project with the `repository` role, the
+repository that role stands for. Roles, resources and folder bindings are
+not rewritten. As every upgrade, it runs after an encrypted backup next to
+the database (`backups/deckpilot-schema13-*.db`). **0.15.x and older
+refuse a schema 14 database** with `UnsupportedSchema` (found 14,
+supported 13) and change nothing. The way back to 0.15.x is that
+pre-migration backup: restore it in place of `deckpilot.db`, without its
+`-wal` and `-shm` files. Changes made after the upgrade are not in the
+backup. Exports with repositories other than the one the role stands for
+are payload version 5, which 0.14.x refuses; other exports keep their
+version.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins
@@ -194,6 +209,19 @@ plugin with `projectContext.select` only) is another `^1.9` field that an
 older agent refuses as unknown; a `resource.resolve` role is the user's
 role name (up to 1,024 characters, not blank), no longer a parameter key.
 No IPC protocol or document change.
+
+Plugin API 1.10 (unreleased,
+[gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
+additive. `contributes.gesturePresets` validates only with `^1.10`; a
+`^1.9` manifest without it validates exactly as before, and an agent of
+1.9 (0.15.0 and older) reports a `^1.10` version `incompatible`. Presets
+are data only: no capability operation, ABI or permission is added, and
+nothing of a preset is stored, so no document, schema or migration
+changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
+are optional fields, left out when empty, that an older app ignores; an
+older agent sends neither, and the app then lists no presets. No IPC
+protocol change. The SDK's `LATEST_API_LEVEL` is 1.10
+(`GESTURE_PRESETS_API_LEVEL`; nothing for the guest).
 
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive

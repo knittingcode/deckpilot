@@ -1177,3 +1177,106 @@ fn close_application_refuses_what_it_cannot_identify() {
     assert_eq!(code(&result), Some(expected), "{}", result.message);
     assert_eq!(apps.calls(), Vec::<String>::new());
 }
+
+/// Answers every lookup with `kind` and records what was asked.
+struct Kinds {
+    kind: TargetKind,
+    asked: std::sync::Mutex<Vec<(ResourceRef, Option<String>)>>,
+}
+
+impl Kinds {
+    fn new(kind: TargetKind) -> Self {
+        Self {
+            kind,
+            asked: std::sync::Mutex::default(),
+        }
+    }
+}
+
+impl TargetKinds for Kinds {
+    fn kind_of(&self, reference: &ResourceRef, relative: Option<&str>) -> TargetKind {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((reference.clone(), relative.map(str::to_owned)));
+        self.kind
+    }
+}
+
+#[test]
+fn open_shows_a_folder_or_a_document_for_its_target() {
+    let open = OpenFile::new(Arc::new(RecordingLauncher::new()));
+    let chosen = ActionParameters::new().with("location", fixed("file.report-abc123"));
+    let symbol =
+        |parameters: &ActionParameters, kind| open.automatic_symbol(parameters, &Kinds::new(kind));
+    assert_eq!(
+        symbol(&chosen, TargetKind::File).as_deref(),
+        Some(FILE_ICON)
+    );
+    assert_eq!(
+        symbol(&chosen, TargetKind::Directory).as_deref(),
+        Some(FOLDER_ICON)
+    );
+    // Not known: Open's own icon (the type's), never a guess.
+    assert_eq!(symbol(&chosen, TargetKind::Unknown), None);
+    // A path inside a folder is looked up as Open resolves it.
+    let inside = chosen.clone().with("path", text("docs/README.md"));
+    let kinds = Kinds::new(TargetKind::File);
+    assert_eq!(
+        open.automatic_symbol(&inside, &kinds).as_deref(),
+        Some(FILE_ICON)
+    );
+    assert_eq!(
+        kinds.asked.lock().unwrap().as_slice(),
+        [(
+            ResourceRef::Fixed {
+                key: key("file.report-abc123")
+            },
+            Some("docs/README.md".to_owned())
+        )]
+    );
+    // Nothing chosen, or a target known only when the action runs (a
+    // variable for the location or the path): not even asked.
+    let kinds = Kinds::new(TargetKind::Directory);
+    let reference = ParameterValue::Reference(
+        deckpilot_core::variables::VariableRef::parse("shared.paths.docs").unwrap(),
+    );
+    for parameters in [
+        ActionParameters::new(),
+        ActionParameters::new().with("location", reference.clone()),
+        chosen.clone().with("path", reference),
+        chosen.clone().with(
+            "path",
+            ParameterValue::Template("{{ shared.paths.docs }}/a.txt".into()),
+        ),
+    ] {
+        assert_eq!(open.automatic_symbol(&parameters, &kinds), None);
+    }
+    assert!(kinds.asked.lock().unwrap().is_empty());
+}
+
+#[test]
+fn open_folder_is_kept_for_saved_actions_only() {
+    let launcher = Arc::new(RecordingLauncher::new());
+    let legacy = OpenDirectory::new(launcher.clone());
+    // Not offered for new actions; its icon and parameters are as before.
+    assert!(legacy.definition().deprecated);
+    assert_eq!(legacy.definition().node.icon.as_deref(), Some(FOLDER_ICON));
+    assert_eq!(
+        legacy
+            .definition()
+            .parameters
+            .iter()
+            .map(|p| p.key.as_str())
+            .collect::<Vec<_>>(),
+        ["location", "path"]
+    );
+    // Its keys keep the folder icon: no automatic icon of its own.
+    let parameters = ActionParameters::new().with("location", fixed("folder.reports"));
+    assert_eq!(
+        legacy.automatic_symbol(&parameters, &Kinds::new(TargetKind::File)),
+        None
+    );
+    // Open is the one offered.
+    assert!(!OpenFile::new(launcher).definition().deprecated);
+}

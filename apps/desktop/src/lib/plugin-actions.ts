@@ -183,6 +183,12 @@ function installedPluginModules(plugins: PluginSummary[], known: KnownPlugin[]):
         supported: true,
         configValues: {},
         actionTypes,
+        // Only presets inside the plugin's own namespace, over its own actions.
+        gesturePresets: (plugin.gesturePresets ?? []).filter(
+          (preset) =>
+            ownerOf(preset.id) === plugin.id &&
+            preset.gestures.every((g) => ownerOf(g.action) === plugin.id),
+        ),
         plugin: {
           state: plugin.state,
           unavailable,
