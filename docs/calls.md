@@ -480,6 +480,12 @@ The per-device setting is kept by the running agent; saving it across
 restarts comes with the plugin's settings (C7). Opening the managed layouts
 in the Device Editor, and the state preview there, are still to come (C6b).
 
-Still to come: a provider in a build (C5); the plugin (C7), whose
-enabling with consent installs Calls; and the IPC event for the editor
-(C6, a release blocker).
+The IPC event for the app and the editor (C6, a release blocker) is
+`callsChanged`, above. It carries the managed layouts too, and is sent
+again after a configuration reload, so an edit made in the Device Editor
+is seen. Still to come:
+
+- a live signal source for the Teams provider (C5, after the macOS
+  permission check);
+- the plugin, whose enabling with consent installs Calls;
+- the managed layouts in the Device Editor, with the state preview (C6b).
