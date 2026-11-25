@@ -17,6 +17,17 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Settings › Connections (builds with plugins): the servers plugins connect
+  to, per plugin that declares them, with their state (connected, token
+  rejected, missing permission, can't reach the server, certificate not
+  trusted, turned off), the account, Default and Read-only. Add a
+  connection to GitHub.com or GitLab.com, or to GitHub Enterprise Server or
+  a self-managed GitLab at the address you open in the browser (a port or
+  a path is fine), with the token's permissions explained in plain words,
+  read-only unless you allow changes, and a private network only when you
+  say so; it is tested at once. Test, Replace token, Turn off and Remove
+  are on each connection. The token is typed once and never shown again.
+  In English and Polish.
 - Plugins: a connection's HTTP answers carry GitHub's `x-oauth-scopes`,
   `x-accepted-oauth-scopes` and `github-authentication-token-expiration`
   (scope names and a date), so a connection's test can name a missing

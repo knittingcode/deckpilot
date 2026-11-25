@@ -4133,6 +4133,7 @@ fn plugin_refusal(h: &Harness, cmd: &str, args: Value) -> (String, String) {
 /// Every plugin command, with the arguments the frontend sends.
 fn plugin_commands() -> Vec<(&'static str, Value)> {
     let mut commands = plugin_lifecycle_commands();
+    commands.extend(plugin_connection_commands());
     commands.extend(plugin_dependency_commands());
     commands
 }
@@ -4158,6 +4159,43 @@ fn plugin_dependency_commands() -> Vec<(&'static str, Value)> {
             "remove_plugin",
             json!({ "plugin": "example.hello", "uninstall": true, "keep": null,
                 "withDependents": true, "orphans": ["example.base"] }),
+        ),
+    ]
+}
+
+/// The connection commands (plugin API 1.14); test tokens are synthetic.
+fn plugin_connection_commands() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "list_plugin_connections",
+            json!({ "plugin": "deckpilot.git-providers" }),
+        ),
+        (
+            "create_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers", "connectionType": "gitlab",
+                "deployment": "selfHosted", "url": "https://code.example.com",
+                "displayName": "Work", "allowChanges": false, "privateNetwork": false,
+                "secret": "dp-test-secret" }),
+        ),
+        (
+            "set_plugin_connection_secret",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A", "secret": "dp-test-secret" }),
+        ),
+        (
+            "update_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A", "enabled": false }),
+        ),
+        (
+            "test_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A" }),
+        ),
+        (
+            "remove_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A" }),
         ),
     ]
 }
