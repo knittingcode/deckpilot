@@ -5,6 +5,12 @@
 // is saved, under the repository's resource key, so a profile never holds a
 // path. Removing a repository never removes its folder's binding, and a
 // folder that is gone is shown, never removed.
+//
+// A saved repository can be linked to a repository on one of the user's
+// connections ("Link remote…", Git Providers K1–K3): the dialog writes the
+// link at once through the app (`link_repository_remote`), not with the
+// form's save, and the form only shows the remotes; its save never sends
+// them (the backend keeps them by id).
 
 import {
   DndContext,
@@ -24,8 +30,8 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { open as openDialog } from "@tauri-apps/plugin-dialog"
-import { FolderPlus, GripVertical, MoreHorizontal, Trash2 } from "lucide-react"
-import { useId } from "react"
+import { FolderPlus, GripVertical, Link2, MoreHorizontal, Trash2 } from "lucide-react"
+import { useId, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/dialogs"
@@ -45,7 +51,8 @@ import { useTranslation } from "@/i18n"
 import { failureDetail } from "@/lib/failure"
 import { STATUS } from "@/lib/resource-status"
 import { baseName } from "@/lib/system-actions"
-import type { ResourceCheck } from "@/lib/types"
+import type { RepositoryRemote, ResourceCheck } from "@/lib/types"
+import { LinkRemoteDialog } from "@/plugins/connections/link-remote-dialog"
 
 import { MAX_REPOSITORY_NAME, type RepositoryRow, proposeKey, rowProblems } from "./repositories"
 
@@ -59,6 +66,7 @@ export function RepositoriesEditor({
   savedRows,
   roleResource,
   checks,
+  link,
 }: {
   rows: RepositoryRow[]
   onChange: (rows: RepositoryRow[]) => void
@@ -73,8 +81,19 @@ export function RepositoriesEditor({
   /** What the project's `repository` role points at now. */
   roleResource: string | null
   checks: ResourceCheck[]
+  /**
+   * Linking remotes: the saved project, and each saved repository's remotes
+   * as stored now. `null` for a project not saved yet (nothing to link to).
+   */
+  link: {
+    profileId: string
+    projectId: string
+    remotes: Record<string, RepositoryRemote[]>
+    onLinked: (repositoryId: string, remotes: RepositoryRemote[]) => void
+  } | null
 }) {
   const { t } = useTranslation()
+  const [linking, setLinking] = useState<RepositoryRow | null>(null)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -169,6 +188,13 @@ export function RepositoriesEditor({
                   roleUse={projectKey === null ? null : `${projectKey} repository`}
                   removable={rows.length > 1 || roleResource === null}
                   check={row.resource ? checks.find((c) => c.key === row.resource) : undefined}
+                  remotes={link?.remotes[row.id] ?? []}
+                  // Only a repository the profile has (saved, or the one its
+                  // role stands for) can be linked.
+                  linkable={link !== null && savedRows.some((r) => r.id === row.id)}
+                  onLink={() => {
+                    setLinking(row)
+                  }}
                   onChange={(patch) => {
                     update(row.id, patch)
                   }}
@@ -202,6 +228,26 @@ export function RepositoriesEditor({
           {t("workspace:projects.repositories.roleStays")}
         </p>
       )}
+      {link && linking && (
+        <LinkRemoteDialog
+          profileId={link.profileId}
+          projectId={link.projectId}
+          repositoryId={linking.id}
+          repositoryName={
+            // As saved: the link is made on the stored repository.
+            savedRows.find((r) => r.id === linking.id)?.name ??
+            (linking.name.trim() || linking.key.trim())
+          }
+          remotes={link.remotes[linking.id] ?? []}
+          onClose={() => {
+            setLinking(null)
+          }}
+          onLinked={(remotes) => {
+            link.onLinked(linking.id, remotes)
+            toast.success(t("workspace:projects.repositories.linked"))
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -217,6 +263,9 @@ function RepositoryItem({
   roleUse,
   removable,
   check,
+  remotes,
+  linkable,
+  onLink,
   onChange,
   onDefault,
   onMove,
@@ -236,6 +285,11 @@ function RepositoryItem({
   /** The last repository stays while the repository role would bring it back. */
   removable: boolean
   check: ResourceCheck | undefined
+  /** Its remotes as stored (shown; the form never edits them). */
+  remotes: RepositoryRemote[]
+  /** Whether it can be linked now (it is saved). */
+  linkable: boolean
+  onLink: () => void
   onChange: (patch: Partial<RepositoryRow>) => void
   onDefault: () => void
   onMove: (to: number) => void
@@ -435,6 +489,54 @@ function RepositoryItem({
           {t("workspace:projects.repositories.rebindShared", { users: users.join(", ") })}
         </p>
       )}
+      <div className="grid gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm font-medium" id={`${ids}-remotes`}>
+            {t("workspace:projects.repositories.remotes")}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!linkable}
+            title={linkable ? undefined : t("workspace:projects.repositories.linkNeedsSave")}
+            aria-label={t("workspace:projects.repositories.linkFor", { name: label })}
+            onClick={onLink}
+          >
+            <Link2 /> {t("workspace:projects.repositories.link")}
+          </Button>
+        </div>
+        {remotes.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {t("workspace:projects.repositories.noRemotes")}
+          </p>
+        ) : (
+          <ul className="grid gap-1 text-xs" aria-labelledby={`${ids}-remotes`}>
+            {remotes.map((remote) => (
+              <li key={remote.name} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-mono font-medium">{remote.name}</span>
+                {remote.primary && (
+                  <span className="text-muted-foreground">
+                    {t("workspace:projects.repositories.primaryRemote")}
+                  </span>
+                )}
+                {remote.remoteUrl && (
+                  <span className="font-mono break-all text-muted-foreground">
+                    {remote.remoteUrl}
+                  </span>
+                )}
+                {remote.connectionId && remote.remoteRepositoryId && (
+                  <span className="text-muted-foreground">
+                    {t("workspace:projects.repositories.linkedRemote", {
+                      id: remote.remoteRepositoryId,
+                    })}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </li>
   )
 }

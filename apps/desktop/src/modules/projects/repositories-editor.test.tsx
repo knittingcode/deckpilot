@@ -4,8 +4,9 @@ import "@testing-library/jest-dom/vitest"
 import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { Project, ResourceCheck } from "@/lib/types"
+import type { Project, RepositoryRemote, ResourceCheck } from "@/lib/types"
 import { ProjectsPage } from "@/modules/projects/projects-page"
+import { type ConnectionsClient, ConnectionsClientContext } from "@/plugins/connections/api"
 import { proposeKey, rowProblems, type RepositoryRow } from "@/modules/projects/repositories"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
@@ -63,7 +64,65 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-async function openEditor(projects: Project[] = [shop]) {
+const PLUGIN = "deckpilot.git-providers"
+const CONNECTION = "cn_01JD7Q0000000000000000000B"
+
+/** A connections client with one usable GitLab connection and one repository there. */
+function connections(): ConnectionsClient {
+  return {
+    listPlugins: vi.fn(() =>
+      Promise.resolve([{ id: PLUGIN, name: "Git Providers", state: "enabled" }]),
+    ),
+    list: vi.fn(() =>
+      Promise.resolve({
+        plugin: PLUGIN,
+        granted: true,
+        privateNetworkAllowed: false,
+        changesAllowed: false,
+        types: [{ id: "gitlab", label: "GitLab", selfHosted: true, auth: [] }],
+        connections: [
+          {
+            id: CONNECTION,
+            type: "gitlab",
+            displayName: "Work GitLab",
+            deployment: "cloud" as const,
+            apiUrl: "https://gitlab.com/api/v4",
+            webUrl: "https://gitlab.com",
+            allowChanges: false,
+            privateNetwork: false,
+            enabled: true,
+            state: "ok" as const,
+            isDefault: true,
+            hasSecret: true,
+            createdAt: 1,
+          },
+        ],
+      }),
+    ),
+    create: vi.fn(),
+    setSecret: vi.fn(),
+    update: vi.fn(),
+    test: vi.fn(),
+    remove: vi.fn(),
+    listRepositories: vi.fn(() =>
+      Promise.resolve([
+        {
+          id: "gl:4711",
+          path: "shop/main",
+          defaultBranch: "main",
+          httpUrl: "https://gitlab.com/shop/main.git",
+        },
+      ]),
+    ),
+    setRepositoryRemotes: vi.fn(() => Promise.resolve(null)),
+    linkRepositoryRemote: vi.fn(
+      (_p: string, _pr: string, _r: string, _plugin: string, remote: RepositoryRemote) =>
+        Promise.resolve({ remotes: [remote] }),
+    ),
+  }
+}
+
+async function openEditor(projects: Project[] = [shop], client: ConnectionsClient = connections()) {
   api.getProfile.mockResolvedValue(profileView({ projects }))
   api.checkResources.mockResolvedValue(checks)
   api.updateProject.mockImplementation((_profile, _id, input) =>
@@ -78,11 +137,15 @@ async function openEditor(projects: Project[] = [shop]) {
       })),
     }),
   )
-  const rendered = renderWithApp(<ProjectsPage />)
+  const rendered = renderWithApp(
+    <ConnectionsClientContext value={client}>
+      <ProjectsPage />
+    </ConnectionsClientContext>,
+  )
   await screen.findByText("Online Shop")
   await rendered.user.click(screen.getByRole("button", { name: "Edit SHOP" }))
   const form = await screen.findByRole("dialog", { name: "Edit SHOP" })
-  return { ...rendered, form }
+  return { ...rendered, form, client }
 }
 
 function row(form: HTMLElement, name: string): HTMLElement {
@@ -260,7 +323,7 @@ describe("Repositories in the project form", () => {
     dialog.open.mockResolvedValue(null)
     const { form, user } = await openEditor()
     await user.click(within(form).getByRole("button", { name: "Add repository…" }))
-    expect(within(form).getAllByRole("listitem")).toHaveLength(2)
+    expect(within(form).getAllByRole("listitem", { name: /^Repository / })).toHaveLength(2)
   })
 
   it("reorders and marks another default, saying the role follows", async () => {
@@ -344,6 +407,105 @@ describe("Repositories in the project form", () => {
     await user.type(name, "!")
     await user.click(within(form).getByRole("button", { name: "Cancel" }))
     expect(await screen.findByRole("alertdialog")).toBeInTheDocument()
+  })
+
+  it("links a saved repository with the Link remote dialog, written at once", async () => {
+    const { form, user, client, context } = await openEditor()
+    // The stored remotes are shown; the form never edits them.
+    const cms = row(form, "CMS")
+    expect(within(cms).getByText("origin")).toBeInTheDocument()
+    expect(within(cms).getByText("primary")).toBeInTheDocument()
+    expect(within(cms).getByText("https://example.com/cms.git")).toBeInTheDocument()
+    const main = row(form, "Online Shop")
+    expect(within(main).getByText("No remotes yet.")).toBeInTheDocument()
+
+    await user.click(within(main).getByRole("button", { name: "Link remote for Online Shop" }))
+    const linkDialog = within(
+      await screen.findByRole("dialog", { name: "Link Online Shop to a remote repository" }),
+    )
+    await user.click(await linkDialog.findByRole("radio", { name: "Work GitLab" }))
+    await user.click(linkDialog.getByRole("button", { name: "Find" }))
+    await user.click(await linkDialog.findByRole("button", { name: "shop/main" }))
+    await user.click(linkDialog.getByRole("button", { name: "Link" }))
+    const expected: RepositoryRemote = {
+      name: "origin",
+      primary: true,
+      connectionId: CONNECTION,
+      remoteRepositoryId: "gl:4711",
+      remoteUrl: "https://gitlab.com/shop/main.git",
+      defaultBranch: "main",
+    }
+    await waitFor(() => {
+      expect(client.linkRepositoryRemote).toHaveBeenCalledWith(
+        "profile-1",
+        shop.id,
+        MAIN,
+        PLUGIN,
+        expected,
+      )
+    })
+    expect(toast.success).toHaveBeenCalledWith("Remote linked")
+    // The project form stays open and shows the link; nothing else is saved.
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /to a remote repository/ })).toBeNull()
+    })
+    expect(within(row(form, "Online Shop")).getByText("linked (gl:4711)")).toBeInTheDocument()
+    expect(client.setRepositoryRemotes).not.toHaveBeenCalled()
+    expect(api.updateProject).not.toHaveBeenCalled()
+    // Closing asks nothing (the link is saved already) and reloads the list.
+    await user.click(within(form).getByRole("button", { name: "Cancel" }))
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Edit SHOP" })).toBeNull()
+    })
+    expect(context.refresh).toHaveBeenCalled()
+  })
+
+  it("writes nothing when the Link remote dialog is cancelled", async () => {
+    const { form, user, client, context } = await openEditor()
+    await user.click(within(row(form, "CMS")).getByRole("button", { name: "Link remote for CMS" }))
+    const linkDialog = within(
+      await screen.findByRole("dialog", { name: "Link CMS to a remote repository" }),
+    )
+    await user.click(linkDialog.getByRole("button", { name: "Cancel" }))
+    expect(client.linkRepositoryRemote).not.toHaveBeenCalled()
+    // The project form is still open, unchanged.
+    expect(screen.getByRole("dialog", { name: "Edit SHOP" })).toBeInTheDocument()
+    await user.click(within(form).getByRole("button", { name: "Cancel" }))
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+    expect(context.refresh).not.toHaveBeenCalled()
+  })
+
+  it("links only repositories that are saved", async () => {
+    dialog.open.mockResolvedValue("/home/me/src/Shop Admin")
+    const { form, user } = await openEditor()
+    await user.click(within(form).getByRole("button", { name: "Add repository…" }))
+    const added = within(row(form, "Shop Admin")).getByRole("button", {
+      name: "Link remote for Shop Admin",
+    })
+    expect(added).toBeDisabled()
+    expect(added).toHaveAttribute("title", "Save the project first to link a remote.")
+    expect(
+      within(row(form, "CMS")).getByRole("button", { name: "Link remote for CMS" }),
+    ).toBeEnabled()
+  })
+
+  it("cannot link in a project that is not saved yet", async () => {
+    dialog.open.mockResolvedValue("/home/me/src/blog")
+    api.getProfile.mockResolvedValue(profileView({ projects: [shop] }))
+    api.checkResources.mockResolvedValue(checks)
+    const { user, titlebarAction } = renderWithApp(
+      <ConnectionsClientContext value={connections()}>
+        <ProjectsPage />
+      </ConnectionsClientContext>,
+    )
+    await screen.findByText("Online Shop")
+    titlebarAction("projects.new")
+    const form = await screen.findByRole("dialog", { name: "New project" })
+    await user.click(within(form).getByRole("button", { name: "Add repository…" }))
+    expect(
+      within(row(form, "blog")).getByRole("button", { name: "Link remote for blog" }),
+    ).toBeDisabled()
   })
 
   it("shows a project's repositories in the list", async () => {

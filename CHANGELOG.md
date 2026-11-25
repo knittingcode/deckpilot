@@ -21,8 +21,9 @@ released either. 0.6.0 is the first version intended for publication.
   repository on one of your connections. Choose the connection, find the
   repository there, check what will be linked and confirm; the link keeps
   the provider's own id (`gh:…`, `gl:…`), so a rename on the server keeps
-  it, and only the app writes it. The Repositories editor offers it once
-  its own change lands.
+  it, and only the app writes it. In the project editor, each saved
+  repository lists its remotes and has a "Link remote…" button; the link is
+  saved at once, not with the project form.
 - Settings › Connections (builds with plugins): the servers plugins connect
   to, per plugin that declares them, with their state (connected, token
   rejected, missing permission, can't reach the server, certificate not
