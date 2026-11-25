@@ -80,6 +80,19 @@ pub(crate) struct RunRepository {
     /// without `repositories.paths`.
     pub folder: Option<PathBuf>,
     pub remote: Option<RepositoryRemote>,
+    /// Every remote (K4).
+    pub remotes: Vec<RunRemote>,
+}
+
+/// A remote of a [`RunRepository`] (K4: script objects only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RunRemote {
+    pub name: String,
+    pub primary: bool,
+    pub url: Option<String>,
+    pub default_branch: Option<String>,
+    pub connection_id: Option<String>,
+    pub remote_repository_id: Option<String>,
 }
 
 /// Why the host refused (a script `ErrorCode` and a message).
@@ -102,7 +115,8 @@ pub(crate) trait ScriptHost: Send + Sync + std::fmt::Debug {
     fn project(&self, id: Option<&str>) -> Result<Option<RunProject>, Refusal>;
 }
 
-/// No script store yet (P7): nothing loads, nothing is granted.
+/// No script store (an agent without one, tests): nothing loads, nothing is
+/// granted.
 #[derive(Debug, Default)]
 pub(crate) struct NoScripts;
 
@@ -114,7 +128,7 @@ impl ScriptHost for NoScripts {
     fn load(&self, _script: &str) -> Result<StoredScript, Refusal> {
         Err(ScriptFault::new(
             codes::SCRIPT_MISSING,
-            "this version of DeckPilot keeps no scripts yet",
+            "no script store is available",
         ))
     }
 
@@ -348,12 +362,13 @@ fn origin(run: &deckpilot_plugin_abi::capability::RunContext) -> &'static str {
 
 /// The executor of an invocation of `plugin` with `params`: for
 /// `deckpilot.scripts`, with the run of the script its `script` parameter
-/// names (from the agent's store, [`NoScripts`] until P7); every other
-/// plugin's unchanged.
+/// names, from `host` (the agent's store; [`NoScripts`] without one);
+/// every other plugin's unchanged.
 pub(crate) fn attach(
     executor: Executor,
     plugin: &str,
     params: &deckpilot_plugin_abi::Params,
+    host: Option<Arc<dyn ScriptHost>>,
 ) -> Executor {
     if plugin != SCRIPTS_PLUGIN {
         return executor;
@@ -362,7 +377,7 @@ pub(crate) fn attach(
         Some(deckpilot_plugin_abi::ParamValue::String(id)) => Some(id.clone()),
         _ => None,
     };
-    executor.with_scripts(Arc::new(NoScripts), script)
+    executor.with_scripts(host.unwrap_or_else(|| Arc::new(NoScripts)), script)
 }
 
 impl Executor {

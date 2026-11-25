@@ -42,6 +42,8 @@ mod gestures;
 mod live_preview;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin_projects;
+#[cfg(feature = "plugins")]
+pub(crate) mod plugin_scripts;
 mod security;
 mod simulate;
 mod stateful;
@@ -210,6 +212,13 @@ pub(crate) enum Command {
         plugin: String,
         call: plugin_projects::ProjectCall,
         reply: std::sync::mpsc::SyncSender<plugin_projects::ProjectReply>,
+    },
+    /// A script run's question to the script store (plugin API 1.13),
+    /// from its lane thread.
+    #[cfg(feature = "plugins")]
+    PluginScript {
+        query: plugin_scripts::ScriptQuery,
+        reply: std::sync::mpsc::SyncSender<plugin_scripts::ScriptAnswer>,
     },
     /// A work session operation from a test (the keys call the service
     /// directly). `press: None` is a press now, in the current state.
@@ -1064,6 +1073,11 @@ impl Agent {
                 reply,
             } => {
                 let _ = reply.try_send(self.plugin_project(&plugin, call));
+                Flow::Continue
+            }
+            #[cfg(feature = "plugins")]
+            Command::PluginScript { query, reply } => {
+                let _ = reply.try_send(self.plugin_script(query));
                 Flow::Continue
             }
             Command::Request {

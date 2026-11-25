@@ -1229,6 +1229,27 @@ pub struct Repository {
     pub path: Option<String>,
     pub exists: bool,
     pub remote: Option<RepositoryRemote>,
+    /// Every remote, the primary first (decision K4): with the link to a
+    /// Git Providers connection on this computer and the provider's
+    /// immutable repository id. Script objects only; text variables never
+    /// carry either id. Absent from replies of agents before it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remotes: Vec<RemoteInfo>,
+}
+
+/// One remote of a [`Repository`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteInfo {
+    /// The git remote name (`origin`).
+    pub name: String,
+    pub primary: bool,
+    pub url: Option<String>,
+    pub default_branch: Option<String>,
+    /// The Git Providers connection it is linked to here.
+    pub connection_id: Option<String>,
+    /// The provider's immutable id (`gh:…`, `gl:…`, `bb:…`).
+    pub remote_repository_id: Option<String>,
 }
 
 /// The `ok` value of `project.repositories`.

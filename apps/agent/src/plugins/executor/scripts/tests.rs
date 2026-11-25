@@ -164,6 +164,7 @@ pub(crate) mod support {
                         is_default: i == 0,
                         folder: Some(canonical(&path).unwrap()),
                         remote: None,
+                        remotes: Vec::new(),
                     }
                 })
                 .collect();
