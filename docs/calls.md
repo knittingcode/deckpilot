@@ -486,6 +486,37 @@ The per-device setting is kept by the running agent; saving it across
 restarts comes with the plugin's settings (C7). Opening the managed layouts
 in the Device Editor, and the state preview there, are still to come (C6b).
 
+### The editor's preview of a call page (C6b)
+
+`previewCallsPage { device, page }` shows one call page (incoming,
+outgoing or active) of `device`'s managed layout on the device, for the
+Device Editor. `endCallsPreview { device }` ends it. **This differs from the
+design, which drove the preview through the mock provider.** The mock
+exists only in `test-hooks` builds, so the shipped preview uses a fixed
+snapshot instead (decided 2026-11-25):
+
+- **Contents:** constant text only. The page's state, no title, no
+  participant, no number, the microphone and camera unknown. Nothing comes
+  from a provider or a real call except the provider's capabilities, so a
+  control it does not support shows disabled with its reason. The keys run
+  nothing.
+- **Who may ask:** only an authenticated desktop (editor) connection at
+  protocol 19. Any other client is refused with `Unauthorized`
+  (`callsPreviewDesktopOnly`); a protocol 18 client never sends it.
+- **Priority:** a lock and a real call always win:
+  - refused while locked;
+  - refused while a call shows (`callsPreviewInCall`);
+  - ended when a call comes.
+- **When it ends:**
+  - on the end request;
+  - when the connection that asked closes;
+  - on lock;
+  - on the device's disconnect;
+  - when dismissed on the device.
+
+  It never leaves an overlay frame behind.
+- **One per device:** a new preview replaces the old.
+
 The IPC event for the app and the editor (C6, a release blocker) is
 `callsChanged`, above. It carries the managed layouts too, and is sent
 again after a configuration reload, so an edit made in the Device Editor

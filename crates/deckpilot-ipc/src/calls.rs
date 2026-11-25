@@ -228,4 +228,8 @@ pub mod reason {
     pub const UNKNOWN_DEVICE: &str = "callsUnknownDevice";
     /// The layout has no "Back to work" key.
     pub const NO_BACK_TO_WORK: &str = "callsNoBackToWork";
+    /// Only the configuration app previews a call page.
+    pub const PREVIEW_DESKTOP_ONLY: &str = "callsPreviewDesktopOnly";
+    /// No preview while a real call shows (it always wins).
+    pub const PREVIEW_IN_CALL: &str = "callsPreviewInCall";
 }

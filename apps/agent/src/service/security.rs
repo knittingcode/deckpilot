@@ -334,6 +334,8 @@ impl Agent {
         self.store = None;
         self.key = None;
         self.plugins.closed();
+        // A locked device shows no preview either.
+        self.calls_end_previews();
         self.calls_layouts_changed();
         self.security =
             security_state(&self.options.paths.database).unwrap_or(SecurityState::Locked);

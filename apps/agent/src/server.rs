@@ -71,6 +71,8 @@ struct KeyWatch {
     viewer: u64,
     actions: BTreeSet<ActionInstanceId>,
     changes: Option<broadcast::Receiver<Vec<KeyStateEntry>>>,
+    /// The connection previewed a Calls page: its previews end with it.
+    calls_preview: bool,
 }
 
 /// The live preview messages of a connection that began a session
@@ -259,6 +261,7 @@ async fn serve_connection<R, W>(
         viewer: NEXT_VIEWER.fetch_add(1, Ordering::Relaxed),
         actions: BTreeSet::new(),
         changes: None,
+        calls_preview: false,
     };
     let mut live: LiveEvents = None;
     loop {
@@ -368,6 +371,10 @@ async fn serve_connection<R, W>(
     drop(desktop);
     if watch.changes.is_some() {
         handle.unwatch_key_states(watch.viewer);
+    }
+    // Its Calls previews end with it: no frame is left behind.
+    if watch.calls_preview {
+        handle.calls_preview_closed(watch.viewer);
     }
     // Its live previews end with it: the devices show the saved
     // configuration again.
@@ -514,6 +521,25 @@ async fn handle_message(
             *live = Some(handle.subscribe_live_preview());
         }
         return reply(id, handle.live_preview(watch.viewer, request).await);
+    }
+    if matches!(
+        request,
+        Request::PreviewCallsPage { .. } | Request::EndCallsPreview { .. }
+    ) {
+        // Only the configuration app's editor previews a call page; a
+        // plugin or the command line never does.
+        if client != ClientKind::Desktop {
+            return ServerMessage::Error {
+                id: Some(id),
+                error: IpcError::new(
+                    ErrorCode::Unauthorized,
+                    "only the configuration app previews a call page",
+                )
+                .with_reason(deckpilot_ipc::calls::reason::PREVIEW_DESKTOP_ONLY),
+            };
+        }
+        watch.calls_preview = true;
+        return reply(id, handle.calls_preview(watch.viewer, request).await);
     }
     if matches!(request, Request::Subscribe) {
         if events.is_none() {

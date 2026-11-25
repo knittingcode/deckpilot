@@ -537,3 +537,64 @@ fn back_to_work_parameters_round_trip() {
         ReturnMode::timer(5).unwrap()
     );
 }
+
+/// The editor's preview of a call page: its own frame on the page asked
+/// for, nothing of a call in its faces, its keys run nothing; a real call
+/// takes over, and ending it leaves no frame.
+#[test]
+fn a_preview_shows_a_page_and_gives_way_to_a_real_call() {
+    let mut w = World::new();
+    let mk2 = w.mk2.clone();
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Incoming)
+        .unwrap();
+    assert!(w.shows(&mk2));
+    assert_eq!(w.page(&mk2), Some(Page::Incoming));
+    // Replaced, never stacked.
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Active)
+        .unwrap();
+    assert_eq!(w.page(&mk2), Some(Page::Active));
+    assert_eq!(
+        w.runtime
+            .all_overlays()
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum::<usize>(),
+        1
+    );
+    // Its keys run nothing.
+    let mic = w.control_of(&mk2, "mic-toggle");
+    let (_, handled) = w.tap(&mk2, mic);
+    assert!(
+        matches!(handled, None | Some(KeyOutcome::Ignored)),
+        "{handled:?}"
+    );
+    // A real call takes over: the preview goes, the call's frame shows.
+    w.active("m");
+    assert_eq!(w.driver.previews().count(), 0);
+    assert!(w.shows(&mk2) && w.shows(&w.plus.clone()));
+    assert_eq!(
+        w.runtime
+            .all_overlays()
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum::<usize>(),
+        2,
+        "one frame per device: the call's"
+    );
+    assert_eq!(
+        w.driver.preview(&mut w.runtime, &mk2, Page::Active),
+        Err(PreviewError::InCall),
+        "never during a call"
+    );
+    w.end("m");
+    w.at(10);
+    assert_eq!(w.runtime.all_overlays().len(), 0, "no frame left");
+    // Ended by hand: no frame left.
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Outgoing)
+        .unwrap();
+    w.driver.end_preview(&mut w.runtime, &mk2);
+    assert_eq!(w.runtime.all_overlays().len(), 0);
+}

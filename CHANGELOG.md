@@ -66,6 +66,11 @@ released either. 0.6.0 is the first version intended for publication.
   A managed Calls layout that cannot be stored while the database is busy
   is tried again after 1 s, then after waits doubling up to a minute;
   other storage errors are not retried.
+- Calls (groundwork): the agent can preview a call page of the Calls layout
+  on a device for the Device Editor (IPC 19 `previewCallsPage`), with fixed
+  placeholder content and nothing from a real call. Only the configuration
+  app may ask. A lock or a real call always wins, and the preview ends with
+  the editor's connection.
 - Calls (groundwork): Settings › Devices lists the call pages of each Calls
   layout. A control the call app does not support stays listed, disabled,
   with the reason (for Teams: Microsoft retired its device API). The

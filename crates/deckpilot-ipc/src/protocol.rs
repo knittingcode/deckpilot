@@ -1052,6 +1052,21 @@ pub enum Request {
         model: deckpilot_device::DeviceModelId,
         back: crate::calls::BackToWork,
     },
+    /// The Device Editor's preview of a call page of `device`'s managed
+    /// Calls layout: fixed placeholder faces, no call, no provider. Only
+    /// from a desktop connection; refused while locked or while a real call
+    /// shows, which always wins. Ends with `endCallsPreview`, when the
+    /// connection closes, on lock, a real call or the device's disconnect.
+    /// Answers [`Response::Ok`]. Since protocol 19.
+    PreviewCallsPage {
+        device: DeviceId,
+        page: crate::calls::CallsPageKind,
+    },
+    /// Ends this connection's preview on `device`. Answers
+    /// [`Response::Ok`]. Since protocol 19.
+    EndCallsPreview {
+        device: DeviceId,
+    },
 }
 
 impl Request {
@@ -1119,6 +1134,14 @@ impl Request {
                 ))
             }
             Self::SetCallsBackToWork { back, .. } if back.validate().is_err() => back.validate(),
+            Self::PreviewCallsPage { device, .. } | Self::EndCallsPreview { device }
+                if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
+            {
+                Err(format!(
+                    "device serial must be 1 to {} bytes",
+                    crate::calls::MAX_SERIAL
+                ))
+            }
             Self::SetCallsOverlay { device, .. }
                 if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
             {
@@ -1850,7 +1873,9 @@ impl Request {
             Self::GetCallsStatus
             | Self::SetCallsOverlay { .. }
             | Self::RestoreCallsLayout { .. }
-            | Self::SetCallsBackToWork { .. } => CALLS_PROTOCOL,
+            | Self::SetCallsBackToWork { .. }
+            | Self::PreviewCallsPage { .. }
+            | Self::EndCallsPreview { .. } => CALLS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices

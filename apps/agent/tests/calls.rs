@@ -1205,3 +1205,201 @@ async fn back_to_work_is_written_to_every_key_keeping_other_parameters() {
     }
     deck.agent.shutdown().await;
 }
+
+// ------------------------------------------------- C6b: the editor's preview
+
+/// Waits until the test view of Calls satisfies `check`.
+async fn wait_view(
+    deck: &Deck,
+    what: &str,
+    check: impl Fn(&deckpilot_agent::service::calls::CallsView) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let view = deck.agent.handle.calls_view().await.unwrap();
+        if check(&view) {
+            return;
+        }
+        assert!(tokio::time::Instant::now() <= deadline, "{what}: {view:?}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+fn preview(deck: &Deck, page: deckpilot_ipc::calls::CallsPageKind) -> deckpilot_ipc::Request {
+    deckpilot_ipc::Request::PreviewCallsPage {
+        device: deck.device.clone(),
+        page,
+    }
+}
+
+fn refused_with(
+    result: Result<deckpilot_ipc::Response, deckpilot_ipc::ClientError>,
+) -> deckpilot_ipc::IpcError {
+    match result {
+        Err(deckpilot_ipc::ClientError::Agent(error)) => error,
+        other => panic!("expected the agent's refusal, got {other:?}"),
+    }
+}
+
+/// Locked: no preview starts, and none is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preview_is_refused_while_locked() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    use deckpilot_ipc::{ErrorCode, Request};
+    let f = fixture();
+    let deck = start(&f).await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    let mut editor = deck.agent.client().await;
+    let error = refused_with(editor.request(preview(&deck, CallsPageKind::Active)).await);
+    assert_eq!(error.code, ErrorCode::Locked);
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!((view.previews, view.frames), (0, 0), "{view:?}");
+    deck.agent.shutdown().await;
+}
+
+/// A real call takes over a preview at once, a preview never starts during
+/// a call, and the call's end leaves no frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_real_call_takes_over_a_preview() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Incoming))
+        .await
+        .unwrap();
+    wait_view(&deck, "the preview", |v| v.previews == 1 && v.frames == 1).await;
+    assert!(deck.shows_overlay().await);
+    deck.join().await;
+    wait_view(&deck, "the call's frame only", |v| {
+        v.previews == 0 && v.frames == 1 && v.state == CallState::Active
+    })
+    .await;
+    let error = refused_with(editor.request(preview(&deck, CallsPageKind::Active)).await);
+    assert_eq!(
+        error.reason.as_deref(),
+        Some(deckpilot_ipc::calls::reason::PREVIEW_IN_CALL)
+    );
+    deck.hang_up().await;
+    wait_view(&deck, "no frame after the call", |v| v.frames == 0).await;
+    deck.agent.shutdown().await;
+}
+
+/// The preview belongs to the editor's connection: closing it ends it.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_the_connection_ends_the_preview() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Active))
+        .await
+        .unwrap();
+    wait_view(&deck, "the preview", |v| v.previews == 1 && v.frames == 1).await;
+    drop(editor);
+    wait_view(&deck, "the preview ended with the connection", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    deck.agent.shutdown().await;
+}
+
+/// Only the configuration app previews: a plugin's (any other client's)
+/// connection is refused, and a protocol 18 one never sends it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_connection_cannot_preview() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    use deckpilot_ipc::{AgentClient, ClientError, ClientKind, ErrorCode};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut other = AgentClient::connect(&deck.agent.paths, ClientKind::Other)
+        .await
+        .unwrap();
+    let error = refused_with(other.request(preview(&deck, CallsPageKind::Active)).await);
+    assert_eq!(error.code, ErrorCode::Unauthorized);
+    assert_eq!(
+        error.reason.as_deref(),
+        Some(deckpilot_ipc::calls::reason::PREVIEW_DESKTOP_ONLY)
+    );
+    let mut old = AgentClient::connect_with_protocol(&deck.agent.paths, ClientKind::Desktop, 18)
+        .await
+        .unwrap();
+    let refused = old.request(preview(&deck, CallsPageKind::Active)).await;
+    assert!(
+        matches!(refused, Err(ClientError::Unsupported { needs: 19, .. })),
+        "{refused:?}"
+    );
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!((view.previews, view.frames), (0, 0), "{view:?}");
+    deck.agent.shutdown().await;
+}
+
+/// No frame leaks: a new preview replaces the old (one per device), the
+/// end request, the device's disconnect and a lock each leave no frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preview_never_leaves_a_frame_behind() {
+    use deckpilot_ipc::Request;
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Incoming))
+        .await
+        .unwrap();
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_view(&deck, "one frame, replaced", |v| {
+        v.previews == 1 && v.frames == 1
+    })
+    .await;
+    editor
+        .request(Request::EndCallsPreview {
+            device: deck.device.clone(),
+        })
+        .await
+        .unwrap();
+    wait_view(&deck, "ended", |v| v.previews == 0 && v.frames == 0).await;
+    // Unplugged while previewing, then plugged in again: nothing comes back.
+    editor
+        .request(preview(&deck, CallsPageKind::Active))
+        .await
+        .unwrap();
+    wait_view(&deck, "the preview", |v| v.frames == 1).await;
+    deck.mock.unplug(&deck.device);
+    wait_view(&deck, "ended by the disconnect", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    deck.mock
+        .plug(&models::stream_deck_mk2(), &deck.device.serial);
+    deck.advance(1).await;
+    wait_view(&deck, "nothing back after the reconnect", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    // Locked while previewing (once the device is back).
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while editor
+        .request(preview(&deck, CallsPageKind::Active))
+        .await
+        .is_err()
+    {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the device came back"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    wait_view(&deck, "the preview", |v| v.frames == 1).await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    wait_view(&deck, "ended by the lock", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    deck.agent.shutdown().await;
+}

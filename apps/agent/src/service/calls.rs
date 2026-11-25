@@ -274,6 +274,9 @@ pub(crate) struct AgentCalls {
     layouts: Option<Vec<deckpilot_ipc::calls::CallsLayout>>,
     /// How often the layouts were read from the store (test hooks).
     layouts_reads: u64,
+    /// The editor's Calls page previews: by device, the connection that
+    /// asked (one per device).
+    previews: BTreeMap<DeviceId, u64>,
     /// Test hooks: the next seeds fail as if the database were busy.
     #[cfg(feature = "test-hooks")]
     fail_seeds: u32,
@@ -488,6 +491,7 @@ impl Agent {
             service.driver.tick(&mut self.runtime, now);
         }
         if due || changed {
+            self.calls_prune_previews();
             self.render_all();
             self.calls_publish();
         }
@@ -539,6 +543,10 @@ impl Agent {
             }
             RuntimeOutcome::OverlayDismissed { session, .. } => {
                 service.driver.dismissed(device, *session);
+                // A dismissed preview is over.
+                if !service.driver.previews().any(|d| d == device) {
+                    self.calls.previews.remove(device);
+                }
                 true
             }
             _ => false,
@@ -631,9 +639,117 @@ impl Agent {
         self.calls_run_ended(run, end);
     }
 
-    /// A device went: the app's device list changes.
-    pub(super) fn calls_device_disconnected(&mut self) {
+    /// A device went: the app's device list changes, and its preview ends.
+    pub(super) fn calls_device_disconnected(&mut self, device: &DeviceId) {
+        if self.calls.previews.remove(device).is_some()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.end_preview(&mut self.runtime, device);
+        }
         self.calls_publish();
+    }
+
+    /// `previewCallsPage` and `endCallsPreview` of the desktop connection
+    /// `viewer` (`server.rs` refuses any other client).
+    pub(super) fn calls_preview(
+        &mut self,
+        viewer: u64,
+        request: &deckpilot_ipc::Request,
+    ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
+        use deckpilot_calls::driver::PreviewError;
+        use deckpilot_calls::layouts::Page;
+        use deckpilot_ipc::calls::CallsPageKind;
+        use deckpilot_ipc::{ErrorCode, IpcError, Request, Response};
+        match request {
+            Request::PreviewCallsPage { device, page } => {
+                if self.store.is_none() {
+                    return Err(IpcError::new(
+                        ErrorCode::Locked,
+                        "the configuration is locked",
+                    ));
+                }
+                if !self.runtime.devices().connected().any(|d| d == device) {
+                    return Err(unknown_device());
+                }
+                let service = self.calls.service.as_mut().ok_or_else(not_installed)?;
+                let page = match page {
+                    CallsPageKind::Incoming => Page::Incoming,
+                    CallsPageKind::Outgoing => Page::Outgoing,
+                    CallsPageKind::Active => Page::Active,
+                };
+                service
+                    .driver
+                    .preview(&mut self.runtime, device, page)
+                    .map_err(|error| match error {
+                        PreviewError::InCall => IpcError::new(
+                            ErrorCode::Unsupported,
+                            "a call shows on the device; it always wins over a preview",
+                        )
+                        .with_reason(deckpilot_ipc::calls::reason::PREVIEW_IN_CALL),
+                        PreviewError::NoLayout => no_layout(),
+                        PreviewError::Refused => {
+                            IpcError::new(ErrorCode::Failed, "the device took no preview")
+                        }
+                    })?;
+                // One per device: a new one replaces the old, whoever asked.
+                self.calls.previews.insert(device.clone(), viewer);
+                self.render_all();
+                Ok(Response::Ok)
+            }
+            Request::EndCallsPreview { device } => {
+                if self.calls.previews.get(device) == Some(&viewer) {
+                    self.calls.previews.remove(device);
+                    if let Some(service) = self.calls.service.as_mut() {
+                        service.driver.end_preview(&mut self.runtime, device);
+                    }
+                    self.render_all();
+                }
+                Ok(Response::Ok)
+            }
+            _ => Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "not a Calls preview request",
+            )),
+        }
+    }
+
+    /// The connection `viewer` closed: its previews end, no frame stays.
+    pub(super) fn calls_preview_closed(&mut self, viewer: u64) {
+        let devices: Vec<DeviceId> = self
+            .calls
+            .previews
+            .iter()
+            .filter(|(_, v)| **v == viewer)
+            .map(|(d, _)| d.clone())
+            .collect();
+        for device in &devices {
+            self.calls.previews.remove(device);
+            if let Some(service) = self.calls.service.as_mut() {
+                service.driver.end_preview(&mut self.runtime, device);
+            }
+        }
+        if !devices.is_empty() {
+            self.render_all();
+        }
+    }
+
+    /// Every preview ends (the configuration locked).
+    pub(super) fn calls_end_previews(&mut self) {
+        self.calls.previews.clear();
+        if let Some(service) = self.calls.service.as_mut() {
+            service.driver.end_previews(&mut self.runtime);
+        }
+    }
+
+    /// Forgets the previews the driver ended by itself (a real call came,
+    /// a dismiss on the device).
+    fn calls_prune_previews(&mut self) {
+        if let Some(service) = self.calls.service.as_ref() {
+            let live: BTreeSet<DeviceId> = service.driver.previews().cloned().collect();
+            self.calls
+                .previews
+                .retain(|device, _| live.contains(device));
+        }
     }
 
     /// The managed layouts may have changed (seeding, *Restore defaults*,
@@ -929,6 +1045,10 @@ pub struct CallsView {
     /// The name of the overlay layout each device shows (the stored
     /// managed layout's).
     pub layouts: Vec<String>,
+    /// The devices with an editor preview.
+    pub previews: usize,
+    /// How many Calls overlay frames are stacked, on every device.
+    pub frames: usize,
     pub scheduled_returns: usize,
     /// How often the managed layouts were read from the store for the app.
     pub layouts_reads: u64,
@@ -982,7 +1102,16 @@ impl Agent {
                     .map(|(l, _)| l.name.clone())
             })
             .collect();
+        let frames = self
+            .runtime
+            .all_overlays()
+            .into_iter()
+            .flat_map(|(_, views)| views)
+            .filter(|view| view.owner == deckpilot_core::OverlayOwner::Calls)
+            .count();
         CallsView {
+            previews: self.calls.previews.len(),
+            frames,
             state,
             devices,
             layouts,

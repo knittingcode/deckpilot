@@ -188,6 +188,16 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<Response, IpcError>>,
     },
     /// The connection `viewer` closed: its live preview sessions end.
+    /// A Calls page preview request of connection `viewer` (`server.rs`).
+    CallsPreview {
+        viewer: u64,
+        request: Request,
+        reply: oneshot::Sender<Result<Response, IpcError>>,
+    },
+    /// The connection `viewer` closed: its Calls previews end.
+    CallsPreviewClosed {
+        viewer: u64,
+    },
     LivePreviewClosed {
         viewer: u64,
     },
@@ -380,6 +390,26 @@ impl AgentHandle {
         response
             .await
             .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?
+    }
+
+    /// A Calls page preview request of connection `viewer`.
+    pub async fn calls_preview(&self, viewer: u64, request: Request) -> Result<Response, IpcError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(Command::CallsPreview {
+                viewer,
+                request,
+                reply,
+            })
+            .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?;
+        response
+            .await
+            .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?
+    }
+
+    /// The connection `viewer` closed: its Calls previews end.
+    pub fn calls_preview_closed(&self, viewer: u64) {
+        let _ = self.commands.send(Command::CallsPreviewClosed { viewer });
     }
 
     /// The connection `viewer` closed: its live preview sessions end and
@@ -1154,6 +1184,18 @@ impl Agent {
                 let _ = reply.send(self.live_preview(viewer, request));
                 Flow::Continue
             }
+            Command::CallsPreview {
+                viewer,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.calls_preview(viewer, &request));
+                Flow::Continue
+            }
+            Command::CallsPreviewClosed { viewer } => {
+                self.calls_preview_closed(viewer);
+                Flow::Continue
+            }
             Command::LivePreviewClosed { viewer } => {
                 self.live_preview_closed(viewer);
                 Flow::Continue
@@ -1506,6 +1548,13 @@ impl Agent {
                 Ok(Response::Ok)
             }
             Request::InspectMockDevice { device } => self.inspect_mock_device(&device),
+            // Per connection: the preview belongs to it (`server.rs`).
+            Request::PreviewCallsPage { .. } | Request::EndCallsPreview { .. } => {
+                Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "Calls previews belong to a connection",
+                ))
+            }
             // Per connection: the session belongs to it (`server.rs`).
             Request::BeginLivePreview { .. }
             | Request::ApplyLivePreview { .. }
@@ -2277,7 +2326,7 @@ impl Agent {
             device: device.clone(),
         });
         info!(%device, "device disconnected");
-        self.calls_device_disconnected();
+        self.calls_device_disconnected(device);
         self.publish();
         self.publish_device_context(Some(device.clone()));
     }
