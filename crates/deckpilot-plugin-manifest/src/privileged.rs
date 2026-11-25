@@ -280,7 +280,7 @@ pub(crate) fn usages(m: &Manifest) -> Vec<(String, String)> {
                 format!("permissions[{index}]"),
                 format!("the `{}` permission", permission.kind().as_str()),
             ));
-        } else if permission.opens_from_params() {
+        } else if permission.names_from_params() {
             found.push((
                 format!("permissions[{index}].fromParams"),
                 "`openUrl.fromParams`".to_owned(),
@@ -514,8 +514,9 @@ fn host_views(c: &mut Checker, m: &Manifest) {
 /// manifest that is not a first-party plugin shipped inside the
 /// application bundle.
 pub(crate) fn first_party_only(m: &Manifest) -> Vec<Issue> {
-    usages(m)
+    super::privileged_usages(m)
         .into_iter()
+        .chain(super::connections::gated(m))
         .map(|(path, what)| Issue {
             path,
             code: IssueCode::FirstPartyOnly,
