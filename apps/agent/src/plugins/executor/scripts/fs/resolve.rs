@@ -154,8 +154,10 @@ fn checked_name(name: &str) -> Result<(), ScriptFault> {
         || name == "."
         || name == ".."
         || name.contains(['/', '\\', '\0', ':'])
-        || (cfg!(windows)
-            && (is_device_name(name) || is_short_name(name) || name.ends_with(['.', ' '])));
+        // A short name reaches a folder under another name on Windows and
+        // on its shares mounted elsewhere.
+        || is_short_name(name)
+        || (cfg!(windows) && (is_device_name(name) || name.ends_with(['.', ' '])));
     if bad {
         Err(fault(
             codes::INVALID_ARGUMENT,
@@ -291,7 +293,7 @@ pub(crate) fn resolve(
                     format!("repository “{key}” has no folder on this computer"),
                 )
             })?;
-            let mut candidate = folder.clone();
+            let mut candidate = simplify(folder.clone());
             candidate.extend(relative_names(path.relative.as_deref().unwrap_or(""))?);
             (candidate, false)
         }

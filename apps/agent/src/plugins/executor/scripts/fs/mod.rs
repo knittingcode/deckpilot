@@ -364,6 +364,8 @@ fn empty_dir(
                 .open_dir_nofollow(&name)
                 .map_err(|e| failure(&e, &shown))?;
             empty_dir(&sub, &[], false, budget, depth + 1)?;
+            // Closed first: Windows removes no folder that is open.
+            drop(sub);
             dir.remove_dir(&name).map_err(|e| failure(&e, &shown))?;
         } else {
             dir.remove_file_or_symlink(&name)
@@ -401,6 +403,7 @@ fn remove_entry(parent: &Dir, name: &str, dir: bool, mut budget: u64) -> Result<
             .open_dir_nofollow(name)
             .map_err(|e| failure(&e, name))?;
         empty_dir(&sub, &[], false, &mut budget, 0)?;
+        drop(sub);
         parent.remove_dir(name).map_err(|e| failure(&e, name))
     } else {
         parent
@@ -483,8 +486,8 @@ impl Fs<'_> {
             .project
             .iter()
             .flat_map(|p| &p.repositories)
-            .filter_map(|r| r.folder.as_ref())
-            .any(|folder| protected::starts_with(folder, &target));
+            .filter_map(|r| r.folder.clone())
+            .any(|folder| protected::starts_with(&protected::simplify(folder), &target));
         if repository && !own_root {
             return Err(fault(
                 codes::PROTECTED_PATH,
@@ -748,11 +751,12 @@ impl Fs<'_> {
         let t = self.resolve(path, FsAccess::Write, notes)?;
         self.may_change(&t)?;
         let (parent, name) = parent_of(&t)?;
-        if let Ok(meta) = parent.symlink_metadata(&name)
-            && meta.is_dir()
-            && !meta.file_type().is_symlink()
-        {
-            return Err(fault(codes::EXISTS, format!("“{}” is a folder", t.shown())));
+        if let Ok(meta) = parent.symlink_metadata(&name) {
+            if meta.is_dir() && !meta.file_type().is_symlink() {
+                return Err(fault(codes::EXISTS, format!("“{}” is a folder", t.shown())));
+            }
+            // Replacing a file's content is a replacement too.
+            self.unattended()?;
         }
         Ok((t, parent, name))
     }
@@ -1099,19 +1103,19 @@ type Pair = (
 /// above the root.
 fn link_stays_inside(at: &[String], target: &std::path::Path) -> bool {
     use std::path::Component;
-    let mut depth = at.len();
+    // Only `../../name/…`: every `..` before the first name, so no earlier
+    // link can make a later `..` climb more than counted.
+    let mut ups = 0usize;
+    let mut named = false;
     for component in target.components() {
         match component {
-            Component::Normal(_) => depth += 1,
+            Component::Normal(_) => named = true,
+            Component::ParentDir if !named => ups += 1,
             Component::CurDir => {}
-            Component::ParentDir => match depth.checked_sub(1) {
-                Some(d) => depth = d,
-                None => return false,
-            },
-            Component::RootDir | Component::Prefix(_) => return false,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
         }
     }
-    true
+    ups <= at.len()
 }
 
 /// Opens without blocking: a FIFO or a device never blocks the run.
@@ -1365,11 +1369,17 @@ impl Pending {
                 }
                 // A volume without hard links (FAT, some shares): checked,
                 // then renamed (a file made in between is replaced).
-                Err(_) if self.parent.symlink_metadata(&self.name).is_err() => self
-                    .parent
-                    .rename(&self.temp, &self.parent, &self.name)
-                    .map_err(|e| failure(&e, &self.name)),
-                Err(_) => Err(fault(codes::EXISTS, format!("“{}” exists", self.name))),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::Unsupported | std::io::ErrorKind::PermissionDenied
+                    ) && self.parent.symlink_metadata(&self.name).is_err() =>
+                {
+                    self.parent
+                        .rename(&self.temp, &self.parent, &self.name)
+                        .map_err(|e| failure(&e, &self.name))
+                }
+                Err(e) => Err(failure(&e, &self.name)),
             }
         } else {
             self.parent

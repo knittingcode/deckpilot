@@ -227,10 +227,12 @@ moved"). Every operation then works relative to that open folder:
 - **DeckPilot's private folders** (its data with the database and the IPC
   token, its logs, configuration and caches, and the app) are never read
   or changed, nor anything that holds them, also through a link: a scope
-  over the home folder still never reaches them;
-- **Windows names**: a device name, a name ending in a dot or a space, and
-  an 8.3 short name (`GIT~1`) are refused, so no name reaches a folder
-  under another name than the one checked;
+  over the home folder still never reaches them, and listing the home
+  folder itself (or `~/Library`) is refused for the same reason;
+- **names**: an 8.3 short name (`GIT~1`) is refused everywhere (Windows
+  shares resolve them on every system), and on Windows a device name and a
+  name ending in a dot or a space, so no name reaches a folder under
+  another name than the one checked;
 - **changes** never pass through a link: each folder of the path is opened
   without following it. A link is removed, replaced or copied as a link,
   never followed;
@@ -259,7 +261,7 @@ moved"). Every operation then works relative to that open folder:
   run nobody started is refused (`notUserInitiated`) unless the script's
   grant says `destructive: "allow"`, which needs no token; with `ask`, a
   run nobody started removes or replaces nothing at all, not even one
-  file. The token is bound to every entry of the plan (its path, kind,
+  file (a write over an existing file included). The token is bound to every entry of the plan (its path, kind,
   size, file id and time), not only to the counts: other files in place
   of the confirmed ones are asked again. Replacing a folder that is not
   empty needs `delete` access. A removal stops if more entries appear
@@ -267,8 +269,9 @@ moved"). Every operation then works relative to that open folder:
   root; elsewhere a tree holding one is never emptied. Note that `delete`
   access removes single files and empty folders without a confirmation in
   runs the user starts;
-- **copies** re-create a link only when it is relative and still leads
-  inside the scope from its new place; any other link is refused;
+- **copies** re-create a link only when it is relative, of the form
+  `../../name/…` (every `..` first), and still leads inside the scope
+  from its new place; any other link is refused;
 - **writes** go to a temporary file in the target's folder, renamed over
   the target on commit (with `createOnly`, linked to it, which never
   replaces an existing file; on a volume without links, checked and
