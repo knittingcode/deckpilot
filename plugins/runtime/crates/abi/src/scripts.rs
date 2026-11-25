@@ -1229,7 +1229,7 @@ pub struct Repository {
     pub path: Option<String>,
     pub exists: bool,
     pub remote: Option<RepositoryRemote>,
-    /// Every remote, the primary first (decision K4): with the link to a
+    /// Every remote, in the stored order (decision K4): with the link to a
     /// Git Providers connection on this computer and the provider's
     /// immutable repository id. Script objects only; text variables never
     /// carry either id. Absent from replies of agents before it.

@@ -257,14 +257,32 @@ pub const CONTAINER_RUNTIMES: &[&str] = &[
     "unshare",
     "chroot",
     "systemd-nspawn",
+    "lxc-attach",
+    "lxc-execute",
+    "machinectl",
+    // Virtual machines.
+    "virsh",
+    "virt-install",
+    "vboxmanage",
+    "prlctl",
+    "vmrun",
+    "utmctl",
+    "vagrant",
+    "tart",
+    "hyperkit",
+    "krunvm",
 ];
 
 /// Programs that act as another user: never grantable.
 pub const ELEVATION: &[&str] = &[
     "sudo",
+    "sudoedit",
     "doas",
     "pkexec",
     "su",
+    "runuser",
+    "run0",
+    "systemd-run",
     "runas",
     "gsudo",
     "osascript",
@@ -289,6 +307,9 @@ pub const PROCESS_SHELLS: &[&str] = &[
     "pwsh",
     "powershell",
     "cmd",
+    // A shell among their applets.
+    "busybox",
+    "toybox",
 ];
 
 /// Programs that run any other program (interpreters, launchers, build
@@ -348,7 +369,10 @@ pub fn command_class(command: &str) -> CommandClass {
     let name = program_name(command);
     let base = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-');
     let is = |list: &[&str]| list.contains(&name.as_str()) || list.contains(&base);
-    if is(CONTAINER_RUNTIMES) || name.starts_with("docker-") || name.starts_with("podman-") {
+    let helper = ["docker-", "podman-", "lxc-", "qemu-"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix));
+    if is(CONTAINER_RUNTIMES) || helper || name == "qemu" {
         CommandClass::ContainerRuntime
     } else if is(ELEVATION) {
         CommandClass::Elevation
@@ -585,6 +609,17 @@ mod tests {
             "nsenter",
             "limactl",
             "incus",
+            "lxc-attach",
+            "lxc-execute",
+            "lxc-create",
+            "machinectl",
+            "qemu-system-x86_64",
+            "qemu-img",
+            "VBoxManage",
+            "virsh",
+            "vagrant",
+            "utmctl",
+            "prlctl",
         ] {
             assert_eq!(
                 command_class(command),
@@ -610,16 +645,28 @@ mod tests {
         };
         for command in [
             "sudo",
+            "sudoedit",
             "/usr/bin/doas",
             "pkexec",
             "su",
+            "runuser",
+            "run0",
+            "systemd-run",
             "runas.exe",
             "osascript",
         ] {
             assert_eq!(command_class(command), CommandClass::Elevation, "{command}");
             assert_eq!(refused(command), Err(GrantsError::Elevation), "{command}");
         }
-        for command in ["sh", "/bin/bash", "zsh", "pwsh.exe", "cmd.exe", "fish"] {
+        for command in [
+            "sh",
+            "/bin/bash",
+            "zsh",
+            "pwsh.exe",
+            "cmd.exe",
+            "fish",
+            "busybox",
+        ] {
             assert_eq!(command_class(command), CommandClass::Shell, "{command}");
             assert_eq!(
                 refused(command),

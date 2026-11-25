@@ -330,8 +330,8 @@ schema 16 (`crates/deckpilot-storage/src/scripts.rs`):
   `settings` (`timeoutMs` 1 000–600 000, default 60 000; `stopOnError`;
   `memoryMiB` 16–128, default 64; `description`, at most 500
   characters), `revision` (every save adds one; the editor's save of an
-  older revision is refused). Names are compared without case beyond
-  ASCII too, and refuse invisible characters (zero-width, format,
+  older revision is refused). Names are compared in Unicode NFC and
+  without case (beyond ASCII too), and refuse invisible characters (zero-width, format,
   separators, tags, variation selectors). At most 500 per profile,
   however a script is added (created, duplicated, imported).
 - `script_trust` (machine-local, never exported, never synced, never

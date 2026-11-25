@@ -174,7 +174,8 @@ fn name_taken(error: &rusqlite::Error, name: &str) -> Option<StorageError> {
 /// A name not used by `taken` (without case): `base`, or `base (copy)`,
 /// `base (copy 2)`, …, cut to the name limit.
 fn copy_name(base: &str, taken: &[String]) -> String {
-    let used = |n: &str| taken.iter().any(|t| t.to_lowercase() == n.to_lowercase());
+    let key = deckpilot_core::script::name_key;
+    let used = |n: &str| taken.iter().any(|t| key(t) == key(n));
     let cut = |suffix: &str| {
         let room = deckpilot_core::script::MAX_NAME.saturating_sub(suffix.chars().count());
         let head: String = base.chars().take(room).collect();
@@ -494,7 +495,7 @@ impl SqliteStore {
 /// Refuses a name another script of the profile has (without case, also
 /// beyond ASCII, which the index's NOCASE does not fold).
 fn check_name(tx: &rusqlite::Transaction<'_>, profile: ProfileId, script: &Script) -> Result<()> {
-    let wanted = script.name.to_lowercase();
+    let wanted = deckpilot_core::script::name_key(&script.name);
     let mut statement = tx.prepare("SELECT id, name FROM scripts WHERE profile_id = ?1")?;
     let clash = statement
         .query_map([profile.to_string()], |row| {
@@ -502,7 +503,9 @@ fn check_name(tx: &rusqlite::Transaction<'_>, profile: ProfileId, script: &Scrip
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
-        .any(|(id, name)| id != script.id.to_string() && name.to_lowercase() == wanted);
+        .any(|(id, name)| {
+            id != script.id.to_string() && deckpilot_core::script::name_key(&name) == wanted
+        });
     if clash {
         return Err(StorageError::ScriptNameTaken(script.name.clone()));
     }

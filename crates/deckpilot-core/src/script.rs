@@ -164,6 +164,15 @@ impl Script {
     }
 }
 
+/// The form two script names are compared in: Unicode NFC, then lower
+/// case (and NFC again), so `É` and `E` + combining accent, or `É` and `é`,
+/// are one name.
+pub fn name_key(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization as _;
+    let lower: String = name.nfc().collect::<String>().to_lowercase();
+    lower.nfc().collect()
+}
+
 /// The lowercase hex SHA-256 of `source`.
 pub fn source_sha256(source: &str) -> String {
     use std::fmt::Write as _;
@@ -292,6 +301,13 @@ mod tests {
             ..record
         };
         assert_eq!(ScriptTrust::effective_grants(Some(&dormant), &script), None);
+    }
+
+    #[test]
+    fn names_compare_normalized_and_without_case() {
+        assert_eq!(name_key("\u{00C9}dition"), name_key("e\u{0301}DITION"));
+        assert_eq!(name_key("Deploy"), name_key("dEPLOY"));
+        assert_ne!(name_key("Deploy"), name_key("Deploy 2"));
     }
 
     #[test]

@@ -241,7 +241,7 @@ path, a file's content or an environment value.
 - `project.list` and `project.repositories` need `projects.read`, answer
   the active profile only, and give a repository's folder only with
   `repositories.paths`. A repository's `remotes` (decision K4) list every
-  remote, the primary first as stored: `name`, `primary`, `url`,
+  remote, in the stored order: `name`, `primary`, `url`,
   `defaultBranch`, the `connectionId` of the Git Providers connection it
   is linked to on this computer and the provider's `remoteRepositoryId`.
   Both ids are in script objects only, never in text variables. `remote`
@@ -440,14 +440,17 @@ runs of the plugin at once.
     `lima`/`limactl`, `containerd`/`ctr`, `runc`/`crun`, `buildah`,
     `finch`, Rancher Desktop's and OrbStack's tools, Apple's `container`,
     `wsl`, `lxc`/`lxd`/`incus`, `multipass`, `nsenter`, `unshare`,
-    `chroot`, `systemd-nspawn`, and every `docker-*` or `podman-*`
-    helper (`CONTAINER_RUNTIMES`). They are effectively full access to
+    `chroot`, `systemd-nspawn`, `lxc-*`, `machinectl`, QEMU (`qemu-*`),
+    `virsh`, VirtualBox, Parallels, VMware's `vmrun`, UTM, Vagrant, Tart,
+    and every `docker-*` or `podman-*` helper (`CONTAINER_RUNTIMES`). They are effectively full access to
     the computer; when the owner decides, they become a high-risk
     consent or stay off;
-  - programs that act as another user (`sudo`, `doas`, `pkexec`, `su`,
-    `runas`, `osascript`, `launchctl`, …) are never grantable;
-  - shells (`sh`, `bash`, `zsh`, `pwsh`, `cmd`, …) run only through
-    `shell.run` and its own grant;
+  - programs that act as another user (`sudo`, `sudoedit`, `doas`,
+    `pkexec`, `su`, `runuser`, `run0`, `systemd-run`, `runas`,
+    `osascript`, `launchctl`, …) are never grantable;
+  - shells (`sh`, `bash`, `zsh`, `pwsh`, `cmd`, …, and `busybox` and
+    `toybox`, which have a shell applet) run only through `shell.run` and
+    its own grant;
   - a grant naming one of these is refused when it is saved, a stored
     record naming one grants nothing, and a granted command whose name
     or resolved file is one is refused at run time (`notGranted`, with
