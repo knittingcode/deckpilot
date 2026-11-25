@@ -95,6 +95,12 @@ released either. 0.6.0 is the first version intended for publication.
   call's state, says plainly that Teams can only be detected, has a switch
   per device for the overlay, and has *Restore defaults*, which first keeps
   your version of the layout under a name it tells you.
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
 
 ## [0.15.0] - 2026-11-24
 
