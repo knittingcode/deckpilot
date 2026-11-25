@@ -349,6 +349,19 @@ impl CapabilitySet {
             .any(|(c, s)| c.is_control() && s.allows_command())
     }
 
+    /// This set with no capability wider than in `bound` (each the narrower
+    /// of the two): what a provider reports at runtime is clamped to what
+    /// the host registered for it.
+    #[must_use]
+    pub fn narrowed_to(&self, bound: &Self) -> Self {
+        Self(
+            Capability::ALL
+                .into_iter()
+                .map(|c| (c, narrower(self.get(c), bound.get(c))))
+                .collect(),
+        )
+    }
+
     /// The same set with every capability `Unsupported { reason }` where it
     /// allowed commands: what is shown while the provider is offline or the
     /// control consent is missing.

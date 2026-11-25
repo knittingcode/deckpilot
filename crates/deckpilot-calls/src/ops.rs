@@ -155,6 +155,19 @@ pub fn gate(input: GateInput<'_>, action: CallAction) -> Result<Plan, GateError>
     }
     let caps = input.capabilities;
     let support = caps.get(action.capability());
+    // A set of the state the call already has (confirmed) sends nothing.
+    let already = match action {
+        CallAction::MicSet { muted } => input.mic_muted.known() == Some(muted),
+        CallAction::CameraSet { on } => input.camera_on.known() == Some(on),
+        _ => false,
+    };
+    // Only a state the provider reads from the app itself is trusted.
+    if already
+        && caps.get(read_of(action)).allows_command()
+        && (support.allows_command() || caps.get(toggle_of(action)).allows_command())
+    {
+        return Ok(Plan::AlreadyThere);
+    }
     if support.allows_command() {
         return Ok(Plan::Send(action));
     }
@@ -191,6 +204,22 @@ pub fn gate(input: GateInput<'_>, action: CallAction) -> Result<Plan, GateError>
             on,
         ),
         _ => Err(unsupported(support)),
+    }
+}
+
+/// The capability that reads the state a set changes.
+fn read_of(action: CallAction) -> Capability {
+    match action {
+        CallAction::CameraSet { .. } => Capability::CameraReadState,
+        _ => Capability::MicReadState,
+    }
+}
+
+/// The toggle capability behind a set.
+fn toggle_of(action: CallAction) -> Capability {
+    match action {
+        CallAction::CameraSet { .. } => Capability::CameraToggle,
+        _ => Capability::MicToggle,
     }
 }
 

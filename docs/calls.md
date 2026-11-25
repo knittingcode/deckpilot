@@ -1,9 +1,10 @@
 # Calls
 
-**Status:** contracts only. The provider contract, the call snapshot, the
-`call.*` operations and the manifest kinds of plugin API 1.16 exist; the
-state engine, the presentation overlay, the managed layouts, the providers
-and the plugin come in later changes. No DeckPilot provides plugin API 1.16
+**Status:** contracts, the state engine and the return sessions. The
+provider contract, the call snapshot, the `call.*` operations, the manifest
+kinds of plugin API 1.16, the call state engine and the "Back to work"
+return sessions exist; the presentation overlay, the managed layouts, the
+providers and the plugin come in later changes. No DeckPilot provides plugin API 1.16
 yet, so nothing of this can be installed or reached by a plugin today.
 
 Calls ("Rozmowy" in Polish) shows the state of the user's calls and
@@ -147,3 +148,72 @@ all three, so the reviewed privileged policy pins them like the 1.9 kinds.
 | --- | --- | --- |
 | `calls` (`calls:observe`) | medium | the focused call's state |
 | `calls:control` | high | `call.control`; always asked for, optional when actions name it |
+
+## State engine (`deckpilot-calls::engine`)
+
+Pure and deterministic: every call is given `now`, `next_wake` says when
+`tick` is due, and every test runs on a virtual clock. Nothing is
+persisted: after an agent restart the engine starts empty.
+
+States: `idle`, `incoming`, `outgoing`, `connecting`, `active`, `ending`,
+`ended { cause }`, `failed { code }`, `unknown`. One track per provider and
+call, at most four.
+
+| From | Event | To |
+| --- | --- | --- |
+| idle | ringing (incoming) / dialing / connected | incoming / outgoing / active |
+| incoming | connecting / connected | connecting / active |
+| incoming | ended, gone, 90 s | ended: rejected, answered elsewhere, missed |
+| outgoing | connecting / connected | connecting / active |
+| outgoing | ended, gone | ended: cancelled, declined, no answer |
+| outgoing / connecting | 120 s / 60 s | unknown |
+| active | ending / ended, gone | ending / ended: remote hang-up, left, unknown |
+| active | *end* confirmed by the provider | ending |
+| active | no observation for 24 h | unknown |
+| ending | ended, gone, 10 s | ended |
+| any live | provider disconnected | unknown |
+| any live | provider protocol error | failed, shown 3 s |
+| unknown | observation after a reconnect | the observed state |
+| unknown | 15 s without evidence (4 h while OS signals still show a call) | ended: lost |
+| ended | 2 s | idle |
+
+Any other observation changes no state. Operating-system evidence must hold
+for 2 s before a call is active and be gone for 8 s before it has ended;
+the call app exiting makes the call unknown, not ended.
+
+**Commands** pass `ops::gate`, are pending until a confirming observation
+(for *end*, the provider's confirmation), and end as unconfirmed after 5 s.
+One command at a time per call. Outcomes of another connection or command
+are dropped.
+
+**Focus**: incoming (newest first), then outgoing and connecting, then
+active (most recently connected), then unknown, then ended. **Overlay
+intent**: shown while the focused call is live (incoming page, outgoing
+page, active page; unknown shows the active page), in one overlay session
+from the first call to the last; a meeting that follows a meeting keeps the
+session. It goes on entering `ended`. Calls known only from operating-system
+signals may be kept off the overlay (on by default).
+
+## Back to work (`deckpilot-calls::ret`)
+
+"Wróć do pracy" suspends a device's overlay; a return session per device
+decides when it comes back:
+
+| Mode | Comes back when |
+| --- | --- |
+| Timer | 20, 30 or 60 s, or a custom 5 to 600 s |
+| Completion | a qualifying run started on the device while suspended has really ended |
+| Completion or timeout (default) | whichever comes first, at most 60 s (10 to 1800 s) |
+
+- Qualifying runs: actions (in place and detached), workflows and Multi
+  Actions by default; navigation only when configured; a key with nothing
+  bound never.
+- Success resumes. A failure resumes by default (or stays). A cancellation
+  stays by default (or resumes). An interruption (the agent stopping)
+  counts for nothing. The first qualifying end wins.
+- One session per device, each with a new `ReturnId`. A second suspension
+  replaces the first, and anything carrying an old id is ignored, so there
+  is never a second timer or a stale restore.
+- The call ending, failing or being lost ends every session without
+  resuming (the overlay is popped). An incoming call preempts them.
+  *Show calls* resumes at once. Memory only.
