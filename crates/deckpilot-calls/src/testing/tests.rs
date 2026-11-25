@@ -487,6 +487,15 @@ fn an_incoming_call_is_answered_through_the_mock() {
     assert_eq!(h.mock.sent().len(), 1);
 }
 
+/// Whether a track of the engine ended with `cause`.
+fn ended_with(h: &H, cause: EndCause) -> bool {
+    h.driver
+        .engine()
+        .tracks()
+        .into_iter()
+        .any(|(_, state)| state == CallState::Ended { cause })
+}
+
 #[test]
 fn reject_cancel_and_end_are_confirmed_by_the_mock() {
     let mut h = H::new();
@@ -497,6 +506,7 @@ fn reject_cancel_and_end_are_confirmed_by_the_mock() {
     h.tap(&mk2, reject);
     h.at(2);
     assert!(!h.shows(&mk2), "rejected: the overlay goes");
+    assert!(ended_with(&h, EndCause::Rejected));
     h.at(5);
     h.mock.dial(Instant::from_secs(5), "out");
     h.at(5);
@@ -505,6 +515,7 @@ fn reject_cancel_and_end_are_confirmed_by_the_mock() {
     h.tap(&mk2, cancel);
     h.at(6);
     assert!(!h.shows(&mk2));
+    assert!(ended_with(&h, EndCause::Cancelled));
     h.at(10);
     h.mock.join(Instant::from_secs(10), "m");
     h.at(10);
@@ -512,6 +523,7 @@ fn reject_cancel_and_end_are_confirmed_by_the_mock() {
     h.tap(&mk2, end);
     h.at(11);
     assert!(!h.shows(&mk2));
+    assert!(ended_with(&h, EndCause::Left));
     let causes: Vec<_> = h.mock.sent().iter().map(|c| c.action).collect();
     assert_eq!(
         causes,
@@ -553,7 +565,9 @@ fn rejected_never_answered_and_unknown_commands_change_nothing() {
         Response::Unknown,
     ] {
         h.mock.respond(CallAction::MicToggle, response.clone());
+        let before = h.mock.sent().len();
         h.tap(&mk2, mic);
+        assert_eq!(h.mock.sent().len(), before + 1, "{response:?}: sent");
         let later = h.now.as_millis() / 1000 + 8;
         h.at(later);
         assert_eq!(
