@@ -172,8 +172,20 @@ fn a_normal_build_has_no_test_hooks_and_no_mock_call_provider() {
             !has(&tree, "deckpilot-calls", "testing"),
             "{build:?}: the mock call provider is built in"
         );
+        // Nor the test hooks of the crates the agent's own turn on.
+        for crate_name in ["deckpilot-core", "deckpilot-plugin-registry"] {
+            assert!(
+                !has(&tree, crate_name, "test-hooks"),
+                "{build:?}: {crate_name} has test hooks"
+            );
+        }
     }
     let hooks = features(&["plugins", "test-hooks"]);
     assert!(has(&hooks, "deckpilot-agent", "test-hooks"), "{hooks:?}");
     assert!(has(&hooks, "deckpilot-calls", "testing"), "{hooks:?}");
+    assert!(has(&hooks, "deckpilot-core", "test-hooks"), "{hooks:?}");
+    assert!(
+        has(&hooks, "deckpilot-plugin-registry", "test-hooks"),
+        "{hooks:?}"
+    );
 }

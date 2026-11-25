@@ -189,16 +189,20 @@ impl Agent {
     /// unedited, an edited one kept) and loads the stored one into the
     /// driver, so the user's edits are what the overlay shows. While the
     /// configuration is locked nothing is seeded; it is tried again.
-    fn calls_seed_connected(&mut self) {
+    /// Returns whether a layout was loaded: the caller then syncs the
+    /// driver, so a call already going on (Calls installed mid-call, or
+    /// while the configuration was locked) gets its overlay now that the
+    /// layout is there, not at its next change.
+    fn calls_seed_connected(&mut self) -> bool {
         let Some(now) = self.calls_now() else {
-            return;
+            return false;
         };
         let mut loaded = false;
         let Some(service) = self.calls.service.as_mut() else {
-            return;
+            return false;
         };
         let Some(store) = self.store.as_ref() else {
-            return;
+            return false;
         };
         let models: BTreeSet<DeviceModelId> = self
             .runtime
@@ -294,20 +298,19 @@ impl Agent {
                 }
             }
         }
-        // A call already going on (Calls installed mid-call, or while the
-        // configuration was locked) gets its overlay now that the layout is
-        // there, not at its next change.
-        if loaded {
-            service.driver.sync(&mut self.runtime, now);
-            self.render_all();
-        }
+        loaded
     }
 
     /// Handles what is due and says how long until Calls next has to be
     /// looked at (`None`: Calls is not installed).
     pub(super) fn calls_wake(&mut self) -> Option<Duration> {
         let now = self.calls_now()?;
-        self.calls_seed_connected();
+        if self.calls_seed_connected()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.sync(&mut self.runtime, now);
+            self.render_all();
+        }
         let service = self.calls.service.as_mut()?;
         let id = service.provider.id();
         let events = service.provider.poll(now);
@@ -387,7 +390,8 @@ impl Agent {
         let Some(now) = self.calls_now() else {
             return;
         };
-        // A new model gets its managed layout first.
+        // A new model gets its managed layout first (`device_connected`
+        // syncs the driver, and the caller draws the device).
         self.calls_seed_connected();
         if let Some(service) = self.calls.service.as_mut() {
             service.driver.device_connected(&mut self.runtime, now);

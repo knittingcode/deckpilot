@@ -453,7 +453,11 @@ async fn back_to_work_follows_a_plugin_action_to_its_end() {
             (a.logged(WENT_BACK) == 1).then_some(())
         })
         .await;
-    assert_eq!(agent.face(&device, lit).await, None, "the user's layout");
+    agent
+        .until("the user's layout (no overlay key lit)", async |a| {
+            a.face(&device, lit).await.is_none().then_some(())
+        })
+        .await;
     let mine = agent
         .until("the user's own key", async |a| {
             a.face(&device, back).await.filter(|f| *f != overlay)
@@ -476,12 +480,14 @@ async fn back_to_work_follows_a_plugin_action_to_its_end() {
             (a.logged(CAME_BACK) == 1).then_some(())
         })
         .await;
-    let log = agent.log();
-    let line = log
-        .lines()
-        .find(|l| l.contains(CAME_BACK))
-        .unwrap_or_default();
-    assert!(line.contains("Succeeded"), "{line}");
+    agent
+        .until("the run's end logged as Succeeded", async |a| {
+            a.log()
+                .lines()
+                .any(|l| l.contains(CAME_BACK) && l.contains("Succeeded"))
+                .then_some(())
+        })
+        .await;
     agent
         .until("the overlay's face again", async |a| {
             (a.face(&device, back).await.as_deref() == Some(overlay.as_str())).then_some(())

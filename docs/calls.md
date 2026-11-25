@@ -348,6 +348,12 @@ owner's list on the mock, the driver and a real core runtime:
 
 ## In the agent (`apps/agent/src/service/calls.rs`)
 
+A call already going on when its managed layout is seeded (Calls installed
+mid-call, or while the configuration was locked) shows its overlay as soon
+as the layout is stored, not at the call's next change. A layout that
+cannot be stored while the database is busy is tried again after 1 s, then
+after waits doubling up to a minute.
+
 The agent holds the driver and a provider, and does nothing for Calls
 unless a provider is installed. No build installs one today: the
 detection-only Teams adapter and the plugin come later. Tests install the
