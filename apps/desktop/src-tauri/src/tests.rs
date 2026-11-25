@@ -4242,6 +4242,37 @@ fn plugin_lifecycle_commands() -> Vec<(&'static str, Value)> {
             json!({ "plugin": "example.hello", "key": "token" }),
         ),
         (
+            "list_plugin_connections",
+            json!({ "plugin": "deckpilot.git-providers" }),
+        ),
+        (
+            "create_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers", "connectionType": "gitlab",
+                "deployment": "selfHosted", "url": "https://code.example.com",
+                "displayName": "Work", "allowChanges": false, "privateNetwork": false,
+                "secret": "dp-test-secret" }),
+        ),
+        (
+            "set_plugin_connection_secret",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A", "secret": "dp-test-secret" }),
+        ),
+        (
+            "update_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A", "enabled": false }),
+        ),
+        (
+            "test_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A" }),
+        ),
+        (
+            "remove_plugin_connection",
+            json!({ "plugin": "deckpilot.git-providers",
+                "connection": "cn_01JD7Q0000000000000000000A" }),
+        ),
+        (
             "invoke_plugin_action",
             json!({ "plugin": "example.hello", "action": "greet", "params": { "name": "x" } }),
         ),

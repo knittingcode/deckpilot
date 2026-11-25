@@ -842,6 +842,156 @@ pub async fn delete_plugin_credential(
     plugin_credentials(&state, Request::DeletePluginCredential { plugin, key }).await
 }
 
+// ------------------------------------------------------------ connections
+
+async fn plugin_connections(
+    state: &AppState,
+    request: Request,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnections> {
+    match plugin_request(state, request).await? {
+        Response::PluginConnections { connections } => Ok(*connections),
+        other => Err(PluginError::unexpected(&other)),
+    }
+}
+
+async fn plugin_connection(
+    state: &AppState,
+    request: Request,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnection> {
+    match plugin_request(state, request).await? {
+        Response::PluginConnection { connection, .. } => Ok(*connection),
+        other => Err(PluginError::unexpected(&other)),
+    }
+}
+
+/// A plugin's connections and connection types (plugin API 1.14); never a
+/// token.
+#[tauri::command]
+pub async fn list_plugin_connections(
+    state: State<'_, AppState>,
+    plugin: String,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnections> {
+    plugin_connections(&state, Request::ListPluginConnections { plugin }).await
+}
+
+/// Creates a connection with the token the user typed. The token goes to
+/// the agent only; nothing here keeps, logs or returns it.
+#[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one Tauri command, its arguments named as the app sends them"
+)]
+pub async fn create_plugin_connection(
+    state: State<'_, AppState>,
+    plugin: String,
+    connection_type: String,
+    deployment: deckpilot_ipc::connections::ConnectionDeployment,
+    url: Option<String>,
+    display_name: String,
+    allow_changes: bool,
+    private_network: bool,
+    secret: Option<String>,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnection> {
+    plugin_connection(
+        &state,
+        Request::CreatePluginConnection {
+            plugin,
+            connection_type,
+            deployment,
+            url,
+            display_name,
+            allow_changes,
+            private_network,
+            secret: secret.map(plugins::PluginSecret::new),
+        },
+    )
+    .await
+}
+
+/// Replaces a connection's token (reconnect). The token goes to the agent
+/// only.
+#[tauri::command]
+pub async fn set_plugin_connection_secret(
+    state: State<'_, AppState>,
+    plugin: String,
+    connection: String,
+    secret: String,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnection> {
+    plugin_connection(
+        &state,
+        Request::SetPluginConnectionSecret {
+            plugin,
+            connection,
+            secret: plugins::PluginSecret::new(secret),
+        },
+    )
+    .await
+}
+
+/// Renames a connection, turns it off or on, allows changes or makes it the
+/// default.
+#[tauri::command]
+pub async fn update_plugin_connection(
+    state: State<'_, AppState>,
+    plugin: String,
+    connection: String,
+    display_name: Option<String>,
+    enabled: Option<bool>,
+    allow_changes: Option<bool>,
+    make_default: Option<bool>,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnection> {
+    plugin_connection(
+        &state,
+        Request::UpdatePluginConnection {
+            plugin,
+            connection,
+            display_name,
+            enabled,
+            allow_changes,
+            make_default: make_default.unwrap_or(false),
+        },
+    )
+    .await
+}
+
+/// What a connection's test found, and the connection after it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionTested {
+    pub connection: deckpilot_ipc::connections::PluginConnection,
+    pub outcome: deckpilot_ipc::connections::ConnectionTestOutcome,
+}
+
+/// Tests a connection through its plugin.
+#[tauri::command]
+pub async fn test_plugin_connection(
+    state: State<'_, AppState>,
+    plugin: String,
+    connection: String,
+) -> PluginResult<ConnectionTested> {
+    match plugin_request(&state, Request::TestPluginConnection { plugin, connection }).await? {
+        Response::PluginConnectionTested {
+            connection,
+            outcome,
+            ..
+        } => Ok(ConnectionTested {
+            connection: *connection,
+            outcome,
+        }),
+        other => Err(PluginError::unexpected(&other)),
+    }
+}
+
+/// Removes a connection and its token.
+#[tauri::command]
+pub async fn remove_plugin_connection(
+    state: State<'_, AppState>,
+    plugin: String,
+    connection: String,
+) -> PluginResult<deckpilot_ipc::connections::PluginConnections> {
+    plugin_connections(&state, Request::RemovePluginConnection { plugin, connection }).await
+}
+
 /// The built-in modules moving to their first-party plugins
 /// (`listModuleMigrations`): phase, reason, attempts, route, aliases and
 /// what waits for consent. Names only; no answer carries a secret.
