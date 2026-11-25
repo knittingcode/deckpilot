@@ -1,5 +1,5 @@
 import { RotateCcw } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Fragment, useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { toast } from "sonner"
 
@@ -24,6 +24,7 @@ import { useAppContext } from "@/lib/app-context"
 import { CALLS_EVENT, type CallStateName, callStateName, OS_SIGNALS_PROVIDER } from "@/lib/calls"
 import { toastFailure } from "@/lib/failure"
 import type { CallsLayout, CallsStatus } from "@/lib/types"
+import { BackToWorkSection, CallsPagesSection } from "@/settings/calls-pages"
 
 const STATE_LABELS = {
   idle: "devices:calls.states.idle",
@@ -84,87 +85,110 @@ export function CallsSettings() {
   const modelName = (model: string) =>
     agent.status?.devices.find((d) => d.id.model === model)?.modelName ?? model
   return (
-    <SettingsSection title={t("devices:calls.title")} description={t("devices:calls.description")}>
-      <SettingsGroup>
-        <SettingsRow label={t("devices:calls.state")}>
-          <span>{t(STATE_LABELS[callStateName(status.state)])}</span>
-        </SettingsRow>
-        {!status.controls && (
-          <SettingsRow
-            label={t("devices:calls.controlsTitle")}
-            description={
-              status.provider === OS_SIGNALS_PROVIDER
-                ? t("devices:calls.detectionOnly")
-                : t("devices:calls.noControls")
-            }
-          >
-            <Badge variant="secondary">{t("devices:calls.controlsNone")}</Badge>
+    <>
+      <SettingsSection
+        title={t("devices:calls.title")}
+        description={t("devices:calls.description")}
+      >
+        <SettingsGroup>
+          <SettingsRow label={t("devices:calls.state")}>
+            <span>{t(STATE_LABELS[callStateName(status.state)])}</span>
           </SettingsRow>
-        )}
-      </SettingsGroup>
-      <SettingsGroup>
-        {status.devices.map((entry) => {
-          const id = `calls-overlay-${entry.device.serial}`
-          return (
+          {!status.controls && (
             <SettingsRow
-              key={id}
-              htmlFor={id}
-              label={deviceName(entry.device.model, entry.device.serial)}
+              label={t("devices:calls.controlsTitle")}
               description={
-                entry.suspended
-                  ? t("devices:calls.suspended")
-                  : entry.shown
-                    ? t("devices:calls.shown")
-                    : t("devices:calls.overlayDescription")
+                status.provider === OS_SIGNALS_PROVIDER
+                  ? t("devices:calls.detectionOnly")
+                  : t("devices:calls.noControls")
               }
             >
-              <Switch
-                id={id}
-                checked={entry.overlay}
-                aria-label={t("devices:calls.overlay")}
-                onCheckedChange={(on) => {
-                  api.setCallsOverlay(entry.device, on).then(setStatus, (e: unknown) => {
-                    toastFailure(t("devices:calls.overlayFailed"), e)
-                  })
-                }}
-              />
+              <Badge variant="secondary">{t("devices:calls.controlsNone")}</Badge>
             </SettingsRow>
-          )
-        })}
-      </SettingsGroup>
-      {status.layouts.length > 0 && (
-        <SettingsGroup>
-          {status.layouts.map((layout) => (
-            <SettingsRow
-              key={layout.layout}
-              label={layout.name}
-              description={t("devices:calls.layoutDescription", {
-                model: modelName(layout.model),
-              })}
-            >
-              <span className="flex items-center gap-2">
-                {layout.edited && <Badge variant="outline">{t("devices:calls.edited")}</Badge>}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setRestoring(layout)
-                  }}
-                >
-                  <RotateCcw /> {t("devices:calls.restore")}
-                </Button>
-              </span>
-            </SettingsRow>
-          ))}
+          )}
         </SettingsGroup>
-      )}
-      <RestoreDialog
-        layout={restoring}
-        onClose={() => {
-          setRestoring(null)
-        }}
-      />
-    </SettingsSection>
+        <SettingsGroup>
+          {status.devices.map((entry) => {
+            const id = `calls-overlay-${entry.device.serial}`
+            return (
+              <SettingsRow
+                key={id}
+                htmlFor={id}
+                label={deviceName(entry.device.model, entry.device.serial)}
+                description={
+                  entry.suspended
+                    ? t("devices:calls.suspended")
+                    : entry.shown
+                      ? t("devices:calls.shown")
+                      : t("devices:calls.overlayDescription")
+                }
+              >
+                <Switch
+                  id={id}
+                  checked={entry.overlay}
+                  aria-label={t("devices:calls.overlay")}
+                  onCheckedChange={(on) => {
+                    api.setCallsOverlay(entry.device, on).then(setStatus, (e: unknown) => {
+                      toastFailure(t("devices:calls.overlayFailed"), e)
+                    })
+                  }}
+                />
+              </SettingsRow>
+            )
+          })}
+        </SettingsGroup>
+        {status.layouts.length > 0 && (
+          <SettingsGroup>
+            {status.layouts.map((layout) => (
+              <SettingsRow
+                key={layout.layout}
+                label={layout.name}
+                description={t("devices:calls.layoutDescription", {
+                  model: modelName(layout.model),
+                })}
+              >
+                <span className="flex items-center gap-2">
+                  {layout.edited && <Badge variant="outline">{t("devices:calls.edited")}</Badge>}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setRestoring(layout)
+                    }}
+                  >
+                    <RotateCcw /> {t("devices:calls.restore")}
+                  </Button>
+                </span>
+              </SettingsRow>
+            ))}
+          </SettingsGroup>
+        )}
+        <RestoreDialog
+          layout={restoring}
+          onClose={() => {
+            setRestoring(null)
+          }}
+        />
+      </SettingsSection>
+      {status.layouts.map((layout) => (
+        <Fragment key={layout.layout}>
+          <CallsPagesSection
+            layout={layout}
+            provider={status.provider}
+            modelName={modelName(layout.model)}
+          />
+          <BackToWorkSection
+            layout={layout}
+            modelName={modelName(layout.model)}
+            onChange={(back) => {
+              api.setCallsBackToWork(layout.model, back).then(setStatus, (e: unknown) => {
+                toastFailure(t("devices:calls.back.failed"), e)
+              })
+            }}
+          />
+        </Fragment>
+      ))}
+    </>
   )
 }
 

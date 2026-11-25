@@ -301,3 +301,44 @@ fn restore_defaults_copies_the_whole_closure_with_its_references() {
     assert_ne!(named, step.id.to_string(), "not the regenerated step");
     assert!(ids.iter().any(|id| id.to_string() == named), "its own copy");
 }
+
+/// The *Back to work* settings are a parameter edit of one of the managed
+/// layout's actions: only that action changes, the layout counts as edited,
+/// and an action of another layout or an unknown model is refused.
+#[test]
+fn a_managed_action_parameter_edit_changes_only_that_action() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    let parameters = ActionParameters::new().with("mode", ParameterValue::Text("set".into()));
+    store
+        .set_managed_action_parameters(OWNER, &mk2(), action_id, &parameters)
+        .unwrap();
+    let managed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(managed.layout, layout, "the layout itself is unchanged");
+    assert_eq!(managed.actions[0].parameters, parameters);
+    assert!(managed.edited);
+    // Now edited: a template update never rewrites it.
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+            .unwrap(),
+        Seeded::Unchanged
+    );
+    assert!(matches!(
+        store.set_managed_action_parameters(OWNER, &mk2(), ActionInstanceId::new(), &parameters),
+        Err(StorageError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.set_managed_action_parameters(
+            OWNER,
+            &DeviceModelId::new(models::STREAM_DECK_XL_ID),
+            action_id,
+            &parameters
+        ),
+        Err(StorageError::UnknownLayout)
+    ));
+}

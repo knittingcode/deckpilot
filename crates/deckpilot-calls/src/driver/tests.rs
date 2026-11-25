@@ -496,3 +496,44 @@ fn dismissed_while_ringing_stays_gone_through_ticks() {
     );
     assert!(!w.shows(&mk2));
 }
+
+/// The *Back to work* parameters written by `parameters_of` read back as
+/// the same settings, for every mode and outcome; out-of-range times are
+/// clamped on the way.
+#[test]
+fn back_to_work_parameters_round_trip() {
+    use crate::ret::{AfterRun, Qualify, ReturnMode, ReturnSettings};
+    use std::time::Duration;
+    let modes = [
+        ReturnMode::timer(20).unwrap(),
+        ReturnMode::timer(45).unwrap(),
+        ReturnMode::Completion,
+        ReturnMode::completion_or_timeout(60).unwrap(),
+        ReturnMode::completion_or_timeout(600).unwrap(),
+    ];
+    for mode in modes {
+        for (on_failure, on_cancel, all_devices) in [
+            (AfterRun::Resume, AfterRun::Stay, false),
+            (AfterRun::Stay, AfterRun::Resume, true),
+        ] {
+            let settings = ReturnSettings {
+                mode,
+                qualify: Qualify::default(),
+                on_failure,
+                on_cancel,
+                all_devices,
+            };
+            assert_eq!(settings_of(&parameters_of(&settings)), settings, "{mode:?}");
+        }
+    }
+    let wild = ReturnSettings {
+        mode: ReturnMode::Timer {
+            after: Duration::from_secs(1),
+        },
+        ..ReturnSettings::default()
+    };
+    assert_eq!(
+        settings_of(&parameters_of(&wild)).mode,
+        ReturnMode::timer(5).unwrap()
+    );
+}

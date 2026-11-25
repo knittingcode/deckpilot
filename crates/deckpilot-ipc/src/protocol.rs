@@ -1044,6 +1044,14 @@ pub enum Request {
         model: deckpilot_device::DeviceModelId,
         copy_name: String,
     },
+    /// Sets the *Back to work* settings of `model`'s managed Calls layout
+    /// (the parameters of its "Back to work" action; the layout counts as
+    /// edited afterwards). Answers [`Response::CallsStatus`]. Since
+    /// protocol 19.
+    SetCallsBackToWork {
+        model: deckpilot_device::DeviceModelId,
+        back: crate::calls::BackToWork,
+    },
 }
 
 impl Request {
@@ -1110,6 +1118,7 @@ impl Request {
                     crate::calls::MAX_COPY_NAME
                 ))
             }
+            Self::SetCallsBackToWork { back, .. } if back.validate().is_err() => back.validate(),
             Self::SetCallsOverlay { device, .. }
                 if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
             {
@@ -1840,7 +1849,8 @@ impl Request {
             Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
             Self::GetCallsStatus
             | Self::SetCallsOverlay { .. }
-            | Self::RestoreCallsLayout { .. } => CALLS_PROTOCOL,
+            | Self::RestoreCallsLayout { .. }
+            | Self::SetCallsBackToWork { .. } => CALLS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices

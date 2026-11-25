@@ -11,7 +11,7 @@ import { installDomStubs } from "@/test/dom"
 import { renderWithApp } from "@/test/render"
 import { emitBackend, resetBackend } from "@/test/tauri"
 import { CALLS_EVENT } from "@/lib/calls"
-import type { CallsStatus } from "@/lib/types"
+import type { BackToWork, CallsLayout, CallsStatus } from "@/lib/types"
 import { CallsSettings } from "@/settings/calls-settings"
 
 vi.mock("@/lib/api", async () => (await import("@/test/api-mock")).apiModule)
@@ -34,10 +34,41 @@ function status(overrides: Partial<CallsStatus> = {}): CallsStatus {
         name: "Calls",
         edited: true,
         templateVersion: "1.0.0",
+        pages: [
+          {
+            page: "active",
+            name: "In a call",
+            controls: [
+              {
+                control: { kind: "key", index: 0 },
+                action: "mic-toggle",
+                supported: false,
+                reason: "provider-has-no-api",
+              },
+              {
+                control: { kind: "key", index: 10 },
+                action: "return-to-work",
+                supported: true,
+              },
+            ],
+          },
+        ],
+        back: {
+          mode: { kind: "completionOrMax", maxSeconds: 60 },
+          onFailure: "resume",
+          onCancel: "stay",
+          allDevices: false,
+        },
       },
     ],
     ...overrides,
   }
+}
+
+function firstLayout(): CallsLayout {
+  const [layout] = status().layouts
+  if (!layout) throw new Error("the fixture's layout")
+  return layout
 }
 
 function agent(capabilities: string[] = ["calls"]) {
@@ -77,7 +108,8 @@ describe("Settings › Devices › Calls", () => {
     api.getCallsStatus.mockResolvedValue(status())
     renderWithApp(<CallsSettings />, { agent: agent() })
     expect(await screen.findByText("In a call")).toBeInTheDocument()
-    expect(screen.getByText("Not supported")).toBeInTheDocument()
+    // The Controls row, and the disabled controls of the call pages.
+    expect(screen.getAllByText("Not supported").length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(/Microsoft Teams can only be detected/)).toBeInTheDocument()
     expect(screen.getByText("Shows the call now.")).toBeInTheDocument()
   })
@@ -145,5 +177,101 @@ describe("Settings › Devices › Calls", () => {
       device.id.model,
       expect.stringMatching(/^Calls \(my version, .+\)$/),
     )
+  })
+
+  it("lists the call pages with unsupported controls disabled and the reason", async () => {
+    api.getCallsStatus.mockResolvedValue(status())
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    const pages = await screen.findByRole("heading", { name: /Call pages/ })
+    const section = pages.closest("section")
+    if (!section) throw new Error("the Call pages section")
+    expect(within(section).getByText("Key 1: Microphone")).toBeInTheDocument()
+    // Teams: the reason names Microsoft's retired API, never a working control.
+    expect(within(section).getByText(/Microsoft retired the Teams device API/)).toBeInTheDocument()
+    expect(within(section).getByText("Key 11: Back to work")).toBeInTheDocument()
+    expect(within(section).getByText("Supported")).toBeInTheDocument()
+  })
+
+  it("names the generic reason for a provider other than Teams", async () => {
+    api.getCallsStatus.mockResolvedValue(status({ provider: "mock" }))
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    expect(await screen.findByText(/the call app offers no control/)).toBeInTheDocument()
+    expect(screen.queryByText(/Microsoft retired the Teams device API/)).not.toBeInTheDocument()
+  })
+
+  it("shows Back to work with completion or a 60 s maximum by default", async () => {
+    api.getCallsStatus.mockResolvedValue(status())
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    const mode = await screen.findByRole("combobox", { name: "Shows the call again" })
+    expect(mode).toHaveTextContent(/at the latest after a time \(default\)/)
+    expect(screen.getByRole("textbox", { name: "At the latest after" })).toHaveValue("60")
+  })
+
+  it("sets a timer from the presets or a custom time, refusing one out of range", async () => {
+    const user = userEvent.setup()
+    const layout = firstLayout()
+    api.getCallsStatus.mockResolvedValue(status())
+    const timer = (seconds: number) =>
+      status({
+        layouts: [{ ...layout, back: { ...layout.back, mode: { kind: "timer", seconds } } }],
+      })
+    api.setCallsBackToWork.mockImplementation((_model: string, back: BackToWork) =>
+      Promise.resolve(timer(back.mode.kind === "timer" ? back.mode.seconds : 0)),
+    )
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("combobox", { name: "Shows the call again" }))
+    await user.click(await screen.findByRole("option", { name: "After a time" }))
+    expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
+      ...layout.back,
+      mode: { kind: "timer", seconds: 30 },
+    })
+    await user.click(await screen.findByRole("combobox", { name: "After" }))
+    await user.click(await screen.findByRole("option", { name: "60 s" }))
+    expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
+      ...layout.back,
+      mode: { kind: "timer", seconds: 60 },
+    })
+    await user.click(screen.getByRole("combobox", { name: "After" }))
+    await user.click(await screen.findByRole("option", { name: "Custom" }))
+    const field = await screen.findByRole("textbox", { name: "After" })
+    const calls = api.setCallsBackToWork.mock.calls.length
+    await user.clear(field)
+    await user.type(field, "3")
+    expect(await screen.findByRole("alert")).toHaveTextContent("5 to 600 seconds")
+    await user.keyboard("{Enter}")
+    expect(api.setCallsBackToWork).toHaveBeenCalledTimes(calls)
+    await user.clear(field)
+    await user.type(field, "45{Enter}")
+    await waitFor(() => {
+      expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
+        ...layout.back,
+        mode: { kind: "timer", seconds: 45 },
+      })
+    })
+  })
+
+  it("sets completion, what a failure does and all devices", async () => {
+    const user = userEvent.setup()
+    const layout = firstLayout()
+    api.getCallsStatus.mockResolvedValue(status())
+    api.setCallsBackToWork.mockResolvedValue(status())
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("combobox", { name: "Shows the call again" }))
+    await user.click(await screen.findByRole("option", { name: "When what you started ends" }))
+    expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
+      ...layout.back,
+      mode: { kind: "completion" },
+    })
+    await user.click(screen.getByRole("combobox", { name: "If it fails" }))
+    await user.click(await screen.findByRole("option", { name: "Stay on my layout" }))
+    expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
+      ...layout.back,
+      onFailure: "stay",
+    })
+    await user.click(screen.getByRole("switch", { name: "All devices" }))
+    expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
+      ...layout.back,
+      allDevices: true,
+    })
   })
 })

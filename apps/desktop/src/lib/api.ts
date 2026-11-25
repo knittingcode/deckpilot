@@ -71,6 +71,7 @@ import type {
   WorkSessionSettings,
   WorkSessionSnapshot,
   WorkSessionSummary,
+  BackToWork,
   CallsStatus,
   DeviceId,
 } from "./types"
@@ -564,6 +565,8 @@ export const api = {
   /** Keeps the user's version as `copyName` first; answers the copy's id. */
   restoreCallsLayout: (model: string, copyName: string) =>
     invoke<string | null>("restore_calls_layout", { model, copyName }),
+  setCallsBackToWork: (model: string, back: BackToWork) =>
+    invoke<CallsStatus>("set_calls_back_to_work", { model, back }),
 }
 
 /** Backend event carrying the latest {@link AgentConnection}. */

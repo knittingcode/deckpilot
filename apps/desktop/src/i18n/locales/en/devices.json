@@ -224,6 +224,66 @@
       "ended": "Ended",
       "failed": "Failed",
       "unknown": "State unknown"
+    },
+    "pagesTitle": "Call pages",
+    "pagesDescription": "What the device shows during a call. A control the call app does not support stays on the page, disabled, with the reason.",
+    "pages": {
+      "incoming": "Incoming call",
+      "outgoing": "Calling",
+      "active": "In a call"
+    },
+    "pageLabel": "Page “{{page}}”",
+    "actions": {
+      "answer": "Answer",
+      "reject": "Reject",
+      "cancelOutgoing": "Cancel",
+      "end": "Leave",
+      "micToggle": "Microphone",
+      "micMute": "Mute microphone",
+      "micUnmute": "Unmute microphone",
+      "cameraToggle": "Camera",
+      "cameraOn": "Camera on",
+      "cameraOff": "Camera off",
+      "returnToWork": "Back to work",
+      "showCalls": "Show calls"
+    },
+    "supported": "Supported",
+    "reasons": {
+      "teams": "Not supported: Microsoft retired the Teams device API on 30 June 2026.",
+      "providerHasNoApi": "Not supported: the call app offers no control.",
+      "platformNotSupported": "Not supported on this system.",
+      "notInMeeting": "Only during a meeting.",
+      "noPermissionInMeeting": "Not allowed in this meeting.",
+      "toggleOnly": "The call app can only switch it on and off.",
+      "needsPairing": "The call app must be paired first.",
+      "needsOsPermission": "Needs a permission of the system.",
+      "consentNotGiven": "You have not allowed DeckPilot to control calls.",
+      "other": "Not supported."
+    },
+    "back": {
+      "title": "Back to work",
+      "description": "When a device that went back to work shows the call again. Changing this counts as an edit of the layout, so a new version of it does not replace yours.",
+      "mode": "Shows the call again",
+      "modes": {
+        "timer": "After a time",
+        "completion": "When what you started ends",
+        "completionOrMax": "When what you started ends, at the latest after a time (default)"
+      },
+      "timer": "After",
+      "custom": "Custom",
+      "preset": "{{seconds}} s",
+      "max": "At the latest after",
+      "seconds": "seconds",
+      "range": "{{min}} to {{max}} seconds",
+      "onFailure": "If it fails",
+      "onCancel": "If it is cancelled",
+      "after": {
+        "resume": "Show the call again",
+        "stay": "Stay on my layout"
+      },
+      "allDevices": "All devices",
+      "allDevicesDescription": "Every device that shows the call goes back to work, not only the one pressed.",
+      "failed": "The Back to work settings could not be saved"
     }
   }
 }

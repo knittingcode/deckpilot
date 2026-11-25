@@ -1335,6 +1335,9 @@ impl Agent {
                 status: Box::new(self.calls_status()),
             }),
             Request::SetCallsOverlay { device, on } => self.set_calls_overlay(&device, on),
+            Request::SetCallsBackToWork { model, back } => {
+                self.set_calls_back_to_work(&model, &back)
+            }
             Request::RestoreCallsLayout { model, copy_name } => {
                 self.restore_calls_layout(&model, &copy_name)
             }
@@ -1497,6 +1500,7 @@ impl Agent {
             | Request::GetCallsStatus
             | Request::SetCallsOverlay { .. }
             | Request::RestoreCallsLayout { .. }
+            | Request::SetCallsBackToWork { .. }
             | Request::GetAutostart
             | Request::Subscribe
             | Request::SubscribePluginEvents { .. }

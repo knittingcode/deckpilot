@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::provider::{
-    CallAction, Capability, CapabilitySet, ConsentState, Tri, UnsupportedReason,
+    CallAction, Capability, CapabilitySet, ConsentState, Support, Tri, UnsupportedReason,
 };
 use crate::snapshot::CallState;
 
@@ -105,6 +105,40 @@ pub fn action_of(id: &str) -> Option<CallAction> {
         .iter()
         .find(|(name, _)| *name == id)
         .map(|(_, action)| *action)
+}
+
+/// Whether the Calls action `id` can work with a provider of
+/// `capabilities` (what a page shows before any call): `None` for an id
+/// that is no control (`return-to-work`, `show-calls`), `Ok` when it can,
+/// else the reason it stays disabled. A set the provider can only toggle
+/// counts when it can read the state; a capability it can only observe or
+/// infer never controls (`provider-has-no-api`).
+pub fn control_support(
+    id: &str,
+    capabilities: &CapabilitySet,
+) -> Option<Result<(), UnsupportedReason>> {
+    let action = action_of(id)?;
+    let support = capabilities.get(action.capability());
+    if support.allows_command() {
+        return Some(Ok(()));
+    }
+    let toggle = match action {
+        CallAction::MicSet { .. } => Some((Capability::MicToggle, Capability::MicReadState)),
+        CallAction::CameraSet { .. } => {
+            Some((Capability::CameraToggle, Capability::CameraReadState))
+        }
+        _ => None,
+    };
+    if let Some((toggle, read)) = toggle
+        && capabilities.get(toggle).allows_command()
+        && capabilities.get(read).allows_command()
+    {
+        return Some(Ok(()));
+    }
+    Some(Err(match support {
+        Support::Unsupported { reason } => reason,
+        _ => UnsupportedReason::ProviderHasNoApi,
+    }))
 }
 
 /// What the gate decided to send.
@@ -234,7 +268,6 @@ fn unsupported(support: crate::provider::Support) -> GateError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::Support;
 
     fn caps(supported: &[Capability]) -> CapabilitySet {
         CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| {
@@ -470,5 +503,44 @@ mod tests {
                 "{extra}"
             );
         }
+    }
+
+    /// A page's controls before any call: supported, disabled with the
+    /// provider's reason, a set covered by a readable toggle, and an
+    /// inferred capability that never controls.
+    #[test]
+    fn control_support_names_the_reason() {
+        let full = caps(&Capability::ALL);
+        assert_eq!(control_support("answer", &full), Some(Ok(())));
+        assert_eq!(control_support("return-to-work", &full), None);
+        let none = caps(&[]);
+        for id in ["answer", "reject", "end", "mic-toggle", "camera-off"] {
+            assert_eq!(
+                control_support(id, &none),
+                Some(Err(UnsupportedReason::ProviderHasNoApi)),
+                "{id}"
+            );
+        }
+        let toggles = caps(&[Capability::MicToggle, Capability::MicReadState]);
+        assert_eq!(control_support("mic-mute", &toggles), Some(Ok(())));
+        let inferred = CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| {
+            let s = if c == Capability::MicToggle {
+                Support::Inferred
+            } else {
+                Support::Unsupported {
+                    reason: UnsupportedReason::PlatformNotSupported,
+                }
+            };
+            (c, s)
+        }))
+        .0;
+        assert_eq!(
+            control_support("mic-toggle", &inferred),
+            Some(Err(UnsupportedReason::ProviderHasNoApi))
+        );
+        assert_eq!(
+            control_support("end", &inferred),
+            Some(Err(UnsupportedReason::PlatformNotSupported))
+        );
     }
 }

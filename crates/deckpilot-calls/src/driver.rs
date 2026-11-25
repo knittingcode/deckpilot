@@ -460,6 +460,34 @@ impl CallsDriver {
     }
 }
 
+/// The parameters that [`settings_of`] reads back as `settings` (its
+/// inverse for every mode, outcome and flag; times as whole seconds).
+pub fn parameters_of(settings: &ReturnSettings) -> ActionParameters {
+    use deckpilot_core::ParameterValue::{Boolean, Choice, Integer};
+    let whole = |d: std::time::Duration| i64::try_from(d.as_secs()).unwrap_or(i64::MAX);
+    let mut parameters = match settings.mode.clamped() {
+        ReturnMode::Timer { after } => ActionParameters::new()
+            .with("mode", Choice("timer".into()))
+            .with("seconds", Integer(whole(after))),
+        ReturnMode::Completion => ActionParameters::new().with("mode", Choice("completion".into())),
+        ReturnMode::CompletionOrTimeout { max } => ActionParameters::new()
+            .with("mode", Choice("completionOrTimeout".into()))
+            .with("maxSeconds", Integer(whole(max))),
+    };
+    let after = |a: AfterRun| {
+        Choice(match a {
+            AfterRun::Resume => "resume".into(),
+            AfterRun::Stay => "stay".into(),
+        })
+    };
+    parameters = parameters
+        .with("onFailure", after(settings.on_failure))
+        .with("onCancel", after(settings.on_cancel))
+        .with("returnAllDevices", Boolean(settings.all_devices))
+        .with("countNavigation", Boolean(settings.qualify.navigation));
+    parameters
+}
+
 /// The *Back to work* settings in an action's parameters (ordinary
 /// parameters the inspector edits); the defaults for anything missing or
 /// out of range.

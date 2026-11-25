@@ -334,6 +334,34 @@ impl SqliteStore {
         Ok(kept)
     }
 
+    /// Sets the parameters of `action`, one of the actions of `owner`'s
+    /// managed layout for `model` (the *Back to work* settings): the
+    /// user's edit, like an edit in the inspector, so the layout counts as
+    /// edited afterwards (a template update then never rewrites it, and
+    /// *Restore defaults* keeps it first). Nothing else changes.
+    pub fn set_managed_action_parameters(
+        &self,
+        owner: &str,
+        model: &DeviceModelId,
+        action: ActionInstanceId,
+        parameters: &deckpilot_core::ActionParameters,
+    ) -> Result<()> {
+        let tx = self.write_transaction()?;
+        let Some(row) = row(&tx, owner, model.as_str())? else {
+            return Err(StorageError::UnknownLayout);
+        };
+        let stored = load(&tx, owner, &row)?;
+        let Some(mut changed) = stored.actions.into_iter().find(|a| a.id == action) else {
+            return Err(StorageError::Invalid(
+                "the action is not one of the managed layout's".into(),
+            ));
+        };
+        changed.parameters = parameters.clone();
+        upsert_action(&tx, &changed, now())?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Removes `owner`'s managed layouts: the unedited ones, and the
     /// edited ones too with `include_edited`. Returns the removed ids.
     pub fn remove_managed_layouts(

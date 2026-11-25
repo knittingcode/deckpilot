@@ -234,6 +234,66 @@
       "ended": "Zakończona",
       "failed": "Błąd",
       "unknown": "Status nieznany"
+    },
+    "pagesTitle": "Strony rozmów",
+    "pagesDescription": "Co urządzenie pokazuje podczas rozmowy. Element, którego aplikacja do rozmów nie obsługuje, zostaje na stronie, wyłączony, z podanym powodem.",
+    "pages": {
+      "incoming": "Rozmowa przychodząca",
+      "outgoing": "Połączenie wychodzące",
+      "active": "W rozmowie"
+    },
+    "pageLabel": "Strona „{{page}}”",
+    "actions": {
+      "answer": "Odbierz",
+      "reject": "Odrzuć",
+      "cancelOutgoing": "Anuluj",
+      "end": "Zakończ",
+      "micToggle": "Mikrofon",
+      "micMute": "Wycisz mikrofon",
+      "micUnmute": "Włącz mikrofon",
+      "cameraToggle": "Kamera",
+      "cameraOn": "Włącz kamerę",
+      "cameraOff": "Wyłącz kamerę",
+      "returnToWork": "Wróć do pracy",
+      "showCalls": "Pokaż rozmowy"
+    },
+    "supported": "Obsługiwane",
+    "reasons": {
+      "teams": "Nieobsługiwane: Microsoft wycofał interfejs Teams dla urządzeń 30.06.2026.",
+      "providerHasNoApi": "Nieobsługiwane: aplikacja do rozmów nie udostępnia sterowania.",
+      "platformNotSupported": "Nieobsługiwane w tym systemie.",
+      "notInMeeting": "Tylko podczas spotkania.",
+      "noPermissionInMeeting": "Niedozwolone w tym spotkaniu.",
+      "toggleOnly": "Aplikacja do rozmów umożliwia tylko przełączanie.",
+      "needsPairing": "Najpierw trzeba sparować aplikację do rozmów.",
+      "needsOsPermission": "Wymaga uprawnienia systemu.",
+      "consentNotGiven": "Nie zezwolono DeckPilotowi na sterowanie rozmowami.",
+      "other": "Nieobsługiwane."
+    },
+    "back": {
+      "title": "Powrót do pracy",
+      "description": "Kiedy urządzenie, które wróciło do pracy, znów pokazuje rozmowę. Zmiana tych ustawień jest edycją układu, więc jego nowa wersja nie zastąpi Twojej.",
+      "mode": "Znów pokazuje rozmowę",
+      "modes": {
+        "timer": "Po czasie",
+        "completion": "Gdy skończy się to, co uruchomiono",
+        "completionOrMax": "Gdy skończy się to, co uruchomiono, najpóźniej po czasie (domyślnie)"
+      },
+      "timer": "Po",
+      "custom": "Własny",
+      "preset": "{{seconds}} s",
+      "max": "Najpóźniej po",
+      "seconds": "s",
+      "range": "Od {{min}} do {{max}} sekund",
+      "onFailure": "Gdy się nie powiedzie",
+      "onCancel": "Gdy zostanie anulowane",
+      "after": {
+        "resume": "Pokaż rozmowę ponownie",
+        "stay": "Zostań na moim układzie"
+      },
+      "allDevices": "Wszystkie urządzenia",
+      "allDevicesDescription": "Do pracy wraca każde urządzenie, które pokazuje rozmowę, nie tylko naciśnięte.",
+      "failed": "Nie udało się zapisać ustawień powrotu do pracy"
     }
   }
 }

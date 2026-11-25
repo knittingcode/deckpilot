@@ -7,7 +7,7 @@
 use tauri::State;
 
 use deckpilot_device::{DeviceId, DeviceModelId};
-use deckpilot_ipc::calls::CallsStatus;
+use deckpilot_ipc::calls::{BackToWork, CallsStatus};
 use deckpilot_ipc::{ClientError, Request, Response};
 
 use super::agent::unexpected;
@@ -53,6 +53,20 @@ pub async fn set_calls_overlay(
     on: bool,
 ) -> CommandResult<CallsStatus> {
     match ask(&state, Request::SetCallsOverlay { device, on }).await? {
+        Response::CallsStatus { status } => Ok(*status),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Sets the *Back to work* settings of `model`'s Calls layout (the agent
+/// checks the times are in range).
+#[tauri::command]
+pub async fn set_calls_back_to_work(
+    state: State<'_, AppState>,
+    model: DeviceModelId,
+    back: BackToWork,
+) -> CommandResult<CallsStatus> {
+    match ask(&state, Request::SetCallsBackToWork { model, back }).await? {
         Response::CallsStatus { status } => Ok(*status),
         other => Err(unexpected(&other)),
     }

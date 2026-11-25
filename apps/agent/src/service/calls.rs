@@ -35,6 +35,138 @@ use tracing::{debug, info, warn};
 
 use super::Agent;
 
+/// The Calls action (id without the plugin's prefix) of `action`.
+fn calls_action(action: &deckpilot_core::ActionInstance) -> Option<&str> {
+    action
+        .action_type
+        .as_str()
+        .strip_prefix(OWNER)
+        .and_then(|rest| rest.strip_prefix('.'))
+}
+
+/// A managed layout's call pages as the app shows them: each control with
+/// its Calls action (support is filled in from the provider when the
+/// status is built, [`with_support`]).
+fn layout_pages(
+    managed: &deckpilot_storage::managed_layouts::ManagedLayout,
+) -> Vec<deckpilot_ipc::calls::CallsPage> {
+    use deckpilot_calls::layouts::{Page, page_id};
+    use deckpilot_ipc::calls::{CallsControl, CallsPage, CallsPageKind};
+    [
+        (Page::Incoming, CallsPageKind::Incoming),
+        (Page::Outgoing, CallsPageKind::Outgoing),
+        (Page::Active, CallsPageKind::Active),
+    ]
+    .into_iter()
+    .filter_map(|(page, kind)| {
+        let layout_page = managed.layout.page(page_id(managed.layout.id, page))?;
+        let controls = layout_page
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                let id = binding.target.action_id()?;
+                let action = managed.actions.iter().find(|a| a.id == id)?;
+                Some(CallsControl {
+                    control: binding.control,
+                    action: calls_action(action)?.to_owned(),
+                    supported: true,
+                    reason: None,
+                })
+            })
+            .collect();
+        Some(CallsPage {
+            page: kind,
+            name: layout_page.name.clone(),
+            controls,
+        })
+    })
+    .collect()
+}
+
+/// `pages` with each control's support by a provider of `capabilities`
+/// now (an action that controls no call is always supported).
+fn with_support(
+    mut pages: Vec<deckpilot_ipc::calls::CallsPage>,
+    capabilities: &deckpilot_calls::provider::CapabilitySet,
+) -> Vec<deckpilot_ipc::calls::CallsPage> {
+    for control in pages.iter_mut().flat_map(|p| p.controls.iter_mut()) {
+        let refused = match deckpilot_calls::ops::control_support(&control.action, capabilities) {
+            Some(Err(reason)) => Some(reason.code().to_owned()),
+            Some(Ok(())) | None => None,
+        };
+        control.supported = refused.is_none();
+        control.reason = refused;
+    }
+    pages
+}
+
+/// The "Back to work" action of a managed layout.
+fn back_action(
+    managed: &deckpilot_storage::managed_layouts::ManagedLayout,
+) -> Option<&deckpilot_core::ActionInstance> {
+    managed
+        .actions
+        .iter()
+        .find(|a| calls_action(a) == Some("return-to-work"))
+}
+
+/// The engine's *Back to work* settings as the app sees them.
+fn ipc_back(settings: &deckpilot_calls::ret::ReturnSettings) -> deckpilot_ipc::calls::BackToWork {
+    use deckpilot_calls::ret::{AfterRun, ReturnMode};
+    use deckpilot_ipc::calls as ipc;
+    let seconds = |d: Duration| u32::try_from(d.as_secs()).unwrap_or(u32::MAX);
+    let after = |a: AfterRun| match a {
+        AfterRun::Resume => ipc::AfterRun::Resume,
+        AfterRun::Stay => ipc::AfterRun::Stay,
+    };
+    ipc::BackToWork {
+        mode: match settings.mode.clamped() {
+            ReturnMode::Timer { after } => ipc::BackToWorkMode::Timer {
+                seconds: seconds(after),
+            },
+            ReturnMode::Completion => ipc::BackToWorkMode::Completion,
+            ReturnMode::CompletionOrTimeout { max } => ipc::BackToWorkMode::CompletionOrMax {
+                max_seconds: seconds(max),
+            },
+        },
+        on_failure: after(settings.on_failure),
+        on_cancel: after(settings.on_cancel),
+        all_devices: settings.all_devices,
+    }
+}
+
+/// `back` over `base` (what `back` does not name, such as whether
+/// navigation counts, stays as it was).
+fn engine_back(
+    back: &deckpilot_ipc::calls::BackToWork,
+    base: deckpilot_calls::ret::ReturnSettings,
+) -> deckpilot_calls::ret::ReturnSettings {
+    use deckpilot_calls::ret::{AfterRun, ReturnMode};
+    use deckpilot_ipc::calls as ipc;
+    let after = |a: ipc::AfterRun| match a {
+        ipc::AfterRun::Resume => AfterRun::Resume,
+        ipc::AfterRun::Stay => AfterRun::Stay,
+    };
+    deckpilot_calls::ret::ReturnSettings {
+        mode: match back.mode {
+            ipc::BackToWorkMode::Timer { seconds } => ReturnMode::Timer {
+                after: Duration::from_secs(u64::from(seconds)),
+            },
+            ipc::BackToWorkMode::Completion => ReturnMode::Completion,
+            ipc::BackToWorkMode::CompletionOrMax { max_seconds } => {
+                ReturnMode::CompletionOrTimeout {
+                    max: Duration::from_secs(u64::from(max_seconds)),
+                }
+            }
+        }
+        .clamped(),
+        on_failure: after(back.on_failure),
+        on_cancel: after(back.on_cancel),
+        all_devices: back.all_devices,
+        ..base
+    }
+}
+
 /// How often an installed provider is polled at most apart.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -430,6 +562,10 @@ impl Agent {
             .unwrap_or_default()
             .into_iter()
             .map(|m| deckpilot_ipc::calls::CallsLayout {
+                pages: layout_pages(&m),
+                back: back_action(&m)
+                    .map(|a| ipc_back(&deckpilot_calls::driver::settings_of(&a.parameters)))
+                    .unwrap_or_default(),
                 model: m.model,
                 layout: m.layout.id.to_string(),
                 name: m.layout.name,
@@ -468,6 +604,15 @@ impl Agent {
                     shown: views.iter().any(|v| v.visible),
                     suspended: views.iter().any(|v| v.suspended),
                 }
+            })
+            .collect();
+        // The controls' support changes with the provider, not with the
+        // stored layout: filled in now, not cached.
+        let layouts = layouts
+            .into_iter()
+            .map(|mut layout| {
+                layout.pages = with_support(layout.pages, &snapshot.capabilities);
+                layout
             })
             .collect();
         deckpilot_ipc::calls::CallsStatus {
@@ -516,6 +661,60 @@ impl Agent {
             .set_device_enabled(&mut self.runtime, device, on, now);
         self.render_all();
         self.calls_publish();
+        Ok(deckpilot_ipc::Response::CallsStatus {
+            status: Box::new(self.calls_status()),
+        })
+    }
+
+    /// `setCallsBackToWork`: the *Back to work* settings of `model`'s
+    /// managed layout, written as the parameters of its "Back to work"
+    /// action (a user edit: the layout counts as edited), loaded into the
+    /// driver and used from the next press.
+    pub(super) fn set_calls_back_to_work(
+        &mut self,
+        model: &DeviceModelId,
+        back: &deckpilot_ipc::calls::BackToWork,
+    ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
+        use deckpilot_ipc::{ErrorCode, IpcError};
+        if self.calls.service.is_none() {
+            return Err(not_installed());
+        }
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| IpcError::new(ErrorCode::Locked, "the configuration is locked"))?;
+        let managed = store
+            .managed_layout(OWNER, model)
+            .map_err(|error| IpcError::new(ErrorCode::Failed, error.to_string()))?
+            .ok_or_else(no_layout)?;
+        let action = back_action(&managed).ok_or_else(no_layout)?;
+        let settings = engine_back(
+            back,
+            deckpilot_calls::driver::settings_of(&action.parameters),
+        );
+        store
+            .set_managed_action_parameters(
+                OWNER,
+                model,
+                action.id,
+                &deckpilot_calls::driver::parameters_of(&settings),
+            )
+            .map_err(|error| match error {
+                deckpilot_storage::StorageError::UnknownLayout => no_layout(),
+                other => IpcError::new(ErrorCode::Failed, other.to_string()),
+            })?;
+        // Loaded again from the store (the edited layout is kept as it is).
+        if let Some(service) = self.calls.service.as_mut() {
+            service.seeded.remove(model);
+        }
+        self.calls_seed_connected();
+        if let Some(now) = self.calls_now()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.sync(&mut self.runtime, now);
+        }
+        self.render_all();
+        self.calls_layouts_changed();
         Ok(deckpilot_ipc::Response::CallsStatus {
             status: Box::new(self.calls_status()),
         })
