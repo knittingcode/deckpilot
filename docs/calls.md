@@ -177,6 +177,11 @@ The agent's `PLUGIN_API` is not moved by this change, and the privileged
 policy has no `deckpilot.calls` entry yet: both are the owner's release
 steps. Until then no plugin can be granted `calls`, and the ops are inert.
 
+The independent reviews of the Calls work, their findings, fixes and the
+accepted residual risks are recorded in
+[the Calls security review record](marketplace/reviews/2026-11-25-calls-security-review.md)
+(C8).
+
 **The gate.** Before anything is sent, `ops::gate` checks, in this order:
 
 1. the provider is connected and the call is not `unknown`, else
