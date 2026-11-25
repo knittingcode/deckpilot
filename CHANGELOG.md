@@ -107,6 +107,10 @@ released either. 0.6.0 is the first version intended for publication.
   it is trusted or what it may do. An imported script arrives untrusted
   with no permissions, and nothing runs on import; the import window
   says so.
+- The agent runs a script only from the active profile and only while it
+  is trusted; its permissions are read again at every step. Scripts see
+  each repository's remotes, with the connection and the provider's
+  repository they are linked to.
 
 ### Changed
 

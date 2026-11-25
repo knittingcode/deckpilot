@@ -18,10 +18,11 @@ Status:
 - in place (P7, part 1): the script store (schema 16) with its
   machine-local trust and grants, and the trust lifecycle
   (`docs/data-model.md`, "Scripts");
-- next: portability of scripts, the agent's script host, the Scripts
-  page (P7), the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8);
-  until the agent's script host lands every run ends with
-  `scriptMissing`.
+- in place (P7, parts 2 and 3): scripts in exports and imports (never
+  their trust or grants), and the agent's script store as the bridge's
+  host, with the repositories' remotes (K4);
+- next: the Scripts page (P7), the agent's `PLUGIN_API` 1.13 and the
+  bundled plugin (P8).
 
 ## Operations
 
@@ -217,7 +218,19 @@ path, a file's content or an environment value.
 - `script.sleep` waits in 25 ms slices, at most the run's time left.
 - `project.list` and `project.repositories` need `projects.read`, answer
   the active profile only, and give a repository's folder only with
-  `repositories.paths`.
+  `repositories.paths`. A repository's `remotes` (decision K4) list every
+  remote, the primary first as stored: `name`, `primary`, `url`,
+  `defaultBranch`, the `connectionId` of the Git Providers connection it
+  is linked to on this computer and the provider's `remoteRepositoryId`.
+  Both ids are in script objects only, never in text variables. `remote`
+  (the primary's `url` and `defaultBranch`) stays for older guests.
+- The agent's script store answers a run (`service/plugin_scripts.rs`):
+  the run's script of the **active profile** (the profile whose key or
+  workflow runs it), only while it is trusted (otherwise
+  `scriptNeedsReview`, and no grants; a script the profile does not have
+  is `scriptMissing`), its grants read again at every call, and nothing
+  while DeckPilot is locked. A repository's folder is its machine
+  binding's, canonical, and only when it is an existing folder.
 
 ## The file system
 

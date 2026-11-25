@@ -31,8 +31,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 use deckpilot_core::script_grants::ScriptGrants;
-use deckpilot_core::{Project, ScriptId};
+use deckpilot_core::{MachineConfig, ProfileId, Project, ScriptId};
 use deckpilot_plugin_abi::scripts::{ScriptFault, ScriptSettings, codes};
+use deckpilot_storage::SqliteStore;
 use deckpilot_storage::scripts::ScriptForRun;
 
 use super::{Agent, Command, SecurityState};
@@ -125,25 +126,8 @@ impl Agent {
     /// thread.
     pub(super) fn plugin_script(&mut self, query: ScriptQuery) -> ScriptAnswer {
         match query {
-            ScriptQuery::Grants(id) => ScriptAnswer::Grants(match self.run_view(&id) {
-                Ok(ScriptForRun::Runnable { grants, .. }) => Some(*grants),
-                _ => None,
-            }),
-            ScriptQuery::Load(id) => ScriptAnswer::Load(match self.run_view(&id) {
-                Ok(ScriptForRun::Runnable { script, .. }) => Ok(StoredScript {
-                    source: script.source,
-                    settings: ScriptSettings {
-                        timeout_ms: u64::from(script.settings.timeout_ms),
-                        stop_on_error: script.settings.stop_on_error,
-                        memory_mib: script.settings.memory_mib,
-                    },
-                }),
-                Ok(ScriptForRun::NeedsReview) => Err(ScriptFault::new(
-                    codes::SCRIPT_NEEDS_REVIEW,
-                    "the script is not trusted: review it on the Scripts page",
-                )),
-                Err(refusal) => Err(refusal),
-            }),
+            ScriptQuery::Grants(id) => ScriptAnswer::Grants(grants_of(self.run_view(&id))),
+            ScriptQuery::Load(id) => ScriptAnswer::Load(load_of(self.run_view(&id))),
             ScriptQuery::Projects => ScriptAnswer::Projects(self.run_projects()),
             ScriptQuery::Project(id) => ScriptAnswer::Project(self.run_project(id.as_deref())),
         }
@@ -154,13 +138,9 @@ impl Agent {
         if self.security != SecurityState::Unlocked {
             return Err(ScriptFault::new(codes::UNAVAILABLE, "DeckPilot is locked"));
         }
-        let id: ScriptId = id.parse().map_err(|_| missing())?;
         let profile = self.runtime.profile().ok_or_else(missing)?.id;
         let store = self.store().map_err(|_| unavailable())?;
-        store
-            .script_for_run(profile, id)
-            .map_err(|_| ScriptFault::new(codes::HOST_ERROR, "the script store failed"))?
-            .ok_or_else(missing)
+        view_in(store, profile, id)
     }
 
     fn run_projects(&self) -> Result<Vec<RunProject>, Refusal> {
@@ -176,7 +156,7 @@ impl Agent {
         Ok(profile
             .projects
             .iter()
-            .map(|p| self.run_project_of(p))
+            .map(|p| run_project_of(p, self.runtime.machine()))
             .collect())
     }
 
@@ -199,52 +179,90 @@ impl Agent {
                 .active_project_id()
                 .and_then(|id| profile.project(id)),
         };
-        Ok(project.map(|p| self.run_project_of(p)))
-    }
-
-    /// A project as a run sees it: its repositories, each with its folder
-    /// here (canonical, an existing folder, or none) and its remotes.
-    fn run_project_of(&self, project: &Project) -> RunProject {
-        let machine = self.runtime.machine();
-        let default = project.default_repository().map(|r| r.id);
-        RunProject {
-            id: project.id.to_string(),
-            key: project.key.as_str().to_owned(),
-            name: project.name.clone(),
-            repositories: project
-                .effective_repositories()
-                .iter()
-                .map(|r| RunRepository {
-                    id: r.id.to_string(),
-                    key: r.key.as_str().to_owned(),
-                    name: r.name.clone(),
-                    description: r.description.clone(),
-                    is_default: Some(r.id) == default,
-                    folder: machine
-                        .binding(&r.resource)
-                        .filter(|b| b.kind == deckpilot_core::ResourceKind::Directory)
-                        .and_then(|b| canonical(&PathBuf::from(&b.value)).ok())
-                        .filter(|p| p.is_dir()),
-                    remote: r.primary_remote().map(|remote| {
-                        deckpilot_plugin_abi::scripts::RepositoryRemote {
-                            url: remote.remote_url.clone(),
-                            default_branch: remote.default_branch.clone(),
-                        }
-                    }),
-                    remotes: r
-                        .remotes
-                        .iter()
-                        .map(|remote| RunRemote {
-                            name: remote.name.clone(),
-                            primary: remote.primary,
-                            url: remote.remote_url.clone(),
-                            default_branch: remote.default_branch.clone(),
-                            connection_id: remote.connection_id.clone(),
-                            remote_repository_id: remote.remote_repository_id.clone(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-        }
+        Ok(project.map(|p| run_project_of(p, self.runtime.machine())))
     }
 }
+
+/// A project as a run sees it: its repositories, each with its folder
+/// here (canonical, an existing folder, or none) and its remotes.
+fn run_project_of(project: &Project, machine: &MachineConfig) -> RunProject {
+    let default = project.default_repository().map(|r| r.id);
+    RunProject {
+        id: project.id.to_string(),
+        key: project.key.as_str().to_owned(),
+        name: project.name.clone(),
+        repositories: project
+            .effective_repositories()
+            .iter()
+            .map(|r| RunRepository {
+                id: r.id.to_string(),
+                key: r.key.as_str().to_owned(),
+                name: r.name.clone(),
+                description: r.description.clone(),
+                is_default: Some(r.id) == default,
+                folder: machine
+                    .binding(&r.resource)
+                    .filter(|b| b.kind == deckpilot_core::ResourceKind::Directory)
+                    .and_then(|b| canonical(&PathBuf::from(&b.value)).ok())
+                    .filter(|p| p.is_dir()),
+                remote: r.primary_remote().map(|remote| {
+                    deckpilot_plugin_abi::scripts::RepositoryRemote {
+                        url: remote.remote_url.clone(),
+                        default_branch: remote.default_branch.clone(),
+                    }
+                }),
+                remotes: r
+                    .remotes
+                    .iter()
+                    .map(|remote| RunRemote {
+                        name: remote.name.clone(),
+                        primary: remote.primary,
+                        url: remote.remote_url.clone(),
+                        default_branch: remote.default_branch.clone(),
+                        connection_id: remote.connection_id.clone(),
+                        remote_repository_id: remote.remote_repository_id.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+/// Script `id` of `profile` in `store`, as a run may see it.
+fn view_in(store: &SqliteStore, profile: ProfileId, id: &str) -> Result<ScriptForRun, Refusal> {
+    let id: ScriptId = id.parse().map_err(|_| missing())?;
+    store
+        .script_for_run(profile, id)
+        .map_err(|_| ScriptFault::new(codes::HOST_ERROR, "the script store failed"))?
+        .ok_or_else(missing)
+}
+
+/// The grants of a run: only a trusted script's.
+fn grants_of(view: Result<ScriptForRun, Refusal>) -> Option<ScriptGrants> {
+    match view {
+        Ok(ScriptForRun::Runnable { grants, .. }) => Some(*grants),
+        _ => None,
+    }
+}
+
+/// What `script.load` gets: a trusted script's source and settings, or
+/// why not.
+fn load_of(view: Result<ScriptForRun, Refusal>) -> Result<StoredScript, Refusal> {
+    match view? {
+        ScriptForRun::Runnable { script, .. } => Ok(StoredScript {
+            source: script.source,
+            settings: ScriptSettings {
+                timeout_ms: u64::from(script.settings.timeout_ms),
+                stop_on_error: script.settings.stop_on_error,
+                memory_mib: script.settings.memory_mib,
+            },
+        }),
+        ScriptForRun::NeedsReview => Err(ScriptFault::new(
+            codes::SCRIPT_NEEDS_REVIEW,
+            "the script is not trusted: review it on the Scripts page",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests;
