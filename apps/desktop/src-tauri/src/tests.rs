@@ -5482,3 +5482,312 @@ fn open_keys_preview_the_icon_of_what_they_open() {
         .remove("appearance");
     assert_eq!(symbol(&layout), "file");
 }
+
+/// A stand-in agent on `paths`' endpoint for one scenario: it answers the
+/// handshake, reports the plugin runtime available, lists `connections`
+/// for `listPluginConnections`, acknowledges a reload, and records every
+/// request it gets. Nothing else is answered (an error), so a test sees
+/// any request the command should not have made.
+struct StubAgent {
+    /// Holds the listener's task; dropping it stops the stand-in.
+    _runtime: tokio::runtime::Runtime,
+    requests: Arc<std::sync::Mutex<Vec<deckpilot_ipc::Request>>>,
+}
+
+impl StubAgent {
+    fn start(
+        paths: &AgentPaths,
+        connections: deckpilot_ipc::connections::PluginConnections,
+    ) -> Self {
+        use deckpilot_ipc::framing::{FrameReader, write_message};
+        use deckpilot_ipc::plugins::PluginRuntimeStatus;
+        use deckpilot_ipc::{ClientMessage, ErrorCode, IpcError, Request, Response, ServerMessage};
+        use interprocess::local_socket::tokio::prelude::*;
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        paths.create_dirs().unwrap();
+        deckpilot_ipc::token::create(&paths.token_file).unwrap();
+        let listener = runtime
+            .block_on(async { paths.endpoint().listen() })
+            .unwrap();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        runtime.spawn(async move {
+            while let Ok(stream) = listener.accept().await {
+                let seen = seen.clone();
+                let connections = connections.clone();
+                tokio::spawn(async move {
+                    let (read, mut write) = tokio::io::split(stream);
+                    let mut reader = FrameReader::new(tokio::io::BufReader::new(read));
+                    while let Ok(Some(message)) = reader.read_message::<ClientMessage>().await {
+                        let answer = match message {
+                            ClientMessage::Hello { protocol, .. } => ServerMessage::Welcome {
+                                protocol,
+                                agent_version: "stub".into(),
+                                capabilities: Vec::new(),
+                            },
+                            ClientMessage::Request { id, request } => {
+                                seen.lock().unwrap().push(request.clone());
+                                let response = match request {
+                                    Request::GetPluginRuntime => Some(Response::PluginRuntime {
+                                        status: Box::new(PluginRuntimeStatus {
+                                            available: true,
+                                            built: true,
+                                            enabled: true,
+                                            execution_supported: true,
+                                            platform: "macos".into(),
+                                            reason: None,
+                                            registry: None,
+                                            features: Vec::new(),
+                                        }),
+                                    }),
+                                    Request::ListPluginConnections { .. } => {
+                                        Some(Response::PluginConnections {
+                                            connections: Box::new(connections.clone()),
+                                        })
+                                    }
+                                    Request::ReloadConfiguration => Some(Response::Ok),
+                                    _ => None,
+                                };
+                                match response {
+                                    Some(response) => ServerMessage::Response { id, response },
+                                    None => ServerMessage::Error {
+                                        id: Some(id),
+                                        error: IpcError {
+                                            code: ErrorCode::InvalidRequest,
+                                            message: "not answered by the stub agent".into(),
+                                            reason: None,
+                                        },
+                                    },
+                                }
+                            }
+                        };
+                        if write_message(&mut write, &answer).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        Self {
+            _runtime: runtime,
+            requests,
+        }
+    }
+
+    /// The requests other than the handshake's runtime check and reloads.
+    fn requests(&self) -> Vec<deckpilot_ipc::Request> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| {
+                !matches!(
+                    r,
+                    deckpilot_ipc::Request::GetPluginRuntime
+                        | deckpilot_ipc::Request::ReloadConfiguration
+                )
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+/// `link_repository_remote` end to end, as the Link remote dialog calls it:
+/// through the command layer, against an agent that lists the plugin's
+/// connections. A link is stored only for a connection on this computer
+/// that is turned on, has a token and is of the id's provider; every
+/// refusal leaves the profile exactly as it was, and the command never
+/// asks the agent for anything but the connections.
+// A single end-to-end scenario reads better than artificially split helpers.
+#[allow(clippy::too_many_lines)]
+#[test]
+fn a_remote_is_linked_only_to_a_usable_connection_of_its_provider() {
+    use deckpilot_ipc::connections::{
+        ConnectionDeployment, ConnectionState, PluginConnection, PluginConnections,
+    };
+
+    const PLUGIN: &str = "deckpilot.git-providers";
+    const GITLAB: &str = "cn_01JD7Q0000000000000000000A";
+    const OFF: &str = "cn_01JD7Q0000000000000000000B";
+    const NO_TOKEN: &str = "cn_01JD7Q0000000000000000000C";
+    const GITHUB: &str = "cn_01JD7Q0000000000000000000D";
+    const ELSEWHERE: &str = "cn_01JD7Q0000000000000000000E";
+    let connection = |id: &str, type_id: &str, enabled: bool, has_secret: bool| PluginConnection {
+        id: id.into(),
+        type_id: type_id.into(),
+        display_name: format!("{type_id} {id}"),
+        deployment: ConnectionDeployment::SelfHosted,
+        api_url: "https://code.example.com/api/v4".into(),
+        web_url: "https://code.example.com".into(),
+        allow_changes: false,
+        private_network: false,
+        enabled,
+        state: ConnectionState::Ok,
+        state_detail: None,
+        account: None,
+        capabilities: None,
+        is_default: false,
+        has_secret,
+        secret_updated_at: None,
+        created_at: 0,
+    };
+
+    let h = Harness::new();
+    let agent = StubAgent::start(
+        &h.paths,
+        PluginConnections {
+            plugin: PLUGIN.into(),
+            granted: true,
+            private_network_allowed: false,
+            changes_allowed: false,
+            types: Vec::new(),
+            connections: vec![
+                connection(GITLAB, "gitlab", true, true),
+                connection(OFF, "gitlab", false, true),
+                connection(NO_TOKEN, "gitlab", true, false),
+                connection(GITHUB, "github", true, true),
+            ],
+        },
+    );
+    let work = new_profile(&h, "Work");
+    let shop = h.ok(
+        "create_project",
+        json!({ "profileId": work, "project": { "key": "SHOP", "name": "Online Shop",
+            "resources": { "repository": "shop.repository" } } }),
+    );
+    let shop_id = shop["id"].as_str().unwrap().to_owned();
+    let derived = deckpilot_core::RepositoryId::derived(shop_id.parse().unwrap()).to_string();
+    let profile = || h.ok("get_profile", json!({ "profileId": work }))["profile"].clone();
+    let link = |remote: Value| {
+        h.call(
+            "link_repository_remote",
+            json!({ "profileId": work, "projectId": shop_id, "repositoryId": derived,
+                "plugin": PLUGIN, "remote": remote }),
+        )
+    };
+    // As the app answers it: `primary` only when set.
+    let remote = |name: &str, connection: &str, id: &str, primary: bool| {
+        let mut remote = json!({ "name": name, "connectionId": connection,
+            "remoteRepositoryId": id, "remoteUrl": "https://code.example.com/group/app.git",
+            "defaultBranch": "main" });
+        if primary {
+            remote["primary"] = json!(true);
+        }
+        remote
+    };
+
+    // A confirmed link to a usable GitLab connection is stored with the
+    // derived repository (R3), exactly as confirmed.
+    let origin = remote("origin", GITLAB, "gl:4711", true);
+    let saved = link(origin.clone()).unwrap();
+    assert_eq!(saved["id"], json!(derived));
+    assert_eq!(saved["remotes"], json!([origin]));
+    let stored = profile();
+    assert_eq!(
+        stored["projects"][0]["repositories"][0]["remotes"],
+        json!([origin])
+    );
+    // The command asked the agent for the plugin's connections, nothing else.
+    assert_eq!(
+        agent.requests(),
+        vec![deckpilot_ipc::Request::ListPluginConnections {
+            plugin: PLUGIN.into()
+        }]
+    );
+
+    // A second link merges by name with what is stored now: a new primary
+    // clears the old one; a link of the same name replaces it.
+    let upstream = remote("upstream", GITHUB, "gh:123456789", true);
+    let saved = link(upstream.clone()).unwrap();
+    let mut demoted = origin.clone();
+    demoted.as_object_mut().unwrap().remove("primary");
+    assert_eq!(saved["remotes"], json!([demoted, upstream]));
+    let replaced = remote("origin", GITLAB, "gl:9", false);
+    let saved = link(replaced.clone()).unwrap();
+    assert_eq!(saved["remotes"], json!([upstream, replaced]));
+
+    // Refusals: each one leaves the profile exactly as it was.
+    let before = profile();
+    let refusals = [
+        // Not on this computer.
+        (
+            remote("fork", ELSEWHERE, "gl:1", false),
+            "not on this computer",
+        ),
+        // Turned off, or without a token.
+        (
+            remote("fork", OFF, "gl:1", false),
+            "turned off or has no token",
+        ),
+        (
+            remote("fork", NO_TOKEN, "gl:1", false),
+            "turned off or has no token",
+        ),
+        // An id of another provider than the connection's.
+        (
+            remote("fork", GITLAB, "gh:1", false),
+            "not of the connection's provider",
+        ),
+        (
+            remote("fork", GITHUB, "gl:1", false),
+            "not of the connection's provider",
+        ),
+        // A name is never an id (K2), even on a usable connection.
+        (remote("fork", GITLAB, "group/app", false), ""),
+        // A URL with a password (K2).
+        (
+            json!({ "name": "fork", "connectionId": GITLAB, "remoteRepositoryId": "gl:1",
+                "remoteUrl": "https://user:pw@code.example.com/group/app.git" }),
+            "",
+        ),
+        // A link names both its connection and the provider's id.
+        (
+            json!({ "name": "fork", "connectionId": GITLAB }),
+            "names a connection",
+        ),
+        (
+            json!({ "name": "fork", "remoteRepositoryId": "gl:1" }),
+            "names a connection",
+        ),
+    ];
+    for (remote, message) in refusals {
+        let error = link(remote.clone()).expect_err(&remote.to_string());
+        let error = error.as_str().unwrap_or_default().to_owned();
+        assert!(error.contains(message), "{remote}: {error}");
+        assert_eq!(profile(), before, "{remote}");
+    }
+    // An unknown project or repository changes nothing either.
+    for (project, repository) in [
+        (
+            deckpilot_core::ProjectId::new().to_string(),
+            derived.clone(),
+        ),
+        (
+            shop_id.clone(),
+            deckpilot_core::RepositoryId::new().to_string(),
+        ),
+    ] {
+        h.call(
+            "link_repository_remote",
+            json!({ "profileId": work, "projectId": project, "repositoryId": repository,
+                "plugin": PLUGIN, "remote": remote("fork", GITLAB, "gl:1", false) }),
+        )
+        .unwrap_err();
+        assert_eq!(profile(), before);
+    }
+    // Only connection lists were ever asked for: no other request, no
+    // profile write through the agent (K3: the app writes the link).
+    assert!(
+        agent.requests().iter().all(|r| matches!(
+            r,
+            deckpilot_ipc::Request::ListPluginConnections { plugin } if plugin == PLUGIN
+        )),
+        "{:?}",
+        agent.requests()
+    );
+}
