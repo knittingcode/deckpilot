@@ -440,6 +440,10 @@
         "write": "A personal, project or group access token with the api scope."
       },
       "generic": "A token with the least permissions the plugin needs."
+    },
+    "turnOffDialog": {
+      "title": "Turn off {{name}}?",
+      "description": "Keys and workflows that use it stop working until you turn it on again, including actions that are running now. Its token stays on this computer."
     }
   }
 }

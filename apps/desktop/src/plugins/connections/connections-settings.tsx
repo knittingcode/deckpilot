@@ -220,6 +220,7 @@ function ConnectionRow({
   const [busy, setBusy] = useState(false)
   const [replacing, setReplacing] = useState(false)
   const [removing, setRemoving] = useState(false)
+  const [turningOff, setTurningOff] = useState(false)
   const state = STATES[connection.state]
   const run = async (work: () => Promise<void>) => {
     setBusy(true)
@@ -290,11 +291,15 @@ function ConnectionRow({
         size="sm"
         variant="outline"
         disabled={busy}
-        onClick={() =>
+        onClick={() => {
+          if (connection.enabled) {
+            setTurningOff(true)
+            return
+          }
           void run(async () => {
-            onChanged(await client.update(plugin, connection.id, { enabled: !connection.enabled }))
+            onChanged(await client.update(plugin, connection.id, { enabled: true }))
           })
-        }
+        }}
       >
         {connection.enabled ? t("plugins:connections.turnOff") : t("plugins:connections.turnOn")}
       </Button>
@@ -320,6 +325,17 @@ function ConnectionRow({
           }}
         />
       )}
+      <ConfirmDialog
+        open={turningOff}
+        onOpenChange={setTurningOff}
+        title={t("plugins:connections.turnOffDialog.title", { name: connection.displayName })}
+        description={t("plugins:connections.turnOffDialog.description")}
+        confirmLabel={t("plugins:connections.turnOff")}
+        onConfirm={async () => {
+          onChanged(await client.update(plugin, connection.id, { enabled: false }))
+        }}
+        describeError={errorText}
+      />
       <ConfirmDialog
         open={removing}
         onOpenChange={setRemoving}

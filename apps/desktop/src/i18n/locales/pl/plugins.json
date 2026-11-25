@@ -462,6 +462,10 @@
         "write": "Osobisty token dostępu, token projektu lub grupy z zakresem api."
       },
       "generic": "Token z najmniejszymi uprawnieniami, których potrzebuje wtyczka."
+    },
+    "turnOffDialog": {
+      "title": "Wyłączyć {{name}}?",
+      "description": "Klawisze i przepływy, które go używają, przestaną działać do ponownego włączenia, także akcje uruchomione teraz. Jego token pozostaje na tym komputerze."
     }
   }
 }

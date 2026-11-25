@@ -255,14 +255,34 @@ describe("Settings › Connections", () => {
       expect(client.setSecret).toHaveBeenCalledWith(PLUGIN, "cn_01JD7Q0000000000000000000A", TOKEN)
     })
     expect(document.body).not.toHaveTextContent(TOKEN)
+    // Opened again, the field is empty.
+    await user.click(s.getByRole("button", { name: "Replace token" }))
+    const again = within(
+      await screen.findByRole("dialog", { name: "New token for octo @ github.com" }),
+    )
+    expect(again.getByLabelText("Token")).toHaveValue("")
+    await user.click(again.getByRole("button", { name: "Cancel" }))
 
+    // Turning off is confirmed first: it stops running actions.
     await user.click(s.getByRole("button", { name: "Turn off" }))
+    const off = within(await screen.findByRole("alertdialog"))
+    expect(client.update).not.toHaveBeenCalled()
+    await user.click(off.getByRole("button", { name: "Turn off" }))
     await waitFor(() => {
       expect(client.update).toHaveBeenCalledWith(PLUGIN, "cn_01JD7Q0000000000000000000A", {
         enabled: false,
       })
     })
     expect(await s.findByText("Turned off")).toBeInTheDocument()
+
+    // Cancelling a removal removes nothing.
+    await user.click(s.getByRole("button", { name: "Remove" }))
+    const cancel = within(await screen.findByRole("alertdialog"))
+    await user.click(cancel.getByRole("button", { name: "Cancel" }))
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+    })
+    expect(client.remove).not.toHaveBeenCalled()
 
     await user.click(s.getByRole("button", { name: "Remove" }))
     const confirm = within(await screen.findByRole("alertdialog"))
@@ -271,6 +291,69 @@ describe("Settings › Connections", () => {
       expect(client.remove).toHaveBeenCalledWith(PLUGIN, "cn_01JD7Q0000000000000000000A")
     })
     expect(await s.findByText("No connections yet.")).toBeInTheDocument()
+  })
+
+  it("sends a private network only when ticked, never for the public service", async () => {
+    const { client, user } = setup()
+    await user.click(within(await section()).getByRole("button", { name: "Add connection" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Add a connection" }))
+    await user.click(dialog.getByRole("radio", { name: "GitLab" }))
+    await user.click(dialog.getByRole("radio", { name: "Self-managed GitLab" }))
+    await user.type(dialog.getByLabelText("Server address"), "https://10.0.0.5")
+    await user.click(
+      dialog.getByRole("checkbox", { name: "This server is on my company or home network" }),
+    )
+    // Another provider: the server and its consent start over.
+    await user.click(dialog.getByRole("radio", { name: "GitHub" }))
+    await user.click(dialog.getByRole("radio", { name: "GitHub Enterprise Server" }))
+    expect(dialog.getByLabelText("Server address")).toHaveValue("")
+    expect(
+      dialog.getByRole("checkbox", { name: "This server is on my company or home network" }),
+    ).not.toBeChecked()
+    await user.type(dialog.getByLabelText("Server address"), "https://10.0.0.5")
+    await user.click(
+      dialog.getByRole("checkbox", { name: "This server is on my company or home network" }),
+    )
+    // The public service: never a private network.
+    await user.click(dialog.getByRole("radio", { name: "github.com" }))
+    expect(dialog.queryByRole("checkbox")).not.toBeInTheDocument()
+    await user.type(dialog.getByLabelText("Token"), TOKEN)
+    await user.click(dialog.getByRole("button", { name: "Add and test" }))
+    await waitFor(() => {
+      expect(client.create).toHaveBeenCalled()
+    })
+    expect(client.create).toHaveBeenCalledWith(
+      PLUGIN,
+      expect.objectContaining({ deployment: "cloud", privateNetwork: false, url: undefined }),
+    )
+  })
+
+  it("sends a private network for a self-hosted server when ticked", async () => {
+    const { client, user } = setup()
+    await user.click(within(await section()).getByRole("button", { name: "Add connection" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Add a connection" }))
+    await user.click(dialog.getByRole("radio", { name: "GitHub Enterprise Server" }))
+    await user.type(dialog.getByLabelText("Server address"), "https://10.0.0.5")
+    await user.click(
+      dialog.getByRole("checkbox", { name: "This server is on my company or home network" }),
+    )
+    await user.type(dialog.getByLabelText("Token"), TOKEN)
+    await user.click(dialog.getByRole("button", { name: "Add and test" }))
+    await waitFor(() => {
+      expect(client.create).toHaveBeenCalledWith(
+        PLUGIN,
+        expect.objectContaining({ deployment: "selfHosted", privateNetwork: true }),
+      )
+    })
+  })
+
+  it("offers no private network when the plugin may not reach one", async () => {
+    const { user } = setup(connections({ privateNetworkAllowed: false }))
+    await user.click(within(await section()).getByRole("button", { name: "Add connection" }))
+    const dialog = within(await screen.findByRole("dialog", { name: "Add a connection" }))
+    await user.click(dialog.getByRole("radio", { name: "GitHub Enterprise Server" }))
+    expect(dialog.getByLabelText("Server address")).toBeInTheDocument()
+    expect(dialog.queryByRole("checkbox")).not.toBeInTheDocument()
   })
 
   it("reports a failed test with the plugin's reason", async () => {

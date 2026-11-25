@@ -148,6 +148,9 @@ export function AddConnectionDialog({
                 setTypeId(value)
                 const next = data.types.find((ty) => ty.id === value)
                 setDeployment(next?.cloudApiUrl ? "cloud" : "selfHosted")
+                // A consent is for one server: never carried to another.
+                setServer("")
+                setPrivateNetwork(false)
               }}
             >
               {data.types.map((ty) => (
@@ -167,7 +170,10 @@ export function AddConnectionDialog({
               aria-labelledby={`${id}-where`}
               value={deployment}
               onValueChange={(value) => {
-                if (value) setDeployment(value as ConnectionDeployment)
+                if (!value) return
+                setDeployment(value as ConnectionDeployment)
+                setServer("")
+                setPrivateNetwork(false)
               }}
             >
               <ToggleGroupItem value="cloud">
@@ -191,6 +197,8 @@ export function AddConnectionDialog({
               spellCheck={false}
               onChange={(e) => {
                 setServer(e.target.value)
+                // Another server: its private network is asked again.
+                setPrivateNetwork(false)
               }}
             />
             <p className="text-caption text-muted-foreground">
