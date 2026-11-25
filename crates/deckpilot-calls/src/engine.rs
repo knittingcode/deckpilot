@@ -26,9 +26,10 @@ use std::time::Duration;
 use crate::clock::Instant;
 use crate::ops::{GateError, GateInput, Plan, gate};
 use crate::provider::{
-    CallAction, CallCommand, CallKey, CallKind, CallObservation, CapabilitySet, CommandOutcome,
-    CommandRefusal, CommandToken, ConsentState, Direction, DisconnectReason, Evidence, ObservedEnd,
-    ObservedPhase, Private, ProviderEvent, ProviderId, ProviderSession, Tri, UnsupportedReason,
+    CallAction, CallCommand, CallKey, CallKind, CallObservation, Capability, CapabilitySet,
+    CommandOutcome, CommandRefusal, CommandToken, ConsentState, Direction, DisconnectReason,
+    Evidence, ObservedEnd, ObservedPhase, Private, ProviderEvent, ProviderId, ProviderSession, Tri,
+    UnsupportedReason,
 };
 use crate::snapshot::{CallSnapshot, CallState, EndCause, FailureCode};
 
@@ -43,6 +44,19 @@ mod proptests;
 /// Most call tracks the engine holds. Beyond it a new call is not
 /// tracked (a provider flooding calls cannot grow the engine).
 pub const MAX_TRACKS: usize = 4;
+
+/// Most operating-system observations waiting for [`Timeouts::infer_on`].
+/// Beyond it a new one is dropped (and reported as an overflow).
+pub const MAX_CANDIDATES: usize = 8;
+
+/// Most calls remembered after their track went, so that a late
+/// observation of an ended call does not bring it back.
+pub const MAX_ENDED_MARKS: usize = 16;
+
+/// Most events kept between two [`Engine::drain_events`]; beyond it the
+/// oldest go (the caller drains after every step, so this is a bound, not
+/// a queue).
+pub const MAX_EVENTS: usize = 256;
 
 /// The engine's timeouts. [`Timeouts::default`] is the normative set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,8 +193,6 @@ struct Pending {
     /// The microphone or camera state that confirms a toggle or a set.
     wanted: Option<bool>,
     deadline: Instant,
-    /// The provider confirmed it; still waiting for the observation.
-    acknowledged: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -207,11 +219,31 @@ struct Track {
     signal_lost_at: Option<Instant>,
     pending: Option<Pending>,
     unconfirmed_until: Option<Instant>,
+    /// When it ended or failed (engine clock).
+    ended_at: Option<Instant>,
+}
+
+/// What is remembered of an ended call: its last observation's time and
+/// when it ended. An observation made before either is late; one made at
+/// the same instant or after is a new call.
+#[derive(Debug, Clone, Copy)]
+struct EndMark {
+    observed: Instant,
+    at: Instant,
+}
+
+impl EndMark {
+    fn is_late(self, obs: &CallObservation) -> bool {
+        obs.observed_at < self.observed || obs.observed_at < self.at
+    }
 }
 
 #[derive(Debug, Clone)]
 struct Provider {
     session: Option<ProviderSession>,
+    /// What the host registered: a provider's own `Capabilities` event can
+    /// narrow it, never widen it.
+    registered: CapabilitySet,
     capabilities: CapabilitySet,
     consent: ConsentState,
     missing_reported: bool,
@@ -232,6 +264,8 @@ pub struct Engine {
     providers: BTreeMap<ProviderId, Provider>,
     tracks: Vec<Track>,
     candidates: BTreeMap<(ProviderId, CallKey), Candidate>,
+    /// Calls whose track went ([`MAX_ENDED_MARKS`]).
+    ended: BTreeMap<(ProviderId, CallKey), EndMark>,
     next_track: u64,
     next_serial: u64,
     next_session: u64,
@@ -256,6 +290,7 @@ impl Engine {
             providers: BTreeMap::new(),
             tracks: Vec::new(),
             candidates: BTreeMap::new(),
+            ended: BTreeMap::new(),
             next_track: 1,
             next_serial: 1,
             next_session: 1,
@@ -280,22 +315,59 @@ impl Engine {
     // ------------------------------------------------------------ providers
 
     /// Adds a provider (not connected yet), with its consents and
-    /// capabilities. Adding one again updates them.
+    /// capabilities. Adding one again updates them. A consent withdrawn
+    /// takes effect at once: without `observe` its calls end as lost and
+    /// nothing it observed is kept; without `titles` their titles go;
+    /// without `control` their pending commands end unconfirmed.
     pub fn add_provider(
         &mut self,
         id: ProviderId,
         consent: ConsentState,
         capabilities: CapabilitySet,
     ) {
+        self.apply_consent(&id, consent);
         let entry = self.providers.entry(id).or_insert(Provider {
             session: None,
+            registered: capabilities.clone(),
             capabilities: capabilities.clone(),
             consent,
             missing_reported: false,
         });
         entry.consent = consent;
+        entry.registered = capabilities.clone();
         entry.capabilities = capabilities;
         self.generation += 1;
+    }
+
+    /// Applies `consent` to what the engine holds of provider `id`.
+    fn apply_consent(&mut self, id: &ProviderId, consent: ConsentState) {
+        if !consent.observe {
+            self.candidates.retain(|(p, _), _| p != id);
+        }
+        // There is no clock here: a withdrawn consent ends calls at the
+        // instant they last changed, which is in the past.
+        for index in 0..self.tracks.len() {
+            if &self.tracks[index].provider != id {
+                continue;
+            }
+            if !consent.titles {
+                self.tracks[index].title = None;
+            }
+            if !consent.control || !consent.observe {
+                self.fail_pending(index);
+            }
+            if !consent.observe && self.tracks[index].state.is_live() {
+                let at = self.tracks[index].last_seen;
+                self.enter(
+                    index,
+                    CallState::Ended {
+                        cause: EndCause::Lost,
+                    },
+                    at,
+                );
+            }
+        }
+        self.after_change();
     }
 
     /// Removes a provider (disabled, consent withdrawn): its calls end as
@@ -305,6 +377,7 @@ impl Engine {
             return;
         }
         self.candidates.retain(|(p, _), _| p != id);
+        self.ended.retain(|(p, _), _| p != id);
         for index in 0..self.tracks.len() {
             if &self.tracks[index].provider == id && self.tracks[index].state.is_live() {
                 self.fail_pending(index);
@@ -341,12 +414,20 @@ impl Engine {
         match event {
             ProviderEvent::Connected { session } => self.connected(id, session),
             ProviderEvent::Disconnected { reason } => self.disconnected(id, reason, now),
+            // Narrowed to what the host registered: a detection-only
+            // provider cannot make itself controllable.
             ProviderEvent::Capabilities(set) => {
                 if let Some(provider) = self.providers.get_mut(id) {
-                    provider.capabilities = set;
+                    provider.capabilities = set.narrowed_to(&provider.registered);
+                    self.generation += 1;
                 }
             }
-            ProviderEvent::Call(observation) => self.observe(id, observation, now),
+            ProviderEvent::Call(observation) => {
+                // Nothing is observed without the user's consent.
+                if self.providers.get(id).is_some_and(|p| p.consent.observe) {
+                    self.observe(id, observation, now);
+                }
+            }
             ProviderEvent::CallGone { key } => self.gone(id, &key, now),
             ProviderEvent::CommandOutcome { token, outcome } => {
                 self.outcome(id, token, outcome, now);
@@ -365,7 +446,7 @@ impl Engine {
             && !provider.missing_reported
         {
             provider.missing_reported = true;
-            self.events.push(EngineEvent::MissingCapabilities {
+            self.emit(EngineEvent::MissingCapabilities {
                 provider: id.clone(),
                 count,
             });
@@ -426,10 +507,71 @@ impl Engine {
             obs.title = None;
         }
         match self.find(id, &obs.key) {
-            Some(index) if self.tracks[index].state.is_live() => self.update(index, obs, now),
-            // A new call, or one that ended and is seen again: a new track.
-            _ => self.start(id, obs, now),
+            Some(index) if self.tracks[index].state.is_live() => {
+                // Older than what the track already shows: out of order.
+                if obs.observed_at < self.tracks[index].observed_at {
+                    return;
+                }
+                self.update(index, obs, now);
+            }
+            Some(index) => {
+                let track = &self.tracks[index];
+                let mark = EndMark {
+                    observed: track.observed_at,
+                    at: track.ended_at.unwrap_or(track.entered),
+                };
+                // A late observation of the ended call does not revive it;
+                // one made after its end is a new call.
+                if !mark.is_late(&obs) {
+                    self.start(id, obs, now);
+                }
+            }
+            None => {
+                let late = self
+                    .ended
+                    .get(&(id.clone(), obs.key.clone()))
+                    .is_some_and(|mark| mark.is_late(&obs));
+                if !late {
+                    self.start(id, obs, now);
+                }
+            }
         }
+    }
+
+    /// Remembers the call of track `index`, which is going.
+    fn remember_end(&mut self, index: usize) {
+        let track = &self.tracks[index];
+        let mark = EndMark {
+            observed: track.observed_at,
+            at: track.ended_at.unwrap_or(track.entered),
+        };
+        let key = (track.provider.clone(), track.key.clone());
+        self.ended.insert(key, mark);
+        while self.ended.len() > MAX_ENDED_MARKS {
+            let oldest = self
+                .ended
+                .iter()
+                .min_by_key(|(_, m)| m.at)
+                .map(|(k, _)| k.clone());
+            match oldest {
+                Some(key) => self.ended.remove(&key),
+                None => break,
+            };
+        }
+    }
+
+    /// Removes track `index`, remembering its call.
+    fn drop_track(&mut self, index: usize) {
+        self.remember_end(index);
+        self.tracks.remove(index);
+    }
+
+    /// Keeps `event` for [`Engine::drain_events`], at most [`MAX_EVENTS`].
+    fn emit(&mut self, event: EngineEvent) {
+        if self.events.len() >= MAX_EVENTS {
+            self.events.remove(0);
+        }
+        self.events.push(event);
     }
 
     /// A call the engine does not track yet.
@@ -452,8 +594,12 @@ impl Engine {
         // Operating-system evidence must hold for a moment first.
         if to == CallState::Active && obs.source == Evidence::OsSignal {
             let key = (id.clone(), obs.key.clone());
+            let full = self.candidates.len() >= MAX_CANDIDATES;
             match self.candidates.get_mut(&key) {
                 Some(candidate) => {
+                    if obs.observed_at < candidate.observation.observed_at {
+                        return;
+                    }
                     candidate.observation = obs;
                     if now.since(candidate.first_seen) < self.timeouts.infer_on {
                         return;
@@ -462,6 +608,11 @@ impl Engine {
                     if let Some(candidate) = candidate {
                         self.create(id, candidate.observation, CallState::Active, now);
                     }
+                }
+                None if full => {
+                    self.emit(EngineEvent::Overflow {
+                        provider: id.clone(),
+                    });
                 }
                 None => {
                     self.candidates.insert(
@@ -482,9 +633,9 @@ impl Engine {
         // Ended and failed tracks make room first.
         if self.tracks.len() >= MAX_TRACKS {
             if let Some(index) = self.tracks.iter().position(|t| !t.state.is_live()) {
-                self.tracks.remove(index);
+                self.drop_track(index);
             } else {
-                self.events.push(EngineEvent::Overflow {
+                self.emit(EngineEvent::Overflow {
                     provider: id.clone(),
                 });
                 return;
@@ -508,6 +659,7 @@ impl Engine {
             signal_lost_at: None,
             pending: None,
             unconfirmed_until: None,
+            ended_at: None,
         };
         self.next_track += 1;
         self.tracks.push(track);
@@ -664,11 +816,19 @@ impl Engine {
             serial: self.next_serial,
         };
         self.next_serial += 1;
+        // A microphone or camera command is confirmed only by a state the
+        // app itself reports: without a readable state there is nothing
+        // that could confirm it, and it ends unconfirmed.
+        let reads = |capability| provider.capabilities.get(capability).allows_command();
         let wanted = match action {
-            CallAction::MicSet { muted } => Some(muted),
-            CallAction::MicToggle => track.mic.known().map(|m| !m),
-            CallAction::CameraSet { on } => Some(on),
-            CallAction::CameraToggle => track.camera.known().map(|c| !c),
+            CallAction::MicSet { muted } if reads(Capability::MicReadState) => Some(muted),
+            CallAction::MicToggle if reads(Capability::MicReadState) => {
+                track.mic.known().map(|m| !m)
+            }
+            CallAction::CameraSet { on } if reads(Capability::CameraReadState) => Some(on),
+            CallAction::CameraToggle if reads(Capability::CameraReadState) => {
+                track.camera.known().map(|c| !c)
+            }
             _ => None,
         };
         let request = Request::Send {
@@ -685,7 +845,6 @@ impl Engine {
             action,
             wanted,
             deadline: now.after(self.timeouts.command_max),
-            acknowledged: false,
         });
         track.unconfirmed_until = None;
         self.generation += 1;
@@ -704,7 +863,7 @@ impl Engine {
             CommandRefusal::UnknownCall => "unknown-call",
             CommandRefusal::Busy => "busy",
         };
-        self.events.push(EngineEvent::CommandDone {
+        self.emit(EngineEvent::CommandDone {
             token,
             end: CommandEnd::Rejected { code: code.into() },
         });
@@ -739,9 +898,6 @@ impl Engine {
         match outcome {
             CommandOutcome::Confirmed => {
                 let action = self.tracks[index].pending.as_ref().map(|p| p.action);
-                if let Some(pending) = self.tracks[index].pending.as_mut() {
-                    pending.acknowledged = true;
-                }
                 // Ending a call is confirmed by the provider itself.
                 if action == Some(CallAction::End)
                     && matches!(self.tracks[index].state, CallState::Active)
@@ -777,12 +933,18 @@ impl Engine {
             ),
             CallAction::CancelOutgoing => matches!(track.state, CallState::Ended { .. }),
             CallAction::End => matches!(track.state, CallState::Ending | CallState::Ended { .. }),
+            // Only the app's own report confirms: an inferred or
+            // operating-system state never does.
             CallAction::MicToggle | CallAction::MicSet { .. } => {
-                pending.wanted.is_some_and(|w| track.mic == Tri::Known(w))
+                track.evidence == Evidence::AppApi
+                    && pending.wanted.is_some_and(|w| track.mic == Tri::Known(w))
             }
-            CallAction::CameraToggle | CallAction::CameraSet { .. } => pending
-                .wanted
-                .is_some_and(|w| track.camera == Tri::Known(w)),
+            CallAction::CameraToggle | CallAction::CameraSet { .. } => {
+                track.evidence == Evidence::AppApi
+                    && pending
+                        .wanted
+                        .is_some_and(|w| track.camera == Tri::Known(w))
+            }
         };
         if done {
             self.finish_pending(index, CommandEnd::Confirmed);
@@ -794,7 +956,7 @@ impl Engine {
 
     fn finish_pending(&mut self, index: usize, end: CommandEnd) {
         if let Some(pending) = self.tracks[index].pending.take() {
-            self.events.push(EngineEvent::CommandDone {
+            self.emit(EngineEvent::CommandDone {
                 token: pending.token,
                 end,
             });
@@ -826,13 +988,16 @@ impl Engine {
         if to == CallState::Active {
             track.connected_at = Some(now);
         }
+        if !to.is_live() {
+            track.ended_at = Some(now);
+        }
         let event = EngineEvent::Transition {
             track: track.id,
             provider: track.provider.clone(),
             from,
             to: to.clone(),
         };
-        self.events.push(event);
+        self.emit(event);
         self.generation += 1;
         // Meeting to meeting: a newly active call ends the provider's other
         // active ones.
@@ -868,7 +1033,7 @@ impl Engine {
             CallState::Connecting => after(t.connect_max),
             CallState::Ending => after(t.ending_max),
             CallState::Active => Some(track.last_seen.after(t.active_max)),
-            CallState::Unknown => after(if self.inferred_evidence() {
+            CallState::Unknown => after(if self.inferred_evidence(&track.provider) {
                 t.inferred_max
             } else {
                 t.stale_max
@@ -888,11 +1053,13 @@ impl Engine {
         .min()
     }
 
-    /// Whether a connected provider shows an active call from
-    /// operating-system signals (an unknown call may still be going on).
-    fn inferred_evidence(&self) -> bool {
+    /// Whether provider `provider`, connected, shows an active call from
+    /// operating-system signals (an unknown call of it may still be going
+    /// on). Another provider's signals say nothing about it.
+    fn inferred_evidence(&self, provider: &ProviderId) -> bool {
         self.tracks.iter().any(|t| {
-            t.evidence == Evidence::OsSignal
+            &t.provider == provider
+                && t.evidence == Evidence::OsSignal
                 && t.state == CallState::Active
                 && t.signal_lost_at.is_none()
                 && self
@@ -948,6 +1115,9 @@ impl Engine {
                 && now >= lost.after(t.infer_off)
             {
                 self.tracks[index].signal_lost_at = None;
+                // The call went by itself: a command waiting on it did not
+                // happen.
+                self.fail_pending(index);
                 self.enter(
                     index,
                     CallState::Ended {
@@ -971,7 +1141,7 @@ impl Engine {
                     cause: EndCause::Left,
                 }),
                 CallState::Unknown => {
-                    let limit = if self.inferred_evidence() {
+                    let limit = if self.inferred_evidence(&track.provider) {
                         t.inferred_max
                     } else {
                         t.stale_max
@@ -981,12 +1151,12 @@ impl Engine {
                     })
                 }
                 CallState::Ended { .. } if elapsed >= t.ended_show => {
-                    self.tracks.remove(index);
+                    self.drop_track(index);
                     self.generation += 1;
                     continue;
                 }
                 CallState::Failed { .. } if elapsed >= t.failed_show => {
-                    self.tracks.remove(index);
+                    self.drop_track(index);
                     self.generation += 1;
                     continue;
                 }
@@ -1070,26 +1240,27 @@ impl Engine {
     /// title only with the provider's opt-in (it is dropped from
     /// observations otherwise).
     pub fn snapshot(&self) -> CallSnapshot {
-        let Some(index) = self.focus_index() else {
-            let capabilities = self.providers.values().next().map_or_else(
+        // Controls only with the control consent, with or without a call.
+        let shown = |p: Option<&Provider>| {
+            p.map_or_else(
                 || CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
-                |p| p.capabilities.clone(),
-            );
+                |p| {
+                    if p.consent.control {
+                        p.capabilities.clone()
+                    } else {
+                        p.capabilities
+                            .without_control(UnsupportedReason::ConsentNotGiven)
+                    }
+                },
+            )
+        };
+        let Some(index) = self.focus_index() else {
+            let capabilities = shown(self.providers.values().next());
             return CallSnapshot::idle(capabilities, self.generation);
         };
         let track = &self.tracks[index];
         let provider = self.providers.get(&track.provider);
-        let capabilities = provider.map_or_else(
-            || CapabilitySet::none(UnsupportedReason::ProviderHasNoApi),
-            |p| {
-                if p.consent.control {
-                    p.capabilities.clone()
-                } else {
-                    p.capabilities
-                        .without_control(UnsupportedReason::ConsentNotGiven)
-                }
-            },
-        );
+        let capabilities = shown(provider);
         let observation = CallObservation {
             key: track.key.clone(),
             kind: track.kind,

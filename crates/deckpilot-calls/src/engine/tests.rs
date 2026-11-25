@@ -1001,3 +1001,390 @@ fn since_stays_while_the_state_does() {
     assert_eq!(h.engine.snapshot().since, since);
     assert_eq!(since, 1000);
 }
+
+// ------------------------------------------------------- review (#452)
+
+fn observation_at(call: &str, phase: ObservedPhase, at: Instant) -> CallObservation {
+    CallObservation {
+        key: key(call),
+        kind: CallKind::OneToOne,
+        phase,
+        direction: None,
+        mic_muted: Tri::Unknown,
+        camera_on: Tri::Unknown,
+        title: None,
+        source: Evidence::AppApi,
+        observed_at: at,
+    }
+}
+
+/// A late or out-of-order observation neither revives an ended call
+/// (while it lingers and after it went) nor overwrites newer state; an
+/// observation made after the end is a new call.
+#[test]
+fn late_observations_do_not_revive_or_overwrite() {
+    let mut h = Harness::new();
+    h.at(1);
+    h.event(ProviderEvent::Call(CallObservation {
+        mic_muted: Tri::Known(true),
+        ..observation_at("a", P::Connected, Instant::from_secs(1))
+    }));
+    h.at(3);
+    // Older than what the track shows: dropped.
+    h.event(ProviderEvent::Call(CallObservation {
+        mic_muted: Tri::Known(false),
+        ..observation_at("a", P::Connected, Instant::ZERO)
+    }));
+    assert_eq!(h.engine.snapshot().mic_muted, Tri::Known(true));
+    h.event(ProviderEvent::Call(observation_at(
+        "a",
+        P::Ended {
+            cause: ObservedEnd::Left,
+        },
+        Instant::from_secs(3),
+    )));
+    assert_eq!(h.ended(), Some(EndCause::Left));
+    // A connected observation made before the end, arriving late.
+    h.event(ProviderEvent::Call(observation_at(
+        "a",
+        P::Connected,
+        Instant::from_secs(2),
+    )));
+    assert_eq!(h.ended(), Some(EndCause::Left), "lingering: not revived");
+    h.at(10);
+    assert_eq!(h.state(), CallState::Idle);
+    h.event(ProviderEvent::Call(observation_at(
+        "a",
+        P::Connected,
+        Instant::from_secs(2),
+    )));
+    assert_eq!(h.state(), CallState::Idle, "gone: not revived");
+    // Made after the end: a new call.
+    h.event(ProviderEvent::Call(observation_at(
+        "a",
+        P::Connected,
+        Instant::from_secs(10),
+    )));
+    assert_eq!(h.state(), CallState::Active);
+}
+
+/// A call that went without an observation (gone) is not revived by an
+/// observation made before it went.
+#[test]
+fn an_observation_from_before_a_gone_call_is_late() {
+    let mut h = Harness::new();
+    h.see("a", P::Ringing, Some(In));
+    h.at(4);
+    h.gone("a");
+    assert_eq!(h.ended(), Some(EndCause::Missed));
+    h.event(ProviderEvent::Call(CallObservation {
+        direction: Some(In),
+        ..observation_at("a", P::Ringing, Instant::from_secs(2))
+    }));
+    assert_eq!(h.ended(), Some(EndCause::Missed));
+}
+
+fn detection_only() -> CapabilitySet {
+    CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| {
+        let support = match c {
+            Capability::DetectMeeting => Support::Inferred,
+            _ => Support::Unsupported {
+                reason: UnsupportedReason::ProviderHasNoApi,
+            },
+        };
+        (c, support)
+    }))
+    .0
+}
+
+/// A mic or camera command is never confirmed from an inferred state or
+/// operating-system evidence: only the app's own report confirms it.
+#[test]
+fn inferred_state_never_confirms_a_toggle() {
+    // The state can be read only by inference: nothing can confirm.
+    let caps = CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| {
+        let support = match c {
+            Capability::MicReadState | Capability::CameraReadState => Support::Inferred,
+            _ => Support::Supported,
+        };
+        (c, support)
+    }))
+    .0;
+    let mut h = Harness::with(MOCK, caps);
+    h.see_full(
+        "a",
+        P::Connected,
+        None,
+        Tri::Known(false),
+        Tri::Known(false),
+        Evidence::AppApi,
+    );
+    let mic = h.send(CallAction::MicToggle);
+    h.at(1);
+    h.see_full(
+        "a",
+        P::Connected,
+        None,
+        Tri::Known(true),
+        Tri::Known(false),
+        Evidence::AppApi,
+    );
+    h.at(6);
+    assert_eq!(h.done(), [(mic, CommandEnd::Unconfirmed)]);
+
+    // Readable state, but the confirming observation is an OS signal.
+    let mut h = Harness::new();
+    h.see_full(
+        "a",
+        P::Connected,
+        None,
+        Tri::Known(false),
+        Tri::Known(false),
+        Evidence::AppApi,
+    );
+    let camera = h.send(CallAction::CameraToggle);
+    h.at(1);
+    h.see_full(
+        "a",
+        P::Connected,
+        None,
+        Tri::Known(false),
+        Tri::Known(true),
+        Evidence::OsSignal,
+    );
+    assert_eq!(h.done().len(), 0, "not confirmed by a signal");
+    h.at(6);
+    assert_eq!(h.done(), [(camera, CommandEnd::Unconfirmed)]);
+}
+
+/// Operating-system observations waiting to be believed are bounded.
+#[test]
+fn candidates_are_bounded() {
+    let mut h = Harness::with(ProviderId::OS_SIGNALS, all_supported());
+    for n in 0..(MAX_CANDIDATES * 4) {
+        h.see_full(
+            &format!("c{n}"),
+            P::Connected,
+            None,
+            Tri::Unknown,
+            Tri::Unknown,
+            Evidence::OsSignal,
+        );
+    }
+    assert_eq!(h.engine.candidates.len(), MAX_CANDIDATES);
+    assert!(
+        h.engine
+            .drain_events()
+            .iter()
+            .any(|e| matches!(e, EngineEvent::Overflow { .. }))
+    );
+}
+
+/// A detection-only provider (like Teams) cannot widen itself at runtime:
+/// its `Capabilities` event is clamped to what the host registered, and
+/// every action is refused.
+#[test]
+fn a_detection_only_provider_cannot_make_itself_controllable() {
+    let mut h = Harness::with(ProviderId::OS_SIGNALS, detection_only());
+    h.event(ProviderEvent::Capabilities(all_supported()));
+    h.see_full(
+        "teams",
+        P::Connected,
+        None,
+        Tri::Known(false),
+        Tri::Known(false),
+        Evidence::OsSignal,
+    );
+    h.at(3);
+    assert_eq!(h.state(), CallState::Active);
+    assert!(!h.engine.snapshot().capabilities.controls_anything());
+    for action in [
+        CallAction::Answer,
+        CallAction::Reject,
+        CallAction::CancelOutgoing,
+        CallAction::End,
+        CallAction::MicToggle,
+        CallAction::MicSet { muted: true },
+        CallAction::CameraToggle,
+        CallAction::CameraSet { on: false },
+    ] {
+        let result = h.engine.request(action, h.now);
+        assert!(result.is_err(), "{action:?}: {result:?}");
+    }
+    // Narrowing still works.
+    h.event(ProviderEvent::Capabilities(CapabilitySet::none(
+        UnsupportedReason::ProviderHasNoApi,
+    )));
+    assert_eq!(
+        h.engine
+            .snapshot()
+            .capabilities
+            .get(Capability::DetectMeeting),
+        Support::Unsupported {
+            reason: UnsupportedReason::ProviderHasNoApi
+        }
+    );
+}
+
+/// Nothing is observed without the observe consent, and withdrawing it
+/// ends the provider's calls and drops what it observed; withdrawing the
+/// title consent scrubs titles.
+#[test]
+fn observations_need_the_observe_consent() {
+    let mut engine = Engine::default();
+    let mock = pid(MOCK);
+    let without = ConsentState {
+        observe: false,
+        control: false,
+        titles: false,
+    };
+    engine.add_provider(mock.clone(), without, all_supported());
+    engine.on_event(
+        &mock,
+        ProviderEvent::Connected {
+            session: ProviderSession(1),
+        },
+        Instant::ZERO,
+    );
+    engine.on_event(
+        &mock,
+        ProviderEvent::Call(observation_at("a", P::Connected, Instant::ZERO)),
+        Instant::ZERO,
+    );
+    assert_eq!(engine.tracks().len(), 0, "not observed without consent");
+
+    let mut h = Harness::new();
+    h.engine.add_provider(
+        pid(MOCK),
+        ConsentState {
+            titles: true,
+            ..consent()
+        },
+        all_supported(),
+    );
+    h.event(ProviderEvent::Call(CallObservation {
+        title: Some(Private::new("Standup".to_owned())),
+        ..observation_at("a", P::Connected, Instant::ZERO)
+    }));
+    let token = h.send(CallAction::End);
+    // Titles withdrawn: scrubbed from the track.
+    h.engine.add_provider(pid(MOCK), consent(), all_supported());
+    assert!(h.engine.tracks.iter().all(|t| t.title.is_none()));
+    // Observe withdrawn: the call ends as lost, its command unconfirmed.
+    h.engine.add_provider(pid(MOCK), without, all_supported());
+    assert_eq!(h.ended(), Some(EndCause::Lost));
+    assert_eq!(h.done(), [(token, CommandEnd::Unconfirmed)]);
+    assert!(!matches!(h.engine.overlay(), OverlayIntent::Shown { .. }));
+    h.at(1);
+    h.see("b", P::Connected, None);
+    assert!(h.engine.tracks().iter().all(|(_, s)| !s.is_live()));
+}
+
+/// A command waiting on an inferred call that goes by itself ends as
+/// unconfirmed (it is not left without an end).
+#[test]
+fn a_command_on_an_inferred_call_that_goes_ends_unconfirmed() {
+    let mut h = Harness::with(ProviderId::OS_SIGNALS, all_supported());
+    h.see_full(
+        "teams",
+        P::Connected,
+        None,
+        Tri::Unknown,
+        Tri::Unknown,
+        Evidence::OsSignal,
+    );
+    h.at(3);
+    assert_eq!(h.state(), CallState::Active);
+    let token = h.send(CallAction::End);
+    h.engine.drain_events();
+    h.gone("teams");
+    // The command's own deadline is later than infer_off here.
+    h.engine.timeouts.command_max = Duration::from_secs(60);
+    h.engine.tracks[0].pending.as_mut().unwrap().deadline = h.now.after(Duration::from_secs(60));
+    h.at(12);
+    assert!(matches!(h.ended(), Some(EndCause::Unknown)));
+    assert_eq!(h.done(), [(token, CommandEnd::Unconfirmed)]);
+}
+
+/// With no call, the snapshot shows no control without the control
+/// consent.
+#[test]
+fn the_idle_snapshot_shows_no_control_without_consent() {
+    let mut engine = Engine::default();
+    engine.add_provider(
+        pid(MOCK),
+        ConsentState {
+            observe: true,
+            control: false,
+            titles: false,
+        },
+        all_supported(),
+    );
+    assert_eq!(engine.snapshot().state, CallState::Idle);
+    assert!(!engine.snapshot().capabilities.controls_anything());
+}
+
+/// One provider's signals do not keep another provider's unknown call
+/// alive past the stale timeout.
+#[test]
+fn inferred_evidence_is_per_provider() {
+    let mut engine = Engine::default();
+    let os = pid(ProviderId::OS_SIGNALS);
+    let mock = pid(MOCK);
+    for id in [&os, &mock] {
+        engine.add_provider(id.clone(), consent(), all_supported());
+        engine.on_event(
+            id,
+            ProviderEvent::Connected {
+                session: ProviderSession(1),
+            },
+            Instant::ZERO,
+        );
+    }
+    engine.on_event(
+        &os,
+        ProviderEvent::Call(CallObservation {
+            source: Evidence::OsSignal,
+            ..observation_at("teams", P::Connected, Instant::ZERO)
+        }),
+        Instant::ZERO,
+    );
+    engine.tick(Instant::from_secs(3));
+    engine.on_event(
+        &mock,
+        ProviderEvent::Call(observation_at("a", P::Connected, Instant::from_secs(3))),
+        Instant::from_secs(3),
+    );
+    engine.on_event(
+        &mock,
+        ProviderEvent::Call(observation_at("a", P::Unknown, Instant::from_secs(4))),
+        Instant::from_secs(4),
+    );
+    let stale = engine.timeouts().stale_max.as_secs();
+    engine.tick(Instant::from_secs(4 + stale));
+    let states: Vec<CallState> = engine.tracks().into_iter().map(|(_, s)| s).collect();
+    assert!(
+        states.contains(&CallState::Ended {
+            cause: EndCause::Lost
+        }),
+        "{states:?}"
+    );
+}
+
+/// The event list is bounded between drains.
+#[test]
+fn events_are_bounded() {
+    let mut h = Harness::new();
+    for n in 0..(MAX_EVENTS as u64) {
+        h.at(n * 10);
+        h.see(&format!("a{}", n % 3), P::Connected, None);
+        h.see(
+            &format!("a{}", n % 3),
+            P::Ended {
+                cause: ObservedEnd::Left,
+            },
+            None,
+        );
+    }
+    assert!(h.engine.drain_events().len() <= MAX_EVENTS);
+}
