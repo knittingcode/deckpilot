@@ -60,6 +60,11 @@ on:
   schedule:
     # Nightly, 03:17 UTC (off the hour, when runners are less busy).
     - cron: "17 3 * * *"
+  # A merge queue group (gh-readonly-queue/main/...): the Changed paths job
+  # diffs the group against its base, so the packages are built only when
+  # the group changes packaging paths. Inert until the merge queue is on.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       prerelease:
@@ -125,6 +130,8 @@ jobs:
       - id: paths
         env:
           EVENT_NAME: ${{ github.event_name }}
+          # Merge groups: diff against the group's base commit.
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: tools/ci/changed-paths.sh
 
   # Builds the Linux .deb, AppImage and .rpm with the release configuration
@@ -481,3 +488,25 @@ jobs:
       # exactly the host), on fake bundles signed ad hoc.
       - name: Entitlement policy (fake bundles)
         run: tools/ci/test-check-macos-entitlements.sh "$RUNNER_TEMP/entitlements-test"
+
+  # One check that always reports, whatever ran: success when every package
+  # job passed or was skipped (no packaging path changed), failure when one
+  # failed, was cancelled or the path check failed. A check that can be
+  # required (or waited for) without blocking pull requests that skip the
+  # packages.
+  result:
+    name: Packaging result
+    needs: [changes, package-linux, install-linux, package-windows, package-macos]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every package job passed or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null \
+            || { echo "::error::a package job did not pass"; exit 1; }
+          echo "$RESULTS" | jq -e '.changes.result == "success"' > /dev/null \
+            || { echo "::error::the changed paths were not determined"; exit 1; }
