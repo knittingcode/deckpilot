@@ -45,6 +45,24 @@ impl Clone for Protected {
     }
 }
 
+/// The private folders' identities for one call.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Identities {
+    private: Vec<FileId>,
+    holders: Vec<FileId>,
+}
+
+impl Identities {
+    /// Whether the open folder `dir` is a private folder (or, with
+    /// `holding`, holds one).
+    pub fn forbids_handle(&self, dir: &cap_std::fs::Dir, holding: bool) -> bool {
+        let Some(id) = handle_id(dir) else {
+            return false;
+        };
+        self.private.contains(&id) || (holding && self.holders.contains(&id))
+    }
+}
+
 /// A folder's identity: its volume (`dev`, the volume serial on Windows)
 /// and its file number (`ino`, the file index on Windows), from an open
 /// handle.
@@ -287,35 +305,52 @@ impl Protected {
         (private, holders)
     }
 
+    /// The identities as they are now, for one call (learned once per
+    /// call, not per folder it opens).
+    pub fn identities_now(&self) -> Identities {
+        let (private, holders) = self.identities();
+        Identities { private, holders }
+    }
+
+    #[cfg(test)]
     /// Whether the open folder `dir` is a private folder (or, with
     /// `holding`, holds one).
     pub fn forbids_handle(&self, dir: &cap_std::fs::Dir, holding: bool) -> bool {
-        let Some(id) = handle_id(dir) else {
-            return false;
-        };
-        let (private, holders) = self.identities();
-        private.contains(&id) || (holding && holders.contains(&id))
+        self.identities_now().forbids_handle(dir, holding)
     }
 
-    /// Whether the open folder `dir`, or a folder above it (walked up
-    /// through its own `..`, handle by handle), is a private folder.
-    pub fn forbids_above(&self, dir: &cap_std::fs::Dir) -> bool {
+    /// Whether the open folder `dir` (at `path`), or a folder above it
+    /// (walked up through its own `..`, handle by handle), is a private
+    /// folder. A walk that cannot finish (no file numbers, a parent that
+    /// cannot be opened) falls back to `path` by identity and text.
+    pub fn forbids_above(&self, dir: &cap_std::fs::Dir, path: &Path) -> bool {
+        // Inside or at a private folder (holding one is the operation's
+        // own check, on the folder it changes as a whole).
+        let inside = || self.private.iter().any(|p| starts_with(path, p));
         let (private, _) = self.identities();
         if private.is_empty() {
-            return false;
+            return inside();
         }
+        let fallback = || {
+            inside()
+                || canonical(path).is_ok_and(|real| {
+                    real.ancestors()
+                        .filter_map(folder_id)
+                        .any(|id| private.contains(&id))
+                })
+        };
         let Ok(mut current) = dir.try_clone() else {
             return true;
         };
         for _ in 0..256 {
             let Some(id) = handle_id(&current) else {
-                return false;
+                return fallback();
             };
             if private.contains(&id) {
                 return true;
             }
             let Ok(parent) = current.open_parent_dir(cap_std::ambient_authority()) else {
-                return false;
+                return fallback();
             };
             if handle_id(&parent) == Some(id) {
                 return false;

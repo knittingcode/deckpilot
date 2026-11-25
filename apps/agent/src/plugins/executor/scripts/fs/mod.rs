@@ -77,7 +77,7 @@ const READ_REPLY_ROOM: usize = (1 << 20) - 4096;
 thread_local! {
     /// The protected folders of the call this thread carries out (set by
     /// [`Guard::enter`] for the call's duration).
-    static GUARD: std::cell::RefCell<Option<std::sync::Arc<protected::Protected>>> =
+    static GUARD: std::cell::RefCell<Option<protected::Identities>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -87,8 +87,10 @@ thread_local! {
 pub(crate) struct Guard;
 
 impl Guard {
-    pub fn enter(protected: std::sync::Arc<protected::Protected>) -> Self {
-        GUARD.with(|g| *g.borrow_mut() = Some(protected));
+    /// The private folders' identities as they are now, for this call.
+    pub fn enter(protected: &protected::Protected) -> Self {
+        let identities = protected.identities_now();
+        GUARD.with(|g| *g.borrow_mut() = Some(identities));
         Self
     }
 }
@@ -106,7 +108,7 @@ pub(crate) fn check_handle(dir: &Dir, holding: bool, shown: &str) -> Result<(), 
     let refused = GUARD.with(|g| {
         g.borrow()
             .as_ref()
-            .is_none_or(|p| p.forbids_handle(dir, holding))
+            .is_none_or(|ids| ids.forbids_handle(dir, holding))
     });
     if refused {
         Err(fault(
@@ -120,15 +122,124 @@ pub(crate) fn check_handle(dir: &Dir, holding: bool, shown: &str) -> Result<(), 
     }
 }
 
-/// Opens `names` below `dir`, each a folder (a relative link inside it
-/// may be followed, never out of it), each checked by its identity.
-pub(crate) fn open_follow(dir: &Dir, names: &[String], shown: &str) -> Result<Dir, ScriptFault> {
-    let mut current = dir.try_clone().map_err(|e| failure(&e, shown))?;
-    for name in names {
-        current = current.open_dir(name).map_err(|e| failure(&e, shown))?;
-        check_handle(&current, false, shown)?;
+/// Links one walk follows at most.
+const MAX_LINK_HOPS: u32 = 40;
+
+/// Walks `names` below `root` one folder at a time, never through the
+/// file system's own link resolution: each folder is opened without
+/// following and checked by its identity, and a link is followed by hand,
+/// only when relative and never above `root` (P7 blocker 1 of #469, its
+/// review's H1). The final name is left to the caller, followed through
+/// links when `follow_last`. Returns the folder that holds the final name
+/// and that name (`None`: the walk ends at a folder, the returned one).
+pub(crate) fn walk(
+    root: &Dir,
+    names: &[String],
+    follow_last: bool,
+    shown: &str,
+) -> Result<(Dir, Option<String>), ScriptFault> {
+    let escape = || {
+        fault(
+            codes::SYMLINK_ESCAPE,
+            format!("“{shown}” leads outside its scope through a link"),
+        )
+    };
+    let mut stack = vec![root.try_clone().map_err(|e| failure(&e, shown))?];
+    let mut queue: std::collections::VecDeque<String> = names.iter().cloned().collect();
+    let mut hops = 0;
+    while let Some(name) = queue.pop_front() {
+        match name.as_str() {
+            "" | "." => continue,
+            ".." => {
+                if stack.len() == 1 {
+                    return Err(escape());
+                }
+                stack.pop();
+                continue;
+            }
+            _ => {}
+        }
+        let last = queue.is_empty();
+        let current = stack.last().expect("never empty");
+        let meta = match current.symlink_metadata(&name) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && last => {
+                let dir = current.try_clone().map_err(|e| failure(&e, shown))?;
+                return Ok((dir, Some(name)));
+            }
+            Err(e) => return Err(failure(&e, shown)),
+        };
+        if meta.file_type().is_symlink() && (!last || follow_last) {
+            hops += 1;
+            if hops > MAX_LINK_HOPS {
+                return Err(fault(codes::LIMIT, format!("“{shown}”: too many links")));
+            }
+            let target = current
+                .read_link_contents(&name)
+                .map_err(|e| failure(&e, shown))?;
+            let mut parts = Vec::new();
+            for component in target.components() {
+                match component {
+                    std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+                    std::path::Component::ParentDir => parts.push("..".into()),
+                    std::path::Component::CurDir => {}
+                    _ => return Err(escape()),
+                }
+            }
+            for part in parts.into_iter().rev() {
+                queue.push_front(part);
+            }
+            continue;
+        }
+        if last {
+            let dir = current.try_clone().map_err(|e| failure(&e, shown))?;
+            return Ok((dir, Some(name)));
+        }
+        if !meta.is_dir() {
+            return Err(fault(
+                codes::INVALID_ARGUMENT,
+                format!("“{shown}”: a part of the path is not a folder"),
+            ));
+        }
+        let next = current
+            .open_dir_nofollow(&name)
+            .map_err(|e| failure(&e, shown))?;
+        check_handle(&next, false, shown)?;
+        stack.push(next);
     }
-    Ok(current)
+    let dir = stack.pop().expect("never empty");
+    Ok((dir, None))
+}
+
+/// The folder `names` lead to below `dir` ([`walk`], links followed by
+/// hand), checked by its identity (with `holding`, also that it holds no
+/// private folder).
+pub(crate) fn open_follow(
+    dir: &Dir,
+    names: &[String],
+    holding: bool,
+    shown: &str,
+) -> Result<Dir, ScriptFault> {
+    let (parent, last) = walk(dir, names, true, shown)?;
+    let folder = match last {
+        None => parent,
+        Some(name) => {
+            let meta = parent
+                .symlink_metadata(&name)
+                .map_err(|e| failure(&e, shown))?;
+            if !meta.is_dir() {
+                return Err(fault(
+                    codes::INVALID_ARGUMENT,
+                    format!("“{shown}” is not a folder"),
+                ));
+            }
+            parent
+                .open_dir_nofollow(&name)
+                .map_err(|e| failure(&e, shown))?
+        }
+    };
+    check_handle(&folder, holding, shown)?;
+    Ok(folder)
 }
 
 /// Whether a name is `.git` (OD-6), as the file system compares it.
@@ -167,7 +278,7 @@ pub(super) fn call(
     notes: &mut Notes,
 ) -> Result<Value, ScriptFault> {
     use CapabilityRequest as R;
-    let _guard = Guard::enter(call.run.protected.clone());
+    let _guard = Guard::enter(&call.run.protected);
     let project = project(call)?;
     let fs = Fs {
         call,
@@ -619,30 +730,26 @@ impl Fs<'_> {
 
     fn exists(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let t = self.resolve(path, FsAccess::Read, notes)?;
-        let exists = match t.rel.split_last() {
-            None => true,
-            Some((last, parents)) => match open_follow(&t.root, parents, &t.shown()) {
-                Ok(parent) => match parent.symlink_metadata(last) {
-                    Ok(_) => true,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-                    Err(e) => return Err(failure(&e, &t.shown())),
-                },
-                Err(f) if f.code == codes::NOT_FOUND => false,
-                Err(f) => return Err(f),
+        let exists = match walk(&t.root, &t.rel, false, &t.shown()) {
+            Ok((_, None)) => true,
+            Ok((parent, Some(last))) => match parent.symlink_metadata(&last) {
+                Ok(_) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => return Err(failure(&e, &t.shown())),
             },
+            Err(f) if f.code == codes::NOT_FOUND => false,
+            Err(f) => return Err(f),
         };
         Ok(json!({ "exists": exists }))
     }
 
     fn stat(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let t = self.resolve(path, FsAccess::Read, notes)?;
-        let meta = match t.rel.split_last() {
-            None => t.root.dir_metadata(),
-            Some((last, parents)) => match open_follow(&t.root, parents, &t.shown()) {
-                Ok(parent) => parent.symlink_metadata(last),
-                Err(f) if f.code == codes::NOT_FOUND => return Ok(json!({ "stat": null })),
-                Err(f) => return Err(f),
-            },
+        let meta = match walk(&t.root, &t.rel, false, &t.shown()) {
+            Ok((dir, None)) => dir.dir_metadata(),
+            Ok((parent, Some(last))) => parent.symlink_metadata(&last),
+            Err(f) if f.code == codes::NOT_FOUND => return Ok(json!({ "stat": null })),
+            Err(f) => return Err(f),
         };
         let stat = match meta {
             Ok(meta) => Some(FsStat {
@@ -658,8 +765,7 @@ impl Fs<'_> {
 
     fn list(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let t = self.resolve(path, FsAccess::Read, notes)?;
-        let dir = open_follow(&t.root, &t.rel, &t.shown())?;
-        check_handle(&dir, true, &t.shown())?;
+        let dir = open_follow(&t.root, &t.rel, true, &t.shown())?;
         let mut entries = Vec::new();
         let mut bytes = 0usize;
         for entry in dir.entries().map_err(|e| failure(&e, &t.shown()))? {
@@ -730,13 +836,14 @@ impl Fs<'_> {
         let mut options = OpenOptions::new();
         options.read(true);
         nonblocking(&mut options);
-        let (last, parents) = t
-            .rel
-            .split_last()
-            .ok_or_else(|| fault(codes::INVALID_ARGUMENT, format!("“{shown}” is not a file")))?;
-        let parent = open_follow(&t.root, parents, &shown)?;
+        let (parent, last) = walk(&t.root, &t.rel, true, &shown)?;
+        let last =
+            last.ok_or_else(|| fault(codes::INVALID_ARGUMENT, format!("“{shown}” is not a file")))?;
+        // Every link of the way was followed by hand: the file itself is
+        // opened without following one.
+        options.follow(FollowSymlinks::No);
         let mut file = parent
-            .open_with(last, &options)
+            .open_with(&last, &options)
             .map_err(|e| failure(&e, &shown))?;
         let meta = file.metadata().map_err(|e| failure(&e, &shown))?;
         if !meta.is_file() {
@@ -883,11 +990,11 @@ impl Fs<'_> {
         let mut state = self.call.run.state();
         match checked {
             Ok(t)
-                if state
-                    .writes
-                    .open
-                    .get(handle)
-                    .is_some_and(|o| o.pending.key == key_of(&t)) =>
+                if state.writes.open.get(handle).is_some_and(|o| {
+                    o.pending.key == key_of(&t)
+                        && parent_of(&t)
+                            .is_ok_and(|(dir, _)| protected::handle_id(&dir) == o.pending.parent_id)
+                }) =>
             {
                 let open = state
                     .writes
@@ -1110,6 +1217,7 @@ impl Fs<'_> {
             let dir = sp
                 .open_dir_nofollow(&sn)
                 .map_err(|e| failure(&e, &s.shown()))?;
+            check_handle(&dir, true, &s.shown())?;
             plan_dir(&dir, "", &[], false, &mut plan, 0)?;
         } else {
             plan.bytes = meta.len();
@@ -1446,6 +1554,9 @@ pub(crate) struct Pending {
     create_only: bool,
     /// The target's absolute path, to recognize it again.
     key: String,
+    /// The identity of the folder it is written in, to recognize it again
+    /// (a folder moved elsewhere keeps its path text nowhere).
+    parent_id: Option<protected::FileId>,
 }
 
 impl Pending {
@@ -1462,13 +1573,16 @@ impl Pending {
         let short: String = name.chars().take(64).collect();
         let temp = format!(".{short}.deckpilot-{suffix}.tmp");
         let mut options = OpenOptions::new();
+        // Readable too: an exclusive copy reads back the very file written.
         options
+            .read(true)
             .write(true)
             .create_new(true)
             .follow(FollowSymlinks::No);
         let file = parent
             .open_with(&temp, &options)
             .map_err(|e| failure(&e, &t.shown()))?;
+        let parent_ref = parent.try_clone().map_err(|e| failure(&e, &t.shown()))?;
         Ok(Self {
             parent,
             name,
@@ -1477,6 +1591,7 @@ impl Pending {
             written: 0,
             create_only,
             key: key_of(t),
+            parent_id: protected::handle_id(&parent_ref),
         })
     }
 
@@ -1494,9 +1609,8 @@ impl Pending {
     }
 
     fn commit(mut self) -> Result<(), ScriptFault> {
-        let file = self.file.take().ok_or_else(unknown_handle)?;
+        let mut file = self.file.take().ok_or_else(unknown_handle)?;
         file.sync_all().map_err(|e| failure(&e, &self.name))?;
-        drop(file);
         let result = if self.create_only {
             // Atomic and never over an existing file.
             match self.parent.hard_link(&self.temp, &self.parent, &self.name) {
@@ -1509,7 +1623,7 @@ impl Pending {
                 // into it. Never a check then a rename, so nothing made
                 // meanwhile is replaced (P7 blocker 2 of #469); the content
                 // is not atomic there.
-                Err(_) => self.copy_exclusively(),
+                Err(_) => self.copy_exclusively(&mut file),
             }
         } else {
             self.parent
@@ -1523,7 +1637,13 @@ impl Pending {
 
     /// Creates the target exclusively (`O_EXCL`, `CREATE_NEW`) and copies
     /// the written content into it.
-    fn copy_exclusively(&self) -> Result<(), ScriptFault> {
+    /// The content comes from the temporary file's own open handle,
+    /// never reopened by name; a copy that fails removes the target it
+    /// made, so no partial file is left.
+    fn copy_exclusively(&self, input: &mut File) -> Result<(), ScriptFault> {
+        input
+            .seek(std::io::SeekFrom::Start(0))
+            .map_err(|e| failure(&e, &self.name))?;
         let mut options = OpenOptions::new();
         options
             .write(true)
@@ -1536,14 +1656,14 @@ impl Pending {
             }
             Err(e) => return Err(failure(&e, &self.name)),
         };
-        let mut options = OpenOptions::new();
-        options.read(true).follow(FollowSymlinks::No);
-        let mut input = self
-            .parent
-            .open_with(&self.temp, &options)
-            .map_err(|e| failure(&e, &self.name))?;
-        std::io::copy(&mut input, &mut out).map_err(|e| failure(&e, &self.name))?;
-        out.sync_all().map_err(|e| failure(&e, &self.name))
+        let copied = std::io::copy(&mut (&mut *input).take(self.written), &mut out)
+            .and_then(|_| out.sync_all());
+        if let Err(e) = copied {
+            drop(out);
+            let _ = self.parent.remove_file(&self.name);
+            return Err(failure(&e, &self.name));
+        }
+        Ok(())
     }
 
     fn abort(mut self) {

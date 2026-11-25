@@ -238,8 +238,13 @@ moved"). Every operation then works relative to that open folder:
   of its names (NetBIOS, DNS with or without its domain, `.local`, a
   trailing dot), `localhost`, any address (loopback, `0.0.0.0`, LAN
   addresses, numeric forms such as `2130706433`, `*.ipv6-literal.net`)
-  or an administrative `C$` share; reads follow a relative link only
-  within the folder it is in;
+  or an administrative `C$` share (names known only to the resolver,
+  such as hosts-file aliases, cannot be told by their text: the identity
+  checks are the backstop). A read follows a link by hand, folder by
+  folder, each opened without following and checked: only a relative link
+  that stays inside the scope, at most 40 links per path; the file itself
+  is opened without following one. A process's working folder is opened
+  the same way and must be the very folder its path names at the start;
 - **names**: an 8.3 short name (`GIT~1`) is refused everywhere (Windows
   shares resolve them on every system), and on Windows a device name and a
   name ending in a dot or a space, so no name reaches a folder under
@@ -288,8 +293,11 @@ moved"). Every operation then works relative to that open folder:
 - **writes** go to a temporary file in the target's folder, renamed over
   the target on commit (with `createOnly`, linked to it, which never
   replaces an existing file; on a volume without hard links, the target
-  is created exclusively and the content copied into it, never a check
-  then a rename); a folder is never written over. An abort, a
+  is created exclusively (atomic on local volumes, SMB and NFSv3 or
+  later, not NFSv2) and the content copied into it from the temporary
+  file's own handle, removed again when the copy fails; never a check then
+  a rename); a folder is never written over. An open chunked write is
+  committed only into the very folder it was opened in. An abort, a
   revoked grant between chunks, or the end of the run removes the
   temporary file;
 - **limits**: 4 MiB per file read or written (`maxBytes`, the chunked

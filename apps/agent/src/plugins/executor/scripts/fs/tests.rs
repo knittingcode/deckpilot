@@ -1462,7 +1462,7 @@ fn scripts_fs_a_private_folder_made_after_the_start_is_known() {
     std::fs::create_dir_all(&data).unwrap();
     let dir = cap_std::fs::Dir::open_ambient_dir(&data, cap_std::ambient_authority()).unwrap();
     assert!(p.forbids_handle(&dir, false));
-    assert!(p.forbids_above(&dir));
+    assert!(p.forbids_above(&dir, &data));
     let root = cap_std::fs::Dir::open_ambient_dir(&f.root, cap_std::ambient_authority()).unwrap();
     assert!(p.forbids_handle(&root, true), "holds it");
     assert!(!p.forbids_handle(&root, false));
@@ -1488,4 +1488,87 @@ fn scripts_fs_a_private_folder_through_localhost_is_refused_by_identity() {
     }
     assert!(!p.forbids(&unc), "the text does not match");
     assert!(p.forbids_identity(&unc), "the identity does");
+}
+
+/// #475's review, H1: a link flipped between the check and the open never
+/// reaches a private folder, because every link is followed by hand,
+/// folder by folder, each checked on its handle.
+#[cfg(unix)]
+#[test]
+fn scripts_fs_a_flipping_link_never_reaches_a_private_folder() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.path("appdata")).unwrap();
+    std::fs::write(f.path("appdata/agent.token"), "SECRET").unwrap();
+    std::fs::write(f.path("harmless"), "fine").unwrap();
+    f.grant(grants(vec![FsScope {
+        root: FsRoot::Directory {
+            path: f.root.clone(),
+            label: "tmp".into(),
+        },
+        access: FsAccess::Read,
+        root_destructive: false,
+    }]));
+    let link = f.path("x");
+    std::os::unix::fs::symlink("harmless", &link).unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = stop.clone();
+    let flipping = link.clone();
+    let flipper = std::thread::spawn(move || {
+        let mut i = 0u32;
+        while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+            let target = if i.is_multiple_of(2) {
+                "appdata/agent.token"
+            } else {
+                "harmless"
+            };
+            let tmp = flipping.with_extension("new");
+            let _ = std::fs::remove_file(&tmp);
+            let _ = std::os::unix::fs::symlink(target, &tmp);
+            let _ = std::fs::rename(&tmp, &flipping);
+            i += 1;
+        }
+    });
+    let mut e = f.loaded();
+    let read = op(
+        "fs.readFile",
+        json!({"path": {"path": link.to_string_lossy()}, "encoding": "utf8"}),
+    );
+    for _ in 0..300 {
+        if let deckpilot_plugin_abi::CallResult::Ok(v) = call(&mut e, &read) {
+            assert_ne!(v["content"], "SECRET", "a private file was read");
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    flipper.join().unwrap();
+}
+
+/// Links that climb within the scope (pnpm's `node_modules`) are read.
+#[cfg(unix)]
+#[test]
+fn scripts_fs_a_link_that_climbs_within_the_scope_is_read() {
+    let f = setup(FsAccess::Read);
+    std::fs::create_dir_all(f.path("w/cms/.pnpm/pkg")).unwrap();
+    std::fs::write(f.path("w/cms/.pnpm/pkg/index.js"), "ok").unwrap();
+    std::fs::create_dir_all(f.path("w/cms/node_modules")).unwrap();
+    std::os::unix::fs::symlink("../.pnpm/pkg", f.path("w/cms/node_modules/pkg")).unwrap();
+    let mut e = f.loaded();
+    let r = ok(&call(
+        &mut e,
+        &op(
+            "fs.readFile",
+            json!({"path": rp("node_modules/pkg/index.js"), "encoding": "utf8"}),
+        ),
+    ));
+    assert_eq!(r["content"], "ok");
+    // One that climbs above the scope's root does not.
+    std::os::unix::fs::symlink("../../../..", f.path("w/cms/node_modules/up")).unwrap();
+    let r = call(
+        &mut e,
+        &op("fs.list", json!({"path": rp("node_modules/up")})),
+    );
+    let refused = code(&r);
+    assert!(
+        matches!(refused.as_str(), "symlinkEscape" | "protectedPath"),
+        "{refused}"
+    );
 }
