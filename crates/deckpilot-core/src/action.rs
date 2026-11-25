@@ -499,6 +499,32 @@ impl ActionType {
     }
 }
 
+/// A value that names something (a credential, a script): empty when it is
+/// optional, otherwise one `valid` accepts.
+fn check_name(
+    spec: &ParameterSpec,
+    text: &str,
+    valid: impl Fn(&str) -> bool,
+    what: &str,
+) -> Result<(), ParameterError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return if spec.required {
+            Err(ParameterError::Missing(spec.key.clone()))
+        } else {
+            Ok(())
+        };
+    }
+    if valid(text) {
+        Ok(())
+    } else {
+        Err(ParameterError::Invalid {
+            key: spec.key.clone(),
+            reason: format!("“{text}” is not {what}"),
+        })
+    }
+}
+
 fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), ParameterError> {
     let key = || spec.key.clone();
     let invalid = |reason: String| ParameterError::Invalid { key: key(), reason };
@@ -549,32 +575,18 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
         (kind @ ParameterKind::Pairs { .. }, ParameterValue::Text(text)) => {
             check_pairs(spec, kind, text)
         }
-        (ParameterKind::Credential, ParameterValue::Text(text)) => {
-            let text = text.trim();
-            if text.is_empty() {
-                return if spec.required {
-                    Err(ParameterError::Missing(key()))
-                } else {
-                    Ok(())
-                };
-            }
-            crate::CredentialId::new(text)
-                .map(|_| ())
-                .map_err(|_| invalid(format!("“{text}” is not a credential name")))
-        }
-        (ParameterKind::Script, ParameterValue::Text(text)) => {
-            let text = text.trim();
-            if text.is_empty() {
-                return if spec.required {
-                    Err(ParameterError::Missing(key()))
-                } else {
-                    Ok(())
-                };
-            }
-            text.parse::<crate::ScriptId>()
-                .map(|_| ())
-                .map_err(|_| invalid(format!("“{text}” is not a script")))
-        }
+        (ParameterKind::Credential, ParameterValue::Text(text)) => check_name(
+            spec,
+            text,
+            |t| crate::CredentialId::new(t).is_ok(),
+            "a credential name",
+        ),
+        (ParameterKind::Script, ParameterValue::Text(text)) => check_name(
+            spec,
+            text,
+            |t| t.parse::<crate::ScriptId>().is_ok(),
+            "a script",
+        ),
         (ParameterKind::Resource { .. }, ParameterValue::Resource(reference)) => match reference {
             ResourceRef::ProjectRole { role } if role.trim().is_empty() => {
                 if spec.required {
@@ -1064,6 +1076,14 @@ mod structured_text_tests {
         assert!(check(ParameterKind::Credential, "github.token").is_ok());
         assert!(check(ParameterKind::Credential, "").is_ok());
         assert!(check(ParameterKind::Credential, "Not A Name").is_err());
+        // A script by id, never a source.
+        assert!(check(ParameterKind::Script, &crate::ScriptId::new().to_string()).is_ok());
+        assert!(check(ParameterKind::Script, "").is_ok());
+        assert!(check(ParameterKind::Script, "deckpilot.log(1)").is_err());
+        assert_eq!(
+            serde_json::to_value(ParameterKind::Script).unwrap(),
+            serde_json::json!({"type": "script"})
+        );
         let code = ParameterKind::Code {
             language: "json".into(),
             max_length: Some(5),

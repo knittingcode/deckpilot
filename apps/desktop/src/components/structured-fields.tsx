@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, KeyRound, Plus, TriangleAlert, X } from "lucide-react"
+import { ArrowDown, ArrowUp, FileCode2, KeyRound, Plus, TriangleAlert, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,8 @@ import {
   serializeLines,
   serializePairs,
 } from "@/lib/structured"
-import type { CredentialInfo } from "@/lib/types"
+import { useEditingProfile } from "@/hooks/use-profile"
+import type { CredentialInfo, StoredScript } from "@/lib/types"
 
 /**
  * An editable list whose items are kept exactly as typed (spaces included)
@@ -420,6 +421,75 @@ export function CredentialField({
         <p className="text-xs text-destructive">
           {t("actions:fields.credential.missing", { name: value })}
         </p>
+      )}
+    </div>
+  )
+}
+
+const NO_SCRIPT = "none"
+
+/**
+ * Chooses a script of the profile being edited, by id: the action names
+ * the script, never holds its code. A script that is not trusted is
+ * listed as such (it does not run until reviewed on the Scripts page); an
+ * id the profile does not have is shown as missing.
+ */
+export function ScriptField({
+  id,
+  value,
+  optional,
+  onChange,
+}: {
+  id: string
+  value: string
+  optional: boolean
+  onChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  const { profileId } = useEditingProfile()
+  const [scripts, setScripts] = useState<StoredScript[] | null>(null)
+  useEffect(() => {
+    if (!profileId) return
+    api.listScripts(profileId).then(setScripts, () => {
+      setScripts([])
+    })
+  }, [profileId])
+  const chosen = scripts?.find((s) => s.script.id === value)
+  const known = scripts === null || chosen !== undefined
+  return (
+    <div className="grid gap-1.5">
+      <Select
+        value={value === "" ? NO_SCRIPT : value}
+        onValueChange={(choice) => {
+          onChange(choice === NO_SCRIPT ? "" : choice)
+        }}
+      >
+        <SelectTrigger id={id} className="w-72">
+          <FileCode2 className="size-4 text-muted-foreground" />
+          <SelectValue placeholder={t("actions:fields.script.choose")} />
+        </SelectTrigger>
+        <SelectContent>
+          {optional && <SelectItem value={NO_SCRIPT}>{t("actions:fields.script.none")}</SelectItem>}
+          {value !== "" && !known && (
+            <SelectItem value={value}>{t("actions:fields.script.missingItem")}</SelectItem>
+          )}
+          {(scripts ?? []).map((s) => (
+            <SelectItem key={s.script.id} value={s.script.id}>
+              {s.trust === "trusted"
+                ? s.script.name
+                : t("actions:fields.script.needsReviewItem", { name: s.script.name })}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {scripts !== null && scripts.length === 0 && (
+        <p className="text-xs text-muted-foreground">{t("actions:fields.script.noneStored")}</p>
+      )}
+      {value !== "" && !known && (
+        <p className="text-xs text-destructive">{t("actions:fields.script.missing")}</p>
+      )}
+      {chosen?.trust === "needsReview" && (
+        <p className="text-xs text-destructive">{t("actions:fields.script.needsReview")}</p>
       )}
     </div>
   )

@@ -35,6 +35,8 @@ export type ParameterKind =
   | { type: "code"; language: string; maxLength?: number }
   /** The name of a credential stored on this computer. */
   | { type: "credential" }
+  /** A script of the profile, by id (the Scripts plugin's `script` parameter). */
+  | { type: "script" }
 
 export type ParameterValue =
   | { type: "text"; value: string }

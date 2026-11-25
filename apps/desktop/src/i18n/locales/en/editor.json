@@ -293,6 +293,11 @@
     "multiAction": {
       "title": "Multi Action",
       "description": "The steps run in order in the agent when the key is pressed. A delay waits between two steps; a running Multi Action can be cancelled from the status bar."
+    },
+    "scriptPreset": {
+      "label": "Run {{script}}",
+      "description": "Runs the script {{script}}; the key names the script, so edits to it apply here.",
+      "needsReview": "Runs the script {{script}} once you trust it on the Scripts page; until then the key does nothing."
     }
   },
   "bar": {

@@ -26,6 +26,8 @@ import type { ModuleInfo } from "./types"
 export const WORKFLOWS_PLUGIN = "deckpilot.workflows"
 export const PROJECTS_PLUGIN = "deckpilot.projects"
 export const SCRIPTS_PLUGIN = "deckpilot.scripts"
+/** The Scripts plugin's action that runs a script, which it names by id. */
+export const RUN_SCRIPT = `${SCRIPTS_PLUGIN}.run`
 
 /** The app's own screens a plugin can activate. */
 export type HostViewKind = "workflows" | "projects" | "scripts"

@@ -118,6 +118,12 @@ released either. 0.6.0 is the first version intended for publication.
   elsewhere before trusting it: its code is shown read only, with
   invisible characters marked, and with the permissions it would get
   back.
+- On the Scripts page, a script's permissions: which projects, files and
+  folders (picked with the system's dialog), programs and shells it may
+  use, and whether it may delete without asking; container runtimes
+  (Docker, Podman and the like) and programs that act as another user
+  are not available. The Action Library lists a "Run …" entry for every
+  script, which puts the script on a key by reference.
 
 ### Changed
 

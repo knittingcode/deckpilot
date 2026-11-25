@@ -26,6 +26,7 @@ import { failureMessage, toastFailure } from "@/lib/failure"
 import type { Script, ScriptReview, ScriptSettings, ScriptUsage, StoredScript } from "@/lib/types"
 
 import { CodeEditor } from "./code-editor"
+import { PermissionsTab } from "./permissions-tab"
 import { hasHiddenChars } from "./completions"
 
 export function ScriptsPage() {
@@ -311,12 +312,16 @@ function ScriptDetail({
           <TabsList>
             <TabsTrigger value="code">{t("workspace:scripts.tabs.code")}</TabsTrigger>
             <TabsTrigger value="settings">{t("workspace:scripts.tabs.settings")}</TabsTrigger>
+            <TabsTrigger value="permissions">{t("workspace:scripts.tabs.permissions")}</TabsTrigger>
           </TabsList>
           <TabsContent value="code">
             <CodeTab script={script} onDirty={onDirty} onSave={save} />
           </TabsContent>
           <TabsContent value="settings">
             <SettingsTab script={script} onSave={save} />
+          </TabsContent>
+          <TabsContent value="permissions">
+            <PermissionsTab profileId={profileId} stored={stored} onSaved={onChanged} />
           </TabsContent>
         </Tabs>
       )}

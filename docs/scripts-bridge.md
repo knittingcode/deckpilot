@@ -31,9 +31,20 @@ Status:
   review of a script that is not trusted: its code read only, a warning
   for hidden characters, the permissions that come back, and "Trust this
   script", which names exactly the hash and permissions shown;
-- next (P7, part 4b): the Permissions tab, running from the page, and
-  the Action Library's Scripts section; then the agent's `PLUGIN_API`
-  1.13 and the bundled plugin (P8).
+- in place (P7, part 4b): the Permissions tab (projects, files by
+  repository or a folder picked with the system's dialog, programs by
+  name or picked with the system's dialog with where they run, their
+  environment and, for git, unrestricted arguments; shells; deleting;
+  revoke all), refusing a container runtime ("Container runtimes are not
+  available to scripts yet"), a program acting as another user and a
+  shell as a program, and flagging a launcher as running any program;
+  the core's `script` parameter kind (`ParameterKind::Script`, a script
+  id stored as text, so the Scripts plugin's `run` action now converts
+  to an action type) with its picker; and the Action Library's "Run …"
+  entries, one per script, each placing an action that names the script
+  by id;
+- next: running from the page (it needs the bundled plugin), the agent's
+  `PLUGIN_API` 1.13 and the bundled plugin (P8).
 
 ## Operations
 

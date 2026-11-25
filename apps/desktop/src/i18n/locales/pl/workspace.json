@@ -528,7 +528,8 @@
     },
     "tabs": {
       "code": "Kod",
-      "settings": "Ustawienia"
+      "settings": "Ustawienia",
+      "permissions": "Uprawnienia"
     },
     "editor": {
       "label": "Kod: {{name}}",
@@ -598,6 +599,41 @@
       "loading": "Szukam użyć skryptu…",
       "usagesFailed": "Nie udało się wyświetlić użyć, więc teraz nie można go usunąć. Spróbuj ponownie.",
       "notYet": "Użycia skryptu nie są jeszcze znane."
+    },
+    "permissions": {
+      "intro": "Co ten skrypt może robić na tym komputerze. Nic z tego nie opuszcza komputera: eksport tego nie zawiera, a skrypt zaimportowany lub zmieniony nie dostaje niczego, dopóki go nie sprawdzisz.",
+      "projects": "Projekty",
+      "files": "Pliki",
+      "access": "Dostęp",
+      "read": "Odczyt",
+      "write": "Odczyt i zmiana",
+      "delete": "Odczyt, zmiana i usuwanie",
+      "rootDestructive": "Może usunąć, opróżnić lub zastąpić sam folder",
+      "removeScope": "Usuń ten folder",
+      "repositoryKey": "Klucz repozytorium",
+      "addRepository": "Dodaj repozytorium",
+      "addEveryRepository": "Dodaj każde repozytorium",
+      "addFolder": "Wybierz folder…",
+      "programs": "Programy",
+      "runsAnyProgram": "Uruchamia dowolny program",
+      "removeProgram": "Usuń {{command}}",
+      "where": "Gdzie działa {{command}}",
+      "programName": "Nazwa programu",
+      "addProgram": "Dodaj program",
+      "chooseProgram": "Wybierz program…",
+      "containerRuntime": "Środowiska kontenerów nie są jeszcze dostępne dla skryptów",
+      "elevation": "Skrypt nie może uruchamiać programów jako inny użytkownik (sudo i podobne).",
+      "shellCommand": "Powłokę nadaje się w sekcji Powłoki, nie jako program.",
+      "shells": "Powłoki",
+      "shellsHint": "Kod powłoki może uruchomić każdy program, który mógłbyś uruchomić ty, także środowisko kontenerów. Nadawaj powłokę tylko skryptowi, który rozumiesz.",
+      "deleting": "Usuwanie plików",
+      "ask": "Pytaj przed usunięciem (przebiegi, których nikt nie uruchomił, nie mogą usuwać)",
+      "revokeAll": "Odbierz wszystko",
+      "revokeTitle": "Odebrać wszystkie uprawnienia „{{name}}”?",
+      "revokeDescription": "Skrypt pozostaje zaufany i działa bez uprawnień, dopóki znów ich nie nadasz.",
+      "save": "Zapisz uprawnienia",
+      "saved": "Zapisano uprawnienia „{{name}}”",
+      "saveFailed": "Nie udało się zapisać uprawnień „{{name}}”"
     }
   }
 }

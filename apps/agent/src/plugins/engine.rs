@@ -1040,7 +1040,10 @@ mod tests {
         let actions = manifest.contributes.actions();
         // `run`: its `script` parameter is the core's script kind.
         let run = action_type("deckpilot.scripts", &actions[0]).unwrap();
-        assert_eq!(run.parameters[0].kind, deckpilot_core::ParameterKind::Script);
+        assert_eq!(
+            run.parameters[0].kind,
+            deckpilot_core::ParameterKind::Script
+        );
         let check = action_type("deckpilot.scripts", &actions[1]).unwrap();
         assert!(matches!(
             &check.parameters[0].kind,

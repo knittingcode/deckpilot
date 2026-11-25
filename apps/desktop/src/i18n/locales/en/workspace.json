@@ -516,7 +516,8 @@
     },
     "tabs": {
       "code": "Code",
-      "settings": "Settings"
+      "settings": "Settings",
+      "permissions": "Permissions"
     },
     "editor": {
       "label": "Code of {{name}}",
@@ -584,6 +585,41 @@
       "loading": "Looking for the script's uses…",
       "usagesFailed": "Its uses could not be listed, so it cannot be deleted now. Try again.",
       "notYet": "The script's uses are not known yet."
+    },
+    "permissions": {
+      "intro": "What this script may do on this computer. Nothing here leaves this computer: an export never holds it, and an imported or changed script gets none of it until you review it.",
+      "projects": "Projects",
+      "files": "Files",
+      "access": "Access",
+      "read": "Read",
+      "write": "Read and change",
+      "delete": "Read, change and delete",
+      "rootDestructive": "May remove, empty or replace the folder itself",
+      "removeScope": "Remove this folder",
+      "repositoryKey": "Repository key",
+      "addRepository": "Add repository",
+      "addEveryRepository": "Add every repository",
+      "addFolder": "Choose folder…",
+      "programs": "Programs",
+      "runsAnyProgram": "Runs any program",
+      "removeProgram": "Remove {{command}}",
+      "where": "Where {{command}} runs",
+      "programName": "Program name",
+      "addProgram": "Add program",
+      "chooseProgram": "Choose program…",
+      "containerRuntime": "Container runtimes are not available to scripts yet",
+      "elevation": "A script cannot run a program as another user (sudo and the like).",
+      "shellCommand": "A shell is given under Shells, not as a program.",
+      "shells": "Shells",
+      "shellsHint": "Shell code can run any program you could, a container runtime included. Give a shell only to a script you understand.",
+      "deleting": "Deleting files",
+      "ask": "Ask before deleting (runs nobody started cannot delete)",
+      "revokeAll": "Revoke all",
+      "revokeTitle": "Revoke every permission of “{{name}}”?",
+      "revokeDescription": "The script stays trusted and runs with no permissions until you give it some again.",
+      "save": "Save permissions",
+      "saved": "Permissions of “{{name}}” saved",
+      "saveFailed": "The permissions of “{{name}}” could not be saved"
     }
   }
 }
