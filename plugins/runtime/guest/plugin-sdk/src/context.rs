@@ -25,6 +25,8 @@ use serde_json::Value;
 use crate::definition::is_camel_key;
 use crate::output::{PluginError, codes};
 
+#[path = "calls.rs"]
+mod calls;
 #[path = "privileged.rs"]
 mod privileged;
 

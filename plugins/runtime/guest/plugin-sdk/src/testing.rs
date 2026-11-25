@@ -62,7 +62,8 @@ impl MockHost {
     /// confirmed with its defaults, a selection with its first option;
     /// plugin API 1.9: `resource.resolve` a handle labelled with the
     /// parameter or role, `tool.run` an exit status of 0 without output,
-    /// `project.list` no projects, `profile.read` nothing).
+    /// `project.list` no projects, `profile.read` nothing; plugin API 1.16:
+    /// `call.state` no call, `call.control` confirmed).
     pub fn allow_all() -> Self {
         Self::new(|req| match req {
             CapabilityRequest::HttpFetch(_) => CallResult::Ok(serde_json::json!({"status": 200})),
@@ -93,6 +94,11 @@ impl MockHost {
                 CallResult::Ok(serde_json::json!({"projects": []}))
             }
             CapabilityRequest::ProfileRead(_) => CallResult::Ok(serde_json::json!({})),
+            // Plugin API 1.16: no call, and an action confirmed.
+            CapabilityRequest::CallState(_) => {
+                CallResult::Ok(serde_json::json!({"state": "idle", "connected": true}))
+            }
+            CapabilityRequest::CallControl(_) => CallResult::Ok(serde_json::json!("confirmed")),
             _ => CallResult::Ok(serde_json::Value::Null),
         })
     }

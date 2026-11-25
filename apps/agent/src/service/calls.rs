@@ -205,6 +205,12 @@ pub(crate) trait Provider: CallProvider {
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
+impl std::fmt::Debug for dyn Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Provider({})", self.id())
+    }
+}
+
 impl<T: CallProvider + 'static> Provider for T {
     fn as_any(&mut self) -> &mut dyn Any {
         self
@@ -233,9 +239,9 @@ pub(crate) struct CallsRun {
     run: RunToken,
 }
 
-struct Service {
-    driver: CallsDriver,
-    provider: Box<dyn Provider>,
+pub(super) struct Service {
+    pub(super) driver: CallsDriver,
+    pub(super) provider: Box<dyn Provider>,
     origin: std::time::Instant,
     /// The templates of the managed layouts (the plugin's).
     templates: Vec<Template>,
@@ -245,7 +251,7 @@ struct Service {
     /// Models to be tried again once the database is free.
     retries: BTreeMap<DeviceModelId, SeedRetry>,
     /// The consent the user gave (from the plugin's grants).
-    consent: ConsentState,
+    pub(super) consent: ConsentState,
 }
 
 impl std::fmt::Debug for Service {
@@ -260,7 +266,11 @@ impl std::fmt::Debug for Service {
 #[derive(Debug, Default)]
 pub(crate) struct AgentCalls {
     /// Boxed: the agent's state stays small (its loop is one future).
-    service: Option<Box<Service>>,
+    pub(super) service: Option<Box<Service>>,
+    /// The Calls plugin's controls waiting for their confirmation
+    /// (`plugin_calls.rs`).
+    #[cfg(feature = "plugins")]
+    pub(super) waiting: super::plugin_calls::WaitingControls,
     /// The device whose key is being handled.
     scope: Option<DeviceId>,
     /// Workflow runs that count for a return session, by execution.
@@ -311,7 +321,7 @@ fn no_layout() -> deckpilot_ipc::IpcError {
 }
 
 impl Agent {
-    fn calls_now(&self) -> Option<Instant> {
+    pub(super) fn calls_now(&self) -> Option<Instant> {
         let origin = self.calls.service.as_ref()?.origin;
         let elapsed = self
             .runtime
@@ -494,6 +504,10 @@ impl Agent {
         if due || changed {
             service.driver.tick(&mut self.runtime, now);
         }
+        // The Calls plugin's controls whose command is done (or that
+        // waited too long).
+        #[cfg(feature = "plugins")]
+        self.calls_answer_waiting(now);
         if due || changed {
             self.calls_prune_previews();
             self.render_all();

@@ -56,6 +56,11 @@ use rate::Bucket;
 /// Most redirects one brokered fetch may follow.
 pub const MAX_REDIRECTS: u32 = 5;
 
+/// The only plugin plugin API 1.16's `call.*` operations exist for
+/// (`docs/calls.md`). The broker refuses them for every other plugin id,
+/// whatever it was granted.
+pub const CALLS_PLUGIN: &str = "deckpilot.calls";
+
 /// Headers a plugin may never set. Credentials are injected by the agent
 /// from handles (design §5.5); framing and routing headers belong to the
 /// HTTP client.
@@ -350,6 +355,18 @@ pub enum Allowed {
     ProfileRead {
         scopes: std::collections::BTreeSet<ProfileScope>,
     },
+    /// `call.state` (plugin API 1.16): granted `calls`, and the plugin is
+    /// [`CALLS_PLUGIN`]. The executor answers the focused call's sanitised
+    /// state only while the user's consent to observe calls holds.
+    CallState,
+    /// `call.control` (plugin API 1.16): granted `calls:control`, the
+    /// plugin is [`CALLS_PLUGIN`], and the user started the run. The agent
+    /// passes it through the state engine's gate (the call's state, the
+    /// provider's capabilities, the user's consent to control calls) and
+    /// answers the confirmed outcome.
+    CallControl {
+        action: deckpilot_plugin_abi::calls::CallAction,
+    },
     /// One of the plugin's own translation keys (plugin API 1.6): the
     /// executor resolves it against the locale files of the plugin the
     /// session belongs to, and nothing else. Always allowed.
@@ -399,6 +416,7 @@ enum RateClass {
     ResourceOpen,
     OpenUrlParam,
     ProjectSwitch,
+    CallControl,
 }
 
 #[derive(Debug)]
@@ -566,6 +584,7 @@ impl Broker {
             RateClass::ResourceOpen => self.inner.limits.resource_open,
             RateClass::OpenUrlParam => self.inner.limits.open_url_param,
             RateClass::ProjectSwitch => self.inner.limits.project_switch,
+            RateClass::CallControl => self.inner.limits.call_control,
         };
         let now = self.inner.clock.now();
         let mut buckets = self.inner.buckets.lock().unwrap_or_else(|e| e.into_inner());
@@ -948,6 +967,9 @@ impl Session {
             | CapabilityRequest::ProfileRead(_) => {
                 (self.decide_privileged(&grants, request, context), None)
             }
+            CapabilityRequest::CallState(_) | CapabilityRequest::CallControl(_) => {
+                (self.decide_calls(&grants, request, context), None)
+            }
             // Own variables (design §5.2): always granted, rate limited.
             CapabilityRequest::VariablesPublish(_) | CapabilityRequest::VariablesClear(_) => {
                 if !b.take(&self.plugin, RateClass::Variables) {
@@ -1081,6 +1103,42 @@ impl Session {
                 }
             }
             _ => unreachable!("only plugin API 1.9's operations come here"),
+        }
+    }
+
+    /// Plugin API 1.16's operations (`docs/calls.md`): only for the plugin
+    /// [`CALLS_PLUGIN`], whatever another plugin was granted (a grant record
+    /// for another plugin is refused here too), each against its own
+    /// grant; `call.control` only in a run the user started (checked
+    /// before the rate limit, so a refused call uses none), 4 per second.
+    fn decide_calls(
+        &self,
+        grants: &Grants,
+        request: &CapabilityRequest,
+        context: Option<&RunContext>,
+    ) -> Decision {
+        if self.plugin.as_str() != CALLS_PLUGIN {
+            return Decision::Deny(DenyReason::NotGranted);
+        }
+        match request {
+            CapabilityRequest::CallState(_) => match grants.calls {
+                None => Decision::Deny(DenyReason::NotGranted),
+                Some(_) => Decision::Allow(Allowed::CallState),
+            },
+            CapabilityRequest::CallControl(control) => {
+                if grants.calls != Some(true) {
+                    Decision::Deny(DenyReason::NotGranted)
+                } else if !context.is_some_and(RunContext::is_user_initiated) {
+                    Decision::Deny(DenyReason::PrivilegedNotUserInitiated)
+                } else if !self.broker.take(&self.plugin, RateClass::CallControl) {
+                    Decision::Deny(DenyReason::RateLimited)
+                } else {
+                    Decision::Allow(Allowed::CallControl {
+                        action: control.action,
+                    })
+                }
+            }
+            _ => unreachable!("only plugin API 1.16's operations come here"),
         }
     }
 

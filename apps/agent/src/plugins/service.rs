@@ -2770,7 +2770,8 @@ impl PluginService {
         .with_dialogs(self.events.dialogs.clone())
         .with_translator(translator)
         .with_data(access)
-        .with_projects(self.events.projects.clone());
+        .with_projects(self.events.projects.clone())
+        .with_calls(self.events.calls.clone());
         Ok((
             record,
             Prepared {

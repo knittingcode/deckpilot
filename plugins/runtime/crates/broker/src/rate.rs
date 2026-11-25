@@ -109,6 +109,9 @@ pub struct RateLimits {
     /// `project.select` and `project.cycle` (X6): 2 per second without a
     /// burst, so a second switch within 500 ms is throttled.
     pub project_switch: Rate,
+    /// `call.control` (plugin API 1.16): 4 per second with a burst of 4;
+    /// the engine allows one waiting command per call anyway.
+    pub call_control: Rate,
 }
 
 impl Default for RateLimits {
@@ -130,6 +133,7 @@ impl Default for RateLimits {
             resource_open: Rate::new(5, Duration::from_secs(5)),
             open_url_param: Rate::new(10, Duration::from_secs(20)),
             project_switch: Rate::new(1, Duration::from_millis(500)),
+            call_control: Rate::new(4, Duration::from_secs(1)),
         }
     }
 }

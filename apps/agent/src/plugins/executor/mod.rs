@@ -108,6 +108,7 @@ use tracing::{debug, info, warn};
 
 use super::variables::{PublishedVariables, typed};
 
+pub(super) mod calls;
 mod open;
 pub(super) mod project;
 pub(super) mod resources;
@@ -594,6 +595,9 @@ pub(super) struct Executor {
     /// without it the project operations and `profile.read` are
     /// `unavailable`.
     projects: Option<Arc<dyn crate::service::plugin_projects::ProjectHost>>,
+    /// Calls (plugin API 1.16, `calls.rs`); without it the `call.*`
+    /// operations are `calls-provider-offline`.
+    calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
 }
 
 /// One audit record of a plugin API 1.9 operation the executor carried
@@ -714,6 +718,7 @@ impl Executor {
             audit: Arc::new(log_privileged),
             tools: super::tools::ToolHost::from_agent(),
             projects: None,
+            calls: None,
         }
     }
 
@@ -1493,6 +1498,8 @@ impl Executor {
             | Allowed::ProjectSelect { .. }
             | Allowed::ProjectCycle { .. }
             | Allowed::ProfileRead { .. } => self.project(plugin, allowed),
+            // Plugin API 1.16 (`calls.rs`).
+            Allowed::CallState | Allowed::CallControl { .. } => self.calls(plugin, allowed),
             Allowed::TimeNow => super::ambient::now(),
             Allowed::RandomBytes { length } => super::ambient::random(*length),
             Allowed::RunContext(context) => serde_json::to_value(context).map_or_else(

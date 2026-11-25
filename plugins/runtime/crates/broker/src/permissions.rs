@@ -138,6 +138,18 @@ pub enum ApprovedPermission {
     },
     /// `profile.read` (X9) with the declared scopes.
     Profile { read: BTreeSet<ProfileScope> },
+    /// Plugin API 1.16 (`docs/calls.md`; the bundled plugin
+    /// `deckpilot.calls` only, which the manifest rules, the policy and the
+    /// broker each check): `call.state`, the focused call's sanitised
+    /// state (`calls`, shown as `calls:observe`); with `control`,
+    /// `call.control` (`calls:control`, consented to on its own). Never
+    /// together with a way out of the agent (`network`, a credential,
+    /// `openUrl`, a user origin, a tool), so what the plugin learns of a
+    /// call cannot leave.
+    Calls {
+        #[serde(default)]
+        control: bool,
+    },
 }
 
 /// What `profile.read` may return.
@@ -244,6 +256,8 @@ pub struct Grants {
     pub(crate) project_context: Option<bool>,
     /// `profile.read` scopes.
     pub(crate) profile: BTreeSet<ProfileScope>,
+    /// Plugin API 1.16: `call.state`; `Some(true)` with `call.control`.
+    pub(crate) calls: Option<bool>,
     /// Credential origins withheld because they have no network grant
     /// (revoked after consent), by slot key. A slot left with no origin is
     /// not in [`Grants::credentials`] at all: it is unusable until the
@@ -429,6 +443,11 @@ impl Grants {
                         return Err(GrantError::Duplicate);
                     }
                 }
+                ApprovedPermission::Calls { control } => {
+                    if g.calls.replace(*control).is_some() {
+                        return Err(GrantError::Duplicate);
+                    }
+                }
                 ApprovedPermission::Profile { read } => {
                     if read.is_empty() || !g.profile.is_empty() {
                         return Err(GrantError::Malformed);
@@ -463,6 +482,18 @@ impl Grants {
         }
         if g.credentials.len() > MAX_CREDENTIALS {
             return Err(GrantError::TooManyCredentials);
+        }
+        // What a Calls plugin learns of a call stays in the agent: no way
+        // out may come with it (the manifest rule, checked again here).
+        if g.calls.is_some()
+            && (!g.network.is_empty()
+                || !g.credentials.is_empty()
+                || !g.open_url.is_empty()
+                || !g.user_origins.is_empty()
+                || !g.tools.is_empty()
+                || g.open_url_from_params)
+        {
+            return Err(GrantError::CallsWithWayOut);
         }
         g.suspend_unreachable_credentials();
         Ok(g)
@@ -581,6 +612,9 @@ pub enum GrantError {
     ToolSubGrant,
     /// A kind of plugin API 1.9 granted twice.
     Duplicate,
+    /// `calls` (plugin API 1.16) together with a way out of the agent
+    /// (`network`, a credential, `openUrl`, a user origin or a tool).
+    CallsWithWayOut,
 }
 
 impl fmt::Display for GrantError {
@@ -605,6 +639,10 @@ impl fmt::Display for GrantError {
                 f.write_str("tool sub-grant on the wrong tool (network is git's, modify docker's)")
             }
             Self::Duplicate => f.write_str("permission granted twice"),
+            Self::CallsWithWayOut => f.write_str(
+                "calls cannot be granted together with network, credentials, openUrl, a user \
+                 origin or a tool",
+            ),
         }
     }
 }

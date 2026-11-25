@@ -16,6 +16,7 @@
 //! channel, never from a message).
 #![forbid(unsafe_code)]
 
+pub mod calls;
 pub mod capability;
 pub mod describe;
 pub mod dialog;
@@ -62,5 +63,7 @@ pub use value::{ActionOutcome, ParamValue, Params, ValidationError};
 /// API 1.9 ([`privileged`]: `resource.resolve`, `resource.open`,
 /// `tool.run`, `url.openParam`, `project.current`, `project.list`,
 /// `project.select`, `project.cycle` and `profile.read`), which only a
+/// guest that uses them sends; and the capability operations of plugin
+/// API 1.16 ([`calls`]: `call.state` and `call.control`), which only a
 /// guest that uses them sends.
 pub const ABI_VERSION: u32 = 1;

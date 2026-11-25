@@ -833,7 +833,8 @@ pub fn approved_with(
                 PermissionKind::Tools
                 | PermissionKind::Resources
                 | PermissionKind::ProjectContext
-                | PermissionKind::Profile,
+                | PermissionKind::Profile
+                | PermissionKind::Calls,
                 _,
             )
             | (PermissionKind::OpenUrl, GrantScope::OpenUrlFromParams) => {}
@@ -940,6 +941,14 @@ fn privileged(effective: &[(GrantKey, GrantScope)]) -> Vec<ApprovedPermission> {
         .collect();
     if !read.is_empty() {
         out.push(ApprovedPermission::Profile { read });
+    }
+    // Plugin API 1.16: `calls` (observe), with `calls:control` only while
+    // `calls` itself is granted. The broker allows them to
+    // `deckpilot.calls` only, and never with a way out of the agent.
+    if has(&GrantScope::CallsObserve) {
+        out.push(ApprovedPermission::Calls {
+            control: has(&GrantScope::CallsControl),
+        });
     }
     out
 }
@@ -1313,17 +1322,22 @@ mod tests {
         deckpilot_plugin_broker::Grants::derive(&approved).unwrap();
     }
 
-    /// Plugin API 1.16's `calls` and `calls:control` approve nothing in the
-    /// broker: no operation exists for them yet (the Calls bundle adds
-    /// them, pinned to `deckpilot.calls`).
+    /// Plugin API 1.16's `calls` reaches the broker as one record, with
+    /// `calls:control` as its sub-grant; a control grant without `calls`
+    /// (revoked) gives nothing.
     #[test]
-    fn calls_grants_approve_nothing_in_the_broker() {
+    fn calls_grants_become_one_broker_record() {
         let key = |text: &str| text.parse::<GrantKey>().unwrap();
-        let (approved, skipped) = approved(&[
+        let (both, skipped) = approved(&[
             (key("calls"), GrantScope::CallsObserve),
             (key("calls:control"), GrantScope::CallsControl),
         ]);
-        assert!(approved.0.is_empty(), "{:?}", approved.0);
-        assert_eq!(skipped, ["calls", "calls:control"]);
+        assert_eq!(both.0, [ApprovedPermission::Calls { control: true }]);
+        assert!(skipped.is_empty(), "{skipped:?}");
+        deckpilot_plugin_broker::Grants::derive(&both).unwrap();
+        let (observe, _) = approved(&[(key("calls"), GrantScope::CallsObserve)]);
+        assert_eq!(observe.0, [ApprovedPermission::Calls { control: false }]);
+        let (revoked, _) = approved(&[(key("calls:control"), GrantScope::CallsControl)]);
+        assert!(revoked.0.is_empty(), "{:?}", revoked.0);
     }
 }

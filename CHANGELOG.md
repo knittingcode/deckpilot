@@ -96,6 +96,19 @@ released either. 0.6.0 is the first version intended for publication.
   call's state, says plainly that Teams can only be detected, has a switch
   per device for the overlay, and has *Restore defaults*, which first keeps
   your version of the layout under a name it tells you.
+- Calls (groundwork, inert until the plugin and its policy entry exist):
+  the plugin operations `call.state` and `call.control` of plugin API
+  1.16, in the ABI, the broker, the agent and the guest SDK. Only the
+  bundled plugin `deckpilot.calls` may use them, each with its own grant
+  (`calls`, `calls:control`), a control only in a run you started, and
+  never together with network, credentials, opening pages or tools. A
+  control is answered only once the call app confirmed it. Your consents
+  to observe and to control calls apply as for the call pages, and
+  detection-only Teams refuses every control with the reason. The agent's
+  plugin API is not raised yet.
+- Calls: the operating-system signals provider reports its connection, so
+  a Teams control is refused with its reason (no supported API) instead of
+  "not connected".
 - Calls (groundwork, off in every build): a detection-only Microsoft Teams
   provider. It infers that a call is probably active while Teams holds the
   microphone, recognizing Teams only by its executable name. Answer, end,
