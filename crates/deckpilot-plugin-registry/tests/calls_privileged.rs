@@ -1,7 +1,7 @@
 //! T-P2 end to end (design-calls.md §11, C9): the Calls plugin's manifest,
 //! `deckpilot.calls` 0.1.0 exactly as deckpilot-plugins builds it
 //! (`tests/fixtures/calls/`, a copy of `official/calls` at deckpilot-plugins
-//! #105 36befd54: the same JSON, formatted by Prettier), through the real
+//! #105 dfd7aea8: the same JSON, formatted by Prettier), through the real
 //! release paths: `package --first-party`, `release sign`'s preflight and
 //! `release verify` with two throwaway publisher keys.
 //!
