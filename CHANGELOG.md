@@ -86,7 +86,11 @@ released either. 0.6.0 is the first version intended for publication.
   against that script's own folders and access, never follows a link
   out of them, never changes a `.git` folder, the home folder, system
   folders or DeckPilot's own, and asks before it deletes or replaces
-  files, showing what it computed itself.
+  files, showing what it computed itself. A script runs only the
+  programs granted to it, with an argument list and never a shell (a
+  shell only with its own grant), in its granted folders, with a clean
+  environment, and the program is stopped when the script is stopped,
+  runs out of time or loses its grant.
 
 ### Changed
 

@@ -292,6 +292,11 @@ nothing changes for an installed plugin. The agent gains the `cap-std` and
 `cap-fs-ext` dependencies (Apache-2.0 WITH LLVM-exception, Apache-2.0 or
 MIT). No IPC protocol, schema, document or export change.
 
+Part 3 adds the agent's executor for processes (`process.run`,
+`shell.run`, `shell.available`) through the tools runner of `tool.run`;
+the runner gains stdin and a stream cap per call, which `tool.run` does
+not use. No IPC protocol, schema, document or export change.
+
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
 `host_settings` table, after the usual encrypted backup in

@@ -381,6 +381,27 @@ mod tests {
     }
 
     #[test]
+    fn input_reaches_the_program_and_a_program_that_never_reads_finishes() {
+        let output = run_with_input(
+            sh("cat"),
+            None,
+            ProcessLimits::default(),
+            Some(b"hello\n".to_vec()),
+        )
+        .unwrap();
+        assert_eq!(output.stdout, "hello\n");
+        // More input than a pipe holds, to a program that exits at once.
+        let output = run_with_input(
+            sh("exit 0"),
+            None,
+            ProcessLimits::default(),
+            Some(vec![b'x'; 1 << 20]),
+        )
+        .unwrap();
+        assert!(output.success());
+    }
+
+    #[test]
     fn output_is_limited() {
         let limits = ProcessLimits {
             max_output: 10,

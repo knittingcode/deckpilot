@@ -13,12 +13,10 @@ Status:
 
 - in place: the ABI and the host engine; the `scripts` permission in the
   broker; the agent's executor for the run's own operations, the
-  projects and the file system;
-- next: processes (`process.run`, `shell.run`, answered `unavailable`
-  until then), the manifest kinds (no manifest can declare `scripts` yet,
-  so nothing is granted in practice), and the script store (P7; until
-  then the agent keeps no scripts and every run ends with
-  `scriptMissing`).
+  projects, the file system and processes;
+- next: the manifest kinds (no manifest can declare `scripts` yet, so
+  nothing is granted in practice), and the script store (P7; until then
+  the agent keeps no scripts and every run ends with `scriptMissing`).
 
 ## Operations
 
@@ -301,3 +299,65 @@ and the run nobody started, the audit) and `.../scripts/fs/tests.rs`
 `scripts_fs_protected_*`, `scripts_fs_traversal_*`, `scripts_fs_symlink_*`
 with a thread that swaps a folder for a link to the protected home during
 removals, chunked reads and writes, copy and move, revocation).
+
+## Processes
+
+`process.run`, `shell.run` and `shell.available` run through the tools
+runner of `tool.run` (`plugins/tools`, `deckpilot_core::process`): the
+program runs in its own process group, its stdin written (at most
+48 KiB) and closed, its output captured, and it is stopped (`SIGTERM`,
+`SIGKILL` after 2 s, `taskkill /T /F` on Windows) when its time is up,
+the run is stopped (`cancelled`), or the grant it used is revoked
+(`notGranted`): the script's grant for that command, or the plugin's
+`process`/`shell` ceiling, checked every 20 ms while it runs. At most 4
+runs of the plugin at once.
+
+- **The command** must be one the script was granted, by the same name
+  or path. `git` and `docker` are the user's configured tools
+  (`gitUnavailable`, `dockerUnavailable` when not found); another bare
+  name is looked up on the agent's `PATH` (with `PATHEXT`, `.exe` and
+  `.com`, on Windows); an absolute grant must exist
+  (`commandNotFound`). The file found is canonicalized and is never a
+  batch file.
+- **Arguments** are an array; there is no shell, glob or expansion. For
+  `git`, unless the grant says `unrestrictedArgs` (OD-8): the global
+  options `-c`, `-C`, `--config-env`, `--exec-path`, `--git-dir`,
+  `--work-tree`, `--namespace`, `--super-prefix`; anywhere
+  `--upload-pack`, `--receive-pack`, `--exec`, `--template`,
+  `--separate-git-dir`, `--config`; `-u` of `clone`, `fetch`, `pull`,
+  `ls-remote` and `archive`; `-c` of `clone`; and the `ext::` and `fd::`
+  transports are refused. `tool.run`'s hardening (`core.fsmonitor=false`,
+  the allowed protocols, no prompts) is prepended, and
+  `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and an empty
+  `GIT_ASKPASS` are set.
+- **`cwd`** follows the grant's rule: `repositories` (a repository of the
+  run's project), `fsScopes` (one of the script's scopes) or `any` (an
+  existing folder, never one of DeckPilot's private folders). It is
+  resolved like a file system path, canonicalized, must be a folder
+  inside its scope (a link that leads out is `symlinkEscape`), and is
+  checked again right before the start. A shell runs only in a repository
+  or a scope. Without `cwd`, an empty folder of the agent's. The design's
+  `fchdir` in the child would close the window between that last check
+  and the start; the agent forbids `unsafe` code, which `pre_exec`
+  needs, so the window stays on every system, as the design already
+  documents for Windows: using it needs write access to a folder inside
+  the scope, which the user granted.
+- **The environment** is the tools runner's base (`PATH`, `HOME`, the
+  user and temporary folders, Windows' system variables, `LC_ALL=C`; no
+  secrets), `LANG` and `SSH_AUTH_SOCK`, plus the script's entries when
+  the grant says `env: "allowed"`, each a valid name the denylist does not
+  refuse. `shell.run` takes the script's entries under the shell grant.
+- **Time**: `min(timeoutMs or the script's timeout, the run's time
+  left)`; a timeout is a result with `timedOut: true`. **Output**: the
+  script's `maxOutputKiB` per stream, at most 512 KiB, then shortened
+  until the result's JSON fits the reply (`truncated: true`). A non-zero
+  exit is `ok: false`, never a fault.
+- **`shell.run`** needs the shell in the script's `shell` grant and a
+  shell this computer has; the script is one argument (`-c`, `-Command`
+  with `-NoProfile -NonInteractive`, or `/d /c`). `shell.available`
+  lists the granted shells that exist.
+
+Tests (Unix, harmless stand-ins only: shell scripts for `git` and other
+tools in a temporary `bin`, `sh` for the shell; never docker compose,
+never git pull, never a real repository):
+`apps/agent/src/plugins/executor/scripts/process/tests.rs`.
