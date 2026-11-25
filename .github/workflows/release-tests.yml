@@ -27,6 +27,12 @@ on:
       # their flathub output is made from.
       - tools/distribution/**
       - packaging/flatpak/**
+  # A merge queue group (gh-readonly-queue/main/...). GitHub applies no
+  # paths filter to it, so the merge-group-paths job applies the
+  # pull_request paths above to the group's files and the jobs report as
+  # skipped when none matches. Inert until the merge queue is enabled.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -36,9 +42,43 @@ concurrency:
   group: release-tests-${{ github.ref }}
   cancel-in-progress: true
 
+# The same CARGO* variables as ci.yml: Swatinem/rust-cache hashes every
+# CARGO* variable into its key, and with these this job's key is the one of
+# main's Linux workspace cache (shared-key ci-workspace below).
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
 jobs:
+  # Merge queue groups only (skipped for every other event): whether the
+  # group changes a path of on.pull_request.paths
+  # (tools/ci/merge-group-paths.sh). The jobs below run unless this job
+  # succeeded and found no such path: skipped (any other event) or failed
+  # (when in doubt), they run.
+  merge-group-paths:
+    name: Changed paths (merge group)
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: tools/ci/merge-group-paths.sh .github/workflows/release-tests.yml
+
   gate:
     name: Release gate
+    needs: merge-group-paths
+    if: ${{ !cancelled() && (needs.merge-group-paths.result != 'success' || needs.merge-group-paths.outputs.run == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -50,13 +90,20 @@ jobs:
         run: tools/ci/install-linux-deps.sh
       - name: Install Rust toolchain
         run: rustup toolchain install
-      # Restores main's cache when one exists, but pull requests never save
-      # one: they would fill the cache quota and evict main's caches. This
-      # workflow does not run on main, so its builds are cold.
+      # rust-cache hashes every installed toolchain into its key; without
+      # this, a runner whose image preinstalls a newer stable misses main's
+      # cache (tools/ci/rust-pinned-toolchain.sh).
+      - name: Only the pinned Rust toolchain
+        shell: bash
+        run: tools/ci/rust-pinned-toolchain.sh
+      # This workflow never runs on main, so a cache of its own was never
+      # saved (key release-tests: always cold). It restores the CI Rust
+      # job's Linux workspace cache instead, which main saves after every
+      # merge, and saves none (the repository cache is limited to 10 GB).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: release-tests
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: ci-workspace
+          save-if: false
       # The Tauri CLI makes the throwaway keys of the key-pair test.
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
