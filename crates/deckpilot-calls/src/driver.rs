@@ -359,6 +359,12 @@ impl CallsDriver {
 
     /// Brings every device's frame in line with the engine.
     pub fn sync(&mut self, runtime: &mut Runtime, _now: Instant) {
+        // Hidden: only no frame. The no-call cleanup below (ending return
+        // sessions, forgetting dismissals, the watchdog) is skipped on
+        // purpose: `set_hidden` already ended every return session, a
+        // dismissal still holds for the call when it is shown again, and
+        // with no frame the watchdog has nothing to pop. The next sync
+        // after `set_hidden(false)` does all of it.
         if self.hidden {
             let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
             for device in devices {

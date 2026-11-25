@@ -602,6 +602,12 @@ impl Runtime {
     }
 
     /// Sets the text devices show while no profile is loaded.
+    /// Whether devices show the placeholder ("Locked"): one is set and
+    /// there is no profile.
+    pub fn shows_placeholder(&self) -> bool {
+        self.placeholder.is_some() && self.profile().is_none()
+    }
+
     pub fn set_placeholder(&mut self, text: Option<&str>) {
         self.placeholder = text.map(str::to_owned);
     }

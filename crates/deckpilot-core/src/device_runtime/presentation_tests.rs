@@ -615,3 +615,46 @@ fn a_gesture_pressed_before_a_switch_is_stale_when_it_fires() {
     runtime.set_overlay_faces(&deck, session, []);
     assert_eq!(runtime.presentation_generation_of(&deck), suspended);
 }
+
+/// A locked runtime (no profile, the "Locked" placeholder) draws
+/// "Locked" even with an overlay frame still stacked, and a press on the
+/// overlay's key hands no action to its owner; unlocked, the frame shows
+/// again.
+#[test]
+fn a_locked_runtime_shows_no_overlay_and_hands_out_no_overlay_action() {
+    let f = fixture();
+    let (mut runtime, _, deck) = started(&f);
+    let o = overlay();
+    let session = runtime.push_overlay(&deck, o.spec).unwrap();
+    assert!(runtime.shows_overlay(&deck));
+    runtime.set_profile(None, None);
+    runtime.set_placeholder(Some("Locked"));
+    assert!(runtime.shows_placeholder());
+    assert!(!runtime.shows_overlay(&deck));
+    assert!(runtime.overlay_page(&deck).is_none());
+    let faces = runtime.faces(&deck);
+    assert_eq!(faces[0].1.title, "Locked", "{faces:?}");
+    assert!(
+        faces.iter().skip(1).all(|(_, face)| face.title.is_empty()),
+        "nothing of the overlay: {faces:?}"
+    );
+    for edge in [ControlInput::Press, ControlInput::Release] {
+        let outcome = runtime.handle_event(&DeviceEvent::Input {
+            device: deck.clone(),
+            control: key(0),
+            input: edge,
+        });
+        assert!(
+            !matches!(outcome, Ok(RuntimeOutcome::OverlayAction { .. })),
+            "{outcome:?}"
+        );
+    }
+    // Unlocked: the frame is still there and shows again.
+    runtime.set_placeholder(None);
+    runtime.set_profile(Some(f.profile.clone()), None);
+    assert!(runtime.shows_overlay(&deck));
+    assert!(matches!(
+        tap(&mut runtime, &deck, 0),
+        RuntimeOutcome::OverlayAction { session: got, .. } if got == session
+    ));
+}
