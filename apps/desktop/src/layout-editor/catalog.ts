@@ -15,7 +15,7 @@ import type {
   ModuleInfo,
   ParameterValue,
 } from "@/lib/types"
-import { actionTypeDescription, actionTypeName } from "@/lib/system-actions"
+import { actionTypeDescription, actionTypeName, newActionIcon } from "@/lib/system-actions"
 
 export interface CatalogEntry {
   type: ActionType
@@ -119,7 +119,7 @@ export function newAction(actions: ActionInstance[], type: ActionType): ActionIn
     actionType: type.id,
     parameters: defaultParameters(type),
     description: "",
-    icon: type.node?.icon ?? null,
+    icon: newActionIcon(type),
     label: null,
   }
 }
@@ -190,7 +190,7 @@ export function newPresetAction(
     actionType: type.id,
     parameters: presetParameters(type, preset),
     description: "",
-    icon: preset.icon ?? type.node?.icon ?? null,
+    icon: preset.icon ?? newActionIcon(type),
     label: null,
   }
 }

@@ -72,8 +72,10 @@ are **extended in place, keeping their ids and every saved parameter**:
 | Open Application | `system.open-app` | extended: discovered applications, stable ids, native resolution per platform |
 | Close Application | `system.close-app` | **new** |
 
-`system.open-directory` stays as it is (opening a subfolder of a folder
-resource); nothing is registered twice.
+`system.open-directory` (Open folder) keeps running as it is (opening a
+subfolder of a folder resource), but since Open opens folders too it is
+**deprecated**: hidden from new assignments and kept for saved ones
+([3.5](#35-open-folder-and-open)); nothing is registered twice.
 
 Platform code lives in a new crate, **`crates/deckpilot-apps`**: application
 discovery, identifier parsing, Linux `.desktop` and macOS `Info.plist`
@@ -124,6 +126,74 @@ its default association (a file in its application, a folder in the file
 manager, an application bundle starts). Existence is checked first;
 `not-found` says the resource was moved or deleted and where to bind it
 again. Containment rules (`existing_inside`) are unchanged.
+
+#### The key's icon
+
+An Open key shows what it opens: the document icon (`file`, Open's own)
+for a file, the open folder (`folder-open`, Open folder's) for a folder,
+and the document icon when nothing is chosen or the type cannot be told.
+The same icons of the UI icon set are used everywhere: the Device Editor's
+canvas, the Inspector's key preview, previews of saved layouts and the
+device itself.
+
+Which icon a key shows, first match wins:
+
+1. the key's own icon or image (the Inspector's *Icon*, `KeyAppearance`),
+   drawn by the renderer over everything below;
+2. the action's own icon, chosen in the action editor. New Open actions
+   are made without one (`icon: null`), so an icon set later is a choice.
+   Actions saved before this change were made with a copy of Open's icon,
+   `file`; they are never rewritten, and an own icon of exactly `file` is
+   treated as that default, not as a choice. A stored `file` cannot tell
+   the two apart, so choosing *File* by hand also shows the automatic icon;
+   to keep the document icon on a folder key, give the key its own icon
+   (1.);
+3. the automatic icon of the resolved target (`folder-open` or `file`);
+4. Open's default document icon (`file`).
+
+Nothing automatic is ever stored: a new Open action has no icon, an
+older one keeps the `file` it was made with, and the key has no icon of
+its own. A custom icon is never changed when the
+target changes; removing it shows the automatic icon again.
+
+**One computation.** The icon is chosen in the core's
+`device_runtime::face_for` (`action_symbol`), the function the agent uses
+for the device and the app's `preview_layout` uses for the canvas, the key
+preview and layout previews: they cannot disagree. The `system` module
+says how (`ActionHandler::automatic_symbol` of Open); the core resolves
+the target (`deckpilot_core::target_kind`). Modules without the
+`machine-resources` capability are told nothing about this computer's
+targets.
+
+**How the type is found.** The location is resolved as Open resolves it
+(the resource key, or the project role for the active project, then the
+optional `path` inside it, through `paths::existing_inside`: links
+followed, never out of the resource), and only its filesystem metadata is
+asked (`stat`). The target is never read, opened with its application or
+run. A macOS application bundle is a folder on disk but starts as an
+application: it shows the default icon. Unknown, so the document icon:
+nothing chosen, an unbound key, a project role without a project, a
+binding that is not a file or folder (`application`, `url`, …), a value
+that is not a local absolute path (network paths such as `\\server\share`
+or `//server/share` are never looked at), a `path` or location given by a
+variable (known only when the action runs), a missing file or folder, a
+permission error, a link out of the resource, or a lookup that takes more
+than 250 ms (a sleeping network drive), and a FIFO, socket or device
+file (only `stat`, never opened). Every lookup's time counts against a
+budget of 1 s per event: after it, the targets not looked at yet are
+unknown until the next event, so a page of keys on a slow mount holds
+the agent for about a second at most, once; a path whose lookup has not
+returned is not looked up again until it does.
+
+**When it is looked at again.** Answers are cached by resolved path
+(`TargetCache`) and never polled. The agent forgets them when the machine's
+resource bindings, the modules or the profile are loaded again (saving an
+action or a binding does that), when a live preview gives a device a
+working layout, and when a device switches layout. The app's previews
+forget theirs whenever anything is written to the database (an action, a
+binding, a layout) or another layout is previewed. A file that is replaced
+by a folder underneath, with nothing saved in DeckPilot, keeps its old
+icon until the next such event.
 
 ### 3.3 Open Application (`system.open-app`)
 
@@ -232,6 +302,35 @@ profiles', cannot restore it. Allowing an id allows every copy of it.
 Outputs: `instances` (matched), `closed` (all gone), `forced`. Not running
 is a success with `instances` 0.
 
+### 3.5 Open folder and Open
+
+The Action Library offers **Website, Open, Open Application and Close
+Application** in the System category. Open folder (`system.open-directory`)
+is marked `deprecated` in its definition, the mechanism Wait uses for
+Delay: it is left out of the Action Library, the action editor's types and
+the workflow catalog's new nodes (`creatableTypes`), while
+
+- saved Open folder actions, their keys, gestures, Multi Action steps and
+  workflow nodes keep running unchanged (the handler is still registered,
+  same id, same parameters), keep their folder icon, and stay editable
+  with the folders-only picker;
+- a saved Open folder action is still listed in the workflow catalog
+  (saved actions are listed whatever their type), so existing workflow
+  steps render and can be placed again;
+- nothing is rewritten: no saved id, parameter or icon is changed.
+
+**Optional migration (not run).** An Open folder action can be turned into
+an equivalent Open action by hand, and a future version could offer it as
+an explicit, user-confirmed step: create an Open action with the same
+`location` and `path`, rebind its keys, gestures and steps to it, then
+delete the old one. It is backward compatible in behaviour because Open
+resolves the same parameters with the same containment rules
+(`existing_inside`); the differences are that Open also accepts a file
+(Open folder refuses a file with `not-found`) and that its key's icon then
+follows the target (a folder keeps the open folder). It is not done
+automatically: it rewrites user data, and a profile exported after it
+needs a DeckPilot whose Open takes a folder without `path`.
+
 ## 4. Contexts, run origins and permissions
 
 Contexts (#407 table): all four are **key, gesture, sequence, workflow**.
@@ -313,8 +412,8 @@ no resource key, project role or internal name shows in it.
 | --- | --- | --- |
 | Open Application, Close Application | Application | A searchable list of the installed applications with their icons (`list_applications`, `application_icon`), and *Another application…*: the native dialog limited to `.app` (macOS), `.exe` and `.lnk` (Windows), `.desktop` files or any file (Linux), turned into a stable id by `describe_application` |
 | Website | Open with | *Default browser (Name)* first, then every installed browser with its icon (`list_browsers`); a browser that is not installed any more is said so, and the page opens in the default browser (`fallback: default-browser`) |
-| Open | File, folder or application | Its name and path, *Choose file…* and *Choose folder…* (the native dialogs of the Tauri dialog plugin); the file inside a folder (`path`) is an optional disclosure |
-| Open folder | Folder | Its name and path, *Choose folder…* |
+| Open | File, folder or application | Its name and path, *Choose file…* and *Choose folder…* (the native dialogs of the Tauri dialog plugin) with what each does and that the key's icon follows; the file inside a folder (`path`) is an optional disclosure |
+| Open folder (saved actions only) | Folder | Its name and path, *Choose folder…* |
 | Close Application | Force quit | A toggle, off, with what graceful and forced mean |
 
 A choice is bound in Settings › Resources under a generated key
@@ -386,3 +485,5 @@ window's drop events are not wired to fields.
 | Permissions and run origins | `close_application_needs_its_capabilities`, `close_application_runs_only_when_the_user_started_it`, `closing_is_a_capability_of_the_system_module_only`, the contract tests |
 | Contexts and gestures | the #407 contract table; `crates/deckpilot-modules/tests/system_actions.rs` (`quit_on_long_press_is_an_ordinary_gesture_binding`); the inspector's long-press model and panel (`layout-editor/system-actions.test.tsx`) |
 | Saved configurations | `saved_open_actions_keep_their_parameters`: the old `system.open-*` parameters round-trip as JSON, validate and run |
+| Open folder hidden from new assignments only | `open_folder_is_kept_for_saved_actions_only` (system module), `every_builtin_action_declares_its_contexts` (contracts), `saved_open_folder_keys_keep_running_with_their_folder_icon` (`crates/deckpilot-modules/tests/open_icon.rs`), `types_that_need_a_value_are_saved_as_drafts_until_configured` (desktop), `layout-editor/open-unified.test.tsx` (library, action editor and workflow catalog) |
+| The key's icon | `target_kind::tests` (core: metadata only, links, missing, network, unresolved, the cache cleared by events, macOS bundles), `open_shows_a_folder_or_a_document_for_its_target` (system module), `crates/deckpilot-modules/tests/open_icon.rs` (file, folder, switching both ways, clearing, missing, unknown and unresolved targets, project roles, custom icons and their removal, saved layouts store no icon, the device and the preview draw the same frames), `open_keys_preview_the_icon_of_what_they_open` (desktop `preview_layout`), the `open` golden set (`crates/deckpilot-render/tests/golden.rs`), the drawn key in `layout-editor/open-unified.test.tsx` |

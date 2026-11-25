@@ -16,6 +16,11 @@
 //!   labels in three layers, every overflow mode, plates, state marks over
 //!   labels; the touch zone is one of the sizes.
 //!
+//! - **Open** (`open`): the automatic icon of Open keys
+//!   (`docs/system-actions.md`, "The key's icon"): the document for a file
+//!   and when nothing is known, the open folder for a folder, and the
+//!   user's own icon drawn over either.
+//!
 //! `DECKPILOT_BLESS=1` rewrites every other set from what the renderer
 //! draws now.
 //!
@@ -1020,4 +1025,56 @@ fn labels_do_not_move_the_title() {
     }
     assert_eq!(differing_outside, 0);
     assert!(!b.overlaps_title);
+}
+
+/// Open keys as the core computes them: `file` for a file (and for a
+/// target that is not chosen or cannot be told), `folder-open` for a
+/// folder; the key's own icon over either.
+fn open_keys() -> Vec<Case> {
+    let open = |symbol: &str| action("Open").with_symbol(Some(symbol));
+    let custom = KeyAppearance {
+        icon: icon("deckpilot.house", IconFit::Fit),
+        ..KeyAppearance::default()
+    };
+    let untitled = |symbol: &str| KeyFace::new(FaceStyle::Action, "").with_symbol(Some(symbol));
+    vec![
+        case("file", open("file")),
+        case("folder", open("folder-open")),
+        case("file-untitled", untitled("file")),
+        case("folder-untitled", untitled("folder-open")),
+        case("custom-over-file", look(open("file"), custom.clone())),
+        case(
+            "custom-over-folder",
+            look(open("folder-open"), custom.clone()),
+        ),
+        case(
+            "image-over-folder",
+            look(
+                open("folder-open"),
+                KeyAppearance {
+                    icon: icon(LOGO, IconFit::Fit),
+                    ..KeyAppearance::default()
+                },
+            ),
+        ),
+    ]
+}
+
+/// The Open set (`docs/system-actions.md`, "The key's icon").
+#[test]
+fn open_keys_draw_their_automatic_icon_as_reviewed() {
+    let cases = open_keys();
+    check_set(
+        "open",
+        "# Open keys' automatic icon (docs/system-actions.md). DECKPILOT_BLESS=1 rewrites them.",
+        &cases,
+        &icons(),
+    );
+    // The user's icon wins: the same frame whatever the target.
+    let draw = |name: &str| {
+        let case = cases.iter().find(|c| c.name == name).unwrap();
+        render_for(&case.face, 72, 72, &icons(), &case.defaults)
+    };
+    assert_eq!(draw("custom-over-file"), draw("custom-over-folder"));
+    assert_ne!(draw("file"), draw("folder"));
 }
