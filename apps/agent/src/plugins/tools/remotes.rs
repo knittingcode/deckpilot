@@ -494,6 +494,14 @@ mod tests {
     /// Exactly what runs: the containment check, then `remote -v` with the
     /// fixed hardening prefix, in a cleared environment; nothing else (no
     /// fetch, no pull, no shell).
+    ///
+    /// Unix only: the fake `git` is a `/bin/sh` script made executable with
+    /// `chmod`, which Windows has no equivalent for here. The argv and the
+    /// cleared environment it asserts are built by platform-independent
+    /// code. On Windows nothing covers this end to end yet: `real_git()`
+    /// looks only in Unix locations, so the real-git tests return early
+    /// there too.
+    #[cfg(unix)]
     #[test]
     fn only_the_containment_check_and_remote_v_run() {
         let dir = tempfile::tempdir().unwrap();
