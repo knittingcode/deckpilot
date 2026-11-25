@@ -21,6 +21,29 @@ use std::path::{Component, Path, PathBuf};
 pub(crate) struct Protected {
     roots: Vec<PathBuf>,
     private: Vec<PathBuf>,
+    /// The file identities of the private folders, and of every folder
+    /// holding one: a folder reached under another name (a firmlink such
+    /// as `/System/Volumes/Data`, a bind mount, a share of this computer)
+    /// is still recognized (re-check of #469).
+    private_ids: Vec<FileId>,
+    holder_ids: Vec<FileId>,
+}
+
+/// A folder's identity: its volume (`dev`, the volume serial on Windows)
+/// and its file number (`ino`, the file index on Windows), from an open
+/// handle.
+pub(crate) type FileId = (u64, u64);
+
+/// The identity of the folder at `path` (following links), if it is one.
+pub(crate) fn folder_id(path: &Path) -> Option<FileId> {
+    let dir = cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority()).ok()?;
+    let meta = dir.dir_metadata().ok()?;
+    let id = (
+        cap_fs_ext::MetadataExt::dev(&meta),
+        cap_fs_ext::MetadataExt::ino(&meta),
+    );
+    // A file system that has no file numbers says nothing.
+    (id != (0, 0)).then_some(id)
 }
 
 /// `path` in the form every comparison here uses: on Windows without the
@@ -210,11 +233,42 @@ impl Protected {
     pub fn with_private(mut self, private: impl IntoIterator<Item = PathBuf>) -> Self {
         for root in private {
             if let Ok(real) = canonical(&root) {
+                if let Some(id) = folder_id(&real) {
+                    self.private_ids.push(id);
+                    self.holder_ids
+                        .extend(real.ancestors().skip(1).filter_map(folder_id));
+                }
                 self.private.push(real);
             }
             self.private.push(simplify(root));
         }
         self
+    }
+
+    /// [`Protected::forbids`] by identity: `target` (or, when it does not
+    /// exist, the nearest folder above it that does), or a folder above
+    /// it, is a private folder; or `target` itself holds one.
+    pub fn forbids_identity(&self, target: &Path) -> bool {
+        if self.private_ids.is_empty() {
+            return false;
+        }
+        let mut path = target.to_path_buf();
+        let mut exists = true;
+        let real = loop {
+            if let Ok(real) = canonical(&path) {
+                break real;
+            }
+            exists = false;
+            if !path.pop() {
+                return false;
+            }
+        };
+        if exists && folder_id(&real).is_some_and(|id| self.holder_ids.contains(&id)) {
+            return true;
+        }
+        real.ancestors()
+            .filter_map(folder_id)
+            .any(|id| self.private_ids.contains(&id))
     }
 
     /// Whether any operation on `target` (or what it holds) would touch a
@@ -236,7 +290,7 @@ impl Protected {
         }
         Self {
             roots: all,
-            private: Vec::new(),
+            ..Self::default()
         }
     }
 
