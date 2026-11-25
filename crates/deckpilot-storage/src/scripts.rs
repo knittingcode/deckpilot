@@ -11,9 +11,9 @@
 //! - [`SqliteStore::create_script`]: trusted, bound to its hash, no grants.
 //! - [`SqliteStore::save_script`] (the editor): a trusted script is bound to
 //!   its new hash and keeps its grants; one that is not trusted stays so.
-//! - [`SqliteStore::put_untrusted_script`] (an import, an overwrite) and
-//!   [`SqliteStore::duplicate_script`]: not trusted; an existing record's
-//!   grants stay dormant.
+//! - [`SqliteStore::put_untrusted_script`] (an import, an overwrite): not
+//!   trusted and with no grants (an existing record is removed);
+//!   [`SqliteStore::duplicate_script`]: not trusted, no grants.
 //! - [`SqliteStore::trust_script`]: the user reviewed the source with this
 //!   hash; refused when the stored source has another.
 
@@ -335,9 +335,8 @@ impl SqliteStore {
     }
 
     /// A script that did not come from this computer's editor (an import,
-    /// an overwrite by one): created or replaced, never trusted. An
-    /// existing record's grants stay dormant until the user trusts it
-    /// again.
+    /// an overwrite by one): created or replaced, never trusted, with no
+    /// grants (an existing record is removed).
     pub fn put_untrusted_script(&self, profile: ProfileId, script: &Script) -> Result<()> {
         script.validate().map_err(invalid)?;
         self.require_profile(profile)?;
@@ -549,10 +548,10 @@ pub(crate) fn put_untrusted(
             .map_err(|e| name_taken(&e, &script.name).unwrap_or(e.into()))?;
         }
     }
-    // Never trusted, whatever the source: grants stay, dormant.
+    // Never trusted, whatever the source, and with no grants: a script
+    // from elsewhere never inherits what a local one was allowed.
     tx.execute(
-        "UPDATE script_trust SET source_sha256 = NULL
-         WHERE profile_id = ?1 AND script_id = ?2",
+        "DELETE FROM script_trust WHERE profile_id = ?1 AND script_id = ?2",
         params![profile.to_string(), script.id.to_string()],
     )?;
     Ok(())

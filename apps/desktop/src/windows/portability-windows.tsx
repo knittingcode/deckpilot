@@ -433,8 +433,10 @@ function ImportChoices({
   const closes = (preview.closeActions ?? []).filter(
     (c) => c.profile === null || selected.includes(c.profile),
   )
-  // Scripts come with their profile, untrusted.
-  const scripts = (preview.scripts ?? []).filter((s) => selected.includes(s.profile))
+  // Scripts come with their profile, untrusted; not with a skipped one.
+  const scripts = (preview.scripts ?? []).filter(
+    (s) => selected.includes(s.profile) && conflicts[s.profile] !== "skip",
+  )
   const [busy, setBusy] = useState(false)
   // Set synchronously, so a second click before React re-renders the busy
   // button cannot submit the same preview again.
