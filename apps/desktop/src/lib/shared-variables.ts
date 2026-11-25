@@ -143,6 +143,10 @@ export function draftOf(value: VariableValue): ValueDraft {
         : { text: value.value.role, mode: "projectRole" }
     case "json":
       return { text: JSON.stringify(value.value, null, 2) }
+    case "object":
+    case "map":
+      // Never a shared variable's value; shown, never edited.
+      return { text: "" }
     default:
       return { text: value.value }
   }
@@ -198,6 +202,10 @@ export function parseValue(type: VariableType, draft: ValueDraft): Parsed {
       return text
         ? { value: { type: "secretRef", value: text } }
         : { error: i18n.t("workflows:sharedVariables.parse.credential") }
+    case "object":
+    case "map":
+      // Only DeckPilot provides structured values (protocol 18).
+      return { error: i18n.t("workflows:sharedVariables.parse.structured") }
   }
 }
 
@@ -239,6 +247,9 @@ export function formatValue(
     case "secretRef":
       // The name of the credential, never its secret.
       return i18n.t("workflows:sharedVariables.shown.credential", { name: value.value })
+    case "object":
+    case "map":
+      return i18n.t("workflows:sharedVariables.shown.structured")
   }
 }
 

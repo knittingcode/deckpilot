@@ -243,6 +243,27 @@ async fn wait_state(agent: &TestAgent, state: S) -> WorkSessionSnapshot {
     wait_for(agent, state.name(), |s| s.state == state).await
 }
 
+/// Waits until a check newer than the one in `before` has run and passed
+/// (`VerifyingEnd` reached and left), and the session is ready to finish
+/// with that check's approval.
+///
+/// `VerifyingEnd` lasts only as long as the check, and the snapshot is a
+/// `watch` value that a slow runner may sample after it moved on, so the
+/// proof is the check's own record rather than seeing the passing state: a
+/// new verification id with an outcome, bound to the approval.
+async fn wait_verified(agent: &TestAgent, before: &WorkSessionSnapshot) -> WorkSessionSnapshot {
+    let earlier = before.verification.as_ref().map(|v| v.id);
+    wait_for(agent, "a passed check, then ReadyToFinish", |s| {
+        s.state == S::ReadyToFinish
+            && s.verification.as_ref().is_some_and(|v| {
+                Some(v.id) != earlier
+                    && v.outcome.as_ref().is_some_and(|o| o.can_finish)
+                    && s.approval == Some(v.id)
+            })
+    })
+    .await
+}
+
 /// Lets a gesture that should do nothing have its chance, then checks
 /// that the session is still `state` (and the same session).
 async fn stays(agent: &TestAgent, before: &WorkSessionSnapshot) {
@@ -310,18 +331,18 @@ async fn the_key_starts_verifies_and_finishes_a_session() {
     tokio::time::sleep(SETTLE).await;
     // Working with a verification workflow: a click verifies.
     f.click();
-    wait_state(&agent, S::VerifyingEnd).await;
-    let ready = wait_state(&agent, S::ReadyToFinish).await;
+    let ready = wait_verified(&agent, &working).await;
     assert_eq!(ready.session, working.session);
+    assert_eq!(runs(&agent, check_id).await, 1);
     // Within the arming delay: ignored, still ready.
     f.click();
     stays(&agent, &ready).await;
     tokio::time::sleep(SETTLE).await;
     // A long press checks again and gives a fresh approval.
     f.long_press().await;
-    wait_state(&agent, S::VerifyingEnd).await;
-    let again = wait_state(&agent, S::ReadyToFinish).await;
+    let again = wait_verified(&agent, &ready).await;
     assert_eq!(again.session, working.session);
+    assert_eq!(runs(&agent, check_id).await, 2);
     assert!(again.approval.is_some() && again.approval != ready.approval);
     tokio::time::sleep(SETTLE).await;
     // A click finishes.

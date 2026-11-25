@@ -1281,6 +1281,8 @@ fn plugin_variables_have_a_root_of_their_own() {
         profile: &profile,
         os: Os::current(),
         live: &NoLiveState,
+        machine: None,
+        private_paths: true,
     };
     for (reference, owner) in [
         (
@@ -2464,6 +2466,7 @@ mod first_party {
             .collect();
         let moved: BTreeSet<String> = deckpilot_core::variables::MODULE_VARIABLE_ALIASES
             .iter()
+            .filter(|a| a.moved)
             .map(|a| a.legacy.to_owned())
             .collect();
         assert_eq!(declared, moved, "every variable of the module moved");
@@ -2475,15 +2478,23 @@ mod first_party {
             .collect();
         let canonical: BTreeSet<String> = deckpilot_core::variables::MODULE_VARIABLE_ALIASES
             .iter()
+            .filter(|a| a.moved)
             .map(|a| {
                 assert_eq!(a.plugin, "deckpilot.projects");
                 a.canonical.to_owned()
             })
             .collect();
-        assert_eq!(
-            plugin, canonical,
+        assert!(
+            plugin.is_superset(&canonical),
             "the plugin declares every moved variable"
         );
+        // The short spellings of plugin API 1.12 (the repositories) name
+        // what the plugin may declare from 0.2.0 on; nothing else.
+        let every: BTreeSet<String> = deckpilot_core::variables::MODULE_VARIABLE_ALIASES
+            .iter()
+            .map(|a| a.canonical.to_owned())
+            .collect();
+        assert!(plugin.is_subset(&every), "{plugin:?}");
     }
 
     /// The core kinds a manifest's resource parameter accepts.
@@ -2704,8 +2715,9 @@ fn every_builtin_action_declares_its_contexts() {
     listed.sort();
     assert_eq!(seen, listed);
     // The registries the agent and the app build, on every platform, hold
-    // only types that declare contexts; Wait is deprecated, hidden from new
-    // actions, and still runs.
+    // only types that declare contexts; Wait (replaced by Delay) and Open
+    // folder (replaced by Open, docs/system-actions.md) are deprecated,
+    // hidden from new actions, and still run.
     for os in [Os::Linux, Os::MacOs, Os::Windows, Os::Other] {
         let mut registry = builtin(os);
         for info in registry.modules() {
@@ -2720,11 +2732,16 @@ fn every_builtin_action_declares_its_contexts() {
             );
             assert_eq!(
                 definition.deprecated,
-                definition.id.as_str() == general::WAIT,
+                [general::WAIT, system::actions::OPEN_DIRECTORY].contains(&definition.id.as_str()),
                 "{}",
                 definition.id
             );
         }
         assert!(actions.definition(&general::wait_id()).is_some());
+        assert!(
+            actions
+                .definition(&system::actions::id(system::actions::OPEN_DIRECTORY))
+                .is_some()
+        );
     }
 }

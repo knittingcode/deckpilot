@@ -169,7 +169,8 @@
     "unsupported": "module `{{module}}` is not supported on this operating system",
     "windowNamespace": "window `{{window}}` is outside the namespace of module `{{module}}`",
     "invalidConfig": "invalid module configuration: {{detail}}",
-    "incompatibleExport": "module `{{module}}` cannot read exported data of version {{found}} (supports up to {{supported}})"
+    "incompatibleExport": "module `{{module}}` cannot read exported data of version {{found}} (supports up to {{supported}})",
+    "gesturePreset": "invalid gesture preset: {{detail}}"
   },
   "catalog": {
     "duplicateKey": "project key `{{key}}` is already used in this profile",

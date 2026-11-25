@@ -25,7 +25,8 @@ use deckpilot_core::variables::{
     CatalogEntry, CatalogFilter, LiveState, MissingReason, PreviewItem, ProjectResolver,
     ProjectSource, ReferenceAvailability, ReferencePreview, Resolution, ResolutionContext,
     ResolutionPhase, ValueSource, VariableGroup, VariableKey, VariableOwner, VariableRef,
-    VariableRegistry, VariableResolver, VariableScope, preview_reference, select_value,
+    VariableRegistry, VariableResolver, VariableScope, catalog_listing, preview_reference,
+    select_value,
 };
 use deckpilot_core::work_session::{WorkSessionSnapshot, WorkSessionVariable};
 use deckpilot_core::{ModuleId, Profile, ProfileId, ProjectId};
@@ -390,6 +391,10 @@ pub fn catalog(
             owner: Some(owner),
             deprecated: None,
             declared_scope: None,
+            members: Vec::new(),
+            map_keys: Vec::new(),
+            members_only: false,
+            member_of: None,
         });
     }
     entries
@@ -488,7 +493,7 @@ impl Agent {
     ) -> Result<Response, IpcError> {
         // Asking for another profile than the active one is fine; one that
         // does not exist is not.
-        self.context_profile(context.profile)?;
+        let profile = self.context_profile(context.profile)?;
         let context = self.preview_context(context);
         let active = self.work_session_snapshot().session.is_some();
         let entries = catalog(
@@ -496,10 +501,12 @@ impl Agent {
             &self.current_variables(context.profile)?,
             &context,
             active,
-        )
-        .into_iter()
-        .filter(|entry| filter.matches(entry))
-        .collect();
+        );
+        // Structured variables with their shape's members and the keys of
+        // the context's project's repositories; the app composes the
+        // member references (protocol 18).
+        let project = context.project.and_then(|id| profile.project(id));
+        let entries = catalog_listing(entries, project, filter);
         Ok(Response::Variables { entries })
     }
 
@@ -523,6 +530,11 @@ impl Agent {
             outputs: None,
             registry: self.modules.variables(),
             live: self.variables.as_ref(),
+            // The configuration app's own preview: this computer's folders,
+            // as Settings › Resources shows them. Whole structured values
+            // are summarised (`ReferenceStatus::Structured`).
+            machine: Some(self.runtime.machine()),
+            private_paths: true,
         };
         let previews: Vec<ReferencePreview> = items
             .iter()
@@ -686,6 +698,8 @@ mod tests {
             profile: &profile,
             os: deckpilot_core::Os::Linux,
             live: &variables,
+            machine: None,
+            private_paths: true,
         };
         let slot = environment.device().unwrap();
         assert_eq!(slot.display_name(), Some(descriptor.display_name.clone()));

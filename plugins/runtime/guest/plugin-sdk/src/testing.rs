@@ -231,9 +231,10 @@ impl MockHost {
 /// action behave differently from its declaration: the id, the version,
 /// `engines.pluginApi` and `engines.sdk` against this SDK, the action ids
 /// (in order) and, per action, every parameter's key, `required`, kind,
-/// bounds, options and default, and its `controls`
+/// bounds, options and default, its `controls`
 /// ([`Action::controls`](crate::Action::controls), compared per kind as
-/// sets). A [`Param::text`](crate::Param::text)
+/// sets) and its `contexts` ([`Action::contexts`](crate::Action::contexts),
+/// compared as a set). A [`Param::text`](crate::Param::text)
 /// matches the manifest kinds `text` (with `maxLength`), `project`,
 /// `lines`, `pairs` and `code`, which all arrive as text; `number` and
 /// `secret` parameters have no manifest kind in manifest version 1 and
@@ -366,8 +367,39 @@ pub fn manifest_mismatches(plugin: &Plugin, manifest: &serde_json::Value) -> Vec
             normalized.as_ref().unwrap_or(&Value::Null),
             plugin_controls.as_ref().unwrap_or(&Value::Null),
         );
+        // Contexts compare as sets too (plugin API 1.11), in the SDK's
+        // order; absent on both sides is equal.
+        let declared_contexts =
+            m.get("contexts")
+                .filter(|c| !c.is_null())
+                .map(|c| match c.as_array() {
+                    Some(names) => {
+                        let mut names: Vec<&str> = names.iter().filter_map(Value::as_str).collect();
+                        names.sort_unstable_by_key(|name| context_order(name));
+                        names.dedup();
+                        json!(names)
+                    }
+                    None => c.clone(),
+                });
+        let plugin_contexts = action
+            .declared_contexts()
+            .map(|set| json!(set.iter().map(|c| c.as_str()).collect::<Vec<_>>()));
+        differ(
+            format!("{}: contexts", action.id()),
+            declared_contexts.as_ref().unwrap_or(&Value::Null),
+            plugin_contexts.as_ref().unwrap_or(&Value::Null),
+        );
     }
     out
+}
+
+/// Where a manifest context name sorts: the SDK's [`crate::ActionContext`]
+/// order, unknown names last.
+fn context_order(name: &str) -> usize {
+    ["key", "gesture", "display", "sequence", "workflow"]
+        .iter()
+        .position(|known| *known == name)
+        .unwrap_or(usize::MAX)
 }
 
 impl Transport for MockHost {

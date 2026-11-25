@@ -5,12 +5,24 @@
 // bind, and the localized names of the built-in System actions.
 
 import { i18n, type TranslationKey } from "@/i18n"
-import type { ActionType, MachineResourceBinding, Os, ResourceKind, ResourceRef } from "@/lib/types"
+import type {
+  ActionInstance,
+  ActionType,
+  MachineResourceBinding,
+  Os,
+  ResourceKind,
+  ResourceRef,
+} from "@/lib/types"
 
 export const WEBSITE = "system.open-url"
 export const OPEN = "system.open-file"
 export const OPEN_APPLICATION = "system.open-app"
 export const CLOSE_APPLICATION = "system.close-app"
+/**
+ * Open folder: replaced by Open (which opens folders too) and deprecated,
+ * so it is not offered for new keys; saved ones keep running, keep their
+ * folder icon and stay editable (docs/system-actions.md).
+ */
 export const OPEN_FOLDER = "system.open-directory"
 
 /** The longest address that opens (`paths::MAX_URL_LEN`). */
@@ -208,6 +220,27 @@ const NAMES: Partial<Record<string, { name: TranslationKey; description: Transla
     name: "actions:system.names.openFolder",
     description: "actions:system.descriptions.openFolder",
   },
+}
+
+/**
+ * The icon a new action of `type` is made with: none for Open, whose keys
+ * show the icon of what they open (a document or a folder, computed by the
+ * core and never stored; docs/system-actions.md, "The key's icon"), so an
+ * icon set later is the user's choice; the type's icon for every other.
+ */
+export function newActionIcon(type: Pick<ActionType, "id" | "node">): string | null {
+  return type.id === OPEN ? null : (type.node?.icon ?? null)
+}
+
+/**
+ * The icon lists show for a saved action: its own, or for an Open action
+ * without one Open's document icon (the core's default for its keys).
+ */
+export function shownActionIcon(
+  action: Pick<ActionInstance, "icon" | "actionType"> | undefined,
+): string | null | undefined {
+  if (action?.icon) return action.icon
+  return action?.actionType === OPEN ? "file" : action?.icon
 }
 
 /** A built-in action type's name in the window's language; others as they are. */

@@ -34,8 +34,8 @@ use crate::variables::{
     VariableRef, VariableRegistry, VariableResolver, VariableValue, bind, parse_expression,
 };
 use crate::{
-    ActionParameters, ActionResult, ActionType, ExecutionId, Os, ParameterKind, ParameterValue,
-    Profile, ProjectId, WorkflowId,
+    ActionParameters, ActionResult, ActionType, ExecutionId, MachineConfig, Os, ParameterKind,
+    ParameterValue, Profile, ProjectId, WorkflowId,
 };
 
 /// Replaces values that must not be shown.
@@ -263,6 +263,25 @@ pub struct ContextResolver<'a> {
     pub registry: &'a VariableRegistry,
     /// Live values outside the context, such as the work session.
     pub live: &'a dyn LiveState,
+    /// This computer's resource bindings: the folders of repositories.
+    pub machine: Option<&'a MachineConfig>,
+    /// Whether the values may carry this computer's folder paths
+    /// ([`crate::variables::Member::private_path`]). `false` for key
+    /// titles and for the parameters of a plugin that may not see paths
+    /// (`resources:paths`): their repositories' `path` is `null`.
+    pub private_paths: bool,
+}
+
+impl ContextResolver<'_> {
+    /// The same resolver for a reader that may (`true`) or may not see
+    /// this computer's folder paths.
+    #[must_use]
+    pub fn with_private_paths(self, private_paths: bool) -> Self {
+        Self {
+            private_paths,
+            ..self
+        }
+    }
 }
 
 impl std::fmt::Debug for ContextResolver<'_> {
@@ -289,6 +308,8 @@ impl VariableResolver for ContextResolver<'_> {
                     profile: self.profile,
                     os: self.os,
                     live: self.live,
+                    machine: self.machine,
+                    private_paths: self.private_paths,
                 };
                 let resolution = match reference {
                     VariableRef::System(variable) => {
@@ -324,6 +345,18 @@ impl VariableResolver for ContextResolver<'_> {
     }
 }
 
+/// Every string inside `json`, for [`Redactor::add_value`].
+fn add_strings(redactor: &mut Redactor, json: &serde_json::Value) {
+    match json {
+        serde_json::Value::String(text) => redactor.add(text),
+        serde_json::Value::Object(members) => {
+            members.values().for_each(|v| add_strings(redactor, v));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| add_strings(redactor, v)),
+        _ => {}
+    }
+}
+
 /// Removes the values of sensitive variables from text that is shown,
 /// logged or stored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -346,6 +379,12 @@ impl Redactor {
     pub fn add_value(&mut self, value: &VariableValue) {
         match value {
             VariableValue::Resource(_) | VariableValue::SecretRef(_) => {}
+            VariableValue::Object(_) | VariableValue::Map(_) => {
+                if let Some(json) = value.structured_json() {
+                    self.add(&json.to_string());
+                    add_strings(self, &json);
+                }
+            }
             VariableValue::Json(json) => {
                 self.add(&json.to_string());
                 if let Some(text) = json.as_str() {

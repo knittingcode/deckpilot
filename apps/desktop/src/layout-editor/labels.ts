@@ -238,6 +238,16 @@ export function positionFromBox(box: LabelBox, mode: LabelPosition["mode"]): Lab
   return { mode: "preset", at }
 }
 
+/**
+ * The look change that puts label `id` at `position`, applied to the key's
+ * labels as they are when it is applied (the latest draft), so quick moves
+ * and edits made meanwhile are kept.
+ */
+export function labelMovedTo(id: string, position: LabelPosition) {
+  return (appearance: KeyAppearance): KeyAppearance =>
+    withLabels(updateLabel(labelsOf(appearance), id, placedAt(position)))(appearance)
+}
+
 /** The change that puts a label at `position`, clearing its offsets. */
 export function placedAt(position: LabelPosition) {
   return { position, offsetX: null, offsetY: null }

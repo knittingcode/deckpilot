@@ -69,6 +69,7 @@ impl Context {
             headers: Vec::new(),
             body: None,
             auth: None,
+            connection: None,
         }))
     }
 

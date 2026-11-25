@@ -625,6 +625,8 @@
       "resource": "zasób",
       "json": "JSON",
       "secretRef": "nazwa poświadczenia",
+      "object": "wartość złożona",
+      "map": "wartości złożone według klucza",
       "resourceOfKind": "zasób ({{kind}})"
     },
     "scope": {
@@ -688,12 +690,20 @@
       "noWorkflow": "W kontekście nie ma przepływu pracy.",
       "noExecution": "W kontekście nie ma uruchomienia.",
       "noOutput": "Krok jeszcze jej nie wytworzył.",
-      "otherProfile": "Wartość należy do innego profilu."
+      "otherProfile": "Wartość należy do innego profilu.",
+      "unknownMember": "Nie ma takiego pola.",
+      "repositoryNotInProject": "Projekt nie ma repozytorium o tym kluczu.",
+      "noDefaultRepository": "Projekt ma kilka repozytoriów i żadne nie jest domyślne."
     },
     "status": {
       "resolved": "Rozwiązana",
       "redacted": "Ukryta",
       "redactedDetail": "Wartość jest poufna i nigdy nie jest pokazywana.",
+      "structured_one": "{{count}} obiekt",
+      "structured_few": "{{count}} obiekty",
+      "structured_many": "{{count}} obiektów",
+      "structured_other": "{{count}} obiektu",
+      "structuredDetail": "Wartość złożona: wybierz jedno z jej pól, aby zobaczyć wartość.",
       "runtime": "Dostępna podczas uruchomienia",
       "runtimeDetail": "Wartość istnieje tylko podczas działania przepływu pracy.",
       "missing": "Brak",
@@ -1183,5 +1193,23 @@
     "place": "Miejsce",
     "inset": "Odstęp od krawędzi",
     "autoShort": "auto"
+  },
+  "gesturePreset": {
+    "multi": "Kilka gestów",
+    "drag": "Przeciągnij {{name}} na element sterujący albo na jeden z jego gestów",
+    "applied": "Umieszczono „{{name}}” w miejscu „{{control}}”",
+    "skipped": "Pominięto, „{{control}}” ich nie obsługuje: {{gestures}}.",
+    "failed": "Nie umieszczono „{{name}}” w miejscu „{{control}}”",
+    "noGesture": "„{{name}}” nie ma nic dla gestu „{{gesture}}”",
+    "noGestureDetail": "Upuść na inny gest albo na klawisz, aby przypisać wszystkie jego gesty.",
+    "unknownAction": "Jedna z jego akcji nie jest tu dostępna.",
+    "moduleOff": "Moduł {{module}} jest wyłączony.",
+    "noControl": "Na tym urządzeniu nie ma elementu „{{control}}”.",
+    "unsupported": "„{{control}}” nie obsługuje gestów: {{gestures}}. {{reason}}",
+    "nothing": "Żaden z jego gestów nie pasuje do „{{control}}”.",
+    "releaseWithGestures": "Zwolnienie nie może być obok dwukrotnego kliknięcia ani długiego naciśnięcia.",
+    "releaseInTheWay": "„{{control}}” ma akcję zwolnienia, która nie może zostać obok dwukrotnego kliknięcia ani długiego naciśnięcia. Najpierw ją usuń.",
+    "switchFirst": "„{{control}}” działa od razu po naciśnięciu i ten wpis tego nie zmienia. Najpierw upuść go na dwukrotne kliknięcie lub długie naciśnięcie w Inspektorze (zapyta przed przełączeniem klawisza na gesty) albo użyj pustego klawisza.",
+    "list": "{{items}} i {{last}}"
   }
 }

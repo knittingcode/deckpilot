@@ -578,6 +578,14 @@ pub struct PluginSummary {
     /// [`PluginSummary::status_items`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dashboard_cards: Vec<String>,
+    /// The active version's gesture presets (`contributes.gesturePresets`,
+    /// plugin API 1.10) as the agent's engine registers them: ids and
+    /// action types prefixed with the plugin id, texts in the app's
+    /// language, whatever the plugin's state (the app offers them only
+    /// while every action they name can run). Data only; a preset grants
+    /// nothing. Empty (left out) without presets and from older agents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gesture_presets: Vec<deckpilot_core::GesturePreset>,
     /// Installed only because this plugin needed it (feature
     /// [`feature::DEPENDENCIES`]); absent for a plugin the user installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1951,6 +1959,7 @@ mod tests {
         let contributing = PluginSummary {
             status_items: vec!["activeProject".into()],
             dashboard_cards: vec!["activeProject".into()],
+            gesture_presets: Vec::new(),
             ..summary.clone()
         };
         let json = serde_json::to_value(&contributing).unwrap();
