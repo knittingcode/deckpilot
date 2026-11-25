@@ -845,3 +845,70 @@ async fn calls_status_reads_layouts_once_and_follows_edits() {
     }
     deck.agent.shutdown().await;
 }
+
+/// A seed that fails while the database is busy is tried again, after a
+/// wait that doubles (1 s, then 2 s), never before: nothing is stored
+/// meanwhile, the first seed that goes through is the only write, and the
+/// overlay uses it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_seed_is_tried_again_with_a_growing_wait_and_stored_once() {
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-busy");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let device = mock.plug(&models::stream_deck_mk2(), "CALLS-B");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent.handle.calls_fail_seeds(2).await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::new(), ActionParameters::new())
+        .await;
+    let deck = Deck {
+        agent,
+        mock,
+        device,
+        clock,
+        _dir: dir,
+    };
+    let mk2 = models::stream_deck_mk2().id;
+    let look = async |millis: u64| {
+        deck.clock.advance(Duration::from_millis(millis));
+        deck.agent.status().await;
+        deck.agent.status().await;
+        let view = deck.agent.handle.calls_view().await.unwrap();
+        let stored = deck
+            .agent
+            .store()
+            .managed_layout("deckpilot.calls", &mk2)
+            .unwrap();
+        (view.seed_attempts, stored)
+    };
+    // At install: the first try fails, nothing is stored.
+    let (attempts, stored) = look(0).await;
+    assert_eq!(attempts, 1);
+    assert!(stored.is_none());
+    // Not before the first wait (1 s) is over.
+    assert_eq!(look(500).await.0, 1);
+    // At 1 s: tried again, busy again; the next wait is 2 s.
+    let (attempts, stored) = look(500).await;
+    assert_eq!(attempts, 2);
+    assert!(stored.is_none());
+    assert_eq!(look(1000).await.0, 2, "not before 3 s");
+    // At 3 s: stored.
+    let (attempts, stored) = look(1000).await;
+    assert_eq!(attempts, 3);
+    let first = stored.expect("stored once the database is free");
+    // Nothing is written again afterwards.
+    for _ in 0..5 {
+        let (attempts, stored) = look(5000).await;
+        assert_eq!(attempts, 3, "no further write");
+        assert_eq!(stored.as_ref(), Some(&first));
+    }
+    // The overlay shows the stored layout.
+    deck.join().await;
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!(view.layouts, std::slice::from_ref(&first.layout.name));
+    deck.agent.shutdown().await;
+}
