@@ -50,6 +50,18 @@ fn wasapi_sessions_give_the_image_names_only() {
         "no camera signal on Windows"
     );
     assert!(parse_wasapi_sessions("{}").is_err());
+    // A sample logged by mistake names no app and no path.
+    let logged = format!("{signals:?}");
+    assert!(!logged.contains("ms-teams"), "{logged}");
+    assert!(!logged.contains("Program Files"), "{logged}");
+}
+
+#[test]
+fn records_over_the_limit_are_refused() {
+    let huge = format!("[{}]", " ".repeat(MAX_RECORD_BYTES));
+    assert!(parse_pw_dump(&huge).is_err());
+    assert!(parse_wasapi_sessions(&huge).is_err());
+    assert!(parse_core_audio(&huge).is_err());
 }
 
 #[test]
@@ -98,11 +110,12 @@ fn teams_is_recognized_by_its_executables_only() {
     assert!(teams.matches(Platform::Windows, "MS-TEAMS.EXE"));
 }
 
-/// A source that replays fixtures, one per sample.
+/// A source that replays fixtures, one per sample, and counts samples.
 struct Replay {
     platform: Platform,
     samples: VecDeque<Result<Signals, SourceError>>,
     last: Signals,
+    taken: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Replay {
@@ -111,6 +124,7 @@ impl Replay {
             platform,
             samples: samples.into(),
             last: Signals::default(),
+            taken: std::sync::Arc::default(),
         }
     }
 }
@@ -121,6 +135,7 @@ impl SignalSource for Replay {
     }
 
     fn sample(&mut self, _now: Instant) -> Result<Signals, SourceError> {
+        self.taken.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         match self.samples.pop_front() {
             Some(Ok(signals)) => {
                 self.last = signals.clone();
@@ -250,7 +265,7 @@ fn every_teams_control_is_unsupported_and_only_detection_is_inferred() {
         for capability in Capability::ALL {
             let support = set.get(capability);
             match capability {
-                Capability::DetectMeeting | Capability::MicReadState => {
+                Capability::DetectMeeting => {
                     assert_eq!(support, Support::Inferred, "{capability:?}");
                 }
                 _ => assert!(
@@ -328,4 +343,77 @@ fn faces_never_claim_control_of_teams() {
             }
         }
     }
+}
+
+// ----------------------------------------------------------- consent
+
+/// Without the `observe` consent the provider does not connect and never
+/// samples; after `disconnect` it samples no more.
+#[test]
+fn nothing_is_sampled_without_consent_or_after_disconnect() {
+    use std::sync::atomic::Ordering;
+    let teams = parse_wasapi_sessions(WASAPI_TEAMS).unwrap();
+    let replay = Replay::new(Platform::Windows, vec![Ok(teams); 5]);
+    let taken = replay.taken.clone();
+    let mut provider = OsSignalsProvider::new(Profile::teams(), Box::new(replay));
+    assert_eq!(provider.poll(Instant::ZERO).len(), 0, "not connected");
+    let refused = ConsentState {
+        observe: false,
+        control: false,
+        titles: false,
+    };
+    assert_eq!(
+        provider.connect(&ProviderCx {
+            consent: refused,
+            session: ProviderSession(1),
+        }),
+        Err(ProviderError::ConsentNotGiven)
+    );
+    assert_eq!(provider.poll(Instant::from_secs(1)).len(), 0);
+    assert_eq!(taken.load(Ordering::SeqCst), 0, "never sampled");
+    provider
+        .connect(&ProviderCx {
+            consent: consent(),
+            session: ProviderSession(2),
+        })
+        .unwrap();
+    assert_ne!(provider.poll(Instant::from_secs(2)).len(), 0);
+    assert_eq!(taken.load(Ordering::SeqCst), 1);
+    provider.disconnect();
+    assert_eq!(provider.poll(Instant::from_secs(3)).len(), 0);
+    assert_eq!(
+        taken.load(Ordering::SeqCst),
+        1,
+        "no sample after disconnect"
+    );
+}
+
+/// A failure before a disconnect is not carried into the next session: the
+/// first good sample after reconnecting reports no extra `Connected`.
+#[test]
+fn a_reconnect_does_not_carry_an_old_failure() {
+    let teams = parse_wasapi_sessions(WASAPI_TEAMS).unwrap();
+    let (mut provider, _) = setup(
+        Platform::Windows,
+        vec![Err(SourceError(FailureCode::new("gone"))), Ok(teams)],
+    );
+    assert!(matches!(
+        provider.poll(Instant::ZERO).as_slice(),
+        [ProviderEvent::Disconnected { .. }]
+    ));
+    provider.disconnect();
+    provider
+        .connect(&ProviderCx {
+            consent: consent(),
+            session: ProviderSession(2),
+        })
+        .unwrap();
+    let events = provider.poll(Instant::from_secs(1));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Connected { .. })),
+        "{events:?}"
+    );
+    assert!(matches!(events.as_slice(), [ProviderEvent::Call(_)]));
 }

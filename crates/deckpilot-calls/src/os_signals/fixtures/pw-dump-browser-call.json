@@ -18,6 +18,7 @@
       "props": {
         "media.class": "Stream/Input/Audio",
         "application.name": "Chromium",
+        "media.name": "Weekly sync with a private title",
         "application.process.binary": "/usr/lib/chromium/chromium",
         "application.process.id": 4242
       }

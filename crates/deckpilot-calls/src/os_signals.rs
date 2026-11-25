@@ -32,6 +32,13 @@
 //! queries need a TCC prompt is not known and is an owner verification
 //! before any live source is built: a signal that would prompt is dropped,
 //! never prompted for.
+//!
+//! **Identity is the executable name only, so it can be spoofed**: any
+//! process named like Teams that holds the microphone shows a call (an
+//! indicator only, no control exists). Before a live source ships, it must
+//! pass a verified identity instead of a bare name: on macOS the bundle id
+//! (`com.microsoft.teams2`) with its code-signing team id, on Windows the
+//! package family (`MSTeams_8wekyb3d8bbwe`).
 
 use serde::Deserialize;
 
@@ -57,18 +64,36 @@ pub enum Platform {
 }
 
 /// One audio capture session: the executable name of the process that
-/// holds it (the file name only, never a path or a command line).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// holds it (the file name only, never a path or a command line). Its
+/// `Debug` leaves the name out, so a sample logged by mistake names no app.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Capture {
     pub executable: String,
     pub active: bool,
 }
 
-/// A camera stream attributed to an app (`PipeWire` only).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A camera stream attributed to an app (`PipeWire` only). Its `Debug`
+/// leaves the name out.
+#[derive(Clone, PartialEq, Eq)]
 pub struct CameraStream {
     pub executable: String,
     pub active: bool,
+}
+
+impl std::fmt::Debug for Capture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Capture")
+            .field("active", &self.active)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for CameraStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CameraStream")
+            .field("active", &self.active)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What the operating system shows at one instant.
@@ -189,7 +214,9 @@ pub fn capabilities(profile: &Profile, platform: Platform) -> CapabilitySet {
     };
     let (set, _) = CapabilitySet::from_reported(Capability::ALL.into_iter().map(|capability| {
         let support = match capability {
-            Capability::DetectMeeting | Capability::MicReadState => detect,
+            // Holding the microphone says nothing about its mute state:
+            // `MicReadState` is unsupported like every control below.
+            Capability::DetectMeeting => detect,
             // Ringing, dialing and titles have no supported signal.
             Capability::DetectIncoming | Capability::DetectOutgoing | Capability::ReadTitle => {
                 no_api
@@ -271,6 +298,7 @@ impl CallProvider for OsSignalsProvider {
     fn disconnect(&mut self) {
         self.session = None;
         self.in_call = false;
+        self.failing = false;
     }
 
     fn poll(&mut self, now: Instant) -> Vec<ProviderEvent> {
@@ -348,25 +376,31 @@ pub fn parse_pw_dump(json: &str) -> Result<Signals, SourceError> {
         #[serde(default)]
         state: Option<String>,
         #[serde(default)]
-        props: serde_json::Map<String, serde_json::Value>,
+        props: Props,
     }
-    let objects: Vec<Object> =
-        serde_json::from_str(json).map_err(|_| SourceError(FailureCode::new("pw-dump-invalid")))?;
+    /// The two properties read; every other one (`media.name`, which may
+    /// hold a tab's or meeting's title, the process id, the user) is
+    /// skipped without being kept.
+    #[derive(Deserialize, Default)]
+    struct Props {
+        #[serde(default, rename = "media.class")]
+        media_class: Option<String>,
+        #[serde(default, rename = "application.process.binary")]
+        binary: Option<String>,
+    }
+    let objects: Vec<Object> = serde_json::from_str(bounded(json, "pw-dump-invalid")?)
+        .map_err(|_| SourceError(FailureCode::new("pw-dump-invalid")))?;
     let mut signals = Signals::default();
     for object in objects {
         if object.kind != "PipeWire:Interface:Node" {
             continue;
         }
         let Some(info) = object.info else { continue };
-        let class = info
-            .props
-            .get("media.class")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
+        let class = info.props.media_class.as_deref().unwrap_or_default();
         let executable = info
             .props
-            .get("application.process.binary")
-            .and_then(|v| v.as_str())
+            .binary
+            .as_deref()
             .map(file_name)
             .unwrap_or_default()
             .to_owned();
@@ -389,20 +423,22 @@ pub fn parse_pw_dump(json: &str) -> Result<Signals, SourceError> {
 }
 
 /// A WASAPI capture session as the Windows source records it: the
-/// session's process image name and `AudioSessionState`.
-#[derive(Debug, Clone, Deserialize)]
+/// session's process image name and `AudioSessionState`. Read only by
+/// [`parse_wasapi_sessions`]; it has no `Debug`, so the image path is never
+/// logged.
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WasapiSession {
-    pub process_image: String,
+struct WasapiSession {
+    process_image: String,
     /// `active`, `inactive` or `expired`.
-    pub state: String,
+    state: String,
 }
 
 /// The Windows source's capture sessions. The camera has no supported
 /// signal on Windows: unknown.
 pub fn parse_wasapi_sessions(json: &str) -> Result<Signals, SourceError> {
-    let sessions: Vec<WasapiSession> =
-        serde_json::from_str(json).map_err(|_| SourceError(FailureCode::new("wasapi-invalid")))?;
+    let sessions: Vec<WasapiSession> = serde_json::from_str(bounded(json, "wasapi-invalid")?)
+        .map_err(|_| SourceError(FailureCode::new("wasapi-invalid")))?;
     Ok(Signals {
         captures: sessions
             .into_iter()
@@ -419,24 +455,25 @@ pub fn parse_wasapi_sessions(json: &str) -> Result<Signals, SourceError> {
 /// The macOS source's record: the Core Audio process objects
 /// (`kAudioHardwarePropertyProcessObjectList`) with their executable name
 /// and `kAudioProcessPropertyIsRunningInput`, and
-/// `AVCaptureDevice.isInUseByAnotherApplication` of the cameras.
-#[derive(Debug, Clone, Deserialize)]
+/// `AVCaptureDevice.isInUseByAnotherApplication` of the cameras. Read only
+/// by [`parse_core_audio`]; no `Debug`, so no name is ever logged.
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CoreAudioRecord {
-    pub processes: Vec<CoreAudioProcess>,
+struct CoreAudioRecord {
+    processes: Vec<CoreAudioProcess>,
     #[serde(default)]
-    pub cameras_in_use: Option<Vec<bool>>,
+    cameras_in_use: Option<Vec<bool>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CoreAudioProcess {
-    pub executable: String,
-    pub is_running_input: bool,
+struct CoreAudioProcess {
+    executable: String,
+    is_running_input: bool,
 }
 
 pub fn parse_core_audio(json: &str) -> Result<Signals, SourceError> {
-    let record: CoreAudioRecord = serde_json::from_str(json)
+    let record: CoreAudioRecord = serde_json::from_str(bounded(json, "core-audio-invalid")?)
         .map_err(|_| SourceError(FailureCode::new("core-audio-invalid")))?;
     Ok(Signals {
         captures: record
@@ -452,6 +489,19 @@ pub fn parse_core_audio(json: &str) -> Result<Signals, SourceError> {
             .cameras_in_use
             .map_or(Tri::Unknown, |c| Tri::Known(c.into_iter().any(|b| b))),
     })
+}
+
+/// Largest record a parser reads (a busy `PipeWire` graph's dump is well
+/// under it).
+pub const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
+
+/// `json` if it is at most [`MAX_RECORD_BYTES`], else the parser's code.
+fn bounded<'a>(json: &'a str, code: &'static str) -> Result<&'a str, SourceError> {
+    if json.len() > MAX_RECORD_BYTES {
+        Err(SourceError(FailureCode::new(code)))
+    } else {
+        Ok(json)
+    }
 }
 
 /// The file name of a path (`C:\…\ms-teams.exe`, `/usr/bin/chrome`).

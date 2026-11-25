@@ -403,10 +403,19 @@ The `os-signals` provider with its Teams profile is detection only:
   `Microsoft Teams (work or school)` on macOS; `ms-teams.exe` and
   `Teams.exe` on Windows. They are compared by executable name only (never
   a path or a command line), and the names are dropped: only the call
-  observation leaves the module.
+  observation leaves the module. The records' `Debug` leaves names out,
+  and the `pw-dump` parser reads only `media.class` and
+  `application.process.binary` (never `media.name`, which may hold a
+  title). A record over 4 MiB is refused.
+- **The name can be spoofed:** any process named like Teams that holds the
+  microphone shows a call (an indicator only; no control exists). Before a
+  live source ships, it must pass a verified identity: the bundle id
+  `com.microsoft.teams2` with its code-signing team id on macOS, the
+  package family `MSTeams_8wekyb3d8bbwe` on Windows.
 - **What is never claimed:**
   - The microphone's mute state is **unknown**: holding the microphone is
-    never shown as "not muted".
+    never shown as "not muted", and `micReadState` is reported
+    unsupported.
   - The camera is not attributed on macOS (`isInUseByAnotherApplication`
     names no app), and Windows has no supported signal for it.
   - On Linux Teams is a browser tab: nothing is attributed, and the
