@@ -48,7 +48,7 @@ use deckpilot_plugin_abi::scripts::{
 use deckpilot_plugin_broker::PluginId;
 use serde_json::Value;
 
-use super::fs::protected::{same_path, starts_with};
+use super::fs::protected::{canonical, same_path, starts_with};
 use super::fs::resolve::resolve;
 use super::{Call, Notes, RunProject, fault, now_us, to_value};
 use crate::plugins::executor::Executor;
@@ -239,7 +239,7 @@ impl Executor {
                 )
             });
         }
-        let project = call.run.host.project(None)?;
+        let project = call.project()?;
         let (cwd, cwd_check) = cwd(call, project.as_ref(), grant.cwd, request.cwd.as_ref())?;
         let mut args: Vec<OsString> = Vec::new();
         let mut extra = vec!["LANG", "SSH_AUTH_SOCK"];
@@ -314,7 +314,7 @@ impl Executor {
                 )
             })?;
         notes.add("command", stem(&program));
-        let project = call.run.host.project(None)?;
+        let project = call.project()?;
         // A shell runs in a repository of the project or a scope of the
         // script, never anywhere else.
         let rule = if request.cwd.as_ref().is_some_and(|c| c.repository.is_some()) {
@@ -447,7 +447,7 @@ impl Executor {
             })?;
         // The folder is checked again right before the start.
         if let Some(expected) = &prepared.cwd_check
-            && !std::fs::canonicalize(&prepared.cwd).is_ok_and(|real| same_path(&real, expected))
+            && !canonical(&prepared.cwd).is_ok_and(|real| same_path(&real, expected))
         {
             return Err(fault(
                 codes::OUTSIDE_SCOPE,
@@ -599,12 +599,30 @@ fn cwd(
         ..ScriptGrants::default()
     };
     let target = match rule {
-        ProcessCwd::Repositories => resolve(path, &repositories, project, FsAccess::Read)?,
-        ProcessCwd::FsScopes => resolve(path, &call.grants, project, FsAccess::Read)?,
+        ProcessCwd::Repositories => resolve(
+            path,
+            &repositories,
+            project,
+            FsAccess::Read,
+            &call.run.protected,
+        )?,
+        ProcessCwd::FsScopes => resolve(
+            path,
+            &call.grants,
+            project,
+            FsAccess::Read,
+            &call.run.protected,
+        )?,
         ProcessCwd::Any => match &path.path {
             Some(absolute) => {
-                let real = std::fs::canonicalize(absolute)
+                let real = canonical(std::path::Path::new(absolute))
                     .map_err(|_| fault(codes::NOT_FOUND, "the working folder does not exist"))?;
+                if call.run.protected.forbids(&real) {
+                    return Err(fault(
+                        codes::PROTECTED_PATH,
+                        "DeckPilot's own folders are never a working folder",
+                    ));
+                }
                 if !real.is_dir() {
                     return Err(fault(
                         codes::INVALID_ARGUMENT,
@@ -613,10 +631,16 @@ fn cwd(
                 }
                 return Ok((real.clone(), Some(real)));
             }
-            None => resolve(path, &repositories, project, FsAccess::Read)?,
+            None => resolve(
+                path,
+                &repositories,
+                project,
+                FsAccess::Read,
+                &call.run.protected,
+            )?,
         },
     };
-    let real = std::fs::canonicalize(target.absolute()).map_err(|_| {
+    let real = canonical(&target.absolute()).map_err(|_| {
         fault(
             codes::NOT_FOUND,
             format!("“{}” does not exist", target.shown()),
