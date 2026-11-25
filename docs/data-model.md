@@ -362,10 +362,11 @@ script's name, source and settings, with the profile it belongs to, and
 never reads `script_trust`; a script record has no field for trust or
 grants, and one that holds either is refused. An import checks every
 script as the store would (and at most 500 per profile, unique ids and
-names), writes it untrusted (`put_untrusted`) into the profile it was
-imported as, renames one whose name is taken there ("… (imported)"),
-and runs nothing. Overwriting a profile replaces its scripts and drops
-their local trust and grants with them. The import preview lists the
+names), writes it untrusted and with no grants (`put_untrusted`, which
+removes any trust record) into the profile it was imported as, and runs
+nothing. That profile holds no scripts here before: a profile that
+exists here is imported as a copy (new ids) or replaced, which removes
+its scripts, their trust and their grants first. The import preview lists the
 scripts and says they arrive untrusted.
 
 Usages (the guarded delete): every action of type `deckpilot.scripts.run`

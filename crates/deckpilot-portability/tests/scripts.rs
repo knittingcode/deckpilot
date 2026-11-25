@@ -191,7 +191,7 @@ fn a_crafted_payload_cannot_carry_grants_or_bad_scripts() {
 }
 
 #[test]
-fn a_name_taken_here_gets_an_imported_suffix() {
+fn a_profile_that_exists_here_gets_its_scripts_as_a_copy() {
     let (source, _, _) = source_store();
     let (payload, _) = exported(&source);
     let target = SqliteStore::open_in_memory().unwrap();

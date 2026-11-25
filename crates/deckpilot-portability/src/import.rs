@@ -142,7 +142,14 @@ fn validate_scripts(
             return invalid("a script belongs to no exported profile".into());
         }
         if let Err(e) = script.validate() {
-            return invalid(format!("script “{}”: {e}", script.name));
+            // An invalid name is not echoed (it can be huge or hold
+            // control and direction characters).
+            return match e {
+                deckpilot_core::script::ScriptError::Name => {
+                    invalid("a script has an invalid name".into())
+                }
+                e => invalid(format!("script “{}”: {e}", script.name)),
+            };
         }
         let (ids, names) = per_profile.entry(exported.profile).or_default();
         if !ids.insert(script.id.to_string()) || !names.insert(script.name.to_lowercase()) {
@@ -1086,66 +1093,23 @@ impl SharedIds {
 }
 
 /// The scripts of the imported profiles, in the profile each ended up as.
-/// Each is written untrusted (an existing one's grants stay dormant), with
-/// a name no other script of that profile has here. Nothing runs.
+/// That profile never holds scripts here before the import (a profile
+/// that exists here is imported as a copy, with a new id, or replaced,
+/// which removes its scripts first), so each is a new script: untrusted,
+/// with no grants. Nothing runs.
 fn plan_scripts(
     payload: &Payload,
-    store: &SqliteStore,
     moved: &BTreeMap<ProfileId, ProfileId>,
-    removed: &BTreeSet<ProfileId>,
     changes: &mut ConfigChanges,
     summary: &mut ImportSummary,
-) -> Result<(), PortabilityError> {
-    let mut taken: BTreeMap<ProfileId, BTreeMap<String, deckpilot_core::ScriptId>> =
-        BTreeMap::new();
+) {
     for exported in &payload.scripts {
         let Some(target) = moved.get(&exported.profile).copied() else {
             continue;
         };
-        let names = match taken.entry(target) {
-            std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::btree_map::Entry::Vacant(e) => {
-                let local = if removed.contains(&target) {
-                    Vec::new()
-                } else {
-                    store.scripts(target)?
-                };
-                e.insert(
-                    local
-                        .into_iter()
-                        .map(|s| (s.script.name.to_lowercase(), s.script.id))
-                        .collect(),
-                )
-            }
-        };
-        let mut script = exported.script.clone();
-        // The one it replaces (same id) gives its name up.
-        names.retain(|_, id| *id != script.id);
-        if names.contains_key(&script.name.to_lowercase()) {
-            script.name = unique_script_name(&script.name, names);
-        }
-        names.insert(script.name.to_lowercase(), script.id);
-        summary.scripts.push(script.name.clone());
-        changes.scripts.push((target, script));
+        summary.scripts.push(exported.script.name.clone());
+        changes.scripts.push((target, exported.script.clone()));
     }
-    Ok(())
-}
-
-/// `name (imported)`, `name (imported 2)`, …, cut to the script name
-/// limit, not in `taken` (lowercase).
-fn unique_script_name(name: &str, taken: &BTreeMap<String, deckpilot_core::ScriptId>) -> String {
-    let cut = |suffix: &str| {
-        let room = deckpilot_core::script::MAX_NAME.saturating_sub(suffix.chars().count());
-        let head: String = name.chars().take(room).collect();
-        format!("{}{suffix}", head.trim_end())
-    };
-    let mut candidate = cut(" (imported)");
-    let mut n = 2;
-    while taken.contains_key(&candidate.to_lowercase()) {
-        candidate = cut(&format!(" (imported {n})"));
-        n += 1;
-    }
-    candidate
 }
 
 fn unique_name(name: &str, taken: &BTreeSet<String>) -> String {
@@ -1398,14 +1362,7 @@ pub fn plan(
         &mut changes,
         &mut summary,
     )?;
-    plan_scripts(
-        payload,
-        store,
-        &moved_profiles,
-        &removed,
-        &mut changes,
-        &mut summary,
-    )?;
+    plan_scripts(payload, &moved_profiles, &mut changes, &mut summary);
     if apply_settings && let Some(updates) = payload.settings.updates {
         changes.settings.push(plan_update_settings(updates, store)?);
         summary.settings.push("updates".into());

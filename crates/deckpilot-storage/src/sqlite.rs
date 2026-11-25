@@ -211,8 +211,7 @@ pub struct ConfigChanges {
     /// `unassigned_layouts` (an import that replaces everything).
     pub delete_unused_layouts: bool,
     /// Scripts to create or replace, after the profiles: never trusted,
-    /// whatever their source (`scripts::put_untrusted`); an existing
-    /// script's grants stay dormant.
+    /// whatever their source, and with no grants (`scripts::put_untrusted`).
     pub scripts: Vec<(ProfileId, deckpilot_core::script::Script)>,
 }
 

@@ -82,7 +82,7 @@ fn a_new_script_is_trusted_with_no_grants_and_saving_grants_nothing() {
 }
 
 #[test]
-fn an_import_never_trusts_and_keeps_grants_dormant_until_reviewed() {
+fn an_import_never_trusts_and_brings_no_grants() {
     let (store, profile) = store();
     let script = store
         .create_script(profile, &Script::new("Deploy", "one()"))
@@ -90,7 +90,7 @@ fn an_import_never_trusts_and_keeps_grants_dormant_until_reviewed() {
     store
         .set_script_grants(profile, script.id, &granted())
         .unwrap();
-    // Overwritten by an import with another source.
+    // Overwritten by an import with another source: no trust, no grants.
     let imported = Script {
         source: "evil()".into(),
         ..script.clone()
@@ -102,6 +102,7 @@ fn an_import_never_trusts_and_keeps_grants_dormant_until_reviewed() {
         None,
         "it never runs"
     );
+    assert!(store.scripts(profile).unwrap()[0].grants.is_none());
     // Even the same source as before is not trusted again by an import.
     store.put_untrusted_script(profile, &script).unwrap();
     assert_eq!(state(&store, profile, script.id), TrustState::NeedsReview);
@@ -114,32 +115,69 @@ fn an_import_never_trusts_and_keeps_grants_dormant_until_reviewed() {
     let current = store.script(profile, script.id).unwrap().unwrap();
     store.save_script(profile, &current).unwrap();
     assert_eq!(state(&store, profile, script.id), TrustState::NeedsReview);
-    // A review of an older source is refused; of the stored one, trusts it
-    // and the dormant grants come back.
-    assert!(matches!(
-        store.trust_script(profile, script.id, &source_sha256("evil()"), &granted()),
-        Err(StorageError::ScriptChanged)
-    ));
-    // The review must have shown the dormant grants: never back unseen.
+    // A review of an older source, or one that saw grants that are not
+    // there, is refused; of the stored source, trusts it with none.
     assert!(matches!(
         store.trust_script(
             profile,
             script.id,
-            &source_sha256("one()"),
+            &source_sha256("evil()"),
             &ScriptGrants::default()
         ),
         Err(StorageError::ScriptChanged)
     ));
-    assert_eq!(run_grants(&store, profile, script.id), None);
+    assert!(matches!(
+        store.trust_script(profile, script.id, &source_sha256("one()"), &granted()),
+        Err(StorageError::ScriptChanged)
+    ));
     store
-        .trust_script(profile, script.id, &source_sha256("one()"), &granted())
+        .trust_script(
+            profile,
+            script.id,
+            &source_sha256("one()"),
+            &ScriptGrants::default(),
+        )
         .unwrap();
-    assert_eq!(run_grants(&store, profile, script.id), Some(granted()));
+    assert_eq!(
+        run_grants(&store, profile, script.id),
+        Some(ScriptGrants::default())
+    );
     // A new script from an import has no record at all.
     let fresh = Script::new("Fresh", "x()");
     store.put_untrusted_script(profile, &fresh).unwrap();
     assert_eq!(state(&store, profile, fresh.id), TrustState::NeedsReview);
     assert_eq!(run_grants(&store, profile, fresh.id), None);
+}
+
+#[test]
+fn a_dormant_grant_comes_back_only_as_the_review_showed_it() {
+    let (store, profile) = store();
+    let script = store
+        .create_script(profile, &Script::new("Deploy", "one()"))
+        .unwrap();
+    store
+        .set_script_grants(profile, script.id, &granted())
+        .unwrap();
+    // A source that no longer matches its hash (changed outside the
+    // editor): not trusted, its grants dormant.
+    store
+        .connection()
+        .execute("UPDATE scripts SET source = 'two()'", [])
+        .unwrap();
+    assert_eq!(run_grants(&store, profile, script.id), None);
+    assert!(matches!(
+        store.trust_script(
+            profile,
+            script.id,
+            &source_sha256("two()"),
+            &ScriptGrants::default()
+        ),
+        Err(StorageError::ScriptChanged)
+    ));
+    store
+        .trust_script(profile, script.id, &source_sha256("two()"), &granted())
+        .unwrap();
+    assert_eq!(run_grants(&store, profile, script.id), Some(granted()));
 }
 
 #[test]
