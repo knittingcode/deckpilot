@@ -465,6 +465,21 @@ impl PluginStore {
         crate::data::credentials(self.connection(), id)
     }
 
+    /// The plugin's connections (plugin API 1.14), oldest first, each
+    /// with whether a secret is stored (never the secret).
+    pub fn connections(&self, id: &PluginId) -> Result<Vec<crate::connections::StoredConnection>> {
+        crate::connections::load(self.connection(), id)
+    }
+
+    /// One of the plugin's connections.
+    pub fn connection_record(
+        &self,
+        id: &PluginId,
+        connection: &str,
+    ) -> Result<Option<crate::connections::StoredConnection>> {
+        crate::connections::get(self.connection(), id, connection)
+    }
+
     /// The settings values the user saved for `id` (without defaults).
     pub fn settings(
         &self,

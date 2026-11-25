@@ -108,6 +108,7 @@ use tracing::{debug, info, warn};
 
 use super::variables::{PublishedVariables, typed};
 
+mod connections;
 mod open;
 pub(super) mod project;
 pub(super) mod resources;
@@ -598,6 +599,10 @@ pub(super) struct Executor {
     /// The script run of an invocation of `deckpilot.scripts` (plugin API
     /// 1.13, `scripts/`); without it every bridge call is refused.
     scripts: Option<scripts::ScriptRun>,
+    /// The connections this invocation is bound to (plugin API 1.14,
+    /// `connections.rs`): those its parameters named, or the one the app
+    /// named. The broker refuses every other one.
+    connections: std::collections::BTreeSet<String>,
 }
 
 /// One audit record of a plugin API 1.9 operation the executor carried
@@ -719,7 +724,15 @@ impl Executor {
             tools: super::tools::ToolHost::from_agent(),
             projects: None,
             scripts: None,
+            connections: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Binds the invocation to `connections` (plugin API 1.14): the only
+    /// ones its capability calls may name.
+    pub fn with_connections(mut self, connections: std::collections::BTreeSet<String>) -> Self {
+        self.connections = connections;
+        self
     }
 
     /// Records of plugin API 1.9's operations go to `audit`.
@@ -1235,10 +1248,18 @@ impl Executor {
             // Read for every hop: the broker re-allowed this hop's
             // credential for its origin (a redirect off the origin never
             // carries one).
-            let auth = match current.auth.as_ref().map(|a| self.credential(plugin, a)) {
-                Some(Ok(auth)) => Some(auth),
-                Some(Err(refused)) => return refused,
-                None => None,
+            let auth = match (&current.connection, &current.auth) {
+                // Plugin API 1.14: the connection's own secret, read for
+                // every hop (the broker kept the hop on its server).
+                (Some(connection), _) => match self.connection_auth(plugin, connection, &current) {
+                    Ok(auth) => Some(auth),
+                    Err(refused) => return refused,
+                },
+                (None, Some(a)) => match self.credential(plugin, a) {
+                    Ok(auth) => Some(auth),
+                    Err(refused) => return refused,
+                },
+                (None, None) => None,
             };
             let forms = auth.as_ref().map_or_else(Vec::new, |a| {
                 let secret = match a {
@@ -1460,6 +1481,10 @@ impl CapabilityExecutor for Executor {
     fn run_context(&self) -> Option<&RunContext> {
         Some(&self.run)
     }
+
+    fn bound_connections(&self) -> &std::collections::BTreeSet<String> {
+        &self.connections
+    }
 }
 
 impl Executor {
@@ -1475,6 +1500,14 @@ impl Executor {
     ) -> CallResult {
         match allowed {
             Allowed::Fetch(fetch) => self.fetch(plugin, fetch, interrupt),
+            // Plugin API 1.14 (`connections.rs`).
+            Allowed::ConnectionGet { connection } => self.connection_info(plugin, connection),
+            Allowed::ConnectionReportStatus {
+                connection,
+                status,
+                detail,
+            } => self.report_connection_status(plugin, connection, *status, detail.as_deref()),
+            Allowed::Sleep { ms } => connections::sleep(*ms, interrupt),
             Allowed::VariablePublish { id, value } => self.publish(plugin, id, Some(value)),
             Allowed::VariableClear { id: Some(id) } => self.publish(plugin, id, None),
             Allowed::VariableClear { id: None } => self.clear(plugin),
@@ -1604,6 +1637,7 @@ mod tests {
             body: None,
             auth: None,
             private_network,
+            connection: None,
         };
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
         let check = |private: bool, address: &str| {
@@ -1646,6 +1680,7 @@ mod tests {
             body: None,
             auth: None,
             private_network,
+            connection: None,
         };
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
         // Tunnel, translation and special ranges that are not plainly
@@ -1734,6 +1769,7 @@ mod tests {
             body: None,
             auth: None,
             private_network: false,
+            connection: None,
         };
         let failure = |code: &'static str, message: &str| {
             SendFailure::from_transport((code, message.to_owned()), &fetch)
@@ -2195,6 +2231,15 @@ pub(super) mod test_transport {
     }
 
     impl Canned {
+        /// Canned `routes` (the JSON of the file), logged to `log`.
+        #[cfg(test)]
+        pub fn new(routes: &serde_json::Value, log: PathBuf) -> Self {
+            Self {
+                routes: serde_json::from_value(routes.clone()).unwrap(),
+                log,
+            }
+        }
+
         pub fn from_env() -> Option<Self> {
             let path = PathBuf::from(std::env::var_os(ENV)?);
             let routes = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
