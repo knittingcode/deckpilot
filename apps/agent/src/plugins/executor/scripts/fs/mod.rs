@@ -731,10 +731,17 @@ impl Fs<'_> {
         })
     }
 
+    /// Whether a write must never replace a file: asked, or with `ask` in
+    /// a run nobody started (a file made after the check included).
+    fn no_replace(&self, create_only: bool) -> bool {
+        create_only
+            || (self.call.grants.destructive == Destructive::Ask && !self.call.user_initiated)
+    }
+
     fn write_file(&self, w: &FsWriteFile, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let bytes = decode(&w.content, w.encoding)?;
         let (t, parent, name) = self.write_target(&w.path, notes)?;
-        let mut pending = Pending::create(parent, name, w.create_only, &t)?;
+        let mut pending = Pending::create(parent, name, self.no_replace(w.create_only), &t)?;
         pending.write(&bytes)?;
         pending.commit()?;
         notes.add("bytes", bytes.len().to_string());
@@ -770,7 +777,7 @@ impl Fs<'_> {
                 format!("at most {MAX_OPEN_WRITES} files are written at once"),
             ));
         }
-        let pending = Pending::create(parent, name, o.create_only, &t)?;
+        let pending = Pending::create(parent, name, self.no_replace(o.create_only), &t)?;
         let handle = random_hex(16).ok_or_else(|| fault(codes::HOST_ERROR, "no random source"))?;
         state.writes.open.insert(
             handle.clone(),
@@ -1056,10 +1063,18 @@ impl Fs<'_> {
     }
 
     fn move_(&self, m: &FsMove, notes: &mut Notes) -> Result<Value, ScriptFault> {
+        // A move takes a file away from its place: with `ask`, never in a
+        // run nobody started.
+        self.unattended()?;
         let (s, (sp, sn), d, (dp, dn), existing) =
             self.pair(&m.src, &m.dst, FsAccess::Write, notes)?;
         // The source leaves its place: the rules of a removal.
         self.may_destroy(&s, false)?;
+        // Every link it holds must still lead inside its scope from the
+        // new place (re-check of #469).
+        let mut at = d.rel.clone();
+        at.pop();
+        links_stay(&sp, &sn, &dn, &at, &mut 0, 0)?;
         let (src_plan, _) = plan_entry(&sp, &sn, &s.shown())?;
         notes.add("files", src_plan.files.to_string());
         if let Some(existing) = &existing {
@@ -1101,7 +1116,7 @@ type Pair = (
 /// Whether a link `target`, placed in the folder `at` (names below the
 /// scope's root), leads to a place inside the scope: relative, and never
 /// above the root.
-fn link_stays_inside(at: &[String], target: &std::path::Path) -> bool {
+pub(crate) fn link_stays_inside(at: &[String], target: &std::path::Path) -> bool {
     use std::path::Component;
     // Only `../../name/…`: every `..` before the first name, so no earlier
     // link can make a later `..` climb more than counted.
@@ -1116,6 +1131,49 @@ fn link_stays_inside(at: &[String], target: &std::path::Path) -> bool {
         }
     }
     ups <= at.len()
+}
+
+/// Whether the links of `name` in `dir` (itself, or everything in it)
+/// still lead inside the scope once it is `as_name` in the folder `at`.
+fn links_stay(
+    dir: &Dir,
+    name: &str,
+    as_name: &str,
+    at: &[String],
+    seen: &mut u64,
+    depth: usize,
+) -> Result<(), ScriptFault> {
+    if depth > MAX_DEPTH {
+        return Err(fault(codes::LIMIT, "the folders are nested too deeply"));
+    }
+    *seen += 1;
+    if *seen > MAX_REMOVE {
+        return Err(fault(codes::LIMIT, "too many files to move at once"));
+    }
+    let meta = dir.symlink_metadata(name).map_err(|e| failure(&e, name))?;
+    if meta.file_type().is_symlink() {
+        let target = dir
+            .read_link_contents(name)
+            .map_err(|e| failure(&e, name))?;
+        if !link_stays_inside(at, &target) {
+            return Err(fault(
+                codes::SYMLINK_ESCAPE,
+                format!(
+                    "“{name}” is or holds a link that would lead outside its scope from the new place"
+                ),
+            ));
+        }
+    } else if meta.is_dir() {
+        let sub = dir.open_dir_nofollow(name).map_err(|e| failure(&e, name))?;
+        let mut inside = at.to_vec();
+        inside.push(as_name.to_owned());
+        for entry in sub.entries().map_err(|e| failure(&e, name))? {
+            let entry = entry.map_err(|e| failure(&e, name))?;
+            let child = name_of(&entry.file_name());
+            links_stay(&sub, &child, &child, &inside, seen, depth + 1)?;
+        }
+    }
+    Ok(())
 }
 
 /// Opens without blocking: a FIFO or a device never blocks the run.

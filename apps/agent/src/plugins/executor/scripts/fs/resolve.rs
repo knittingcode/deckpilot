@@ -121,6 +121,21 @@ impl Target {
     }
 }
 
+/// A UNC share of this computer: `localhost`, a loopback address, its own
+/// name, or an administrative share (`C$`, `ADMIN$`).
+pub(crate) fn is_local_share(server: &std::ffi::OsStr, share: &std::ffi::OsStr) -> bool {
+    let server = server.to_string_lossy().to_ascii_lowercase();
+    let share = share.to_string_lossy();
+    let own = std::env::var("COMPUTERNAME").is_ok_and(|name| name.eq_ignore_ascii_case(&server));
+    own || share.ends_with('$')
+        || matches!(
+            server.as_str(),
+            "localhost" | "." | "?" | "::1" | "0:0:0:0:0:0:0:1"
+        )
+        || server.starts_with("127.")
+        || server.ends_with(".localhost")
+}
+
 /// Windows names that are devices whatever the folder.
 fn is_device_name(name: &str) -> bool {
     let stem = name
@@ -216,8 +231,14 @@ fn absolute(path: &str) -> Result<PathBuf, ScriptFault> {
                 use std::path::Prefix;
                 match prefix.kind() {
                     Prefix::Disk(_) => {}
-                    // A share needs its server and its name.
-                    Prefix::UNC(server, share) if !server.is_empty() && !share.is_empty() => {}
+                    // A share needs its server and its name, and is never
+                    // one of this computer's own (an administrative `C$`
+                    // share or `localhost`): the same folders under
+                    // another name.
+                    Prefix::UNC(server, share)
+                        if !server.is_empty()
+                            && !share.is_empty()
+                            && !is_local_share(server, share) => {}
                     _ => return Err(invalid()),
                 }
                 out.push(component);
@@ -333,7 +354,7 @@ pub(crate) fn resolve(
             "DeckPilot's own folders are never read or changed by scripts",
         )
     };
-    if protected.forbids(&candidate) {
+    if protected.forbids(&candidate) || protected.forbids_identity(&candidate) {
         return Err(private());
     }
     // Where a link inside the scope leads (a read may follow one).

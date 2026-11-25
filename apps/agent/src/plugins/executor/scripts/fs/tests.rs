@@ -1242,3 +1242,194 @@ fn scripts_fs_the_run_keeps_the_project_it_started_with() {
     // and never the new project's `cms`.
     assert_eq!(code(&r), "notFound");
 }
+
+// --- the coordinator's re-check of #469 -------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn scripts_fs_move_never_carries_a_link_out_of_its_scope() {
+    let f = setup(FsAccess::Write);
+    std::fs::create_dir_all(f.path("w/cms/a/b/c")).unwrap();
+    // Inside from its place, three levels above the root once moved up.
+    std::os::unix::fs::symlink("../../y", f.path("w/cms/a/b/c/x")).unwrap();
+    std::fs::create_dir_all(f.path("w/cms/a/b/d")).unwrap();
+    std::os::unix::fs::symlink("/etc", f.path("w/cms/a/b/d/abs")).unwrap();
+    let mut e = f.loaded();
+    let mv = |src: &str, dst: &str| {
+        op(
+            "fs.move",
+            json!({"src": rp(src), "dst": rp(dst), "overwrite": false}),
+        )
+    };
+    assert_eq!(code(&call(&mut e, &mv("a/b/c/x", "x"))), "symlinkEscape");
+    assert_eq!(
+        code(&call(&mut e, &mv("a/b/c", "c"))),
+        "symlinkEscape",
+        "a folder holding one"
+    );
+    assert_eq!(
+        code(&call(&mut e, &mv("a/b/d", "a/d"))),
+        "symlinkEscape",
+        "an absolute link"
+    );
+    assert!(exists(&f.path("w/cms/a/b/c/x")) && !exists(&f.path("w/cms/x")));
+    // Moved where it still leads inside, it moves.
+    ok(&call(&mut e, &mv("a/b/c", "a/b/c2")));
+}
+
+#[test]
+fn scripts_fs_copied_links_put_every_parent_first() {
+    use super::link_stays_inside;
+    let at = |n: usize| vec!["d".to_owned(); n];
+    assert!(link_stays_inside(&at(2), std::path::Path::new("../../x")));
+    assert!(!link_stays_inside(&at(1), std::path::Path::new("../../x")));
+    assert!(
+        !link_stays_inside(&at(3), std::path::Path::new("a/../..")),
+        "a name before .."
+    );
+    assert!(!link_stays_inside(&at(3), std::path::Path::new("sub/../x")));
+    assert!(!link_stays_inside(&at(3), std::path::Path::new("/etc")));
+}
+
+#[test]
+fn scripts_fs_ask_never_writes_over_or_moves_in_a_run_nobody_started() {
+    let f = setup(FsAccess::Delete);
+    f.grant(ScriptGrants {
+        destructive: Destructive::Ask,
+        ..grants(vec![repo_grant("cms", FsAccess::Delete, false)])
+    });
+    std::fs::write(f.path("w/cms/a.txt"), "keep").unwrap();
+    let schedule = deckpilot_plugin_abi::capability::RunContext::workflow(
+        deckpilot_plugin_abi::capability::RunCause::Schedule,
+        None,
+    );
+    let mut e = f.loaded_in(schedule);
+    let write = |rel: &str| {
+        op(
+            "fs.writeFile",
+            json!({"path": rp(rel), "content": "new", "encoding": "utf8", "createOnly": false}),
+        )
+    };
+    assert_eq!(code(&call(&mut e, &write("a.txt"))), "notUserInitiated");
+    let mv = op(
+        "fs.move",
+        json!({"src": rp("a.txt"), "dst": rp("a.bak"), "overwrite": false}),
+    );
+    assert_eq!(code(&call(&mut e, &mv)), "notUserInitiated");
+    // A chunked write whose target appears after it opened never replaces it.
+    let h = ok(&call(
+        &mut e,
+        &op(
+            "fs.write.open",
+            json!({"path": rp("b.txt"), "createOnly": false}),
+        ),
+    ))["handle"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    ok(&call(
+        &mut e,
+        &op(
+            "fs.write.chunk",
+            json!({"handle": h, "content": "new", "encoding": "utf8"}),
+        ),
+    ));
+    std::fs::write(f.path("w/cms/b.txt"), "theirs").unwrap();
+    assert_eq!(
+        code(&call(&mut e, &op("fs.write.commit", json!({"handle": h})))),
+        "exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.path("w/cms/b.txt")).unwrap(),
+        "theirs"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.path("w/cms/a.txt")).unwrap(),
+        "keep"
+    );
+    // A new file is fine.
+    ok(&call(&mut e, &write("c.txt")));
+}
+
+#[test]
+fn scripts_fs_a_private_folder_is_known_by_its_identity() {
+    use super::protected::Protected;
+    let f = Fixture::new();
+    let data = f.path("appdata");
+    std::fs::create_dir_all(data.join("sub")).unwrap();
+    let p = Protected::default().with_private([data.clone()]);
+    assert!(p.forbids_identity(&data));
+    assert!(p.forbids_identity(&data.join("sub")));
+    assert!(
+        p.forbids_identity(&data.join("not-yet/file")),
+        "below it, not there yet"
+    );
+    assert!(p.forbids_identity(&f.root), "holds it");
+    assert!(
+        !p.forbids_identity(&f.root.join("other-new-file")),
+        "a new file beside it"
+    );
+    // The same folder under another name: macOS's firmlink of the data
+    // volume.
+    #[cfg(target_os = "macos")]
+    {
+        let other =
+            std::path::Path::new("/System/Volumes/Data").join(data.strip_prefix("/").unwrap());
+        if other.is_dir() {
+            assert!(!p.forbids(&other), "the text does not match");
+            assert!(p.forbids_identity(&other), "the identity does");
+        }
+    }
+}
+
+#[test]
+fn scripts_fs_shares_of_this_computer_are_refused() {
+    use std::ffi::OsStr;
+    let local = |server: &str, share: &str| {
+        super::resolve::is_local_share(OsStr::new(server), OsStr::new(share))
+    };
+    assert!(local("localhost", "Users"));
+    assert!(local("127.0.0.1", "c"));
+    assert!(local("fileserver", "C$"));
+    assert!(local("fileserver", "ADMIN$"));
+    assert!(!local("fileserver", "projects"));
+}
+
+/// A repository folder in Windows' verbatim form (`\\?\C:\…`, what
+/// `canonicalize` gives) resolves and stays protected.
+#[cfg(windows)]
+#[test]
+fn scripts_fs_a_verbatim_repository_folder_resolves() {
+    let f = setup(FsAccess::Delete);
+    std::fs::write(f.path("w/cms/a.txt"), "a").unwrap();
+    {
+        let mut project = f.host.project.lock().unwrap();
+        let repo = &mut project.as_mut().unwrap().repositories[0];
+        repo.folder = Some(std::fs::canonicalize(f.path("w/cms")).unwrap());
+        assert!(
+            repo.folder
+                .as_ref()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(r"\\?\")
+        );
+    }
+    let mut e = f.loaded();
+    let r = ok(&call(
+        &mut e,
+        &op(
+            "fs.readFile",
+            json!({"path": rp("a.txt"), "encoding": "utf8"}),
+        ),
+    ));
+    assert_eq!(r["content"], "a");
+    // The repository's own folder is still never removed.
+    let r = call(
+        &mut e,
+        &op(
+            "fs.remove",
+            json!({"path": rp(""), "recursive": true, "dryRun": false}),
+        ),
+    );
+    assert_eq!(code(&r), "protectedPath");
+}

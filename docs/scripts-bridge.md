@@ -226,7 +226,13 @@ moved"). Every operation then works relative to that open folder:
   token, its logs, configuration and caches, and the app) are never read
   or changed, nor anything that holds them, also through a link: a scope
   over the home folder still never reaches them, and listing the home
-  folder itself (or `~/Library`) is refused for the same reason;
+  folder itself (or `~/Library`) is refused for the same reason. They are
+  recognized by their text and by their **file identity** (volume and
+  file number, from an open handle) along the path, so another name for
+  the same folder (macOS's `/System/Volumes/Data` firmlink, a bind mount)
+  is refused too; shares of this computer (`localhost`, a loopback
+  address, its own name, `C$`-style administrative shares) are never
+  paths;
 - **names**: an 8.3 short name (`GIT~1`) is refused everywhere (Windows
   shares resolve them on every system), and on Windows a device name and a
   name ending in a dot or a space, so no name reaches a folder under
@@ -259,7 +265,8 @@ moved"). Every operation then works relative to that open folder:
   run nobody started is refused (`notUserInitiated`) unless the script's
   grant says `destructive: "allow"`, which needs no token; with `ask`, a
   run nobody started removes or replaces nothing at all, not even one
-  file (a write over an existing file included). The token is bound to every entry of the plan (its path, kind,
+  file: no write over an existing file (a chunked write commits only if
+  nothing appeared at its target meanwhile), and no move; The token is bound to every entry of the plan (its path, kind,
   size, file id and time), not only to the counts: other files in place
   of the confirmed ones are asked again. Replacing a folder that is not
   empty needs `delete` access. A removal stops if more entries appear
@@ -267,9 +274,10 @@ moved"). Every operation then works relative to that open folder:
   root; elsewhere a tree holding one is never emptied. Note that `delete`
   access removes single files and empty folders without a confirmation in
   runs the user starts;
-- **copies** re-create a link only when it is relative, of the form
-  `../../name/…` (every `..` first), and still leads inside the scope
-  from its new place; any other link is refused;
+- **copies and moves** carry a link only when it is relative, of the
+  form `../../name/…` (every `..` first), and still leads inside the
+  scope from its new place; a move of a link, or of a folder holding a
+  link, that would lead out (or any absolute link) is refused;
 - **writes** go to a temporary file in the target's folder, renamed over
   the target on commit (with `createOnly`, linked to it, which never
   replaces an existing file; on a volume without links, checked and
