@@ -919,7 +919,7 @@ mod tests {
         }
         // Built from pieces, so no literal here has a real token's shape.
         let shaped = |prefix: [&str; 2], rest: &str| format!("{}{}{rest}", prefix[0], prefix[1]);
-        for secret in [
+        for (case, secret) in [
             &shaped(["gh", "p_"], "0123456789abcdefghijABCDEFGHIJ012345"),
             &shaped(["github", "_pat_"], "11AAAA"),
             &format!(
@@ -928,15 +928,21 @@ mod tests {
             ),
             "0123456789abcdef0123456789abcdef",
             "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=",
-        ] {
-            assert!(looks_like_secret(secret), "{secret}");
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert!(looks_like_secret(secret), "secret shape {case}");
         }
-        for name in [
+        for (case, name) in [
             "octo @ github.com",
             "Work GitLab",
             "ana.kowalska @ code.example.com",
-        ] {
-            assert!(!looks_like_secret(name), "{name}");
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert!(!looks_like_secret(name), "name {case}");
         }
         check_secret("dp-test-abc").unwrap();
         for bad in [
