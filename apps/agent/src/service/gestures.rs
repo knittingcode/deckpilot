@@ -317,6 +317,7 @@ impl Agent {
                 .engine
                 .cancel(device, GestureCancel::PageChanged);
             self.after_change();
+            self.calls_publish();
             return;
         }
         match outcome {
