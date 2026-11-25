@@ -94,6 +94,14 @@ function agent(capabilities: string[] = ["calls"]) {
   })
 }
 
+/** The same agent after a restart: a new process. */
+function restarted() {
+  return agentConnection({
+    status: agentStatus({ devices: [device], pid: 2, startedAt: 1_700_000_100 }),
+    capabilities: ["calls"] as never,
+  })
+}
+
 beforeAll(() => {
   installDomStubs()
 })
@@ -562,5 +570,61 @@ describe("Settings › Devices › Calls", () => {
       "aria-pressed",
       "false",
     )
+  })
+  it("ends the preview when the status after the begin cannot be read", async () => {
+    const user = userEvent.setup()
+    api.getCallsStatus
+      .mockResolvedValueOnce(previewing())
+      .mockRejectedValue(new Error("the agent went away"))
+    api.callsPreviewBegin.mockResolvedValue(null)
+    api.callsPreviewEnd.mockResolvedValue(null)
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    await waitFor(() => {
+      expect(api.callsPreviewEnd).toHaveBeenCalled()
+    })
+    expect(screen.getByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
+
+  it("drops a preview of an earlier agent run", async () => {
+    const user = userEvent.setup()
+    api.getCallsStatus.mockResolvedValueOnce(previewing()).mockResolvedValue(previewing("active"))
+    api.callsPreviewBegin.mockResolvedValue(null)
+    const view = renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    expect(await screen.findByRole("button", { name: "End preview" })).toBeInTheDocument()
+    // The agent restarted: its first status (revision 1 again) still names
+    // the page, but this preview was the old run's.
+    view.rerender(<CallsSettings />, { ...view.context, agent: restarted() })
+    expect(await screen.findByRole("button", { name: "Show on the device" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
+
+  it("drops an answer of an earlier agent run", async () => {
+    let answer: (value: CallsStatus) => void = () => undefined
+    api.getCallsStatus.mockResolvedValue(status({ state: "outgoing" }))
+    api.setCallsOverlay.mockReturnValue(
+      new Promise<CallsStatus>((resolve) => {
+        answer = resolve
+      }),
+    )
+    const view = renderWithApp(<CallsSettings />, { agent: agent() })
+    expect(await screen.findByText("Calling")).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole("switch", { name: "Show calls on this device" }))
+    // The agent restarts before it answers: the new run says no call.
+    api.getCallsStatus.mockResolvedValue(status({ state: "idle" }))
+    view.rerender(<CallsSettings />, { ...view.context, agent: restarted() })
+    expect(await screen.findByText("No call")).toBeInTheDocument()
+    // The old run's late answer (a higher revision, too) changes nothing.
+    act(() => {
+      answer(status({ state: "outgoing", revision: 9 }))
+    })
+    expect(screen.getByText("No call")).toBeInTheDocument()
+    expect(screen.queryByText("Calling")).not.toBeInTheDocument()
   })
 })

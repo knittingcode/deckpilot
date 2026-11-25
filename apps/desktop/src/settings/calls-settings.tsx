@@ -1,5 +1,5 @@
 import { RotateCcw } from "lucide-react"
-import { Fragment, useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { toast } from "sonner"
 
@@ -52,13 +52,17 @@ interface HeldStatus {
 /**
  * Keeps `next` as the status of the agent instance `from`, unless the one
  * held for it has a higher revision (an answer and an event may arrive in
- * either order). Another instance's status is always replaced.
+ * either order). A status of an instance that is no longer the running one
+ * (`live`: an answer that arrives after the agent restarted) is dropped;
+ * the running instance's replaces another's.
  */
 function keeper(
   setHeld: (update: (prev: HeldStatus) => HeldStatus) => void,
   from: string | null,
+  live: { readonly current: string | null },
 ): (next: CallsStatus | null) => void {
   return (next) => {
+    if (live.current !== from) return
     setHeld((prev) =>
       next !== null &&
       prev.instance === from &&
@@ -86,7 +90,14 @@ export function CallsSettings() {
   // never rolls back a newer one.
   const [held, setHeld] = useState<HeldStatus>({ instance, status: null })
   const status = held.instance === instance ? held.status : null
-  const setStatus = keeper(setHeld, instance)
+  // The running agent instance, for answers that arrive after a restart.
+  const live = useRef(instance)
+  useLayoutEffect(() => {
+    live.current = instance
+  }, [instance])
+  const setStatus = (next: CallsStatus | null) => {
+    keeper(setHeld, instance, live)(next)
+  }
   const [restoring, setRestoring] = useState<CallsLayout | null>(null)
   // The one preview the app holds (the backend has one at a time): the
   // device it shows on, the page, whether the agent's status confirmed it,
@@ -189,7 +200,7 @@ export function CallsSettings() {
   useEffect(() => {
     if (!supported) return
     let current = true
-    const keepHere = keeper(setHeld, instance)
+    const keepHere = keeper(setHeld, instance, live)
     api.getCallsStatus().then(
       (next) => {
         if (current) keepHere(next)

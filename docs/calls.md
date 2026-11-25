@@ -549,7 +549,9 @@ snapshot instead (decided 2026-11-25):
   (a lock, a call, a dismiss, a disconnect), confirmed or not. An older
   status decides nothing, and the answer itself goes through the revision
   check, so it never rolls back a newer `callsChanged`. If that answer
-  fails, the preview is ended. A restarted agent has no preview. A status
+  fails, the preview is ended. A restarted agent has no preview, and an
+  answer of an earlier agent run (to a request made before the restart) is
+  dropped. A status
   that names the page on another device of the same model is not this
   preview, and the page buttons are pressed only for the device that
   shows it.
