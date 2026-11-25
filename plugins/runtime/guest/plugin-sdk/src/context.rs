@@ -27,6 +27,8 @@ use crate::output::{PluginError, codes};
 
 #[path = "connections.rs"]
 mod connections;
+#[path = "calls.rs"]
+mod calls;
 #[path = "privileged.rs"]
 mod privileged;
 

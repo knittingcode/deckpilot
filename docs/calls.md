@@ -97,14 +97,74 @@ provider's own text never reaches the user.
 
 | Operation | Arguments | Answer |
 | --- | --- | --- |
-| `call.state` | none | the focused call's snapshot |
+| `call.state` | none | the focused call, sanitised (`CallStateReply`, below) |
 | `call.control` | `{"action": {"kind": "answer" \| "reject" \| "cancelOutgoing" \| "end" \| "micToggle" \| "micSet", "muted": bool \| "cameraToggle" \| "cameraSet", "on": bool}}` | `confirmed` or `alreadyThere`, or an error code |
 
-The plugin never names a call or a provider: the host acts on the focused
-call. Unknown fields are refused. The broker will grant both only to
-`deckpilot.calls` with the `calls` permission, and `call.control` only with
-`calls:control`; the ABI wire entries and the broker pin come with the
-Calls bundle, which also moves the agent's plugin API to 1.16.
+The plugin never names a call, a provider, a device or a layout: the host
+acts on the focused call. Unknown fields are refused.
+
+**What `call.state` answers** (`deckpilot_plugin_abi::calls::CallStateReply`):
+the state's name, the provider id, whether it is connected, `micMuted` and
+`cameraOn` only as the call app reports them (absent when unknown: holding
+the microphone is no mute state), whether a command waits (`pending`) or
+was not confirmed (`unconfirmed`), per control action id whether it can
+work now and the reason when not (`provider-has-no-api`,
+`consent-not-given`…), the title only with the user's opt-in, and a
+`generation`. Not the snapshot's `kind`, `direction` or `since`, never a
+participant, a number, a meeting link or id, a process or an executable.
+
+### Plugin operations: who may ask, and how (C9)
+
+The ops are carried through the plugin runtime like plugin API 1.9's
+(`plugins/runtime/crates/abi/src/calls.rs`, the broker, the agent's
+executor `plugins/executor/calls.rs` and `service/plugin_calls.rs`). The
+guest SDK has `Context::call_state` and `Context::call_control`.
+
+- **Only `deckpilot.calls`**, checked three times: the broker refuses both
+  for any other plugin id whatever it was granted (`CALLS_PLUGIN`), the
+  executor checks again, and so does the agent. The manifest rules (bundled
+  only, `^1.16`) and the reviewed privileged policy keep any other plugin
+  from declaring `calls` at all.
+- **Grants:** `call.state` needs `calls`; `call.control` needs
+  `calls:control` too. A broker grant record with `calls` together with a
+  way out of the agent (`network`, a credential, `openUrl`, a user origin,
+  a tool, `openUrl:from-params`) is refused as a whole
+  (`CallsWithWayOut`), the manifest rule checked again.
+- **Runs:** `call.control` only in a run the user started (a key, a
+  gesture, the app, or a workflow the user started): never a schedule, an
+  event, the agent's start or a work session. 4 per second. `call.state`
+  needs no run and is answered inside a key's state call, so the plugin's
+  keys can show the call (still under its grant); `call.control` is not.
+- **The user's consents** decide on the agent's thread: without the
+  consent to observe calls nothing runs (`calls-provider-offline`), and a
+  control passes the gate above, so without the consent to control calls
+  it is `calls-consent` and nothing reaches the call app.
+- **The confirmed outcome:** a control the gate let through goes to the
+  provider, and the plugin's call waits for the engine's confirmation (at
+  most 8 s, at most 8 waiting in all): `confirmed`, or `calls-unconfirmed`,
+  or the provider's refusal (`calls-unsupported: <reason>` for a closed
+  reason). A set of the state the call has answers `alreadyThere` and sends
+  nothing.
+- **Detection-only Teams:** every control is refused with its reason,
+  `calls-unsupported: provider-has-no-api` (answer, reject and cancel are
+  `calls-not-in-call` first, since Teams never shows a ringing or dialing
+  call).
+- **Locked:** both are `calls-locked`.
+- **No overlay, layout or device:** neither operation names a device, a
+  frame, a page or a layout, so the plugin cannot drive an overlay or a
+  managed layout. A confirmed command changes the call, and the overlay
+  follows the call as it always does.
+- **Audit:** every call is recorded with the operation, the grant, the
+  outcome and a control's action kind; never the state, a title or anything
+  of the call.
+- **Refusals** start with their code (`calls-unsupported: …`), which the
+  plugin's `errorCodes` translate. ABI codes: `calls-consent` is
+  `not-permitted`, `calls-provider-offline` and `calls-locked` are
+  `unavailable`, the others `failed`.
+
+The agent's `PLUGIN_API` is not moved by this change, and the privileged
+policy has no `deckpilot.calls` entry yet: both are the owner's release
+steps. Until then no plugin can be granted `calls`, and the ops are inert.
 
 **The gate.** Before anything is sent, `ops::gate` checks, in this order:
 

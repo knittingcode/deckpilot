@@ -128,6 +128,16 @@ async fn start(f: &Fixture) -> Deck {
 
 /// With the "Back to work" parameters `back`.
 async fn start_with(f: &Fixture, back: ActionParameters) -> Deck {
+    let deck = start_bare(f).await;
+    deck.agent
+        .handle
+        .install_calls_mock(MockProvider::new(), back)
+        .await;
+    deck
+}
+
+/// An unlocked agent with the MK.2 and Calls not installed.
+async fn start_bare(f: &Fixture) -> Deck {
     let dir = TempDir::new("deckpilot-calls");
     let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
     let mock = MockBackend::new();
@@ -135,18 +145,13 @@ async fn start_with(f: &Fixture, back: ActionParameters) -> Deck {
     let clock = FakeInstant::default();
     let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
     agent.unlock().await;
-    let deck = Deck {
+    Deck {
         agent,
         mock,
         device,
         clock,
         _dir: dir,
-    };
-    deck.agent
-        .handle
-        .install_calls_mock(MockProvider::new(), back)
-        .await;
-    deck
+    }
 }
 
 impl Deck {
@@ -1789,4 +1794,300 @@ async fn a_locked_device_never_shows_the_call() {
         "the device no longer shows Locked"
     );
     deck.agent.shutdown().await;
+}
+
+/// Plugin API 1.16's `call.state` and `call.control` as the Calls plugin's
+/// executor asks the agent (after the broker allowed them; the broker's
+/// and the executor's refusals are tested in their crates): the user's
+/// consents, detection-only Teams, the confirmed outcome, the plugin id
+/// and the lock (T-P1).
+#[cfg(feature = "plugins")]
+mod plugin_ops {
+    use deckpilot_calls::os_signals::{
+        Capture, OsSignalsProvider, Platform, Profile as SignalsProfile, SignalSource, Signals,
+        SourceError,
+    };
+    use deckpilot_calls::provider::{ConsentState, Tri};
+    use deckpilot_ipc::Request;
+    use deckpilot_plugin_abi::calls::{CallAction, CallStateReply};
+    use serde_json::Value;
+
+    use super::*;
+
+    const CALLS: &str = "deckpilot.calls";
+
+    async fn state(deck: &Deck) -> Result<CallStateReply, (String, String)> {
+        deck.agent
+            .handle
+            .plugin_call(CALLS, None)
+            .await
+            .map(|v| serde_json::from_value(v).unwrap())
+    }
+
+    /// A control, with the folder clock moved in steps of 100 ms until it
+    /// is answered (the mock confirms 200 ms after the command).
+    async fn control(deck: &Deck, action: CallAction) -> Result<Value, (String, String)> {
+        let call = deck.agent.handle.plugin_call(CALLS, Some(action));
+        tokio::pin!(call);
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            tokio::select! {
+                answer = &mut call => return answer,
+                () = tokio::time::sleep(Duration::from_millis(20)) => {
+                    assert!(tokio::time::Instant::now() <= deadline, "answered");
+                    deck.clock.advance(Duration::from_millis(100));
+                    deck.agent.status().await;
+                }
+            }
+        }
+    }
+
+    /// How many commands the mock received.
+    async fn sent_commands(deck: &Deck) -> Option<usize> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        deck.agent
+            .handle
+            .calls_mock(move |mock, _| {
+                let _ = tx.send(mock.sent().len());
+            })
+            .await;
+        rx.try_recv().ok()
+    }
+
+    fn code(answer: Result<Value, (String, String)>) -> (String, String) {
+        answer.expect_err("refused")
+    }
+
+    /// The mock's full path (test hooks only): the state, a confirmed
+    /// toggle, a set of the state the call has, and a confirmed end.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_plugin_reads_and_controls_a_call_of_the_mock() {
+        let f = fixture();
+        let deck = start(&f).await;
+        let idle = state(&deck).await.unwrap();
+        assert_eq!(idle.state, "idle");
+        deck.join().await;
+        let active = state(&deck).await.unwrap();
+        assert_eq!(active.state, "active");
+        assert_eq!(active.provider.as_deref(), Some("mock"));
+        assert!(active.connected);
+        assert_eq!(active.title, None, "no title without the opt-in");
+        for id in ["end", "mic-toggle", "mic-mute", "camera-toggle"] {
+            assert!(active.controls[id].supported, "{id}");
+        }
+        let muted_before = active.mic_muted;
+        assert_eq!(
+            control(&deck, CallAction::MicToggle).await.unwrap(),
+            "confirmed"
+        );
+        let after = state(&deck).await.unwrap();
+        assert_eq!(after.mic_muted, muted_before.map(|m| !m));
+        let now = after.mic_muted.unwrap();
+        assert_eq!(
+            control(&deck, CallAction::MicSet { muted: now })
+                .await
+                .unwrap(),
+            "alreadyThere"
+        );
+        assert_eq!(control(&deck, CallAction::End).await.unwrap(), "confirmed");
+        let sent = sent_commands(&deck).await;
+        assert_eq!(sent, Some(2), "the toggle and the end; nothing for the set");
+        // Not in a call any more: nothing to answer.
+        deck.advance(30).await;
+        let (refusal, _) = code(control(&deck, CallAction::Answer).await);
+        assert_eq!(refusal, "calls-not-in-call");
+        deck.agent.shutdown().await;
+    }
+
+    /// Observing without the consent to control: the state, every control
+    /// shown disabled for the consent, and every control refused before
+    /// anything reaches the call app.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_the_control_consent_nothing_is_controlled() {
+        let f = fixture();
+        let deck = start_observing(&f).await;
+        deck.join().await;
+        let active = state(&deck).await.unwrap();
+        assert_eq!(active.state, "active");
+        for (id, support) in &active.controls {
+            assert!(!support.supported, "{id}");
+            assert_eq!(support.reason.as_deref(), Some("consent-not-given"), "{id}");
+        }
+        for action in [
+            CallAction::End,
+            CallAction::MicToggle,
+            CallAction::CameraSet { on: true },
+        ] {
+            let (refusal, _) = code(control(&deck, action).await);
+            assert_eq!(refusal, "calls-consent", "{action:?}");
+        }
+        let sent = sent_commands(&deck).await;
+        assert_eq!(sent, Some(0));
+        deck.agent.shutdown().await;
+    }
+
+    async fn start_observing(f: &Fixture) -> Deck {
+        let deck = start_bare(f).await;
+        deck.agent
+            .handle
+            .install_calls_mock_with(
+                MockProvider::new(),
+                ActionParameters::new(),
+                ConsentState {
+                    observe: true,
+                    control: false,
+                    titles: false,
+                },
+            )
+            .await;
+        deck
+    }
+
+    /// Without the consent to observe calls, Calls does not run: both
+    /// operations are refused and say why.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_the_observe_consent_both_are_refused() {
+        let f = fixture();
+        let deck = start_bare(&f).await;
+        deck.agent
+            .handle
+            .install_calls_mock_with(
+                MockProvider::new(),
+                ActionParameters::new(),
+                ConsentState::default(),
+            )
+            .await;
+        let (refusal, _) = state(&deck).await.unwrap_err();
+        assert_eq!(refusal, "calls-provider-offline");
+        let (refusal, _) = code(control(&deck, CallAction::End).await);
+        assert_eq!(refusal, "calls-provider-offline");
+        deck.agent.shutdown().await;
+    }
+
+    /// The agent checks the plugin a third time, and a locked DeckPilot
+    /// answers nothing about calls.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn another_plugin_and_a_lock_are_refused() {
+        let f = fixture();
+        let deck = start(&f).await;
+        deck.join().await;
+        for plugin in ["deckpilot.workspace", "acme.calls"] {
+            let refusal = deck
+                .agent
+                .handle
+                .plugin_call(plugin, None)
+                .await
+                .unwrap_err();
+            assert_eq!(refusal.0, "calls-consent", "{plugin}");
+            let refusal = deck
+                .agent
+                .handle
+                .plugin_call(plugin, Some(CallAction::End))
+                .await
+                .unwrap_err();
+            assert_eq!(refusal.0, "calls-consent", "{plugin}");
+        }
+        deck.agent.request(Request::Lock).await.unwrap();
+        let (refusal, _) = state(&deck).await.unwrap_err();
+        assert_eq!(refusal, "calls-locked");
+        let (refusal, _) = code(control(&deck, CallAction::End).await);
+        assert_eq!(refusal, "calls-locked");
+        deck.agent.shutdown().await;
+    }
+
+    /// Teams holding the microphone, as a Windows signals fixture shows it.
+    struct TeamsInACall;
+
+    impl SignalSource for TeamsInACall {
+        fn platform(&self) -> Platform {
+            Platform::Windows
+        }
+
+        fn sample(
+            &mut self,
+            _now: deckpilot_calls::clock::Instant,
+        ) -> Result<Signals, SourceError> {
+            Ok(Signals {
+                captures: vec![Capture {
+                    executable: "ms-teams.exe".into(),
+                    active: true,
+                }],
+                cameras: Vec::new(),
+                camera_in_use: Tri::Unknown,
+            })
+        }
+    }
+
+    /// Detection-only Teams, even with every consent: the call is seen,
+    /// the microphone's mute state stays unknown, and every control is
+    /// refused with its reason (`provider-has-no-api`). No control is
+    /// claimed anywhere.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn teams_is_detection_only_and_every_control_says_why() {
+        let f = fixture();
+        let deck = start_bare(&f).await;
+        deck.agent
+            .handle
+            .install_calls_provider(
+                OsSignalsProvider::new(SignalsProfile::teams(), Box::new(TeamsInACall)),
+                ActionParameters::new(),
+                ConsentState {
+                    observe: true,
+                    control: true,
+                    titles: true,
+                },
+            )
+            .await;
+        // Operating-system evidence counts after 2 s.
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        let active = loop {
+            deck.advance(1).await;
+            let now = state(&deck).await.unwrap();
+            if now.state == "active" {
+                break now;
+            }
+            assert!(tokio::time::Instant::now() <= deadline, "{}", now.state);
+        };
+        assert_eq!(active.provider.as_deref(), Some("os-signals"));
+        assert_eq!(
+            active.mic_muted, None,
+            "holding the microphone is no mute state"
+        );
+        assert_eq!(active.title, None);
+        assert!(!active.controls.is_empty());
+        for (id, support) in &active.controls {
+            assert!(!support.supported, "{id}");
+            assert_eq!(
+                support.reason.as_deref(),
+                Some("provider-has-no-api"),
+                "{id}"
+            );
+        }
+        for action in [
+            CallAction::Answer,
+            CallAction::Reject,
+            CallAction::CancelOutgoing,
+            CallAction::End,
+            CallAction::MicToggle,
+            CallAction::MicSet { muted: true },
+            CallAction::MicSet { muted: false },
+            CallAction::CameraToggle,
+            CallAction::CameraSet { on: true },
+            CallAction::CameraSet { on: false },
+        ] {
+            let (refusal, reason) = code(control(&deck, action).await);
+            match action {
+                // Only in an incoming or outgoing call, which Teams never
+                // shows.
+                CallAction::Answer | CallAction::Reject | CallAction::CancelOutgoing => {
+                    assert_eq!(refusal, "calls-not-in-call", "{action:?}");
+                }
+                _ => {
+                    assert_eq!(refusal, "calls-unsupported", "{action:?}");
+                    assert_eq!(reason, "provider-has-no-api", "{action:?}");
+                }
+            }
+        }
+        deck.agent.shutdown().await;
+    }
 }

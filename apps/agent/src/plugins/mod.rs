@@ -409,7 +409,10 @@ impl PluginRuntime {
                         notifier,
                         dialogs: dialogs.clone(),
                         projects: Some(std::sync::Arc::new(
-                            crate::service::plugin_projects::AgentProjects::new(commands),
+                            crate::service::plugin_projects::AgentProjects::new(commands.clone()),
+                        )),
+                        calls: Some(std::sync::Arc::new(
+                            crate::service::plugin_calls::AgentCallsHost::new(commands),
                         )),
                     },
                     changed,
