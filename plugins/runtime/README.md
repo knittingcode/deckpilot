@@ -139,6 +139,25 @@ unchanged byte for byte (tested in `crates/abi` and `crates/host/tests/lifecycle
 - `notify` takes an optional `severity` (`info`, `success`, `warning`,
   `error`; `Allowed::Notify` always carries one, `info` by default). It
   sets only how the notification looks. SDK: `Context::notify_with`.
+- The Scripts host bridge (plugin API 1.13, `crates/abi/src/scripts.rs`,
+  [docs/scripts-bridge.md](../../docs/scripts-bridge.md)): `script.*`,
+  `project.repositories`, `fs.*`, `process.run`, `shell.run` and
+  `shell.available`, for `deckpilot.scripts` only. Requests are strict
+  and mirror the guest's marshallers field for field; the shared fixture
+  `crates/abi/tests/fixtures/script-requests.json` holds one of every op.
+  No frame cap is raised (decision D1): files move in chunks of 512 KiB
+  (read) and 32 KiB (write, `fs.write.open`/`chunk`/`commit`/`abort`),
+  and a process's arguments, its stdin and a shell script are at most
+  48 KiB each. A refusal may carry the script detail (`CallError.script`,
+  a `ScriptFault`), which the host keeps only on the bridge's own ops
+  (`CallResult::for_op`). `GuestLimits` gains the optional `hostCalls`
+  (at most 4,096, `MAX_SCRIPT_HOST_CALLS`) and `polls` (at most 8,192,
+  counted apart, `MAX_SCRIPT_POLLS`); without them a guest keeps 256
+  calls. The continuous deadline is op-aware: after `script.poll`,
+  `script.log` and any reply the host gives itself, the guest gets back
+  only what was left of its segment (`resets_deadline`), so a busy loop
+  that polls or logs still traps at `continuousMs`; a call that waited
+  on the agent starts a new segment (`crates/host/tests/scripts_bridge.rs`).
 - `HttpResponse.headers` carries only the names in `RESPONSE_HEADERS`
   (`capability.rs`: caching, `link`, GitLab's `x-total` family, GitHub's
   `x-ratelimit-*` and the `ratelimit-*` family, by exact name; never

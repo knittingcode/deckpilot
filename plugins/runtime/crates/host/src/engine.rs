@@ -7,7 +7,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -19,10 +19,11 @@ use deckpilot_plugin_abi::guest::{
 };
 use deckpilot_plugin_abi::limits::{
     MAX_DESCRIPTOR, MAX_GUEST_INPUT, MAX_GUEST_OUTPUT, MAX_HOST_CALL_REPLY, MAX_HOST_CALL_REQUEST,
-    MAX_HOST_CALLS_PER_INVOCATION, MAX_MODULE_BYTES, MAX_STATE_HOST_CALLS, MAX_STATE_OUTPUT,
-    STATE_FUEL_DIVISOR,
+    MAX_HOST_CALLS_PER_INVOCATION, MAX_MODULE_BYTES, MAX_SCRIPT_HOST_CALLS, MAX_SCRIPT_POLLS,
+    MAX_STATE_HOST_CALLS, MAX_STATE_OUTPUT, STATE_FUEL_DIVISOR,
 };
 use deckpilot_plugin_abi::protocol::{FatalReason, GuestLimits};
+use deckpilot_plugin_abi::scripts::resets_deadline;
 use deckpilot_plugin_abi::state::{
     STATE_INVALID, STATE_UNSUPPORTED, StateOutcome, allowed_in_state,
 };
@@ -59,6 +60,13 @@ pub struct EffectiveLimits {
     pub fuel: u64,
     pub memory_bytes: usize,
     pub table_elements: usize,
+    /// `host_call`s per invocation (`script.poll` apart when `polls` is
+    /// set): [`MAX_HOST_CALLS_PER_INVOCATION`] unless the supervisor gave
+    /// a budget, at most [`MAX_SCRIPT_HOST_CALLS`].
+    pub host_calls: u32,
+    /// `script.poll` calls per invocation, counted on their own, at most
+    /// [`MAX_SCRIPT_POLLS`]; `None`: a poll is an ordinary call.
+    pub polls: Option<u32>,
 }
 
 impl EffectiveLimits {
@@ -70,6 +78,10 @@ impl EffectiveLimits {
             fuel: l.fuel_per_invocation.clamp(1, hard::MAX_FUEL),
             memory_bytes: l.memory_bytes.min(hard::MAX_MEMORY_BYTES) as usize,
             table_elements: l.table_elements.min(hard::MAX_TABLE_ELEMENTS) as usize,
+            host_calls: l.host_calls.map_or(MAX_HOST_CALLS_PER_INVOCATION, |n| {
+                n.clamp(1, MAX_SCRIPT_HOST_CALLS)
+            }),
+            polls: l.polls.map(|n| n.min(MAX_SCRIPT_POLLS)),
         }
     }
 }
@@ -166,8 +178,21 @@ struct HostState {
     limits: StoreLimits,
     handler: Box<dyn HostCallHandler>,
     deadline_ticks: u64,
+    /// The epoch (in [`EPOCH_TICK`]s, as the ticker counts it) at which
+    /// the current segment of continuous guest execution traps. A reply
+    /// that does not reset the deadline ([`resets_deadline`]) hands the
+    /// guest back only what was left of it.
+    segment_end: u64,
+    /// The ticker's count of epochs, next to the engine's.
+    epoch: Arc<AtomicU64>,
+    /// `host_call`s allowed per invocation ([`EffectiveLimits::host_calls`]).
+    max_calls: u32,
+    /// `script.poll`s allowed per invocation, counted on their own
+    /// ([`EffectiveLimits::polls`]).
+    max_polls: Option<u32>,
     invocation_id: u64,
     calls_this_invocation: u32,
+    polls_this_invocation: u32,
     next_call_id: u64,
     /// Inside `dp_features`, `dp_describe`, `dp_init` or `dp_shutdown`:
     /// host calls get a local `unavailable` reply and never reach the
@@ -185,7 +210,7 @@ struct HostState {
 /// the OS sandbox is applied, so that no thread is started afterwards.
 pub struct PluginEngine {
     engine: Engine,
-    _ticker: EpochTicker,
+    ticker: EpochTicker,
 }
 
 impl fmt::Debug for PluginEngine {
@@ -209,10 +234,7 @@ impl PluginEngine {
             .cranelift_opt_level(OptLevel::Speed);
         let engine = Engine::new(&config).map_err(|e| Fault::Load(format!("engine: {e:#}")))?;
         let ticker = EpochTicker::start(&engine);
-        Ok(Self {
-            engine,
-            _ticker: ticker,
-        })
+        Ok(Self { engine, ticker })
     }
 
     /// Validates, compiles and instantiates a module. The start function and
@@ -247,8 +269,13 @@ impl PluginEngine {
                 .build(),
             handler,
             deadline_ticks: limits.deadline_ticks,
+            segment_end: 0,
+            epoch: self.ticker.epoch.clone(),
+            max_calls: limits.host_calls,
+            max_polls: limits.polls,
             invocation_id: 0,
             calls_this_invocation: 0,
+            polls_this_invocation: 0,
             next_call_id: 0,
             in_lifecycle: false,
             features: 0,
@@ -259,7 +286,7 @@ impl PluginEngine {
         store
             .set_fuel(limits.fuel)
             .map_err(|e| Fault::Load(format!("{e:#}")))?;
-        store.set_epoch_deadline(limits.deadline_ticks);
+        begin_segment(&mut store);
         store.epoch_deadline_trap();
 
         let instance =
@@ -281,7 +308,7 @@ impl PluginEngine {
             .get_memory(&mut store, EXPORT_MEMORY)
             .ok_or_else(|| Fault::Load("no memory export".into()))?;
 
-        store.set_epoch_deadline(limits.deadline_ticks);
+        begin_segment(&mut store);
         let v = version.call(&mut store, ()).map_err(Fault::from_runtime)?;
         if v != ABI_VERSION as i32 {
             return Err(Fault::Load(format!(
@@ -448,11 +475,12 @@ impl LoadedPlugin {
             let s = self.store.data_mut();
             s.in_lifecycle = true;
             s.calls_this_invocation = 0;
+            s.polls_this_invocation = 0;
         }
         self.store
             .set_fuel(self.limits.fuel)
             .map_err(|e| Fault::Trap(format!("{e:#}")))?;
-        self.store.set_epoch_deadline(self.limits.deadline_ticks);
+        begin_segment(&mut self.store);
         let r = f(&mut self.store).map_err(Fault::from_runtime);
         self.store.data_mut().in_lifecycle = false;
         r
@@ -512,6 +540,7 @@ impl LoadedPlugin {
             let s = self.store.data_mut();
             s.invocation_id = invocation_id;
             s.calls_this_invocation = 0;
+            s.polls_this_invocation = 0;
             // Call ids count from 1 within each invocation.
             s.next_call_id = 0;
         }
@@ -519,7 +548,7 @@ impl LoadedPlugin {
             .set_fuel(self.limits.fuel)
             .map_err(|e| Fault::Trap(format!("{e:#}")))?;
 
-        self.store.set_epoch_deadline(self.limits.deadline_ticks);
+        begin_segment(&mut self.store);
         let ptr = self
             .alloc
             .call(&mut self.store, input.len() as i32)
@@ -531,7 +560,7 @@ impl LoadedPlugin {
             .write(&mut self.store, ptr as u32 as usize, &input)
             .map_err(|_| Fault::GuestAbi("dp_alloc returned an out-of-bounds buffer".into()))?;
 
-        self.store.set_epoch_deadline(self.limits.deadline_ticks);
+        begin_segment(&mut self.store);
         let packed = self
             .invoke
             .call(&mut self.store, (ptr, input.len() as i32))
@@ -586,6 +615,7 @@ impl LoadedPlugin {
             let s = self.store.data_mut();
             s.invocation_id = invocation_id;
             s.calls_this_invocation = 0;
+            s.polls_this_invocation = 0;
             s.next_call_id = 0;
             s.in_state = true;
         }
@@ -602,7 +632,7 @@ impl LoadedPlugin {
         self.store
             .set_fuel((self.limits.fuel / STATE_FUEL_DIVISOR).max(1))
             .map_err(|e| Fault::Trap(format!("{e:#}")))?;
-        self.store.set_epoch_deadline(self.limits.deadline_ticks);
+        begin_segment(&mut self.store);
         let ptr = self
             .alloc
             .call(&mut self.store, input.len() as i32)
@@ -613,7 +643,7 @@ impl LoadedPlugin {
         self.memory
             .write(&mut self.store, ptr as u32 as usize, input)
             .map_err(|_| Fault::GuestAbi("dp_alloc returned an out-of-bounds buffer".into()))?;
-        self.store.set_epoch_deadline(self.limits.deadline_ticks);
+        begin_segment(&mut self.store);
         let packed = state
             .call(&mut self.store, (ptr, input.len() as i32))
             .map_err(Fault::from_runtime)?;
@@ -679,24 +709,18 @@ const KNOWN_OPS: &[&str] = &[
     "locale.translate",
 ];
 
+/// Whether a malformed request of `op` is `bad-request` (rather than
+/// `unsupported-op`): the ops above and the Scripts bridge's own.
+fn known_op(op: &str) -> bool {
+    KNOWN_OPS.contains(&op) || deckpilot_plugin_abi::scripts::carries_script_detail(op)
+}
+
 fn abi_error(msg: &str) -> wasmtime::Error {
     wasmtime::Error::new(GuestAbiError(msg.to_owned()))
 }
 
 /// `deckpilot_v1.host_call(ptr, len) -> i64`.
 fn host_call(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> wasmtime::Result<i64> {
-    {
-        let s = caller.data_mut();
-        s.calls_this_invocation += 1;
-        if s.calls_this_invocation > MAX_HOST_CALLS_PER_INVOCATION {
-            return Err(abi_error("too many host calls in one invocation"));
-        }
-    }
-    // A state call gets few capability calls; the rest are refused here.
-    let state_budget_spent = {
-        let s = caller.data();
-        s.in_state && s.calls_this_invocation > MAX_STATE_HOST_CALLS
-    };
     let (ptr, len) = (ptr as u32 as usize, len as u32 as usize);
     if len > MAX_HOST_CALL_REQUEST {
         return Err(abi_error("host_call request too large"));
@@ -711,9 +735,32 @@ fn host_call(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> wasmtime:
         .and_then(|end| memory.data(&caller).get(ptr..end))
         .ok_or_else(|| abi_error("host_call request out of bounds"))?
         .to_vec();
+    let parsed = parse_request(&request);
+    {
+        // A `script.poll` counts against its own budget when the guest has
+        // one (`deckpilot.scripts`, D2); every other call, malformed ones
+        // included, against the call budget.
+        let s = caller.data_mut();
+        if s.max_polls.is_some() && matches!(parsed, Ok(CapabilityRequest::ScriptPoll(_))) {
+            s.polls_this_invocation += 1;
+            if s.max_polls.is_some_and(|max| s.polls_this_invocation > max) {
+                return Err(abi_error("too many script.poll calls in one invocation"));
+            }
+        } else {
+            s.calls_this_invocation += 1;
+            if s.calls_this_invocation > s.max_calls {
+                return Err(abi_error("too many host calls in one invocation"));
+            }
+        }
+    }
+    // A state call gets few capability calls; the rest are refused here.
+    let state_budget_spent = {
+        let s = caller.data();
+        s.in_state && s.calls_this_invocation > MAX_STATE_HOST_CALLS
+    };
 
     let mut op = "";
-    let reply = match parse_request(&request) {
+    let reply = match parsed {
         // A dialog needs a run the user started; `dp_init` and
         // `dp_shutdown` are none (plugin API 1.5).
         Ok(CapabilityRequest::DialogOpen(_)) if caller.data().in_lifecycle => CallResult::error(
@@ -755,10 +802,17 @@ fn host_call(mut caller: Caller<'_, HostState>, ptr: i32, len: i32) -> wasmtime:
     }
 
     // The deadline bounds continuous guest execution; time spent waiting
-    // for the supervisor does not count. Reset it before re-entering the
-    // guest (dp_alloc is guest code), or the guest traps on re-entry.
-    let ticks = caller.data().deadline_ticks;
-    caller.as_context_mut().set_epoch_deadline(ticks);
+    // for the supervisor does not count. It is set before re-entering the
+    // guest (dp_alloc is guest code), or the guest traps on re-entry: a
+    // new segment after a call that waited on the agent, and only what was
+    // left of the current one after `script.poll` and `script.log`, which
+    // a busy loop sends at will, and after a reply this host gave itself
+    // (the call never left it).
+    if !op.is_empty() && resets_deadline(op) {
+        begin_segment(&mut caller);
+    } else {
+        resume_segment(&mut caller);
+    }
     let alloc = caller
         .get_export(EXPORT_ALLOC)
         .and_then(|e| e.into_func())
@@ -786,7 +840,7 @@ fn parse_request(bytes: &[u8]) -> Result<CapabilityRequest, CallResult> {
             let unknown_op = serde_json::from_slice::<Value>(bytes)
                 .ok()
                 .and_then(|v| v.get("op").and_then(Value::as_str).map(str::to_owned))
-                .is_some_and(|op| !KNOWN_OPS.contains(&op.as_str()));
+                .is_some_and(|op| !known_op(&op));
             Err(if unknown_op {
                 CallResult::error(CallErrorCode::UnsupportedOp, "unsupported operation")
             } else {
@@ -796,9 +850,31 @@ fn parse_request(bytes: &[u8]) -> Result<CapabilityRequest, CallResult> {
     }
 }
 
-/// Increments the engine epoch every [`EPOCH_TICK`] on a background thread.
+/// Starts a new segment of continuous guest execution: it traps
+/// `deadline_ticks` epochs from now.
+fn begin_segment(mut ctx: impl AsContextMut<Data = HostState>) {
+    let mut ctx = ctx.as_context_mut();
+    let ticks = ctx.data().deadline_ticks;
+    let now = ctx.data().epoch.load(Ordering::Relaxed);
+    ctx.data_mut().segment_end = now.saturating_add(ticks);
+    ctx.set_epoch_deadline(ticks);
+}
+
+/// Continues the current segment: the guest gets back only the epochs that
+/// were left of it (at least one, so it re-enters and traps there if none
+/// were).
+fn resume_segment(mut ctx: impl AsContextMut<Data = HostState>) {
+    let mut ctx = ctx.as_context_mut();
+    let now = ctx.data().epoch.load(Ordering::Relaxed);
+    let left = ctx.data().segment_end.saturating_sub(now).max(1);
+    ctx.set_epoch_deadline(left);
+}
+
+/// Increments the engine epoch every [`EPOCH_TICK`] on a background thread,
+/// and counts the epochs for the deadline's segments ([`HostState`]).
 struct EpochTicker {
     stop: Arc<AtomicBool>,
+    epoch: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -806,18 +882,25 @@ impl EpochTicker {
     fn start(engine: &Engine) -> Self {
         let engine = engine.clone();
         let stop = Arc::new(AtomicBool::new(false));
+        let epoch = Arc::new(AtomicU64::new(0));
         let flag = stop.clone();
+        let count = epoch.clone();
         let thread = std::thread::Builder::new()
             .name("epoch-ticker".into())
             .spawn(move || {
                 while !flag.load(Ordering::Relaxed) {
                     std::thread::sleep(EPOCH_TICK);
+                    // The count trails the engine's epoch by at most this
+                    // one tick, so a resumed segment is never shorter
+                    // than what was left of it.
                     engine.increment_epoch();
+                    count.fetch_add(1, Ordering::Relaxed);
                 }
             })
             .expect("spawn epoch ticker");
         Self {
             stop,
+            epoch,
             thread: Some(thread),
         }
     }
