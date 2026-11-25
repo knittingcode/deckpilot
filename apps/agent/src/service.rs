@@ -233,6 +233,8 @@ pub(crate) enum Command {
         mock: Box<deckpilot_calls::testing::MockProvider>,
         /// The parameters of "Back to work" in the templates.
         back: deckpilot_core::ActionParameters,
+        /// The consent the test grants.
+        consent: deckpilot_calls::provider::ConsentState,
         reply: oneshot::Sender<()>,
     },
     /// Edits the installed mock provider (tests).
@@ -512,12 +514,30 @@ impl AgentHandle {
         mock: deckpilot_calls::testing::MockProvider,
         back: deckpilot_core::ActionParameters,
     ) {
+        let full = deckpilot_calls::provider::ConsentState {
+            observe: true,
+            control: true,
+            titles: false,
+        };
+        self.install_calls_mock_with(mock, back, full).await;
+    }
+
+    /// [`AgentHandle::install_calls_mock`] with the consent `consent`
+    /// (tests: observe only, say).
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_mock_with(
+        &self,
+        mock: deckpilot_calls::testing::MockProvider,
+        back: deckpilot_core::ActionParameters,
+        consent: deckpilot_calls::provider::ConsentState,
+    ) {
         let (reply, done) = oneshot::channel();
         if self
             .commands
             .send(Command::CallsInstallMock {
                 mock: Box::new(mock),
                 back,
+                consent,
                 reply,
             })
             .is_ok()
@@ -1208,13 +1228,13 @@ impl Agent {
                 Flow::Continue
             }
             #[cfg(feature = "test-hooks")]
-            Command::CallsInstallMock { mock, back, reply } => {
+            Command::CallsInstallMock {
+                mock,
+                back,
+                consent,
+                reply,
+            } => {
                 // Tests only: the consent a test grants.
-                let consent = deckpilot_calls::provider::ConsentState {
-                    observe: true,
-                    control: true,
-                    titles: false,
-                };
                 self.install_calls(mock, consent, calls::templates_with_back(&back));
                 let _ = reply.send(());
                 Flow::Continue

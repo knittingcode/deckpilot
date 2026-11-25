@@ -97,9 +97,12 @@ pub struct CallsLayout {
     /// whether the provider supports it now.
     #[serde(default)]
     pub pages: Vec<CallsPage>,
-    /// Its *Back to work* settings.
-    #[serde(default)]
-    pub back: BackToWork,
+    /// Its *Back to work* settings; `None` when the layout has no "Back to
+    /// work" key (a template without one, such as for a device without
+    /// displays, or a layout whose key was removed): there is nothing to
+    /// set then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub back: Option<BackToWork>,
 }
 
 /// Which call page.
@@ -223,4 +226,6 @@ pub mod reason {
     pub const NO_LAYOUT: &str = "callsNoLayout";
     /// The device is not connected.
     pub const UNKNOWN_DEVICE: &str = "callsUnknownDevice";
+    /// The layout has no "Back to work" key.
+    pub const NO_BACK_TO_WORK: &str = "callsNoBackToWork";
 }

@@ -88,26 +88,32 @@ fn layout_pages(
 fn with_support(
     mut pages: Vec<deckpilot_ipc::calls::CallsPage>,
     capabilities: &deckpilot_calls::provider::CapabilitySet,
+    consent: ConsentState,
 ) -> Vec<deckpilot_ipc::calls::CallsPage> {
     for control in pages.iter_mut().flat_map(|p| p.controls.iter_mut()) {
-        let refused = match deckpilot_calls::ops::control_support(&control.action, capabilities) {
-            Some(Err(reason)) => Some(reason.code().to_owned()),
-            Some(Ok(())) | None => None,
-        };
+        let refused =
+            match deckpilot_calls::ops::control_support(&control.action, capabilities, consent) {
+                Some(Err(reason)) => Some(reason.code().to_owned()),
+                Some(Ok(())) | None => None,
+            };
         control.supported = refused.is_none();
         control.reason = refused;
     }
     pages
 }
 
-/// The "Back to work" action of a managed layout.
-fn back_action(
+/// The "Back to work" actions a managed layout binds (one in every
+/// template; a user may have bound it to more keys, or to none).
+fn back_actions(
     managed: &deckpilot_storage::managed_layouts::ManagedLayout,
-) -> Option<&deckpilot_core::ActionInstance> {
+) -> Vec<&deckpilot_core::ActionInstance> {
+    let bound: BTreeSet<deckpilot_core::ActionInstanceId> =
+        managed.layout.bound_actions().into_iter().collect();
     managed
         .actions
         .iter()
-        .find(|a| calls_action(a) == Some("return-to-work"))
+        .filter(|a| calls_action(a) == Some("return-to-work") && bound.contains(&a.id))
+        .collect()
 }
 
 /// The engine's *Back to work* settings as the app sees them.
@@ -238,6 +244,8 @@ struct Service {
     seeded: BTreeSet<DeviceModelId>,
     /// Models to be tried again once the database is free.
     retries: BTreeMap<DeviceModelId, SeedRetry>,
+    /// The consent the user gave (from the plugin's grants).
+    consent: ConsentState,
 }
 
 impl std::fmt::Debug for Service {
@@ -341,6 +349,7 @@ impl Agent {
             templates,
             seeded: BTreeSet::new(),
             retries: BTreeMap::new(),
+            consent,
         }));
         self.calls_wake();
     }
@@ -651,9 +660,9 @@ impl Agent {
             .into_iter()
             .map(|m| deckpilot_ipc::calls::CallsLayout {
                 pages: layout_pages(&m),
-                back: back_action(&m)
-                    .map(|a| ipc_back(&deckpilot_calls::driver::settings_of(&a.parameters)))
-                    .unwrap_or_default(),
+                back: back_actions(&m)
+                    .first()
+                    .map(|a| ipc_back(&deckpilot_calls::driver::settings_of(&a.parameters))),
                 model: m.model,
                 layout: m.layout.id.to_string(),
                 name: m.layout.name,
@@ -699,7 +708,7 @@ impl Agent {
         let layouts = layouts
             .into_iter()
             .map(|mut layout| {
-                layout.pages = with_support(layout.pages, &snapshot.capabilities);
+                layout.pages = with_support(layout.pages, &snapshot.capabilities, service.consent);
                 layout
             })
             .collect();
@@ -707,7 +716,8 @@ impl Agent {
             installed: true,
             state: snapshot.state.name().to_owned(),
             provider: snapshot.provider.map(|p| p.to_string()),
-            controls: snapshot.capabilities.controls_anything(),
+            // Nothing controls without the control consent.
+            controls: service.consent.control && snapshot.capabilities.controls_anything(),
             devices,
             layouts,
         }
@@ -764,6 +774,9 @@ impl Agent {
         back: &deckpilot_ipc::calls::BackToWork,
     ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
         use deckpilot_ipc::{ErrorCode, IpcError};
+        // Refused, never clamped: the app shows what it set.
+        back.validate()
+            .map_err(|message| IpcError::new(ErrorCode::InvalidRequest, message))?;
         if self.calls.service.is_none() {
             return Err(not_installed());
         }
@@ -775,22 +788,32 @@ impl Agent {
             .managed_layout(OWNER, model)
             .map_err(|error| IpcError::new(ErrorCode::Failed, error.to_string()))?
             .ok_or_else(no_layout)?;
-        let action = back_action(&managed).ok_or_else(no_layout)?;
-        let settings = engine_back(
-            back,
-            deckpilot_calls::driver::settings_of(&action.parameters),
-        );
-        store
-            .set_managed_action_parameters(
-                OWNER,
-                model,
-                action.id,
-                &deckpilot_calls::driver::parameters_of(&settings),
+        let actions = back_actions(&managed);
+        if actions.is_empty() {
+            return Err(IpcError::new(
+                ErrorCode::NotFound,
+                "this Calls layout has no Back to work key",
             )
-            .map_err(|error| match error {
-                deckpilot_storage::StorageError::UnknownLayout => no_layout(),
-                other => IpcError::new(ErrorCode::Failed, other.to_string()),
-            })?;
+            .with_reason(deckpilot_ipc::calls::reason::NO_BACK_TO_WORK));
+        }
+        // Every "Back to work" key of the layout gets the settings; each
+        // keeps the parameters these do not name (merged, not replaced).
+        for action in actions {
+            let settings = engine_back(
+                back,
+                deckpilot_calls::driver::settings_of(&action.parameters),
+            );
+            let mut parameters = action.parameters.clone();
+            for (key, value) in deckpilot_calls::driver::parameters_of(&settings).iter() {
+                parameters = parameters.with(key.clone(), value.clone());
+            }
+            store
+                .set_managed_action_parameters(OWNER, model, action.id, &parameters)
+                .map_err(|error| match error {
+                    deckpilot_storage::StorageError::UnknownLayout => no_layout(),
+                    other => IpcError::new(ErrorCode::Failed, other.to_string()),
+                })?;
+        }
         // Loaded again from the store (the edited layout is kept as it is).
         if let Some(service) = self.calls.service.as_mut() {
             service.seeded.remove(model);

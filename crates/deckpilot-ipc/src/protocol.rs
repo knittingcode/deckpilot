@@ -2658,6 +2658,84 @@ mod tests {
         );
     }
 
+    /// `setCallsBackToWork` on the wire, and its times checked at the
+    /// boundaries of their ranges.
+    #[test]
+    fn back_to_work_is_set_in_range_only() {
+        use crate::calls::{BackToWork, BackToWorkMode};
+        let set = |mode| Request::SetCallsBackToWork {
+            model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+            back: BackToWork {
+                mode,
+                ..BackToWork::default()
+            },
+        };
+        let json =
+            serde_json::to_value(set(BackToWorkMode::CompletionOrMax { max_seconds: 60 })).unwrap();
+        assert_eq!(json["type"], "setCallsBackToWork");
+        assert_eq!(
+            json["back"],
+            serde_json::json!({
+                "mode": { "kind": "completionOrMax", "maxSeconds": 60 },
+                "onFailure": "resume",
+                "onCancel": "stay",
+                "allDevices": false,
+            })
+        );
+        let timer = serde_json::to_value(set(BackToWorkMode::Timer { seconds: 20 })).unwrap();
+        assert_eq!(
+            timer["back"]["mode"],
+            serde_json::json!({"kind": "timer", "seconds": 20})
+        );
+        for (seconds, ok) in [
+            (4, false),
+            (5, true),
+            (600, true),
+            (601, false),
+            (u32::MAX, false),
+        ] {
+            assert_eq!(
+                set(BackToWorkMode::Timer { seconds }).validate().is_ok(),
+                ok,
+                "timer {seconds}"
+            );
+        }
+        for (max_seconds, ok) in [
+            (9, false),
+            (10, true),
+            (1800, true),
+            (1801, false),
+            (u32::MAX, false),
+        ] {
+            assert_eq!(
+                set(BackToWorkMode::CompletionOrMax { max_seconds })
+                    .validate()
+                    .is_ok(),
+                ok,
+                "maximum {max_seconds}"
+            );
+        }
+        assert!(set(BackToWorkMode::Completion).validate().is_ok());
+    }
+
+    /// A layout of an agent before the call pages (no `pages`, no `back`)
+    /// reads as none of either.
+    #[test]
+    fn a_calls_layout_without_pages_or_back_reads_as_none() {
+        let layout: crate::calls::CallsLayout = serde_json::from_value(serde_json::json!({
+            "model": "elgato.streamdeck.mk2",
+            "layout": "0b6f3f3e-6c51-4d0e-9a55-2f1f0c1d9a01",
+            "name": "Calls",
+            "edited": false,
+            "templateVersion": "1.0.0",
+        }))
+        .unwrap();
+        assert_eq!(layout.pages.len(), 0);
+        assert_eq!(layout.back, None);
+        let json = serde_json::to_value(&layout).unwrap();
+        assert!(json.get("back").is_none(), "no back key: {json}");
+    }
+
     #[test]
     fn calls_need_protocol_19_and_carry_no_private_text() {
         assert!(!Capability::of_protocol(18).contains(&Capability::Calls));
@@ -2675,6 +2753,10 @@ mod tests {
             Request::RestoreCallsLayout {
                 model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
                 copy_name: "Rozmowy (moja wersja)".into(),
+            },
+            Request::SetCallsBackToWork {
+                model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                back: crate::calls::BackToWork::default(),
             },
         ] {
             assert_eq!(request.since_protocol(), 19);

@@ -700,6 +700,10 @@ async fn a_protocol_18_connection_cannot_ask_about_calls() {
             model: deck.device.model.clone(),
             copy_name: "Mine".into(),
         },
+        Request::SetCallsBackToWork {
+            model: deck.device.model.clone(),
+            back: deckpilot_ipc::calls::BackToWork::default(),
+        },
     ] {
         let refused = old.request(request).await;
         assert!(
@@ -948,10 +952,10 @@ async fn the_call_pages_and_back_to_work_over_ipc() {
     };
     assert!(control("mic-toggle").supported, "the mock controls calls");
     assert!(control("return-to-work").supported);
-    assert_eq!(layout.back, BackToWork::default());
+    assert_eq!(layout.back, Some(BackToWork::default()));
     assert_eq!(
-        layout.back.mode,
-        BackToWorkMode::CompletionOrMax { max_seconds: 60 }
+        layout.back.map(|b| b.mode),
+        Some(BackToWorkMode::CompletionOrMax { max_seconds: 60 })
     );
 
     // A 20 s timer.
@@ -970,7 +974,7 @@ async fn the_call_pages_and_back_to_work_over_ipc() {
     else {
         panic!("calls status")
     };
-    assert_eq!(set.layouts[0].back, timer);
+    assert_eq!(set.layouts[0].back, Some(timer));
     assert!(set.layouts[0].edited, "a Back to work change is an edit");
     // The device follows it: back after 20 s, not before.
     deck.join().await;
@@ -991,8 +995,35 @@ async fn the_call_pages_and_back_to_work_over_ipc() {
             },
         })
         .await;
-    assert!(refused.is_err(), "{refused:?}");
-    assert_eq!(status().await.layouts[0].back, timer);
+    match &refused {
+        Err(deckpilot_ipc::ClientError::Agent(error)) => {
+            assert_eq!(
+                error.code,
+                deckpilot_ipc::ErrorCode::InvalidRequest,
+                "{error:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(status().await.layouts[0].back, Some(timer));
+    // A model without a Calls layout.
+    let unknown = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: models::stream_deck_xl().id,
+            back: timer,
+        })
+        .await;
+    match &unknown {
+        Err(deckpilot_ipc::ClientError::Agent(error)) => {
+            assert_eq!(error.code, deckpilot_ipc::ErrorCode::NotFound);
+            assert_eq!(
+                error.reason.as_deref(),
+                Some(deckpilot_ipc::calls::reason::NO_LAYOUT)
+            );
+        }
+        other => panic!("{other:?}"),
+    }
     deck.agent.shutdown().await;
 }
 
@@ -1030,6 +1061,50 @@ async fn a_detection_only_provider_lists_its_controls_as_unsupported() {
         } else {
             assert!(!control.supported, "{control:?}");
             assert_eq!(control.reason.as_deref(), Some("provider-has-no-api"));
+        }
+    }
+    agent.shutdown().await;
+}
+
+/// With only the consent to observe calls, no control of the pages is
+/// supported (`consent-not-given`), whatever the provider can, and the
+/// status says nothing can be controlled.
+#[tokio::test(flavor = "multi_thread")]
+async fn observing_only_lists_every_control_as_not_allowed() {
+    use deckpilot_calls::provider::ConsentState;
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-observe");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let _device = mock.plug(&models::stream_deck_mk2(), "CALLS-O");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    let observe = ConsentState {
+        observe: true,
+        control: false,
+        titles: false,
+    };
+    agent
+        .handle
+        .install_calls_mock_with(MockProvider::new(), ActionParameters::new(), observe)
+        .await;
+    let Response::CallsStatus { status } = agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(!status.controls, "observe only: nothing controls");
+    for control in status.layouts[0]
+        .pages
+        .iter()
+        .flat_map(|p| p.controls.iter())
+    {
+        if control.action == "return-to-work" {
+            assert!(control.supported);
+        } else {
+            assert!(!control.supported, "{control:?}");
+            assert_eq!(control.reason.as_deref(), Some("consent-not-given"));
         }
     }
     agent.shutdown().await;

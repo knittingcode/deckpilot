@@ -263,6 +263,7 @@
     "back": {
       "title": "Back to work",
       "description": "When a device that went back to work shows the call again. Changing this counts as an edit of the layout, so a new version of it does not replace yours.",
+      "noKey": "This Calls layout has no Back to work key, so there is nothing to set. Restore defaults brings the key back.",
       "mode": "Shows the call again",
       "modes": {
         "timer": "After a time",

@@ -2,7 +2,12 @@ import { useState } from "react"
 
 import { useInlineNumber } from "@/components/inline-number"
 import { InlineNumberInput } from "@/components/inline-number-input"
-import { SettingsGroup, SettingsRow, SettingsSection } from "@/components/settings-layout"
+import {
+  SettingsGroup,
+  SettingsNote,
+  SettingsRow,
+  SettingsSection,
+} from "@/components/settings-layout"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -162,9 +167,17 @@ export function BackToWorkSection({
   onChange: (back: BackToWork) => void
 }) {
   const { t } = useTranslation()
-  const back = layout.back
+  const stored = layout.back
   const id = `calls-back-${layout.model}`
-  const [preset, setPreset] = usePreset(back.mode)
+  const [preset, setPreset] = usePreset(stored?.mode ?? { kind: "completion" })
+  if (!stored) {
+    return (
+      <SettingsSection title={`${t("devices:calls.back.title")}: ${modelName}`}>
+        <SettingsNote>{t("devices:calls.back.noKey")}</SettingsNote>
+      </SettingsSection>
+    )
+  }
+  const back = stored
   const setMode = (kind: BackToWorkMode["kind"]) => {
     if (kind === back.mode.kind) return
     const mode: BackToWorkMode =

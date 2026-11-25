@@ -3555,6 +3555,31 @@ fn calls_commands_reach_the_agent_and_say_when_calls_is_not_installed() {
         refused.contains("Calls is not installed") || refused.contains("locked"),
         "{refused}"
     );
+    let back = json!({
+        "mode": { "kind": "timer", "seconds": 20 },
+        "onFailure": "resume",
+        "onCancel": "stay",
+        "allDevices": false,
+    });
+    let refused = h.error(
+        "set_calls_back_to_work",
+        json!({ "model": "elgato.streamdeck.mk2", "back": back }),
+    );
+    assert!(refused.contains("Calls is not installed"), "{refused}");
+    let out_of_range = json!({
+        "mode": { "kind": "timer", "seconds": 3 },
+        "onFailure": "resume",
+        "onCancel": "stay",
+        "allDevices": false,
+    });
+    let refused = h.error(
+        "set_calls_back_to_work",
+        json!({ "model": "elgato.streamdeck.mk2", "back": out_of_range }),
+    );
+    assert!(
+        refused.contains("the timer is 5 to 600 seconds"),
+        "{refused}"
+    );
     h.ok("stop_agent", json!({}));
     wait_for(&h, |s| s["running"] == false);
 }

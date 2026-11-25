@@ -338,7 +338,9 @@ impl SqliteStore {
     /// managed layout for `model` (the *Back to work* settings): the
     /// user's edit, like an edit in the inspector, so the layout counts as
     /// edited afterwards (a template update then never rewrites it, and
-    /// *Restore defaults* keeps it first). Nothing else changes.
+    /// *Restore defaults* keeps it first). Nothing else changes. The
+    /// parameters are stored as given: a caller that changes some keys
+    /// merges them into the action's own first (the agent does).
     pub fn set_managed_action_parameters(
         &self,
         owner: &str,

@@ -71,6 +71,12 @@ function firstLayout(): CallsLayout {
   return layout
 }
 
+function firstBack(): BackToWork {
+  const { back } = firstLayout()
+  if (!back) throw new Error("the fixture's Back to work")
+  return back
+}
+
 function agent(capabilities: string[] = ["calls"]) {
   return agentConnection({
     status: agentStatus({ devices: [device] }),
@@ -213,7 +219,7 @@ describe("Settings › Devices › Calls", () => {
     api.getCallsStatus.mockResolvedValue(status())
     const timer = (seconds: number) =>
       status({
-        layouts: [{ ...layout, back: { ...layout.back, mode: { kind: "timer", seconds } } }],
+        layouts: [{ ...layout, back: { ...firstBack(), mode: { kind: "timer", seconds } } }],
       })
     api.setCallsBackToWork.mockImplementation((_model: string, back: BackToWork) =>
       Promise.resolve(timer(back.mode.kind === "timer" ? back.mode.seconds : 0)),
@@ -222,13 +228,13 @@ describe("Settings › Devices › Calls", () => {
     await user.click(await screen.findByRole("combobox", { name: "Shows the call again" }))
     await user.click(await screen.findByRole("option", { name: "After a time" }))
     expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
-      ...layout.back,
+      ...firstBack(),
       mode: { kind: "timer", seconds: 30 },
     })
     await user.click(await screen.findByRole("combobox", { name: "After" }))
     await user.click(await screen.findByRole("option", { name: "60 s" }))
     expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
-      ...layout.back,
+      ...firstBack(),
       mode: { kind: "timer", seconds: 60 },
     })
     await user.click(screen.getByRole("combobox", { name: "After" }))
@@ -244,7 +250,7 @@ describe("Settings › Devices › Calls", () => {
     await user.type(field, "45{Enter}")
     await waitFor(() => {
       expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
-        ...layout.back,
+        ...firstBack(),
         mode: { kind: "timer", seconds: 45 },
       })
     })
@@ -252,26 +258,34 @@ describe("Settings › Devices › Calls", () => {
 
   it("sets completion, what a failure does and all devices", async () => {
     const user = userEvent.setup()
-    const layout = firstLayout()
     api.getCallsStatus.mockResolvedValue(status())
     api.setCallsBackToWork.mockResolvedValue(status())
     renderWithApp(<CallsSettings />, { agent: agent() })
     await user.click(await screen.findByRole("combobox", { name: "Shows the call again" }))
     await user.click(await screen.findByRole("option", { name: "When what you started ends" }))
     expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
-      ...layout.back,
+      ...firstBack(),
       mode: { kind: "completion" },
     })
     await user.click(screen.getByRole("combobox", { name: "If it fails" }))
     await user.click(await screen.findByRole("option", { name: "Stay on my layout" }))
     expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
-      ...layout.back,
+      ...firstBack(),
       onFailure: "stay",
     })
     await user.click(screen.getByRole("switch", { name: "All devices" }))
     expect(api.setCallsBackToWork).toHaveBeenLastCalledWith(device.id.model, {
-      ...layout.back,
+      ...firstBack(),
       allDevices: true,
     })
+  })
+
+  it("has nothing to set when the layout has no Back to work key", async () => {
+    const { back, ...layout } = firstLayout()
+    expect(back).toBeDefined()
+    api.getCallsStatus.mockResolvedValue(status({ layouts: [layout] }))
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    expect(await screen.findByText(/has no Back to work key/)).toBeInTheDocument()
+    expect(screen.queryByRole("combobox", { name: "Shows the call again" })).not.toBeInTheDocument()
   })
 })

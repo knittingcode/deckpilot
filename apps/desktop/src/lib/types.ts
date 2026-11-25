@@ -1517,7 +1517,8 @@ export interface CallsLayout {
   templateVersion: string
   /** The call pages, each control with whether the provider supports it now. */
   pages: CallsPage[]
-  back: BackToWork
+  /** Absent when the layout has no "Back to work" key: nothing to set. */
+  back?: BackToWork
 }
 
 export type CallsPageKind = "incoming" | "outgoing" | "active"
