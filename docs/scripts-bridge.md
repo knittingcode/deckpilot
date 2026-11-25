@@ -228,11 +228,18 @@ moved"). Every operation then works relative to that open folder:
   over the home folder still never reaches them, and listing the home
   folder itself (or `~/Library`) is refused for the same reason. They are
   recognized by their text and by their **file identity** (volume and
-  file number, from an open handle) along the path, so another name for
-  the same folder (macOS's `/System/Volumes/Data` firmlink, a bind mount)
-  is refused too; shares of this computer (`localhost`, a loopback
-  address, its own name, `C$`-style administrative shares) are never
-  paths;
+  file number) checked **on the handles the operation uses**: the scope's
+  open root and each folder above it (walked up through `..`), and each
+  folder of the path as it is opened, one at a time, so no rename between
+  a check by path and the open slips through, and another name for the
+  same folder (macOS's `/System/Volumes/Data` firmlink, a bind mount, a
+  share) is refused too. A folder made after the agent started is learned
+  when it first exists. Shares of this computer are never paths: by any
+  of its names (NetBIOS, DNS with or without its domain, `.local`, a
+  trailing dot), `localhost`, any address (loopback, `0.0.0.0`, LAN
+  addresses, numeric forms such as `2130706433`, `*.ipv6-literal.net`)
+  or an administrative `C$` share; reads follow a relative link only
+  within the folder it is in;
 - **names**: an 8.3 short name (`GIT~1`) is refused everywhere (Windows
   shares resolve them on every system), and on Windows a device name and a
   name ending in a dot or a space, so no name reaches a folder under
@@ -280,8 +287,9 @@ moved"). Every operation then works relative to that open folder:
   link, that would lead out (or any absolute link) is refused;
 - **writes** go to a temporary file in the target's folder, renamed over
   the target on commit (with `createOnly`, linked to it, which never
-  replaces an existing file; on a volume without links, checked and
-  renamed); a folder is never written over. An abort, a
+  replaces an existing file; on a volume without hard links, the target
+  is created exclusively and the content copied into it, never a check
+  then a rename); a folder is never written over. An abort, a
   revoked grant between chunks, or the end of the run removes the
   temporary file;
 - **limits**: 4 MiB per file read or written (`maxBytes`, the chunked
