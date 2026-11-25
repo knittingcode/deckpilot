@@ -219,7 +219,7 @@ path, a file's content or an environment value.
 - `project.list` and `project.repositories` need `projects.read`, answer
   the active profile only, and give a repository's folder only with
   `repositories.paths`. A repository's `remotes` (decision K4) list every
-  remote, the primary first as stored: `name`, `primary`, `url`,
+  remote, in the stored order: `name`, `primary`, `url`,
   `defaultBranch`, the `connectionId` of the Git Providers connection it
   is linked to on this computer and the provider's `remoteRepositoryId`.
   Both ids are in script objects only, never in text variables. `remote`
