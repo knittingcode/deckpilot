@@ -109,6 +109,16 @@ const MIGRATIONS: &[&str] = &[
     crate::scripts::SCHEMA,
 ];
 
+/// The place of migration 15, held empty until the Calls work's migration
+/// takes it (`MIGRATIONS`). A database this build upgrades is at 16 and
+/// would never run a migration put into 15 later, so no release may be
+/// built while it is empty: a release build fails here.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(
+    !MIGRATIONS[14].is_empty(),
+    "migration 15 is still an empty placeholder: merge the Calls work's migration (#457) first"
+);
+
 /// Runs `step` again while SQLite reports the database busy, for up to
 /// [`BUSY_TIMEOUT`].
 fn retry_busy(mut step: impl FnMut() -> rusqlite::Result<()>) -> Result<()> {

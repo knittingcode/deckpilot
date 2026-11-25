@@ -390,21 +390,36 @@ runs of the plugin at once.
   Restricted git still runs the repository's own hooks and filters (the
   user's repository); with `unrestrictedArgs` a git grant runs any
   program the user could, and is shown as such.
-- **Container runtimes are not available to scripts** in this version
-  (an open owner decision, kept at the safest option): `docker`,
-  `podman`, `nerdctl`, `colima`, `lima`/`limactl`, `containerd`/`ctr`,
-  `runc`/`crun`, `buildah`, `finch`, Rancher Desktop's tools, and every
-  `docker-*` or `podman-*` helper (`deckpilot_core::script_grants::
-  CONTAINER_RUNTIMES`). A grant naming one is refused when it is saved,
-  a stored record naming one grants nothing, and a granted command
-  whose name or resolved file is one is refused at run time
-  (`notGranted`, "container runtimes are not available to scripts
-  yet"). A container runtime can start containers with the host's
-  folders mounted, so it is effectively full access to the computer;
-  when the owner decides, it becomes a high-risk consent or stays off.
-  A `shell.run` grant (high, off by default) can still start any
-  program the user could, a container runtime included: it is shown as
-  such.
+- **What a command may be** (`deckpilot_core::script_grants::
+  command_class`, by its file name without case and program extension,
+  for the granted name, the path found and the file it resolves to):
+  - **container runtimes, virtual machines and namespace tools are not
+    available to scripts** in this version (an open owner decision, kept
+    at the safest option): `docker`, `podman`, `nerdctl`, `colima`,
+    `lima`/`limactl`, `containerd`/`ctr`, `runc`/`crun`, `buildah`,
+    `finch`, Rancher Desktop's and OrbStack's tools, Apple's `container`,
+    `wsl`, `lxc`/`lxd`/`incus`, `multipass`, `nsenter`, `unshare`,
+    `chroot`, `systemd-nspawn`, and every `docker-*` or `podman-*`
+    helper (`CONTAINER_RUNTIMES`). They are effectively full access to
+    the computer; when the owner decides, they become a high-risk
+    consent or stay off;
+  - programs that act as another user (`sudo`, `doas`, `pkexec`, `su`,
+    `runas`, `osascript`, `launchctl`, …) are never grantable;
+  - shells (`sh`, `bash`, `zsh`, `pwsh`, `cmd`, …) run only through
+    `shell.run` and its own grant;
+  - a grant naming one of these is refused when it is saved, a stored
+    record naming one grants nothing, and a granted command whose name
+    or resolved file is one is refused at run time (`notGranted`, with
+    the reason, e.g. "container runtimes are not available to scripts
+    yet"); a bare name is ASCII;
+  - programs that run any other program (interpreters such as `python`
+    or `node`, `env`, `xargs`, build tools, package runners, `open`,
+    `ssh`, `curl`, `RUNS_ANY_PROGRAM`) are grantable, but such a grant is
+    as broad as a shell, a container runtime included (`curl
+    --unix-socket` reaches a container daemon's socket), and the
+    Permissions tab shows it as such. The refusal above stops only a
+    direct call. A copy of a refused program under another name is not
+    recognized; nor is a program reached on another computer (`ssh`).
 - **`cwd`** follows the grant's rule: `repositories` (a repository of the
   run's project), `fsScopes` (one of the script's scopes) or `any` (an
   existing folder, never one of DeckPilot's private folders). It is

@@ -330,7 +330,10 @@ schema 16 (`crates/deckpilot-storage/src/scripts.rs`):
   `settings` (`timeoutMs` 1 000–600 000, default 60 000; `stopOnError`;
   `memoryMiB` 16–128, default 64; `description`, at most 500
   characters), `revision` (every save adds one; the editor's save of an
-  older revision is refused). At most 500 per profile.
+  older revision is refused). Names are compared without case beyond
+  ASCII too, and refuse invisible characters (zero-width, format,
+  separators, tags, variation selectors). At most 500 per profile,
+  however a script is added (created, duplicated, imported).
 - `script_trust` (machine-local, never exported, never synced, never
   written by an import; deleted with its script): the source hash the
   user trusted (`NULL`: not trusted), when, and the script's grants
@@ -347,8 +350,10 @@ Trust:
 - a script whose stored source does not match the trusted hash is not
   trusted either;
 - "Trust this script" names the hash of the source the user reviewed and
-  is refused when the stored source has another; grants can be set only
-  on a trusted script, and are checked whole;
+  the dormant grants the review showed, and is refused when the stored
+  source has another hash or the grants are not those (dormant grants
+  never come back unseen); grants can be set only on a trusted script,
+  and are checked whole;
 - a script that is not trusted never runs (`scriptNeedsReview`).
 
 Usages (the guarded delete): every action of type `deckpilot.scripts.run`

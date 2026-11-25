@@ -5,7 +5,7 @@ use deckpilot_core::{
     ProfileId, ScriptId,
 };
 
-use super::{RUN_ACTION, script_usages};
+use super::{RUN_ACTION, ScriptForRun, script_usages};
 use crate::{ConfigStore, SqliteStore, StorageError};
 
 fn store() -> (SqliteStore, ProfileId) {
@@ -20,6 +20,18 @@ fn granted() -> ScriptGrants {
         projects_read: true,
         ..ScriptGrants::default()
     }
+}
+
+/// The grants a run gets, `None` when it must not run.
+fn run_grants(store: &SqliteStore, profile: ProfileId, id: ScriptId) -> Option<ScriptGrants> {
+    match store.script_for_run(profile, id).unwrap().unwrap() {
+        ScriptForRun::Runnable { grants, .. } => Some(*grants),
+        ScriptForRun::NeedsReview => None,
+    }
+}
+
+fn source(store: &SqliteStore, profile: ProfileId, id: ScriptId) -> String {
+    store.script(profile, id).unwrap().unwrap().source
 }
 
 fn state(store: &SqliteStore, profile: ProfileId, id: ScriptId) -> TrustState {
@@ -40,8 +52,11 @@ fn a_new_script_is_trusted_with_no_grants_and_saving_grants_nothing() {
         .unwrap();
     assert_eq!(script.revision, 1);
     assert_eq!(state(&store, profile, script.id), TrustState::Trusted);
-    let (_, grants) = store.script_for_run(profile, script.id).unwrap().unwrap();
-    assert_eq!(grants, Some(ScriptGrants::default()), "runs, with none");
+    assert_eq!(
+        run_grants(&store, profile, script.id),
+        Some(ScriptGrants::default()),
+        "runs, with none"
+    );
     // The editor's save keeps it trusted and its grants.
     store
         .set_script_grants(profile, script.id, &granted())
@@ -57,9 +72,8 @@ fn a_new_script_is_trusted_with_no_grants_and_saving_grants_nothing() {
         .unwrap();
     assert_eq!(saved.revision, 2);
     assert_eq!(state(&store, profile, script.id), TrustState::Trusted);
-    let (stored, grants) = store.script_for_run(profile, script.id).unwrap().unwrap();
-    assert_eq!(stored.source, "two()");
-    assert_eq!(grants, Some(granted()));
+    assert_eq!(source(&store, profile, script.id), "two()");
+    assert_eq!(run_grants(&store, profile, script.id), Some(granted()));
     // An older revision is refused.
     assert!(matches!(
         store.save_script(profile, &script),
@@ -83,8 +97,11 @@ fn an_import_never_trusts_and_keeps_grants_dormant_until_reviewed() {
     };
     store.put_untrusted_script(profile, &imported).unwrap();
     assert_eq!(state(&store, profile, script.id), TrustState::NeedsReview);
-    let (_, grants) = store.script_for_run(profile, script.id).unwrap().unwrap();
-    assert_eq!(grants, None, "it never runs");
+    assert_eq!(
+        run_grants(&store, profile, script.id),
+        None,
+        "it never runs"
+    );
     // Even the same source as before is not trusted again by an import.
     store.put_untrusted_script(profile, &script).unwrap();
     assert_eq!(state(&store, profile, script.id), TrustState::NeedsReview);
@@ -100,22 +117,29 @@ fn an_import_never_trusts_and_keeps_grants_dormant_until_reviewed() {
     // A review of an older source is refused; of the stored one, trusts it
     // and the dormant grants come back.
     assert!(matches!(
-        store.trust_script(profile, script.id, &source_sha256("evil()")),
+        store.trust_script(profile, script.id, &source_sha256("evil()"), &granted()),
         Err(StorageError::ScriptChanged)
     ));
+    // The review must have shown the dormant grants: never back unseen.
+    assert!(matches!(
+        store.trust_script(
+            profile,
+            script.id,
+            &source_sha256("one()"),
+            &ScriptGrants::default()
+        ),
+        Err(StorageError::ScriptChanged)
+    ));
+    assert_eq!(run_grants(&store, profile, script.id), None);
     store
-        .trust_script(profile, script.id, &source_sha256("one()"))
+        .trust_script(profile, script.id, &source_sha256("one()"), &granted())
         .unwrap();
-    let (_, grants) = store.script_for_run(profile, script.id).unwrap().unwrap();
-    assert_eq!(grants, Some(granted()));
+    assert_eq!(run_grants(&store, profile, script.id), Some(granted()));
     // A new script from an import has no record at all.
     let fresh = Script::new("Fresh", "x()");
     store.put_untrusted_script(profile, &fresh).unwrap();
     assert_eq!(state(&store, profile, fresh.id), TrustState::NeedsReview);
-    assert_eq!(
-        store.script_for_run(profile, fresh.id).unwrap().unwrap().1,
-        None
-    );
+    assert_eq!(run_grants(&store, profile, fresh.id), None);
 }
 
 #[test]
@@ -132,10 +156,7 @@ fn a_duplicate_has_a_new_id_a_copy_name_and_no_trust() {
     assert_eq!(copy.name, "Deploy (copy)");
     assert_eq!(copy.source, "one()");
     assert_eq!(state(&store, profile, copy.id), TrustState::NeedsReview);
-    assert_eq!(
-        store.script_for_run(profile, copy.id).unwrap().unwrap().1,
-        None
-    );
+    assert_eq!(run_grants(&store, profile, copy.id), None);
     let again = store.duplicate_script(profile, script.id).unwrap();
     assert_eq!(again.name, "Deploy (copy 2)");
 }
@@ -152,6 +173,24 @@ fn names_are_unique_without_case_and_scripts_are_checked() {
     ));
     assert!(matches!(
         store.create_script(profile, &Script::new(" ", "two()")),
+        Err(StorageError::Invalid(_))
+    ));
+    // Beyond ASCII too, which SQLite's NOCASE does not fold.
+    store
+        .create_script(profile, &Script::new("Édition", "x()"))
+        .unwrap();
+    assert!(matches!(
+        store.create_script(profile, &Script::new("édition", "y()")),
+        Err(StorageError::ScriptNameTaken(_))
+    ));
+    // An import or a duplicate never passes the profile's limit either.
+    for n in 0..deckpilot_core::script::MAX_SCRIPTS - 2 {
+        store
+            .create_script(profile, &Script::new(format!("s{n}"), ""))
+            .unwrap();
+    }
+    assert!(matches!(
+        store.put_untrusted_script(profile, &Script::new("one too many", "")),
         Err(StorageError::Invalid(_))
     ));
     assert!(matches!(
