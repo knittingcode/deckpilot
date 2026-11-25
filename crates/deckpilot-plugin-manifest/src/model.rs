@@ -130,7 +130,37 @@ pub struct Runtime {
     /// The plugin ABI version the module implements (`deckpilot_v1`
     /// imports, `dp_*` exports). Only [`WASM_ABI_VERSION`] exists.
     pub abi: u64,
+    /// Plugin API 1.13, `deckpilot.scripts` only (a privileged construct):
+    /// the continuous-CPU deadline between two host calls that wait on
+    /// the agent, in place of the default 250 ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<RuntimeLimits>,
+    /// Plugin API 1.13, `deckpilot.scripts` only (a privileged construct):
+    /// host calls per invocation (`script.poll` counted apart), in place of
+    /// the default 256.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_calls: Option<u32>,
 }
+
+/// `runtime.limits` (plugin API 1.13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeLimits {
+    /// Milliseconds, [`MIN_CONTINUOUS_MS`] to [`MAX_CONTINUOUS_MS`].
+    pub continuous_ms: u64,
+}
+
+/// The bounds of `runtime.limits.continuousMs` (design §5.4: at most
+/// 10 s) and `runtime.hostCalls` (at most 4,096).
+pub const MIN_CONTINUOUS_MS: u64 = 250;
+pub const MAX_CONTINUOUS_MS: u64 = 10_000;
+pub const MAX_RUNTIME_HOST_CALLS: u32 = 4_096;
+
+/// Plugin API 1.13: the Scripts plugin's kinds (`docs/scripts-bridge.md`).
+pub const SCRIPTS_API: ApiLevel = ApiLevel::new(1, 13);
+/// The only plugin that may declare the `scripts` permission, the
+/// `runtime.limits` and `runtime.hostCalls` constructs.
+pub const SCRIPTS_PLUGIN: &str = "deckpilot.scripts";
 
 /// Kinds of executable artifact. A JavaScript plugin of the future is also
 /// a `wasm` module (`QuickJS` and the bundle compiled into one ABI module),
@@ -337,6 +367,19 @@ pub enum Permission {
     /// `contributes.statusItems` and `contributes.dashboardCards` the app
     /// draws from core data. Placement only, no data. Low tier.
     HostViews { justification: String },
+    /// Plugin API 1.13, `deckpilot.scripts` only: the Scripts host
+    /// bridge's ceiling (`docs/scripts-bridge.md`). `fs` the file system
+    /// operations, `process` `process.run`, `shell` `shell.run`; what one
+    /// script may do is that script's own machine-local grant. High tier.
+    Scripts {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fs: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        process: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shell: Option<bool>,
+        justification: String,
+    },
 }
 
 /// One executable of the `tools` permission, with the subcommands and
@@ -541,6 +584,7 @@ pub enum PermissionKind {
     Resources,
     ProjectContext,
     HostViews,
+    Scripts,
 }
 
 impl PermissionKind {
@@ -561,6 +605,7 @@ impl PermissionKind {
             Self::Resources => "resources",
             Self::ProjectContext => "projectContext",
             Self::HostViews => "hostViews",
+            Self::Scripts => "scripts",
         }
     }
 
@@ -569,7 +614,7 @@ impl PermissionKind {
     pub fn is_first_party_only(self) -> bool {
         matches!(
             self,
-            Self::Tools | Self::Resources | Self::ProjectContext | Self::HostViews
+            Self::Tools | Self::Resources | Self::ProjectContext | Self::HostViews | Self::Scripts
         )
     }
 }
@@ -591,6 +636,7 @@ impl Permission {
             Self::Resources { .. } => PermissionKind::Resources,
             Self::ProjectContext { .. } => PermissionKind::ProjectContext,
             Self::HostViews { .. } => PermissionKind::HostViews,
+            Self::Scripts { .. } => PermissionKind::Scripts,
         }
     }
 
@@ -616,6 +662,7 @@ impl Permission {
             | Self::Tools { justification, .. }
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
+            | Self::Scripts { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -636,6 +683,7 @@ impl Permission {
             | Self::Tools { justification, .. }
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
+            | Self::Scripts { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -855,6 +903,8 @@ pub enum CodeLanguage {
     Text,
     Yaml,
     Markdown,
+    /// Plugin API 1.13: a script's source (the Scripts plugin's `check`).
+    Javascript,
 }
 
 /// The value a parameter accepts: `deckpilot-core`'s `ParameterKind` minus
@@ -915,6 +965,9 @@ pub enum ParameterKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         no_secrets: Option<bool>,
     },
+    /// Plugin API 1.13, `deckpilot.scripts` only: a script of the active
+    /// profile, by id; the editor offers the profile's scripts.
+    Script {},
     #[serde(rename_all = "camelCase")]
     Code {
         language: CodeLanguage,
@@ -1408,6 +1461,9 @@ pub enum ViewKind {
     Workflows,
     /// The app's Projects screen (plugin API 1.9, `hostViews`, X8).
     Projects,
+    /// The app's Scripts page (plugin API 1.13, `hostViews`,
+    /// `deckpilot.scripts` only).
+    Scripts,
 }
 
 impl ViewKind {
@@ -1419,13 +1475,14 @@ impl ViewKind {
             Self::Settings => "settings",
             Self::Workflows => "workflows",
             Self::Projects => "projects",
+            Self::Scripts => "scripts",
         }
     }
 
     /// Whether the view is one of the app's own screens a first-party
     /// plugin activates (`hostViews`).
     pub fn is_host_view(self) -> bool {
-        matches!(self, Self::Workflows | Self::Projects)
+        matches!(self, Self::Workflows | Self::Projects | Self::Scripts)
     }
 }
 
