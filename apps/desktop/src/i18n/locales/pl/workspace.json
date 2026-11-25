@@ -81,6 +81,24 @@
       "layoutsShared": "Układy są współdzielone: ten profil się do nich odwołuje, a inne profile mogą używać tych samych.",
       "manageLayouts": "Zarządzaj układami…",
       "openInEditor": "Otwórz w edytorze"
+    },
+    "savedActions": {
+      "title": "Zapisane akcje",
+      "show": "Pokaż zapisane akcje",
+      "all": "Wszystkie",
+      "unused": "Nieużywane",
+      "empty": "Ten profil nie ma zapisanych akcji.",
+      "noneUnused": "Każda zapisana akcja jest używana.",
+      "name": "Nazwa",
+      "type": "Typ",
+      "usedIn": "Używana w",
+      "notUsed": "Nieużywana",
+      "places_one": "{{count}} miejscu",
+      "places_few": "{{count}} miejscach",
+      "places_many": "{{count}} miejscach",
+      "places_other": "{{count}} miejscach",
+      "edit": "Edytuj {{name}}",
+      "delete": "Usuń {{name}}"
     }
   },
   "pluginView": {
