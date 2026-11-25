@@ -392,7 +392,10 @@ impl ScriptGrants {
                     }
                     if label.trim().is_empty()
                         || label.chars().count() > MAX_LABEL
-                        || label.chars().any(char::is_control)
+                        || label
+                            .chars()
+                            .any(|c| c.is_control() || crate::script::is_hidden(c))
+                        || path.to_string_lossy().chars().any(crate::script::is_hidden)
                     {
                         return Err(GrantsError::Label);
                     }
@@ -412,8 +415,12 @@ impl ScriptGrants {
                 CommandClass::Shell => return Err(GrantsError::ShellCommand),
                 CommandClass::RunsAnyProgram | CommandClass::Plain => {}
             }
-            // A bare name is ASCII: no look-alike of a refused one.
-            if bare && !c.is_ascii() {
+            // A bare name is ASCII: no look-alike of a refused one; no
+            // command hides characters from the review.
+            if (bare && !c.is_ascii())
+                || c.chars()
+                    .any(|ch| ch.is_control() || crate::script::is_hidden(ch))
+            {
                 return Err(GrantsError::Command);
             }
             if !bare && !std::path::Path::new(c).is_absolute() {
@@ -606,7 +613,11 @@ mod tests {
         }
         assert_eq!(command_class("git"), CommandClass::Plain);
         // A look-alike folds to the refused name; any other bare name is
-        // ASCII.
+        // ASCII; no command or label hides characters.
+        assert_eq!(
+            refused("/usr/local/bin/ma\u{202E}ke"),
+            Err(GrantsError::Command)
+        );
         assert_eq!(refused("doc\u{212A}er"), Err(GrantsError::ContainerRuntime));
         assert_eq!(refused("g\u{00EF}t"), Err(GrantsError::Command));
     }

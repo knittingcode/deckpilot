@@ -23,7 +23,7 @@ import { useEditingProfile } from "@/hooks/use-profile"
 import { useTranslation } from "@/i18n"
 import { api } from "@/lib/api"
 import { failureMessage, toastFailure } from "@/lib/failure"
-import type { Script, ScriptGrants, ScriptSettings, ScriptUsage, StoredScript } from "@/lib/types"
+import type { Script, ScriptReview, ScriptSettings, ScriptUsage, StoredScript } from "@/lib/types"
 
 import { CodeEditor } from "./code-editor"
 import { hasHiddenChars } from "./completions"
@@ -489,10 +489,15 @@ function SettingsTab({
   )
 }
 
-/** The permissions a grant set gives, in words, for the review. */
-function useGrantLines(grants: ScriptGrants | null): string[] {
+/**
+ * Every permission a grant set gives, in words, for the review: nothing
+ * that comes back with trust is left out (a field this does not know is
+ * named as such).
+ */
+function useGrantLines(review: ScriptReview | null): string[] {
   const { t } = useTranslation()
-  if (!grants) return []
+  if (!review) return []
+  const grants = review.grants
   const lines: string[] = []
   if (grants.projectsRead) lines.push(t("workspace:scripts.grants.projectsRead"))
   if (grants.repositoriesPaths) lines.push(t("workspace:scripts.grants.repositoriesPaths"))
@@ -502,7 +507,10 @@ function useGrantLines(grants: ScriptGrants | null): string[] {
         ? scope.root.repository === "*"
           ? t("workspace:scripts.grants.everyRepository")
           : t("workspace:scripts.grants.repository", { key: scope.root.repository })
-        : t("workspace:scripts.grants.folder", { label: scope.root.directory.label })
+        : t("workspace:scripts.grants.folder", {
+            label: scope.root.directory.label,
+            path: scope.root.directory.path,
+          })
     lines.push(
       scope.access === "read"
         ? t("workspace:scripts.grants.fs.read", { where })
@@ -510,14 +518,54 @@ function useGrantLines(grants: ScriptGrants | null): string[] {
           ? t("workspace:scripts.grants.fs.write", { where })
           : t("workspace:scripts.grants.fs.delete", { where }),
     )
+    if (scope.rootDestructive) lines.push(t("workspace:scripts.grants.rootDestructive", { where }))
   }
   for (const process of grants.process ?? []) {
-    lines.push(t("workspace:scripts.grants.process", { command: process.command }))
+    const qualifiers = [
+      review.commandClasses[process.command] === "runsAnyProgram"
+        ? t("workspace:scripts.grants.runsAnyProgram")
+        : null,
+      process.unrestrictedArgs ? t("workspace:scripts.grants.unrestrictedArgs") : null,
+      process.env === "allowed" ? t("workspace:scripts.grants.envAllowed") : null,
+      process.cwd === "any"
+        ? t("workspace:scripts.grants.cwdAny")
+        : process.cwd === "fsScopes"
+          ? t("workspace:scripts.grants.cwdScopes")
+          : t("workspace:scripts.grants.cwdRepositories"),
+    ].filter((q): q is string => q !== null)
+    lines.push(
+      t("workspace:scripts.grants.process", {
+        command: process.command,
+        qualifiers: qualifiers.join("; "),
+      }),
+    )
   }
   if (grants.shell && grants.shell.shells.length > 0) {
     lines.push(t("workspace:scripts.grants.shell", { shells: grants.shell.shells.join(", ") }))
   }
   if (grants.destructive === "allow") lines.push(t("workspace:scripts.grants.destructiveAllow"))
+  const limits = grants.limits
+  if (limits) {
+    lines.push(
+      t("workspace:scripts.grants.limits", {
+        seconds: Math.round((limits.timeoutMs ?? 60_000) / 1000),
+        memory: limits.memoryMiB ?? 64,
+        output: limits.maxOutputKiB ?? 256,
+      }),
+    )
+  }
+  const known = new Set([
+    "projectsRead",
+    "repositoriesPaths",
+    "fs",
+    "process",
+    "shell",
+    "destructive",
+    "limits",
+  ])
+  for (const key of Object.keys(grants)) {
+    if (!known.has(key)) lines.push(t("workspace:scripts.grants.unknown", { key }))
+  }
   return lines
 }
 
@@ -539,7 +587,7 @@ function ReviewPanel({
   const { t } = useTranslation()
   const review = useAsync(() => api.reviewScript(profileId, scriptId), `${profileId}:${scriptId}`)
   const [busy, setBusy] = useState(false)
-  const lines = useGrantLines(review.state.status === "ready" ? review.state.data.grants : null)
+  const lines = useGrantLines(review.state.status === "ready" ? review.state.data : null)
   if (review.state.status === "loading") return <Loading />
   if (review.state.status === "error") return <ErrorNotice error={review.state.error} />
   const data = review.state.data
@@ -628,14 +676,14 @@ function DeleteScriptDialog({
 }) {
   const { t } = useTranslation()
   // Mounted fresh for each opening (the caller renders it only while open).
-  const [usages, setUsages] = useState<ScriptUsage[] | null>(null)
+  const [usages, setUsages] = useState<ScriptUsage[] | "failed" | null>(null)
   const [clearKeys, setClearKeys] = useState(false)
   useEffect(() => {
     api.scriptUsages(profileId, script.id).then(setUsages, () => {
-      setUsages([])
+      setUsages("failed")
     })
   }, [profileId, script.id])
-  const uses = (usages ?? []).flatMap((u) =>
+  const uses = (Array.isArray(usages) ? usages : []).flatMap((u) =>
     u.references.map((r) => ({ action: u.actionName, owner: r.ownerName, detail: r.detail })),
   )
   return (
@@ -646,12 +694,18 @@ function DeleteScriptDialog({
       }}
       title={t("workspace:scripts.delete.title", { name: script.name })}
       description={
-        uses.length === 0
-          ? t("workspace:scripts.delete.unused")
-          : t("workspace:scripts.delete.used", { count: uses.length })
+        usages === null
+          ? t("workspace:scripts.delete.loading")
+          : usages === "failed"
+            ? t("workspace:scripts.delete.usagesFailed")
+            : uses.length === 0
+              ? t("workspace:scripts.delete.unused")
+              : t("workspace:scripts.delete.used", { count: uses.length })
       }
       confirmLabel={t("workspace:scripts.delete.confirm")}
       onConfirm={async () => {
+        // Never before its uses are known: they are what the user confirms.
+        if (!Array.isArray(usages)) throw new Error(t("workspace:scripts.delete.notYet"))
         await api.deleteScript(profileId, script.id, clearKeys)
         onDeleted()
       }}

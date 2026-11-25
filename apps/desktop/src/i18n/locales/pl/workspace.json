@@ -565,15 +565,24 @@
       "repositoriesPaths": "Widok folderów repozytoriów",
       "everyRepository": "każdym repozytorium projektu",
       "repository": "repozytorium {{key}}",
-      "folder": "folderze „{{label}}”",
+      "folder": "folderze „{{label}}” ({{path}})",
       "fs": {
         "read": "Odczyt plików w {{where}}",
         "write": "Odczyt i zmiana plików w {{where}}",
         "delete": "Odczyt, zmiana i usuwanie plików w {{where}}"
       },
-      "process": "Uruchamianie {{command}}",
+      "process": "Uruchamianie {{command}} ({{qualifiers}})",
       "shell": "Uruchamianie kodu powłoki: {{shells}}",
-      "destructiveAllow": "Usuwanie plików bez pytania"
+      "destructiveAllow": "Usuwanie plików bez pytania",
+      "rootDestructive": "Usuwanie, opróżnianie lub zastępowanie samego: {{where}}",
+      "runsAnyProgram": "uruchamia dowolny inny program, tak szeroko jak powłoka",
+      "unrestrictedArgs": "z dowolnymi argumentami, także opcjami uruchamiającymi programy",
+      "envAllowed": "może ustawiać zmienne środowiskowe",
+      "cwdAny": "w dowolnym folderze",
+      "cwdScopes": "w folderach skryptu",
+      "cwdRepositories": "w repozytoriach projektu",
+      "limits": "Limity: {{seconds}} s, {{memory}} MiB, {{output}} KiB wyjścia",
+      "unknown": "Uprawnienie nieznane tej wersji: {{key}}"
     },
     "delete": {
       "title": "Usunąć „{{name}}”?",
@@ -585,7 +594,10 @@
       "uses": "Użycia skryptu",
       "clearKeys": "Wyczyść też klawisze, które go uruchamiają",
       "confirm": "Usuń skrypt",
-      "failed": "Nie udało się usunąć „{{name}}”"
+      "failed": "Nie udało się usunąć „{{name}}”",
+      "loading": "Szukam użyć skryptu…",
+      "usagesFailed": "Nie udało się wyświetlić użyć, więc teraz nie można go usunąć. Spróbuj ponownie.",
+      "notYet": "Użycia skryptu nie są jeszcze znane."
     }
   }
 }
