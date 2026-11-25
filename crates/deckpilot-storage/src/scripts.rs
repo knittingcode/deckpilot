@@ -69,6 +69,19 @@ pub struct StoredScript {
     pub updated_at: i64,
 }
 
+/// What a run of a script gets ([`SqliteStore::script_for_run`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScriptForRun {
+    /// Trusted: it runs, with these grants (none when its record is
+    /// invalid).
+    Runnable {
+        script: Box<Script>,
+        grants: Box<ScriptGrants>,
+    },
+    /// Not trusted: it must not run until the user reviews it.
+    NeedsReview,
+}
+
 /// Where a script is used: an action that runs it, and that action's
 /// usages.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -148,12 +161,14 @@ fn write_trust(
     Ok(())
 }
 
+/// A constraint the name check above did not catch: an id (or a name
+/// NOCASE folds) that is taken.
 fn name_taken(error: &rusqlite::Error, name: &str) -> Option<StorageError> {
-    constraint_violation(error).then(|| StorageError::ScriptNameTaken(name.to_owned()))
-}
-
-fn now_ms() -> i64 {
-    now().saturating_mul(1000)
+    constraint_violation(error).then(|| {
+        StorageError::Invalid(format!(
+            "a script like “{name}” already exists in this profile"
+        ))
+    })
 }
 
 /// A name not used by `taken` (without case): `base`, or `base (copy)`,
@@ -226,23 +241,22 @@ impl SqliteStore {
             .map(|(script, ..)| script))
     }
 
-    /// What a run of the script gets: its source and settings, and its
-    /// grants only while it is trusted (`None`: it must not run).
-    pub fn script_for_run(
-        &self,
-        profile: ProfileId,
-        id: ScriptId,
-    ) -> Result<Option<(Script, Option<ScriptGrants>)>> {
+    /// What a run of the script gets (`None`: there is no such script):
+    /// its source, settings and grants only while it is trusted.
+    pub fn script_for_run(&self, profile: ProfileId, id: ScriptId) -> Result<Option<ScriptForRun>> {
         let Some(script) = self.script(profile, id)? else {
             return Ok(None);
         };
         let trust = trust_of(self.connection(), profile, id)?;
-        let grants = ScriptTrust::effective_grants(trust.as_ref(), &script).or_else(|| {
-            // Trusted with an invalid or empty record: it runs with none.
-            (ScriptTrust::state(trust.as_ref(), &script) == TrustState::Trusted)
-                .then(ScriptGrants::default)
-        });
-        Ok(Some((script, grants)))
+        if ScriptTrust::state(trust.as_ref(), &script) != TrustState::Trusted {
+            return Ok(Some(ScriptForRun::NeedsReview));
+        }
+        // Trusted with an invalid record: it runs with none.
+        let grants = ScriptTrust::effective_grants(trust.as_ref(), &script).unwrap_or_default();
+        Ok(Some(ScriptForRun::Runnable {
+            script: Box::new(script),
+            grants: Box::new(grants),
+        }))
     }
 
     /// A new script from the editor: trusted (its author is the user),
@@ -251,16 +265,6 @@ impl SqliteStore {
         script.validate().map_err(invalid)?;
         self.require_profile(profile)?;
         let tx = self.write_transaction()?;
-        let count: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM scripts WHERE profile_id = ?1",
-            [profile.to_string()],
-            |row| row.get(0),
-        )?;
-        if usize::try_from(count).unwrap_or(usize::MAX) >= MAX_SCRIPTS {
-            return Err(StorageError::Invalid(format!(
-                "a profile holds at most {MAX_SCRIPTS} scripts"
-            )));
-        }
         let stored = Script {
             revision: 1,
             ..script.clone()
@@ -272,7 +276,7 @@ impl SqliteStore {
             stored.id,
             &ScriptTrust {
                 source_sha256: Some(stored.source_sha256()),
-                reviewed_at: Some(now_ms()),
+                reviewed_at: Some(now()),
                 grants: ScriptGrants::default(),
             },
         )?;
@@ -306,6 +310,7 @@ impl SqliteStore {
             revision: stored.revision + 1,
             ..script.clone()
         };
+        check_name(&tx, profile, &saved)?;
         tx.execute(
             "UPDATE scripts SET name = ?3, source = ?4, settings = ?5, revision = ?6,
                  updated_at = ?7
@@ -381,9 +386,17 @@ impl SqliteStore {
     }
 
     /// The user reviewed the script's source, whose hash is `reviewed`,
-    /// and trusts it. Refused when the stored source has another hash (it
-    /// changed after the review). Dormant grants come back.
-    pub fn trust_script(&self, profile: ProfileId, id: ScriptId, reviewed: &str) -> Result<()> {
+    /// and its dormant grants, `shown` (the review lists them), and trusts
+    /// it. Refused when the stored source has another hash or the grants
+    /// are not the ones shown (either changed after the review): dormant
+    /// grants never come back unseen.
+    pub fn trust_script(
+        &self,
+        profile: ProfileId,
+        id: ScriptId,
+        reviewed: &str,
+        shown: &ScriptGrants,
+    ) -> Result<()> {
         let tx = self.write_transaction()?;
         let Some(script) = tx
             .query_row(
@@ -400,8 +413,11 @@ impl SqliteStore {
             return Err(StorageError::ScriptChanged);
         }
         let mut trust = trust_of(&tx, profile, id)?.unwrap_or_default();
+        if trust.grants != *shown {
+            return Err(StorageError::ScriptChanged);
+        }
         trust.source_sha256 = Some(reviewed.to_owned());
-        trust.reviewed_at = Some(now_ms());
+        trust.reviewed_at = Some(now());
         write_trust(&tx, profile, id, &trust)?;
         tx.commit()?;
         Ok(())
@@ -442,7 +458,36 @@ impl SqliteStore {
     }
 }
 
+/// Refuses a name another script of the profile has (without case, also
+/// beyond ASCII, which the index's NOCASE does not fold).
+fn check_name(tx: &rusqlite::Transaction<'_>, profile: ProfileId, script: &Script) -> Result<()> {
+    let wanted = script.name.to_lowercase();
+    let mut statement = tx.prepare("SELECT id, name FROM scripts WHERE profile_id = ?1")?;
+    let clash = statement
+        .query_map([profile.to_string()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .any(|(id, name)| id != script.id.to_string() && name.to_lowercase() == wanted);
+    if clash {
+        return Err(StorageError::ScriptNameTaken(script.name.clone()));
+    }
+    Ok(())
+}
+
 fn insert(tx: &rusqlite::Transaction<'_>, profile: ProfileId, script: &Script) -> Result<()> {
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM scripts WHERE profile_id = ?1",
+        [profile.to_string()],
+        |row| row.get(0),
+    )?;
+    if usize::try_from(count).unwrap_or(usize::MAX) >= MAX_SCRIPTS {
+        return Err(StorageError::Invalid(format!(
+            "a profile holds at most {MAX_SCRIPTS} scripts"
+        )));
+    }
+    check_name(tx, profile, script)?;
     let at = now();
     tx.execute(
         "INSERT INTO scripts (profile_id, id, name, source, settings, revision, created_at,
@@ -486,6 +531,7 @@ pub(crate) fn put_untrusted(
             },
         )?,
         Some(revision) => {
+            check_name(tx, profile, script)?;
             tx.execute(
                 "UPDATE scripts SET name = ?3, source = ?4, settings = ?5, revision = ?6,
                      updated_at = ?7

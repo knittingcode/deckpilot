@@ -110,10 +110,15 @@ fn is_plain(text: &str, max: usize, newlines: bool) -> bool {
             .any(|c| (c.is_control() && !(newlines && matches!(c, '\n' | '\t'))) || is_bidi(c))
 }
 
-/// Bidirectional overrides and isolates, which make a name read other
-/// than it is.
+/// Invisible and direction-changing characters (format characters, line
+/// and paragraph separators, variation selectors, tags), which make a name
+/// read other than it is or two names look the same.
 fn is_bidi(c: char) -> bool {
-    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}')
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}'
+        | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FE00}'..='\u{FE0F}'
+        | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}'
+        | '\u{E0100}'..='\u{E01EF}')
 }
 
 impl Script {
@@ -220,7 +225,19 @@ mod tests {
     fn a_script_is_checked() {
         let ok = Script::new("Deploy", "deckpilot.log('hi')");
         assert_eq!(ok.validate(), Ok(()));
-        for name in ["", " x", "x ", "a\nb", "a\u{202E}b", &"x".repeat(65)] {
+        for name in [
+            "",
+            " x",
+            "x ",
+            "a\nb",
+            "a\u{202E}b",
+            "De\u{200B}ploy",
+            "a\u{FEFF}",
+            "a\u{00AD}b",
+            "a\u{2028}b",
+            "a\u{E0041}",
+            &"x".repeat(65),
+        ] {
             let s = Script {
                 name: name.into(),
                 ..ok.clone()
