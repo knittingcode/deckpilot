@@ -299,3 +299,43 @@ fn a_restart_has_no_session() {
     assert_eq!(c.next_wake(), None);
     assert!(!c.is_suspended(&"deck"));
 }
+
+/// A mode built from its public fields, outside the ranges, is clamped
+/// where it is used: never an instant or an unbounded wait.
+#[test]
+fn a_mode_built_by_hand_is_clamped() {
+    for (mode, wake) in [
+        (
+            ReturnMode::Timer {
+                after: Duration::ZERO,
+            },
+            100 + TIMER_RANGE.0,
+        ),
+        (
+            ReturnMode::Timer {
+                after: Duration::from_secs(u64::MAX / 4),
+            },
+            100 + TIMER_RANGE.1,
+        ),
+        (
+            ReturnMode::CompletionOrTimeout {
+                max: Duration::from_secs(1),
+            },
+            100 + MAX_TIMEOUT_RANGE.0,
+        ),
+        (
+            ReturnMode::CompletionOrTimeout {
+                max: Duration::from_secs(1_000_000),
+            },
+            100 + MAX_TIMEOUT_RANGE.1,
+        ),
+    ] {
+        let mut c = Controller::default();
+        let settings = ReturnSettings {
+            mode,
+            ..ReturnSettings::default()
+        };
+        c.suspend("deck", settings, at(100));
+        assert_eq!(c.next_wake(), Some(at(wake)), "{mode:?}");
+    }
+}
