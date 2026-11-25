@@ -2,6 +2,8 @@
 # Tests merge-group-paths.sh: which merge queue groups start a path-filtered
 # workflow's jobs, by the workflow's own on.pull_request.paths.
 set -euo pipefail
+# The script writes to GITHUB_OUTPUT, which a runner sets: each case points
+# it at its own file.
 
 dir="$(cd "$(dirname "$0")" && pwd)"
 script="$dir/merge-group-paths.sh"
@@ -16,7 +18,7 @@ expect() {
   shift 2
   printf '%s\n' "$@" > "$work/changed"
   : > "$work/out"
-  "$script" "$workflow" "$work/changed" 2> /dev/null > "$work/out" || true
+  GITHUB_OUTPUT="$work/out" "$script" "$workflow" "$work/changed" 2> /dev/null || true
   if [ "$(cat "$work/out")" = "run=$expected" ]; then
     echo "ok   $(basename "$workflow"): $*"
   else
@@ -67,7 +69,8 @@ printf 'on:\n  pull_request:\n    paths:\n      - src/**\n      - !src/x\n' > "$
 expect true "$work/negated.yml" docs/x.md
 expect true "$f" ""
 # Not a merge group, no list file: run.
-EVENT_NAME=pull_request "$script" "$f" > "$work/out" 2> /dev/null
+: > "$work/out"
+EVENT_NAME=pull_request GITHUB_OUTPUT="$work/out" "$script" "$f" 2> /dev/null
 if [ "$(cat "$work/out")" = "run=true" ]; then echo "ok   pull_request event"; else
   echo "FAIL pull_request event: $(cat "$work/out")"; failures=$((failures + 1)); fi
 
