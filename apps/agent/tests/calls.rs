@@ -1848,6 +1848,45 @@ mod plugin_ops {
         deck.agent.shutdown().await;
     }
 
+    /// A control that waits when Calls is started again is answered at
+    /// once, and never by a command of the new engine.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_waiting_control_is_answered_when_calls_starts_again() {
+        use deckpilot_calls::testing::Response;
+        let f = fixture();
+        let deck = start(&f).await;
+        deck.join().await;
+        deck.agent
+            .handle
+            .calls_mock(|mock, _| {
+                mock.respond(
+                    deckpilot_calls::provider::CallAction::MicToggle,
+                    Response::Never,
+                );
+            })
+            .await;
+        let handle = deck.agent.handle.clone();
+        let waiting = handle.plugin_call(CALLS, Some(CallAction::MicToggle));
+        tokio::pin!(waiting);
+        // It waits for a confirmation that never comes.
+        tokio::select! {
+            answer = &mut waiting => panic!("answered early: {answer:?}"),
+            () = tokio::time::sleep(Duration::from_millis(300)) => {}
+        }
+        deck.agent
+            .handle
+            .install_calls_mock(MockProvider::new(), ActionParameters::new())
+            .await;
+        let started = std::time::Instant::now();
+        let (refusal, _) = waiting.await.unwrap_err();
+        assert_eq!(refusal, "calls-provider-offline");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "answered at once"
+        );
+        deck.agent.shutdown().await;
+    }
+
     /// Teams holding the microphone, as a Windows signals fixture shows it.
     struct TeamsInACall;
 

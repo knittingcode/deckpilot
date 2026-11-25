@@ -49,8 +49,11 @@ use tracing::{debug, info};
 
 use super::{Agent, Command, SecurityState};
 
-/// How long an executor waits for the answer to `call.state`.
-const STATE_WAIT: Duration = Duration::from_secs(2);
+/// How long an executor waits for the answer to `call.state`: well within
+/// a key's state call (2 s), so a busy agent answers the plugin
+/// `calls-provider-offline` instead of the state call running out of time
+/// (which stops the plugin's host).
+const STATE_WAIT: Duration = Duration::from_millis(400);
 
 /// How long an executor waits for a control's confirmation: the engine's
 /// own wait for a confirmation (5 s) and a margin for the agent's loop.
@@ -175,6 +178,17 @@ pub(crate) struct WaitingControls(BTreeMap<CommandToken, Waiting>);
 impl WaitingControls {
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    /// Answers every waiting control `calls-provider-offline`: Calls is
+    /// installed again (a new engine, whose commands must never answer an
+    /// old one's) or went.
+    pub fn abandon(&mut self, why: &str) {
+        for (_, waiting) in std::mem::take(&mut self.0) {
+            let _ = waiting
+                .reply
+                .try_send(Err(CallsRefusal::new(codes::PROVIDER_OFFLINE, why)));
+        }
     }
 }
 
@@ -307,6 +321,10 @@ impl Agent {
             return;
         }
         let Some(service) = self.calls.service.as_mut() else {
+            let _ = reply.try_send(Err(CallsRefusal::new(
+                codes::PROVIDER_OFFLINE,
+                "Calls is not running",
+            )));
             return;
         };
         let requested = service.driver.engine_mut().request(action, now);
@@ -323,6 +341,10 @@ impl Agent {
             Ok(request) => request,
         };
         let Request::Send { command, token, .. } = request else {
+            let _ = reply.try_send(Err(CallsRefusal::new(
+                codes::UNCONFIRMED,
+                "nothing was sent",
+            )));
             return;
         };
         let until =
@@ -343,12 +365,7 @@ impl Agent {
     pub(super) fn calls_answer_waiting(&mut self, now: deckpilot_calls::clock::Instant) {
         let Some(service) = self.calls.service.as_mut() else {
             // Calls went: nothing will confirm them.
-            for (_, waiting) in std::mem::take(&mut self.calls.waiting.0) {
-                let _ = waiting.reply.try_send(Err(CallsRefusal::new(
-                    codes::PROVIDER_OFFLINE,
-                    "Calls stopped",
-                )));
-            }
+            self.calls.waiting.abandon("Calls stopped");
             return;
         };
         for event in service.driver.engine_mut().drain_events() {

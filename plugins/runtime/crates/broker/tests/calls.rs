@@ -184,6 +184,7 @@ fn a_calls_grant_never_comes_with_a_way_out() {
         r#"{"kind":"credential","key":"token","origins":["https://example.com"],"schemes":["bearer"]}"#,
         r#"{"kind":"tool","tool":"git"}"#,
         r#"{"kind":"openUrlFromParams"}"#,
+        r#"{"kind":"resources","open":true}"#,
         r#"{"kind":"userOrigin","origin":"https://example.com","methods":["GET"]}"#,
     ] {
         let json = format!(r#"[{{"kind":"calls"}},{way_out}]"#);

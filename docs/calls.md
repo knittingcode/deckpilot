@@ -128,11 +128,14 @@ guest SDK has `Context::call_state` and `Context::call_control`.
 - **Grants:** `call.state` needs `calls`; `call.control` needs
   `calls:control` too. A broker grant record with `calls` together with a
   way out of the agent (`network`, a credential, `openUrl`, a user origin,
-  a tool, `openUrl:from-params`) is refused as a whole
-  (`CallsWithWayOut`), the manifest rule checked again.
+  a tool, `openUrl:from-params`, `resources`) is refused as a whole
+  (`CallsWithWayOut`), the manifest rule checked again (and `resources`,
+  whose `resource.open` takes a path the guest chose, too).
 - **Runs:** `call.control` only in a run the user started (a key, a
   gesture, the app, or a workflow the user started): never a schedule, an
-  event, the agent's start or a work session. 4 per second. `call.state`
+  event, the agent's start or a work session. 4 per second, and at most 2
+  per run, so one press cannot keep controlling calls that come later.
+  `call.state`
   needs no run and is answered inside a key's state call, so the plugin's
   keys can show the call (still under its grant); `call.control` is not.
 - **The user's consents** decide on the agent's thread: without the
@@ -141,7 +144,9 @@ guest SDK has `Context::call_state` and `Context::call_control`.
   it is `calls-consent` and nothing reaches the call app.
 - **The confirmed outcome:** a control the gate let through goes to the
   provider, and the plugin's call waits for the engine's confirmation (at
-  most 8 s, at most 8 waiting in all): `confirmed`, or `calls-unconfirmed`,
+  most 8 s, at most 8 waiting in all; Calls started again answers every
+  waiting control `calls-provider-offline`, and each start is a new provider
+  session, so no command of the new engine ever answers an old one): `confirmed`, or `calls-unconfirmed`,
   or the provider's refusal (`calls-unsupported: <reason>` for a closed
   reason). A set of the state the call has answers `alreadyThere` and sends
   nothing.
@@ -149,7 +154,13 @@ guest SDK has `Context::call_state` and `Context::call_control`.
   `calls-unsupported: provider-has-no-api` (answer, reject and cancel are
   `calls-not-in-call` first, since Teams never shows a ringing or dialing
   call).
-- **Locked:** both are `calls-locked`.
+- **Locked:** both are `calls-locked`. `call.state` waits at most 400 ms
+  for the agent, well within a key's state call.
+- **Consent changes:** the engine's consents are set when Calls is
+  installed. The broker reads the grants on every call, so revoking
+  `calls:control` refuses controls at once; when the plugin's enabling
+  installs Calls (with C7's release), a grant change must also update the
+  engine's consents (`Engine::add_provider` applies a withdrawn consent).
 - **No overlay, layout or device:** neither operation names a device, a
   frame, a page or a layout, so the plugin cannot drive an overlay or a
   managed layout. A confirmed command changes the call, and the overlay
