@@ -111,6 +111,24 @@ command -v jq > /dev/null || fail "jq is required"
 # jq on Windows ends its lines with CRLF; every value here is one line.
 jq() { command jq "$@" | tr -d '\r'; }
 
+# A build that ends with status 0 has staged every listed plugin and
+# written their pins (checked against the lists at the end). Ending with
+# status 0 before that, on any path, is a failure here: a dry run on
+# Windows once ended after the first artifact with status 0, no error and
+# no pins.json, and only a later diff noticed. An incomplete bundle is
+# never left to pass for a smaller one. (--fetch-only stops early by design
+# and stages nothing.)
+complete=false
+on_exit() {
+  local status=$?
+  if [ "$status" = 0 ] && [ "$fetch_only" = false ] && [ "$complete" = false ]; then
+    rm -f "${bundled:-$out/bundled}/pins.json"
+    echo "build.sh: ended before every listed plugin was staged and pinned; ${bundled:-$out/bundled} is incomplete" >&2
+    exit 1
+  fi
+}
+trap on_exit EXIT
+
 if command -v sha256sum > /dev/null; then
   sha() { sha256sum < "$1" | cut -d' ' -f1; }
 else
@@ -182,12 +200,14 @@ if [ "$fetch_only" = false ]; then
 fi
 
 crates=()
+source_ids=()
 for entry in ${entries[@]+"${entries[@]}"}; do
   dir="$here/${entry%%$'\t'*}"
   [ -f "$dir/Cargo.toml" ] || fail "$dir has no Cargo.toml"
   crates+=("$(sed -n 's/^name = "\(.*\)"$/\1/p' "$dir/Cargo.toml" | head -n 1)")
   # Never both, before anything is downloaded or built.
   id=$(jq -r .id "$dir/manifest.json")
+  source_ids+=("$id")
   [ "$(jq --arg id "$id" '[.plugins[] | select(.id == $id)] | length' "$lock")" = 0 ] \
     || fail "$id is built from $dir and locked as a release artifact in artifacts.json: a plugin is one or the other"
   for listed in ${listed_ids[@]+"${listed_ids[@]}"}; do
@@ -317,6 +337,19 @@ for entry in ${entries[@]+"${entries[@]}"}; do
 done
 
 jq -S -n --argjson p "$pins" '{pinsVersion: 1, plugins: ($p | sort_by(.id))}' > "$bundled/pins.json"
+# Complete or nothing: the pins name exactly the listed plugins, each staged
+# with its module, and no other plugin directory is there.
+want=$(printf '%s\n' ${listed_ids[@]+"${listed_ids[@]}"} ${source_ids[@]+"${source_ids[@]}"} | LC_ALL=C sort)
+pinned=$(jq -r '.plugins[].id' "$bundled/pins.json" | LC_ALL=C sort)
+staged=$(cd "$bundled" && find . -mindepth 1 -maxdepth 1 -type d | sed 's|^\./||' | LC_ALL=C sort)
+[ "$pinned" = "$want" ] && [ "$staged" = "$want" ] || {
+  rm -f "$bundled/pins.json"
+  fail "the bundle is incomplete: listed $(tr '\n' ' ' <<< "$want"); pinned $(tr '\n' ' ' <<< "$pinned"); staged $(tr '\n' ' ' <<< "$staged")"
+}
+for id in ${want}; do
+  [ -s "$bundled/$id/plugin.wasm" ] && [ -s "$bundled/$id/manifest.json" ] \
+    || { rm -f "$bundled/pins.json"; fail "$id is pinned without its plugin.wasm and manifest.json"; }
+done
 echo "wrote $bundled/pins.json ($(jq '.plugins | length' "$bundled/pins.json") plugins)"
 if [ -n "$test_keys" ]; then
   # Verified with throwaway keys: never shippable (check-bundled-plugins.sh
@@ -324,3 +357,4 @@ if [ -n "$test_keys" ]; then
   echo "verified with the test-only publisher keys $test_keys, not the pinned keys: NOT FOR RELEASE" > "$bundled/NOT-FOR-RELEASE"
   echo "build.sh: test-only publisher keys: $bundled is not for release" >&2
 fi
+complete=true

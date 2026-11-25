@@ -360,4 +360,27 @@ diff -r "$out/$id" "$mixed/$id" > /dev/null || bad "the artifact of the mixed bu
   || bad "the mixed build's pins differ from the all-source build of the same files"
 pass "a mixed build stages the artifact and the source plugin with the pins of both"
 
+# ------------------------------------------------------------ incomplete
+
+# Complete or a failure: a build that ends with status 0 after its first
+# artifact (as a Windows dry run once did, with no error and no
+# pins.json), or whose staged plugins are not the listed ones, fails and
+# leaves no pins.json. The copy of build.sh is changed for each case and
+# restored after.
+cp "$build" "$work/build.sh.orig"
+sed 's/^  stage_artifacts$/  stage_artifacts; exit 0/' "$work/build.sh.orig" > "$build"
+grep -q '^  stage_artifacts; exit 0$' "$build" || bad "the early-end case could not change the copy of build.sh"
+refused early-end "ended before every listed plugin was staged and pinned" \
+  --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}"
+awk '/^# Complete or nothing:/ { print "rm -rf \"$bundled/deckpilot.legacy-fixture\"" } { print }' \
+  "$work/build.sh.orig" > "$build"
+# shellcheck disable=SC2016 # the literal line the case adds
+grep -q '^rm -rf "$bundled/deckpilot.legacy-fixture"$' "$build" || bad "the missing-plugin case could not change the copy of build.sh"
+refused missing-plugin "the bundle is incomplete" \
+  --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}"
+cp "$work/build.sh.orig" "$build"
+run complete-again --test-fixtures --artifacts-dir "$full" --offline "${two_keys[@]}" \
+  || { cat "$work/complete-again.log" >&2; bad "the restored build.sh refused the mixed build"; }
+pass "the restored build.sh builds the mixed bundle again"
+
 echo "test-build.sh: $passed checks passed"
