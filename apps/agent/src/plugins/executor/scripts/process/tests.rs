@@ -422,6 +422,8 @@ fn git_options_that_change_its_programs_are_refused() {
         vec!["grep", "-f", "/outside/x"],
         vec!["ls-files", "--exclude-from=/outside/x"],
         vec!["pull", "-Xours"],
+        vec!["blame", "--ignore-revs-file=/outside/secret", "f"],
+        vec!["diff", "-O/outside/order"],
     ] {
         assert_eq!(
             code(&call(&mut e, &run("git", &args))),
@@ -474,6 +476,9 @@ fn the_git_denylist_reads_positions() {
     assert!(!git_denied(&v(&["rebase", "--continue"])));
     assert!(!git_denied(&v(&["diff", "--exit-code"])));
     assert!(!git_denied(&v(&["pull", "--ff-only"])));
+    assert!(!git_denied(&v(&["grep", "--files-with-matches", "x"])));
+    assert!(!git_denied(&v(&["log", "--exclude=refs/x", "--all"])));
+    assert!(!git_denied(&v(&["diff", "--output-indicator-new=+"])));
 }
 
 #[test]
