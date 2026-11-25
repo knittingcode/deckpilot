@@ -171,6 +171,63 @@ never seeded with a bundled plugin (which seeds low tiers only).
 - A plugin with `tools` declares no `network`, `credentials` or `openUrl`
   (no exfiltration channel next to process authority).
 
+## Plugin API 1.14: connections (first-party bundled plugins only)
+
+A **connection** is a server the user connects in the app: GitHub.com,
+a company's GitHub Enterprise Server, GitLab.com, a self-managed GitLab
+on its own port or path. Each connection the user creates has its own
+origin consent, private-network consent, secret and status; the plugin
+names it by an opaque id (`cn_` and 26 characters) and never sees its
+secret, its auth header or another connection's server. This replaces,
+for these plugins, the single server and token a `userOrigins` slot
+allows.
+
+The `connections` permission, `openUrl.connections`,
+`contributes.connectionTypes` and `connection` parameters need
+`"engines": { "pluginApi": "^1.14" }` and, like plugin API 1.9's kinds,
+pass only the rules for a plugin shipped inside the app
+(`Manifest::validate_bundled`); they are privileged usages, so a signed
+release of such a plugin is admitted only with a reviewed privileged
+policy that names them. The other additions of the level (parameter
+`options`, internal actions, `records` outputs and
+`contributes.recordSchemas`, [manifest.md](manifest.md#plugin-api-114-connections))
+are first-party only too in 1.14, without being privileged.
+
+**Status:** the manifest model and its validation, the JSON Schema, the
+ABI operations and the SDK are in place. The agent provides plugin
+API 1.10 (`PLUGIN_API`), so it reports a `^1.14` plugin as
+`incompatible`; its broker answers every connection operation and every
+`http.fetch` naming a connection `unsupported-op`, whatever the grants,
+and the plugin store records no grant for the permission. The host side
+(connection storage, per-connection grants and binding, the stricter
+redirect rule, per-connection rate limits) lands separately, and the
+agent's level moves to 1.14 only then.
+
+| Kind | Fields | Grant | Allows |
+| --- | --- | --- | --- |
+| `connections` | `types`: 1-8 ids of `contributes.connectionTypes`, every declared type; `methods` (must include `GET`; absent: `GET`), the most a connection may get; `privateNetwork` (boolean) | **high**, never derived by a migration and never seeded; each connection is then consented to by the user creating it | `http.fetch` with `connection`, `connections.get`, `connections.reportStatus` for connections the invocation is bound to |
+| `openUrl` with `connections: true` | `hosts` may then be empty; needs the `connections` permission | follows each connection's consent | `url.open` of `https` pages on the web origin of a bound connection |
+
+The rules the host enforces once it carries connections out:
+
+- A request goes only to the bound connection's exact origin (scheme,
+  host, port), inside its path prefix segment by segment (`/api/v4`,
+  never `/api/v40`), with one of the connection's methods. A new
+  connection gets `GET` only until the user allows changes.
+- An invocation is bound to the connections its parameters name (a
+  `connection` parameter, or the connection of a repository reference),
+  or the one the app names for its own screens. A plugin cannot list
+  connections and use them freely; an id outside the binding is
+  `not-permitted`.
+- A redirect off the connection's origin or prefix is refused outright
+  (`redirect-refused`), never followed without the secret.
+- `https` only; the operating system's trust store, with no option to
+  skip verification. Private-network servers only with the connection's
+  own consent; loopback and link-local addresses never.
+- The secret is injected by the host in the type's scheme (`bearer`,
+  `basic` or `header`, never in a URL), and redacted from every reply,
+  header and error.
+
 ## Plugin API 1.16: the bundled Calls plugin only
 
 `calls`, `contributes.callOverlay` and `contributes.layoutTemplates`
@@ -194,8 +251,8 @@ today.
   are pages of it.
 - A template control places one of the plugin's own actions on a key,
   dial or touch zone the shape has, with parameters the action declares.
-- A plugin with `calls` declares no `network`, `credentials`, `openUrl`
-  or `tools`: what it learns about calls leaves it only through the
+- A plugin with `calls` declares no `network`, `credentials`, `openUrl`,
+  `tools` or `connections`: what it learns about calls leaves it only through the
   host's faces.
 
 ## Always allowed (no permission)

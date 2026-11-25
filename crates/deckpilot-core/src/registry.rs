@@ -89,6 +89,21 @@ pub trait ActionHandler: Send + Sync {
         face
     }
 
+    /// The icon a key running this action shows when neither the user nor
+    /// the action chose one ([`crate::KeyFace::symbol`]), from what its
+    /// target is on this computer: Open shows a folder for a folder and a
+    /// document for a file. `targets` looks at filesystem metadata only and
+    /// is [`crate::NoTargets`] for a module without
+    /// [`Capability::MachineResources`]. `None` (the default): the type's
+    /// icon. Never stored: computed with every face.
+    fn automatic_symbol(
+        &self,
+        _parameters: &ActionParameters,
+        _targets: &dyn crate::TargetKinds,
+    ) -> Option<String> {
+        None
+    }
+
     /// Whether keys running this action show a live [`ButtonState`], and
     /// how often it may be refreshed. `None` (the default): no live state,
     /// and [`ActionHandler::button_state`] is never called.
@@ -344,6 +359,16 @@ impl ActionHandler for AliasHandler {
         }
     }
 
+    fn automatic_symbol(
+        &self,
+        parameters: &ActionParameters,
+        targets: &dyn crate::TargetKinds,
+    ) -> Option<String> {
+        self.translate(parameters)
+            .ok()
+            .and_then(|parameters| self.target.automatic_symbol(&parameters, targets))
+    }
+
     fn state_policy(&self, parameters: &ActionParameters) -> Option<RefreshPolicy> {
         self.target.state_policy(&self.translate(parameters).ok()?)
     }
@@ -396,6 +421,9 @@ pub struct ActionRegistry {
     handlers: BTreeMap<ActionTypeId, Registered>,
     /// Known action types that cannot run, with the reason.
     unavailable: BTreeMap<ActionTypeId, String>,
+    /// The plugins whose actions may receive folder paths
+    /// ([`ActionRegistry::reads_paths`]).
+    path_readers: BTreeSet<ModuleId>,
 }
 
 impl fmt::Debug for ActionRegistry {
@@ -403,6 +431,7 @@ impl fmt::Debug for ActionRegistry {
         f.debug_struct("ActionRegistry")
             .field("types", &self.handlers.keys())
             .field("unavailable", &self.unavailable.keys())
+            .field("path_readers", &self.path_readers)
             .finish()
     }
 }
@@ -524,6 +553,24 @@ impl ActionRegistry {
         Some(handler.decorate_face(face, parameters, template, project))
     }
 
+    /// The automatic icon of a key that runs `action_type`
+    /// ([`ActionHandler::automatic_symbol`]). Modules without
+    /// [`Capability::MachineResources`] are told nothing about this
+    /// computer's targets. `None`: no automatic icon (the type's shows).
+    pub fn automatic_symbol(
+        &self,
+        action_type: &ActionTypeId,
+        parameters: &ActionParameters,
+        targets: &dyn crate::TargetKinds,
+    ) -> Option<String> {
+        let handler = self.handler(action_type)?;
+        if self.allows(action_type, Capability::MachineResources) {
+            handler.automatic_symbol(parameters, targets)
+        } else {
+            handler.automatic_symbol(parameters, &crate::NoTargets)
+        }
+    }
+
     /// The refresh policy of `action_type`'s live state, if it has one.
     pub fn state_policy(
         &self,
@@ -577,6 +624,25 @@ impl ActionRegistry {
     pub fn runs_detached(&self, action_type: &ActionTypeId) -> bool {
         self.handler(action_type)
             .is_some_and(ActionHandler::runs_detached)
+    }
+
+    /// Lets the actions of the plugin `module` receive folder paths (it
+    /// holds `resources:paths`).
+    pub fn allow_paths(&mut self, module: ModuleId) {
+        self.path_readers.insert(module);
+    }
+
+    /// Whether the parameters of `id` may carry this computer's folder
+    /// paths (a repository's `path`): DeckPilot's own actions may; a
+    /// plugin's only when it holds `resources:paths`
+    /// ([`ActionRegistry::allow_paths`]); an action nobody provides never.
+    pub fn reads_paths(&self, id: &ActionTypeId) -> bool {
+        self.handlers.get(id).is_some_and(|entry| {
+            entry
+                .module
+                .as_ref()
+                .is_none_or(|module| !module.is_plugin() || self.path_readers.contains(module))
+        })
     }
 
     /// The module that provides `id`, if it was registered by a module.
@@ -914,6 +980,30 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert_eq!(denied.code, "not-permitted");
+    }
+
+    /// Folder paths reach DeckPilot's own actions, and a plugin's only
+    /// when it may see them (`resources:paths`); an unknown type never.
+    #[test]
+    fn only_allowed_plugins_read_folder_paths() {
+        let builtin = |module: &str| {
+            let mut registry = ActionRegistry::default();
+            registry
+                .register_for_module(ModuleId::new(module).unwrap(), &[], Box::new(Echo::new()))
+                .unwrap();
+            registry
+        };
+        assert!(builtin("test").reads_paths(&echo_type()));
+        let mut plugin = builtin("acme.tools");
+        assert!(!plugin.reads_paths(&echo_type()));
+        plugin.allow_paths(ModuleId::new("acme.other").unwrap());
+        assert!(!plugin.reads_paths(&echo_type()));
+        plugin.allow_paths(ModuleId::new("acme.tools").unwrap());
+        assert!(plugin.reads_paths(&echo_type()));
+        assert!(!plugin.reads_paths(&select_type()));
+        let mut trusted = ActionRegistry::default();
+        trusted.register(Box::new(Echo::new())).unwrap();
+        assert!(trusted.reads_paths(&echo_type()));
     }
 
     #[test]

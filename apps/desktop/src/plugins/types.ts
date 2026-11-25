@@ -6,7 +6,7 @@
 // manifest permission shapes (plugin-manifest.schema.json) are what a
 // registry version lists for consent before it is installed.
 
-import type { ActionType } from "@/lib/types"
+import type { ActionType, GesturePreset } from "@/lib/types"
 
 import type { MediaRef } from "./storefront-types"
 
@@ -236,6 +236,13 @@ export interface PluginSummary {
   statusItems?: string[]
   /** Dashboard cards the app draws from core data; like `statusItems`. */
   dashboardCards?: string[]
+  /**
+   * Gesture presets of the active version (plugin API 1.10), as the agent
+   * registers them (ids and action types in the plugin's namespace, texts
+   * in the app's language), whatever the plugin's state. Absent when none
+   * and from older agents.
+   */
+  gesturePresets?: GesturePreset[]
 }
 
 /**

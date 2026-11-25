@@ -27,6 +27,7 @@ import { typeAvailability } from "@/lib/plugin-actions"
 import { ActionIcon } from "@/components/action-icon"
 import type { ActionInstance, ActionReference, ActionType, ProfileView } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { shownActionIcon } from "@/lib/system-actions"
 
 /** The category of actions whose type names none. */
 const OTHER = "Other"
@@ -242,7 +243,7 @@ function Library({
                       setSelected(action.id)
                     }}
                   >
-                    <ActionIcon name={action.icon} className="size-4 shrink-0" />
+                    <ActionIcon name={shownActionIcon(action)} className="size-4 shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">{action.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">

@@ -153,11 +153,13 @@ impl Engine {
 
     /// The resolver for references of actions in `profile`: core and
     /// module variables from the registry, shared variables from this
-    /// engine's store, node outputs from `outputs`.
+    /// engine's store, node outputs from `outputs`, repository folders from
+    /// `machine`. Its values may carry folder paths; see
+    /// [`Engine::action_resolver`] for an action's.
     pub fn resolver<'a>(
         &'a self,
         profile: &'a Profile,
-        machine: &MachineConfig,
+        machine: &'a MachineConfig,
         outputs: Option<&'a dyn StepOutputs>,
     ) -> ContextResolver<'a> {
         ContextResolver {
@@ -167,7 +169,24 @@ impl Engine {
             outputs,
             registry: &self.variable_registry,
             live: self.live.as_ref(),
+            machine: Some(machine),
+            private_paths: true,
         }
+    }
+
+    /// [`Engine::resolver`] for the parameters of an action of
+    /// `action_type`: folder paths only for an action that may see them
+    /// ([`ActionRegistry::reads_paths`]), so a plugin without
+    /// `resources:paths` reads a repository's `path` as `null`.
+    pub fn action_resolver<'a>(
+        &'a self,
+        profile: &'a Profile,
+        machine: &'a MachineConfig,
+        outputs: Option<&'a dyn StepOutputs>,
+        action_type: &crate::ActionTypeId,
+    ) -> ContextResolver<'a> {
+        self.resolver(profile, machine, outputs)
+            .with_private_paths(self.registry.reads_paths(action_type))
     }
 
     /// The core's and the modules' variables this engine resolves.
@@ -188,7 +207,10 @@ impl Engine {
         then: impl FnOnce(&crate::variables::DisplayEnvironment<'_>) -> R,
     ) -> R {
         let context = crate::variables::display_context(profile.id, project);
-        let resolver = self.resolver(profile, machine, None);
+        // A key never shows a folder path (OD-4), whatever it references.
+        let resolver = self
+            .resolver(profile, machine, None)
+            .with_private_paths(false);
         then(&crate::variables::DisplayEnvironment {
             context: &context,
             resolver: &resolver,
@@ -251,7 +273,7 @@ impl Engine {
         let handler = self.registry.handler(&instance.action_type)?;
         // A key's state follows the application's active project.
         let resolution = Invocation::default().context(profile, project.map(|p| p.id));
-        let lookup = self.resolver(profile, machine, None);
+        let lookup = self.action_resolver(profile, machine, None, &instance.action_type);
         let resolved = match resolve_parameters(
             handler.definition(),
             &instance.parameters,
@@ -546,8 +568,10 @@ impl Engine {
             // own parameters: this engine's shared variables, system
             // variables from the run.
             let resolver = self.resolver(profile, machine, None);
+            let without_paths = resolver.with_private_paths(false);
             let services = RunServices {
                 variables: Some(&resolver),
+                variables_without_paths: Some(&without_paths),
                 device: invocation.device.as_ref(),
                 execution: invocation.execution,
             };
@@ -712,8 +736,10 @@ impl Engine {
             .ok_or(EngineError::UnknownWorkflow(workflow))?;
         let inputs = workflow_inputs(definition, &std::collections::BTreeMap::new())?;
         let resolver = self.resolver(profile, machine, None);
+        let without_paths = resolver.with_private_paths(false);
         let services = RunServices {
             variables: Some(&resolver),
+            variables_without_paths: Some(&without_paths),
             ..RunServices::default()
         };
         self.run_graph_nested(
@@ -930,7 +956,7 @@ impl Engine {
         // The context is captured once: the run's own project inside a
         // workflow, never replaced by the application's active project.
         let resolution = invocation.context(profile, project.map(|p| p.id));
-        let lookup = self.resolver(profile, machine, outputs);
+        let lookup = self.action_resolver(profile, machine, outputs, &instance.action_type);
         let device = crate::variables::doubles::FixedDevice(invocation.device.clone());
         let dependencies = ExecutionDependencies {
             variables: &lookup,

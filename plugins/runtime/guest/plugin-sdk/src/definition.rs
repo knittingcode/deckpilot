@@ -16,7 +16,10 @@ use crate::args::{Args, normalize};
 use crate::context::{Context, Transport};
 use crate::controls::Controls;
 use crate::output::{ActionResult, IntoValue, PluginError, codes};
-use crate::{API_LEVEL, ApiLevel, CONTROLS_API_LEVEL, LATEST_API_LEVEL, SDK_NAME, SDK_VERSION};
+use crate::{
+    ACTION_CONTEXTS_API_LEVEL, API_LEVEL, ApiLevel, CONTROLS_API_LEVEL, LATEST_API_LEVEL, SDK_NAME,
+    SDK_VERSION,
+};
 
 /// An action handler. Plain functions and non-capturing closures coerce to
 /// it.
@@ -167,6 +170,9 @@ impl Plugin {
             if a.controls.is_some() && self.api_level() < CONTROLS_API_LEVEL {
                 return Err(DefinitionError::ControlsNeedApi(a.id.clone()));
             }
+            if a.contexts.is_some() && self.api_level() < ACTION_CONTEXTS_API_LEVEL {
+                return Err(DefinitionError::ContextsNeedApi(a.id.clone()));
+            }
         }
         // The wire form must pass the host's check too.
         self.descriptor()
@@ -263,6 +269,39 @@ impl Plugin {
     }
 }
 
+/// Where an action makes sense (plugin API 1.11, `docs/action-contexts.md`):
+/// the manifest's `contributes.actions[].contexts`. Advisory: the app
+/// offers the action where it belongs; a use elsewhere is reported, never
+/// refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ActionContext {
+    /// A key's, dial's or touch zone's primary input (press, release,
+    /// click, rotation, touch).
+    Key,
+    /// A double click or a long press.
+    Gesture,
+    /// The key's live face ([`Action::state`]).
+    Display,
+    /// A step of a Multi Action.
+    Sequence,
+    /// An action node of a graph workflow.
+    Workflow,
+}
+
+impl ActionContext {
+    /// The manifest's name: `key`, `gesture`, `display`, `sequence`,
+    /// `workflow`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Key => "key",
+            Self::Gesture => "gesture",
+            Self::Display => "display",
+            Self::Sequence => "sequence",
+            Self::Workflow => "workflow",
+        }
+    }
+}
+
 /// One action: an id from the manifest, its parameters and a handler.
 #[derive(Clone)]
 pub struct Action {
@@ -271,6 +310,7 @@ pub struct Action {
     handler: Handler,
     state: Option<StateHandler>,
     controls: Option<Controls>,
+    contexts: Option<BTreeSet<ActionContext>>,
 }
 
 impl fmt::Debug for Action {
@@ -291,6 +331,7 @@ impl Action {
             handler,
             state: None,
             controls: None,
+            contexts: None,
         }
     }
 
@@ -383,6 +424,43 @@ impl Action {
         self.controls.as_ref()
     }
 
+    /// Where the action makes sense (plugin API 1.11): at least one
+    /// [`ActionContext`]. Without a declaration it has all five, as
+    /// before. The manifest entry needs the same `contexts`
+    /// ([`manifest_mismatches`](crate::testing::manifest_mismatches)
+    /// compares them as a set) and `"engines": { "pluginApi": "^1.11" }`,
+    /// so the plugin calls [`Plugin::requires_api`] with
+    /// [`ACTION_CONTEXTS_API_LEVEL`] ([`Plugin::validate`] refuses contexts
+    /// below it). The manifest validator also checks them against the
+    /// controls and the state (`gesture` needs a double click or long
+    /// press, `key` a primary input, `display` a [`Action::state`]).
+    ///
+    /// ```
+    /// use deckpilot_plugin_sdk::prelude::*;
+    /// use deckpilot_plugin_sdk::{ACTION_CONTEXTS_API_LEVEL, ActionContext};
+    ///
+    /// fn check(_: &mut Context<'_>, _: &Args<'_>) -> ActionResult {
+    ///     Ok(Output::ok())
+    /// }
+    /// let plugin = Plugin::new("acme.health", "1.0.0")
+    ///     .requires_api(ACTION_CONTEXTS_API_LEVEL)
+    ///     .action(
+    ///         Action::new("check", check)
+    ///             .contexts([ActionContext::Sequence, ActionContext::Workflow]),
+    ///     );
+    /// assert_eq!(plugin.validate(), Ok(()));
+    /// ```
+    #[must_use]
+    pub fn contexts(mut self, contexts: impl IntoIterator<Item = ActionContext>) -> Self {
+        self.contexts = Some(contexts.into_iter().collect());
+        self
+    }
+
+    /// What [`Action::contexts`] declared; `None`: all five.
+    pub fn declared_contexts(&self) -> Option<&BTreeSet<ActionContext>> {
+        self.contexts.as_ref()
+    }
+
     /// Whether the action has a state handler.
     pub fn has_state(&self) -> bool {
         self.state.is_some()
@@ -413,6 +491,9 @@ impl Action {
     }
 
     fn validate(&self) -> Result<(), DefinitionError> {
+        if self.contexts.as_ref().is_some_and(BTreeSet::is_empty) {
+            return Err(DefinitionError::NoContexts(self.id.clone()));
+        }
         if let Some(controls) = &self.controls {
             controls
                 .check()
@@ -654,6 +735,11 @@ pub enum DefinitionError {
     /// An action declares controls but the plugin needs a plugin API below
     /// 1.3: the action id.
     ControlsNeedApi(String),
+    /// An action declares an empty list of contexts: the action id.
+    NoContexts(String),
+    /// An action declares contexts but the plugin needs a plugin API below
+    /// 1.11: the action id.
+    ContextsNeedApi(String),
 }
 
 impl fmt::Display for DefinitionError {
@@ -678,6 +764,16 @@ impl fmt::Display for DefinitionError {
                 "action `{id}` declares controls, which need plugin API {CONTROLS_API_LEVEL}: \
                  call `requires_api(ApiLevel {{ major: 1, minor: 3 }})` and declare \
                  `\"pluginApi\": \"^1.3\"` in the manifest"
+            ),
+            Self::NoContexts(id) => write!(
+                f,
+                "action `{id}` declares no context: name at least one, or none for all five"
+            ),
+            Self::ContextsNeedApi(id) => write!(
+                f,
+                "action `{id}` declares contexts, which need plugin API \
+                 {ACTION_CONTEXTS_API_LEVEL}: call `requires_api(ACTION_CONTEXTS_API_LEVEL)` and \
+                 declare `\"pluginApi\": \"^1.11\"` in the manifest"
             ),
         }
     }

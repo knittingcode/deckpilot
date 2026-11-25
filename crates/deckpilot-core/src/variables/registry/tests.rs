@@ -39,6 +39,8 @@ fn environment<'a>(
         profile,
         os: Os::Linux,
         live: &NoLiveState,
+        machine: None,
+        private_paths: true,
     }
 }
 
@@ -418,6 +420,8 @@ fn the_device_slot_reads_the_generic_descriptor() {
         profile: &profile,
         os: Os::Linux,
         live: &catalog,
+        machine: None,
+        private_paths: true,
     };
     let slot = environment.device().unwrap();
     assert_eq!(slot.reference_id(), device.to_string());

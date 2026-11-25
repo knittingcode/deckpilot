@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 17 | 13 |
+| Current main | see `Cargo.toml` | 18 | 14 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -58,6 +58,21 @@ the app sends only to an agent that announces the feature (against an
 older agent the app's storefront commands answer `null`). The agent caches
 a verified storefront under `<state>/storefront/` and its media under
 `<state>/media/`; an older agent does not read them.
+
+Current main (after 0.15.0) moves the configuration database to schema
+14: projects get their repositories (`docs/data-model.md`,
+"Repositories"). The migration is additive. It adds two columns to
+`projects` and stores, for every project with the `repository` role, the
+repository that role stands for. Roles, resources and folder bindings are
+not rewritten. As every upgrade, it runs after an encrypted backup next to
+the database (`backups/deckpilot-schema13-*.db`). **0.15.x and older
+refuse a schema 14 database** with `UnsupportedSchema` (found 14,
+supported 13) and change nothing. The way back to 0.15.x is that
+pre-migration backup: restore it in place of `deckpilot.db`, without its
+`-wal` and `-shm` files. Changes made after the upgrade are not in the
+backup. Exports with repositories other than the one the role stands for
+are payload version 5, which 0.14.x refuses; other exports keep their
+version.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins
@@ -194,6 +209,62 @@ plugin with `projectContext.select` only) is another `^1.9` field that an
 older agent refuses as unknown; a `resource.resolve` role is the user's
 role name (up to 1,024 characters, not blank), no longer a parameter key.
 No IPC protocol or document change.
+
+Plugin API 1.10 (unreleased,
+[gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
+additive. `contributes.gesturePresets` validates only with `^1.10`; a
+`^1.9` manifest without it validates exactly as before, and an agent of
+1.9 (0.15.0 and older) reports a `^1.10` version `incompatible`. Presets
+are data only: no capability operation, ABI or permission is added, and
+nothing of a preset is stored, so no document, schema or migration
+changes. `ModuleInfo.gesturePresets` and `PluginSummary.gesturePresets`
+are optional fields, left out when empty, that an older app ignores; an
+older agent sends neither, and the app then lists no presets. No IPC
+protocol change. The SDK's `GESTURE_PRESETS_API_LEVEL` is 1.10 (nothing
+for the guest).
+
+Plugin API 1.11 (unreleased, [action-contexts.md](action-contexts.md#plugin-actions)):
+additive. `contributes.actions[].contexts` validates only with `^1.11`;
+a manifest without it validates exactly as before and its actions keep
+all five contexts. An agent of 1.10 or older reports a `^1.11` version
+`incompatible`. The declaration reaches the app inside the action type
+(`ActionType.contexts`, the optional field 0.14.0's built-in contexts
+already use), so there is no IPC protocol, schema or
+document change; contexts stay advisory (reported on save, warned on
+run, never refused). The SDK's `LATEST_API_LEVEL` is 1.11
+(`ACTION_CONTEXTS_API_LEVEL`, `Action::contexts`).
+
+Plugin API 1.12 (unreleased, [variables.md §2.8](variables.md#28-structured-values-and-member-access)):
+additive. Structured variable types (`valueType` `{"type": "object",
+"shape": "repository"}` and `{"type": "map", "of": "repository"}`) and the
+host sources `host:project.repositories` and `host:project.repository`
+validate only with `^1.12`, only with exactly their source's type, only for
+a bundled first-party plugin with `projectContext` (privileged constructs,
+so the reviewed privileged policy must list them before a plugin may use
+them), and a structured type only with a host source. A `^1.9` manifest
+without them validates exactly as before. The validator knows 1.12; the
+agent's `PLUGIN_API` stays 1.11 until the release that bundles Projects
+0.2.0, so an agent reports a `^1.12` version `incompatible` until then.
+Scalar references, templates and stored `{{ … }}` texts resolve exactly as
+before; text of 7 to 9 segments under a module or plugin root, which was not
+a reference, now parses as a member reference and resolves as unknown. No
+database, document or export change.
+
+IPC protocol 18 (unreleased): structured variables (capability
+`structuredVariables`). `CatalogEntry.valueType` may be `object` or `map`
+with the shape's `members` and, for a map, its keys in the context's
+project (`mapKeys`); each structured variable is listed once and the app
+composes its member entries (`memberOf`), so a catalog stays within one
+message with up to 256 repositories. The title picker's catalog marks a
+structured variable listed for its display-safe members only
+(`membersOnly`). A preview of a whole structured value is `structured` (a
+count, never a member), and the reasons `unknownMember`,
+`repositoryNotInProject` and `noDefaultRepository` are new. An agent of 18
+answers an older client with structured types as `json` without members
+or keys, no members-only entries, a structured preview as `redacted` JSON
+and the nearest older reasons
+(`Response::for_protocol`); no request changes, so an app of 18 works with
+an agent of 17 as before (without repository variables).
 
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
@@ -433,6 +504,7 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | protocol 12 app or agent with a protocol 13 peer (the app's language) | IPC test `a_protocol_12_agent_is_never_told_the_locale`; agent test `a_protocol_12_app_never_sets_the_language` (`tests/locale.rs`); IPC test `the_locale_is_protocol_13_and_only_a_tag` | the client does not send `setLocale` below protocol 13 and refuses it locally; the agent refuses it from an older connection; the status of an older agent has no `locale`; keys and plugin texts stay English; everything else works as before |
 | protocol 13 app or agent with a protocol 14 peer (simulated presses) | IPC test `a_protocol_13_agent_is_never_asked_to_simulate_a_press`; agent test `a_protocol_13_app_cannot_simulate` (`tests/simulate_press.rs`); IPC test `simulated_presses_are_protocol_14`; desktop test `simulated_presses_answer_ran_confirmation_or_refused` | the client does not send `simulatePress` below protocol 14 and refuses it locally (the app answers `refused` with code `unsupported`); the agent refuses it from an older connection; nothing is pressed; everything else works as before |
 | protocol 15 app or agent with a protocol 16 peer (live preview) | IPC test `a_protocol_15_agent_is_never_asked_for_a_live_preview`; agent test `a_protocol_15_connection_cannot_preview` (`tests/live_preview.rs`); IPC test `live_preview_is_protocol_16`; frontend `use-live-preview.test.tsx` | the client does not send the live preview requests below protocol 16 and refuses them locally; the agent refuses them from an older connection; the editor says changes reach the device when saved; everything else works as before |
+| protocol 17 app or agent with a protocol 18 peer (structured variables) | IPC tests `structured_variables_need_protocol_18` (`protocol.rs`) and `a_protocol_17_agent_has_no_structured_variables` (`tests/peers.rs`) | an older app receives structured types as `json` without members or keys, no members-only entries, structured previews as `redacted` and the nearest older missing reasons; nothing it sends changes; a newer app with an older agent sees no repository variables |
 | protocol 16 app or agent with a protocol 17 peer (variables in key titles, key labels) | IPC test `a_protocol_16_agent_is_never_asked_to_resolve_display_templates` (`tests/peers.rs`) | the client does not send `listDisplayVariables` or `resolveDisplayTemplates` below protocol 17 and refuses them locally; the app shows titles resolved by the core alone; labels travel only as optional fields that an older peer ignores; everything else works as before |
 | agent temporarily unavailable | desktop tests (`stopped` state), connect timeouts (`deckpilot-ipc`) | stopped state; no request hangs |
 | agent restarted during a running workflow | agent test `runs_of_a_stopped_agent_are_recorded_as_interrupted` | run recorded as interrupted; history kept |

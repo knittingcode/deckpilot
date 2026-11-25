@@ -243,6 +243,27 @@
           "items": { "enum": ["activeProject"] },
           "description": "Plugin API 1.9 (engines.pluginApi ^1.9), first-party bundled plugins with the hostViews permission only. Dashboard cards the app draws from core data; the plugin only names them."
         },
+        "connectionTypes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/connectionType" },
+          "description": "Plugin API 1.14 (engines.pluginApi ^1.14), first-party bundled plugins with the connections permission only. The kinds of server the user can connect the plugin to; each connection is created, consented to and signed in by the user in the app. Ids are unique; every type is listed in the connections permission."
+        },
+        "recordSchemas": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/recordSchema" },
+          "description": "Plugin API 1.14, first-party bundled plugins only. The shapes of the plugin's records outputs. Ids are unique."
+        },
+        "gesturePresets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/gesturePreset" },
+          "description": "Plugin API 1.10 (engines.pluginApi ^1.10). Action Library entries that assign several gestures of one control at once, each to one of this plugin's own actions with predefined parameters. Data only: a preset grants nothing and each action keeps its own permissions and checks. Ids are unique; registered as <plugin id>.<preset id>."
+        },
         "callOverlay": {
           "type": "object",
           "additionalProperties": false,
@@ -688,13 +709,18 @@
               "type": "boolean",
               "description": "Plugin API 1.9 (engines.pluginApi ^1.9), first-party bundled plugins only. The agent may open the literal http or https URL the user stored in one of the invocation's own parameters (url.openParam); the plugin never names the URL. Medium tier."
             },
+            "connections": {
+              "type": "boolean",
+              "description": "Plugin API 1.14 (engines.pluginApi ^1.14), with the connections permission: pages on the web origin of a connection the invocation is bound to may be opened too."
+            },
             "justification": { "$ref": "#/$defs/justification" }
           },
           "required": ["hosts"],
           "anyOf": [
             { "properties": { "hosts": { "minItems": 1 } } },
             { "required": ["userOrigins"] },
-            { "required": ["fromParams"], "properties": { "fromParams": { "const": true } } }
+            { "required": ["fromParams"], "properties": { "fromParams": { "const": true } } },
+            { "required": ["connections"], "properties": { "connections": { "const": true } } }
           ],
           "additionalProperties": false
         },
@@ -764,6 +790,31 @@
             "kind": { "const": "hostViews" },
             "justification": { "$ref": "#/$defs/justification" }
           },
+          "additionalProperties": false
+        },
+        {
+          "description": "Plugin API 1.14 (engines.pluginApi ^1.14), first-party bundled plugins only. The plugin may be offered connections of the listed contributes.connectionTypes, each one created, consented to and signed in by the user in the app, with its own server, secret and status. The host makes every request; the secret never reaches the plugin. High tier, never derived.",
+          "properties": {
+            "kind": { "const": "connections" },
+            "types": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/connectionTypeId" }
+            },
+            "methods": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "contains": { "const": "GET" },
+              "items": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] },
+              "description": "The most a connection may be allowed; a new connection gets GET only until the user allows changes. Absent: GET."
+            },
+            "privateNetwork": { "type": "boolean", "default": false },
+            "justification": { "$ref": "#/$defs/justification" }
+          },
+          "required": ["types"],
           "additionalProperties": false
         },
         {
@@ -903,6 +954,22 @@
           },
           "required": ["language"],
           "additionalProperties": false
+        },
+        {
+          "description": "Plugin API 1.14 (engines.pluginApi ^1.14), first-party bundled plugins with the connections permission only. One of the user's connections of one of the types, picked in the app; the stored value is the connection's id. No default, not a setting, never a dynamic reference.",
+          "properties": {
+            "type": { "const": "connection" },
+            "types": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/connectionTypeId" }
+            },
+            "capability": { "$ref": "#/$defs/camelKey" }
+          },
+          "required": ["types"],
+          "additionalProperties": false
         }
       ]
     },
@@ -932,7 +999,30 @@
         "description": { "type": "string", "maxLength": 300 },
         "kind": { "$ref": "#/$defs/parameterKind" },
         "required": { "type": "boolean" },
-        "default": { "$ref": "#/$defs/parameterValue" }
+        "default": { "$ref": "#/$defs/parameterValue" },
+        "options": { "$ref": "#/$defs/parameterOptions" }
+      }
+    },
+    "parameterOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "value"],
+      "description": "Plugin API 1.14, first-party bundled plugins only, single-line text parameters only. The values the parameter's picker offers, listed by one of the plugin's own internal readOnly actions with a records output. The stored value stays plain text.",
+      "properties": {
+        "from": { "$ref": "#/$defs/localId" },
+        "dependsOn": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/camelKey" },
+          "description": "Other parameters of the action, also parameters of the source, whose values the source receives."
+        },
+        "value": { "$ref": "#/$defs/camelKey" },
+        "label": { "$ref": "#/$defs/camelKey" },
+        "search": {
+          "type": "boolean",
+          "description": "The picker passes what the user types as the source's text parameter search."
+        }
       }
     },
     "setting": {
@@ -960,11 +1050,16 @@
         "key": { "$ref": "#/$defs/camelKey" },
         "label": { "type": "string", "minLength": 1, "maxLength": 48 },
         "kind": {
-          "enum": ["text", "integer", "boolean", "path", "url", "projectKey"],
-          "default": "text"
+          "enum": ["text", "integer", "boolean", "path", "url", "projectKey", "records"],
+          "default": "text",
+          "description": "records (plugin API 1.14, first-party bundled plugins only): a list of at most 200 records of schema, at most 64 KiB; never shown on a key."
         },
         "always": { "type": "boolean", "default": false },
-        "sensitive": { "type": "boolean", "default": false }
+        "sensitive": { "type": "boolean", "default": false },
+        "schema": {
+          "$ref": "#/$defs/localId",
+          "description": "For a records output only: the id of one of contributes.recordSchemas."
+        }
       }
     },
     "node": {
@@ -1057,6 +1152,13 @@
           },
           "description": "What the action suggests for its keys' titles (plugin API 1.8): a default title, whether it sets the title while it runs (its state's label), a position, and the parts of the look DeckPilot's title editor offers. Suggestions only: the user's own title and look always win; the editor cannot be replaced."
         },
+        "contexts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["key", "gesture", "display", "sequence", "workflow"] },
+          "description": "Plugin API 1.11: where the action makes sense (key, gesture, display, sequence, workflow). Absent: all five. Advisory: a use elsewhere is reported, never refused. gesture needs a double click or long press among the controls, key a press, release, click, rotation or touch, display the action's state."
+        },
         "editorNavigation": {
           "type": "object",
           "additionalProperties": false,
@@ -1076,6 +1178,129 @@
             "pageParameter": { "type": "string", "minLength": 1, "maxLength": 32 }
           },
           "description": "What running the action does to the page or layout a device shows, for the editor's interactive preview (plugin API 1.7). Data only: the editor moves its own view and never calls the plugin. folder.open and layout.switch name the text parameter that holds the target (a page id, a layout id); layout.switch may also name its pageParameter."
+        },
+        "internal": {
+          "type": "boolean",
+          "description": "Plugin API 1.14, first-party bundled plugins only: not in the Action Library, never on a key or a workflow node. The app and the plugin's own parameter options invoke it. No controls, state, title, editorNavigation, replacedBy, contexts or node.changesContext."
+        }
+      }
+    },
+    "connectionTypeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    },
+    "apiPath": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^(/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.\\.[A-Za-z0-9._~-]+))+$",
+      "description": "One or more path segments; no . or .. segment, no trailing /."
+    },
+    "connectionType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "auth"],
+      "anyOf": [{ "required": ["cloud"] }, { "required": ["selfHosted"] }],
+      "description": "Plugin API 1.14. A kind of server the user can connect: the provider's public service at fixed origins (cloud), a server the user enters (selfHosted), or both.",
+      "properties": {
+        "id": { "$ref": "#/$defs/connectionTypeId" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "cloud": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["api", "web"],
+          "properties": {
+            "api": {
+              "type": "string",
+              "maxLength": 256,
+              "pattern": "^https://[^/?#@]+(/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.[A-Za-z0-9_~-][A-Za-z0-9._~-]*|\\.\\.[A-Za-z0-9._~-]+))*$",
+              "description": "The API base, an https URL optionally with a path."
+            },
+            "web": {
+              "type": "string",
+              "maxLength": 256,
+              "pattern": "^https://[^/?#@]+$",
+              "description": "The web origin pages are opened on: an https origin without a path."
+            }
+          }
+        },
+        "selfHosted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apiPath"],
+          "properties": {
+            "apiPath": { "$ref": "#/$defs/apiPath" },
+            "label": { "type": "string", "minLength": 1, "maxLength": 48 }
+          }
+        },
+        "auth": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method", "scheme"],
+            "properties": {
+              "method": { "enum": ["pat"] },
+              "scheme": { "enum": ["bearer", "basic", "header"] },
+              "headerName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9-]+$"
+              },
+              "setupUrl": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "cloud": { "$ref": "#/$defs/httpsUrl" },
+                  "selfHosted": {
+                    "type": "string",
+                    "maxLength": 261,
+                    "pattern": "^\\{web\\}/",
+                    "description": "{web}/...: a page on the server the user entered."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "extensions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*\\.[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "description": "Provider-only operations, <type id>.<name>."
+        }
+      }
+    },
+    "recordSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fields"],
+      "properties": {
+        "id": { "$ref": "#/$defs/localId" },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "kind"],
+            "properties": {
+              "key": { "$ref": "#/$defs/camelKey" },
+              "kind": { "enum": ["text", "integer", "boolean", "url", "timestamp", "state"] },
+              "sensitive": { "type": "boolean", "default": false }
+            }
+          }
         }
       }
     },
@@ -1091,7 +1316,34 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type"],
-          "properties": { "type": { "enum": ["string", "integer", "boolean", "json"] } }
+          "properties": {
+            "type": { "enum": ["string", "integer", "boolean", "json", "object", "map"] },
+            "shape": {
+              "enum": ["repository"],
+              "description": "Plugin API 1.12: the shape of an object."
+            },
+            "of": {
+              "enum": ["repository"],
+              "description": "Plugin API 1.12: the shape of a map's objects."
+            }
+          },
+          "description": "object and map (plugin API 1.12) are structured values only DeckPilot provides, through a host source: an object names its shape, a map names of.",
+          "oneOf": [
+            {
+              "properties": { "type": { "const": "object" } },
+              "required": ["shape"],
+              "not": { "required": ["of"] }
+            },
+            {
+              "properties": { "type": { "const": "map" } },
+              "required": ["of"],
+              "not": { "required": ["shape"] }
+            },
+            {
+              "properties": { "type": { "enum": ["string", "integer", "boolean", "json"] } },
+              "allOf": [{ "not": { "required": ["shape"] } }, { "not": { "required": ["of"] } }]
+            }
+          ]
         },
         "scope": { "enum": ["machine", "profile", "project"] },
         "requires": {
@@ -1102,8 +1354,14 @@
         "sensitive": { "type": "boolean", "default": false },
         "deprecated": { "type": "boolean", "default": false },
         "source": {
-          "enum": ["host:project.id", "host:project.key", "host:project.name"],
-          "description": "Plugin API 1.9, first-party bundled plugins with the projectContext permission only: DeckPilot computes and publishes the value (the id, key or name of the project in the context; scope project, a string). The plugin never publishes it."
+          "enum": [
+            "host:project.id",
+            "host:project.key",
+            "host:project.name",
+            "host:project.repositories",
+            "host:project.repository"
+          ],
+          "description": "Plugin API 1.9, first-party bundled plugins with the projectContext permission only: DeckPilot computes and publishes the value (the id, key or name of the project in the context; scope project, a string). The plugin never publishes it. Plugin API 1.12 adds the project's repositories (host:project.repositories, a map of repository) and its default repository (host:project.repository, an object of repository); a repository's folder path reaches only readers that may see paths."
         }
       }
     },
@@ -1207,6 +1465,63 @@
           "then": { "required": ["queryName"] }
         }
       ]
+    },
+    "gesturePreset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "category", "gestures"],
+      "properties": {
+        "id": { "$ref": "#/$defs/localId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "description": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "allowPartial": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether a control that cannot produce every gesture still takes the others; otherwise such a control refuses the whole preset."
+        },
+        "gestures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/presetAssignment" },
+          "description": "Each gesture at most once; release never next to doubleClick or longPress."
+        }
+      }
+    },
+    "presetAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gesture", "action", "label"],
+      "properties": {
+        "gesture": {
+          "enum": [
+            "click",
+            "doubleClick",
+            "longPress",
+            "release",
+            "rotateClockwise",
+            "rotateCounterClockwise"
+          ]
+        },
+        "action": {
+          "$ref": "#/$defs/localId",
+          "description": "The id of one of this plugin's own actions (contributes.actions[].id)."
+        },
+        "parameters": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": { "$ref": "#/$defs/camelKey" },
+          "additionalProperties": { "$ref": "#/$defs/parameterValue" },
+          "description": "Over the action's defaults; checked against its parameters."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "What the gesture does, in words: the name of the action the preset creates."
+        }
+      }
     }
   }
 }

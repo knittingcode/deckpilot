@@ -90,6 +90,7 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
                     | PermissionKind::Credentials
                     | PermissionKind::OpenUrl
                     | PermissionKind::Tools
+                    | PermissionKind::Connections
             ) {
                 c.error(
                     format!("permissions[{index}]"),

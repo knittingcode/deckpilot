@@ -478,6 +478,12 @@ export type DragSource =
    */
   | { type: "actionType"; actionType: string; preset?: ActionPreset }
   | { type: "newMultiAction" }
+  /**
+   * A gesture preset (`GesturePreset.id`): several actions on the gestures
+   * of one control. The editor resolves it to actions and bindings; `name`
+   * and `icon` are for the drag preview.
+   */
+  | { type: "gesturePreset"; preset: string; name: string; icon?: string | null }
 
 /** A ready-made action of a library entry: its name and settings. */
 export interface ActionPreset {
@@ -504,7 +510,8 @@ export function dropOnControl(
   if (
     source.type === "newFolder" ||
     source.type === "actionType" ||
-    source.type === "newMultiAction"
+    source.type === "newMultiAction" ||
+    source.type === "gesturePreset"
   ) {
     return null
   }

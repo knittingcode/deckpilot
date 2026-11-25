@@ -21,17 +21,31 @@ use crate::model::{
     Action, ActionControls, ControlKind, Credential, CredentialScheme, DIALOGS_API, Effect,
     HttpMethod, MAX_INPUTS_PER_KIND, MAX_NAVIGATION_ENTRIES, MAX_NAVIGATION_ID,
     MAX_NAVIGATION_LABEL, MAX_VIEWS, Manifest, NAVIGATION_API, Node, Parameter, ParameterKind,
-    ParameterValue, Permission, PermissionKind, ProfileScope, Setting, UserOriginSlot,
-    VIEW_CONTEXT_API, VariableScope,
+    ParameterValue, Permission, PermissionKind, ProfileScope, REPOSITORY_VARIABLES_API, Setting,
+    UserOriginSlot, VIEW_CONTEXT_API, VariableScope, VariableValueKind,
 };
 use crate::{MANIFEST_VERSION, path_rules};
 
+#[path = "action_contexts.rs"]
+mod action_contexts;
 #[path = "calls_rules.rs"]
 mod calls_rules;
+#[path = "connections_check.rs"]
+mod connections;
+#[path = "gesture_presets.rs"]
+mod gesture_presets;
 #[path = "privileged.rs"]
 mod privileged;
 pub use privileged::OPTIONAL_PERMISSIONS;
-pub(crate) use privileged::{first_party_only, usages as privileged_usages};
+pub(crate) use privileged::first_party_only;
+
+/// Every privileged usage (X12): plugin API 1.9's kinds and the
+/// connection constructs of 1.14, as `(JSON path, what)`.
+pub(crate) fn privileged_usages(m: &Manifest) -> Vec<(String, String)> {
+    let mut found = privileged::usages(m);
+    found.extend(connections::usages(m));
+    found
+}
 
 /// Error codes every plugin may return without declaring them (`SharedCode`
 /// in the SDK). `errorCodes` must not redeclare them (section 7, rule 13).
@@ -372,6 +386,8 @@ pub(crate) fn check(manifest: &Manifest) -> Checker {
     dialogs_api_level(&mut c, manifest);
     editor_navigation(&mut c, manifest);
     action_titles(&mut c, manifest);
+    action_contexts::check(&mut c, manifest);
+    gesture_presets::check(&mut c, manifest);
     visual_assets(&mut c, manifest);
     localization(&mut c, manifest);
     variables(&mut c, manifest);
@@ -382,6 +398,7 @@ pub(crate) fn check(manifest: &Manifest) -> Checker {
     dependencies(&mut c, manifest);
     privileged::check(&mut c, manifest);
     calls_rules::check(&mut c, manifest);
+    connections::check(&mut c, manifest);
     c
 }
 
@@ -695,6 +712,7 @@ fn permissions(c: &mut Checker, m: &Manifest) {
             | Permission::ProjectContext { .. }
             | Permission::HostViews { .. }
             | Permission::Calls { .. } => privileged::permission(c, &path, permission),
+            Permission::Connections { .. } => connections::permission(c, &path, permission),
             Permission::Notifications { routing: None, .. } | Permission::Dialogs { .. } => {}
         }
     }
@@ -781,7 +799,9 @@ fn open_url(c: &mut Checker, path: &str, permission: &Permission, m: &Manifest) 
         return;
     };
     let min = usize::from(
-        user_origins.as_ref().is_none_or(Vec::is_empty) && !permission.opens_from_params(),
+        user_origins.as_ref().is_none_or(Vec::is_empty)
+            && !permission.opens_from_params()
+            && !permission.opens_connections(),
     );
     c.hosts_min(&format!("{path}.hosts"), hosts, min, 16);
     let Some(settings) = user_origins else {
@@ -982,6 +1002,7 @@ fn parameter_kind(c: &mut Checker, path: &str, kind: &ParameterKind) {
             c.count(&field, kinds.len(), 1, 4);
             c.unique(&field, kinds.iter().map(|k| k.as_str()));
         }
+        ParameterKind::Connection { .. } => connections::parameter_kind(c, path, kind),
         ParameterKind::Integer { .. } | ParameterKind::Boolean {} | ParameterKind::Project {} => {}
     }
 }
@@ -997,6 +1018,7 @@ fn kind_name(kind: &ParameterKind) -> &'static str {
         ParameterKind::Lines { .. } => "lines",
         ParameterKind::Pairs { .. } => "pairs",
         ParameterKind::Code { .. } => "code",
+        ParameterKind::Connection { .. } => "connection",
     }
 }
 
@@ -1065,6 +1087,10 @@ fn default_value(c: &mut Checker, path: &str, kind: &ParameterKind, value: &Para
         (ParameterKind::Resource { .. }, _) => {
             Some("a resource parameter cannot have a default: the user binds it".into())
         }
+        (ParameterKind::Connection { .. }, _) => Some(
+            "a connection parameter cannot have a default: the user's default connection is used"
+                .into(),
+        ),
         (kind, value) => {
             let value = match value {
                 ParameterValue::Text(_) => "text",
@@ -1825,6 +1851,12 @@ fn replaced_by(c: &mut Checker, path: &str, action: &Action, actions: &[Action])
             IssueCode::UnknownReference,
             format!("`{target}` is not an action of this plugin"),
         );
+    } else if actions.iter().any(|a| &a.id == target && a.is_internal()) {
+        c.error(
+            &field,
+            IssueCode::Conflict,
+            format!("`{target}` is internal: an action is never replaced by one off the keys"),
+        );
     }
     if action.deprecated != Some(true) {
         c.error(
@@ -1908,8 +1940,54 @@ fn variables(c: &mut Checker, m: &Manifest) {
                 requires.iter().map(|x| format!("{x:?}")),
             );
         }
+        structured_type(c, &path, variable, m);
     }
     c.unique("contributes.variables", variables.iter().map(|v| &v.id));
+}
+
+/// `valueType.shape` and `valueType.of` (plugin API 1.12): an `object`
+/// names its shape, a `map` the shape of its objects, every other type
+/// neither. Structured types are a host source's only: a plugin never
+/// publishes one (`variables.publish` refuses them), so a variable without
+/// a `source` cannot declare one.
+fn structured_type(c: &mut Checker, path: &str, variable: &crate::Variable, m: &Manifest) {
+    let value_type = &variable.value_type;
+    let field = format!("{path}.valueType");
+    let (shape, of) = (value_type.shape.is_some(), value_type.of.is_some());
+    let fits = match value_type.kind {
+        VariableValueKind::Object => shape && !of,
+        VariableValueKind::Map => of && !shape,
+        _ => !shape && !of,
+    };
+    if !fits {
+        c.error(
+            &field,
+            IssueCode::InvalidValue,
+            "an `object` names its `shape`, a `map` names `of`, and no other type has either",
+        );
+    }
+    if !value_type.is_structured() {
+        return;
+    }
+    if m.engines.plugin_api.minimum < REPOSITORY_VARIABLES_API {
+        c.error(
+            &field,
+            IssueCode::Conflict,
+            format!(
+                "a structured type needs plugin API {REPOSITORY_VARIABLES_API}: set \
+                 engines.pluginApi to `^{REPOSITORY_VARIABLES_API}` (it is `{}`)",
+                m.engines.plugin_api
+            ),
+        );
+    }
+    if variable.source.is_none() {
+        c.error(
+            &field,
+            IssueCode::InvalidValue,
+            "only DeckPilot provides structured values: an `object` or `map` variable needs a \
+             host `source`",
+        );
+    }
 }
 
 fn settings(c: &mut Checker, m: &Manifest) {

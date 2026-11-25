@@ -145,6 +145,15 @@ pub enum MissingReason {
     NoOutput,
     /// The value names a project or profile outside the context's profile.
     OtherProfile,
+    /// The structured variable has no such member (since protocol 18;
+    /// older clients receive `unknownVariable`).
+    UnknownMember,
+    /// The project in the context has no repository with that key (since
+    /// protocol 18; older clients receive `noValue`).
+    RepositoryNotInProject,
+    /// The project has several repositories and none is the default (since
+    /// protocol 18; older clients receive `noValue`).
+    NoDefaultRepository,
 }
 
 impl MissingReason {
@@ -158,6 +167,22 @@ impl MissingReason {
             Self::NoExecution => "no run is in the context",
             Self::NoOutput => "the node has not produced it",
             Self::OtherProfile => "it belongs to another profile",
+            Self::UnknownMember => "it has no such member",
+            Self::RepositoryNotInProject => "the project has no repository with that key",
+            Self::NoDefaultRepository => "the project has no default repository",
+        }
+    }
+
+    /// The reason as a client of `protocol` knows it: the reasons of
+    /// structured variables (protocol 18) become the nearest older one.
+    #[must_use]
+    pub fn for_protocol(self, protocol: u32) -> Self {
+        match self {
+            Self::UnknownMember if protocol < 18 => Self::UnknownVariable,
+            Self::RepositoryNotInProject | Self::NoDefaultRepository if protocol < 18 => {
+                Self::NoValue
+            }
+            other => other,
         }
     }
 }
@@ -302,6 +327,14 @@ pub enum ReferenceStatus {
         value_type: VariableType,
         source: ValueSource,
     },
+    /// Has a structured value (an object or a map), summarised: how many
+    /// objects, never their members, so a preview never shows a path
+    /// (since protocol 18; older clients receive `redacted` as `json`).
+    Structured {
+        value_type: VariableType,
+        entries: usize,
+        source: ValueSource,
+    },
     UnavailableUntilRuntime,
     Missing {
         reason: MissingReason,
@@ -339,6 +372,12 @@ pub fn preview(resolution: Resolution, expected: Option<&ParameterKind>) -> Refe
                     value_type: found,
                     source,
                 }
+            } else if let Some(entries) = structured_entries(&value) {
+                ReferenceStatus::Structured {
+                    value_type: found,
+                    entries,
+                    source,
+                }
             } else {
                 ReferenceStatus::Resolved { value, source }
             }
@@ -347,6 +386,62 @@ pub fn preview(resolution: Resolution, expected: Option<&ParameterKind>) -> Refe
         Resolution::Missing(reason) => ReferenceStatus::Missing { reason },
         Resolution::PermissionDenied => ReferenceStatus::PermissionDenied,
         Resolution::Unavailable { owner } => ReferenceStatus::Unavailable { owner },
+    }
+}
+
+/// How many objects a structured value holds; `None` for other values.
+fn structured_entries(value: &VariableValue) -> Option<usize> {
+    match value {
+        VariableValue::Object(_) => Some(1),
+        VariableValue::Map(map) => Some(map.entries.len()),
+        _ => None,
+    }
+}
+
+/// A structured type as a client before protocol 18 knows it: `json`.
+fn type_for_protocol(value_type: VariableType, protocol: u32) -> VariableType {
+    if protocol < 18 && value_type.is_structured() {
+        VariableType::Json
+    } else {
+        value_type
+    }
+}
+
+impl VariableType {
+    /// The type as a client of `protocol` knows it: structured types
+    /// (protocol 18) are `json` before.
+    #[must_use]
+    pub fn for_protocol(self, protocol: u32) -> Self {
+        type_for_protocol(self, protocol)
+    }
+}
+
+impl ReferenceStatus {
+    /// The status as a client of `protocol` knows it: before protocol 18 a
+    /// structured value is redacted JSON, and the reasons of structured
+    /// variables are the nearest older ones.
+    #[must_use]
+    pub fn for_protocol(self, protocol: u32) -> Self {
+        if protocol >= 18 {
+            return self;
+        }
+        match self {
+            Self::Structured { source, .. } => Self::Redacted {
+                value_type: VariableType::Json,
+                source,
+            },
+            Self::Redacted { value_type, source } => Self::Redacted {
+                value_type: type_for_protocol(value_type, protocol),
+                source,
+            },
+            Self::TypeMismatch { found } => Self::TypeMismatch {
+                found: type_for_protocol(found, protocol),
+            },
+            Self::Missing { reason } => Self::Missing {
+                reason: reason.for_protocol(protocol),
+            },
+            other => other,
+        }
     }
 }
 

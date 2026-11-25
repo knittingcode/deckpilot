@@ -23,7 +23,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use deckpilot_core::Engine;
 use deckpilot_core::variables::{
-    CatalogFilter, DisplayDependency, DisplayText, ResolutionContext, TextKey, display_listed,
+    CatalogFilter, DisplayDependency, DisplayText, ResolutionContext, TextKey, display_listing,
     resolve_display_template,
 };
 use deckpilot_device::DeviceId;
@@ -129,7 +129,7 @@ impl Agent {
         context: &ResolutionContext,
         filter: &CatalogFilter,
     ) -> Result<Response, IpcError> {
-        self.context_profile(context.profile)?;
+        let profile = self.context_profile(context.profile)?;
         let context = client_display_context(&self.preview_context(context));
         let registry = self.runtime.engine().variable_registry();
         let entries = catalog(
@@ -137,10 +137,13 @@ impl Agent {
             &self.current_variables(context.profile)?,
             &context,
             false,
-        )
-        .into_iter()
-        .filter(|entry| display_listed(entry, registry) && filter.matches(entry))
-        .collect();
+        );
+        // Structured variables for their display-safe members only (the
+        // current project's repositories' names and keys, never a path or
+        // an id), with the repositories' keys: the app composes the member
+        // references, so the answer stays small (protocol 18).
+        let project = context.project.and_then(|id| profile.project(id));
+        let entries = display_listing(entries, project, registry, filter);
         Ok(Response::Variables { entries })
     }
 

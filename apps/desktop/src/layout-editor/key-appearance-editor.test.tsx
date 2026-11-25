@@ -1130,6 +1130,84 @@ describe("labels on the device canvas", { timeout: 20_000 }, () => {
     expect(header().getByRole("textbox", { name: "Key title" })).toBeInTheDocument()
   })
 
+  const pick = (outline: HTMLElement) => {
+    fireEvent.pointerDown(outline, { button: 0, pointerId: 1, clientX: 30, clientY: 60 })
+    fireEvent.pointerUp(outline, { pointerId: 1, clientX: 30, clientY: 60 })
+  }
+
+  it("nudges the label picked on the canvas with the arrows, each from the last nudge", async () => {
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    const outline = await waitFor(() => outlineOnCanvas("a"))
+    pick(outline)
+    // The key under the label holds the focus, so the arrows reach it.
+    expect(control("Key 1")).toHaveFocus()
+    // Three presses before the renderer draws any of them: each one starts
+    // where the one before put the label.
+    fireEvent.keyDown(control("Key 1"), { key: "ArrowRight" })
+    fireEvent.keyDown(control("Key 1"), { key: "ArrowUp", shiftKey: true })
+    fireEvent.keyDown(control("Key 1"), { key: "ArrowUp", shiftKey: true })
+    // The key selection stays where it was.
+    expect(control("Key 1")).toHaveAttribute("aria-pressed", "true")
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "false")
+    const bindings = await saved(user)
+    const moved = bindings[0]?.appearance?.labels
+    expect(moved?.[0]).toEqual({
+      id: "a",
+      text: "SHOP",
+      // The centre (36, 60) moved by 1 right and 2 × 5 up: 37/72 and about
+      // 50/72 (each step is kept in thousandths). A nudge from the old box
+      // would end at 55/72 (764).
+      position: { mode: "absolute", x: 514, y: 695 },
+    })
+    expect(moved?.[1]).toEqual(labelled.pages[0]?.bindings[0]?.appearance?.labels?.[1])
+    expect(bindings[0]?.appearance?.background).toBe("#000000")
+  })
+
+  it("moves between keys with the arrows while no label is picked", async () => {
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    await waitFor(() => outlineOnCanvas("a"))
+    fireEvent.keyDown(control("Key 1"), { key: "ArrowRight" })
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "true")
+    expect(control("Key 2")).toHaveFocus()
+    expect(api.saveLayout).not.toHaveBeenCalled()
+  })
+
+  it("lets go of the picked label with Escape or a click on the key, then moves between keys", async () => {
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    pick(await waitFor(() => outlineOnCanvas("a")))
+    expect(outlineOnCanvas("a")).toHaveAttribute("data-selected")
+    fireEvent.keyDown(control("Key 1"), { key: "Escape" })
+    // Only the label is let go of: the key stays selected.
+    expect(outlineOnCanvas("a")).not.toHaveAttribute("data-selected")
+    expect(control("Key 1")).toHaveAttribute("aria-pressed", "true")
+
+    pick(outlineOnCanvas("b"))
+    expect(outlineOnCanvas("b")).toHaveAttribute("data-selected")
+    await user.click(control("Key 1"))
+    expect(outlineOnCanvas("b")).not.toHaveAttribute("data-selected")
+    fireEvent.keyDown(control("Key 1"), { key: "ArrowRight" })
+    expect(control("Key 2")).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("duplicates a label from its menu, with a new id and the same look", async () => {
+    const user = renderEditor(plus, labelled)
+    await user.click(control("Key 1"))
+    await user.click(await screen.findByRole("button", { name: "Label “SHOP”" }))
+    await user.click(
+      within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Duplicate" }),
+    )
+    const labels = (await saved(user))[0]?.appearance?.labels ?? []
+    expect(labels).toHaveLength(3)
+    const [original, copy] = labels
+    expect(original).toEqual(labelled.pages[0]?.bindings[0]?.appearance?.labels?.[0])
+    expect(copy?.id).not.toBe("a")
+    expect(copy?.id).not.toBe("b")
+    expect({ ...copy, id: "a" }).toEqual(original)
+  })
+
   it("draws no outlines while the agent does not draw labels", async () => {
     agentState.agent = { capabilities: [] }
     const user = renderEditor(plus, labelled)

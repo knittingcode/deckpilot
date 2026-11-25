@@ -12,6 +12,7 @@ import type {
   ParameterKind,
   ValueKind,
   VariableDefinition,
+  VariableType,
   VariableValue,
   WorkflowGraph,
 } from "@/lib/types"
@@ -177,8 +178,17 @@ export function variableProblems(
   return problems
 }
 
-function valueType(value: VariableValue) {
-  return value.type === "resource" ? { type: "resource" as const } : { type: value.type }
+function valueType(value: VariableValue): VariableType {
+  switch (value.type) {
+    case "resource":
+      return { type: "resource" }
+    case "object":
+      return { type: "object", shape: value.value.shape }
+    case "map":
+      return { type: "map", of: value.value.shape }
+    default:
+      return { type: value.type }
+  }
 }
 
 export interface OutputOption {
