@@ -38,7 +38,10 @@ pub fn valid_copy_name(name: &str) -> bool {
 }
 
 fn is_invisible(c: char) -> bool {
-    matches!(c, '\u{2028}' | '\u{2029}' | '\u{200B}'..='\u{200D}' | '\u{FEFF}')
+    matches!(
+        c,
+        '\u{2028}' | '\u{2029}' | '\u{200B}'..='\u{200D}' | '\u{FEFF}'
+    )
 }
 
 fn is_bidi_control(c: char) -> bool {

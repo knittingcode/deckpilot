@@ -681,10 +681,10 @@ async fn the_app_reads_and_changes_calls_over_ipc() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_protocol_18_connection_cannot_ask_about_calls() {
     use deckpilot_ipc::framing::{read_message, write_message};
+    use deckpilot_ipc::{AgentClient, ClientError, ClientKind, Request};
     use deckpilot_ipc::{AgentEvent, ErrorCode, ServerMessage, SharedStream};
     use serde_json::json;
     use tokio::io::BufReader;
-    use deckpilot_ipc::{AgentClient, ClientError, ClientKind, Request};
     let f = fixture();
     let deck = start(&f).await;
     let mut old = AgentClient::connect_with_protocol(&deck.agent.paths, ClientKind::Desktop, 18)
@@ -714,11 +714,14 @@ async fn a_protocol_18_connection_cannot_ask_about_calls() {
     let stream = SharedStream::new(deck.agent.paths.endpoint().connect().await.unwrap());
     let mut reader = BufReader::new(stream.clone());
     let mut writer = stream;
-    let mut receive = async move |reader: &mut BufReader<SharedStream>| {
-        tokio::time::timeout(Duration::from_millis(300), read_message::<_, ServerMessage>(reader))
-            .await
-            .ok()
-            .and_then(|m| m.ok().flatten())
+    let receive = async move |reader: &mut BufReader<SharedStream>| {
+        tokio::time::timeout(
+            Duration::from_millis(300),
+            read_message::<_, ServerMessage>(reader),
+        )
+        .await
+        .ok()
+        .and_then(|m| m.ok().flatten())
     };
     write_message(
         &mut writer,
@@ -740,13 +743,12 @@ async fn a_protocol_18_connection_cannot_ask_about_calls() {
     deck.join().await;
     // The protocol 19 subscription is told.
     loop {
-        match tokio::time::timeout(TIMEOUT, current.next_event())
+        if let AgentEvent::CallsChanged { .. } = tokio::time::timeout(TIMEOUT, current.next_event())
             .await
             .unwrap()
             .unwrap()
         {
-            AgentEvent::CallsChanged { .. } => break,
-            _ => {}
+            break;
         }
     }
     // Sent anyway at protocol 18: refused by the agent.
