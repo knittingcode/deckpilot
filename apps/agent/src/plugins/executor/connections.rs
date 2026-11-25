@@ -480,7 +480,16 @@ mod tests {
                 &mut executor,
                 &fetch(&format!("{PROJECTS}?{target}"), GITLAB),
             );
-            assert!(message(&result).contains("redirect-refused"), "{result:?}");
+            // The code comes first, as plugins read it.
+            match &result {
+                CallResult::Error(error) => {
+                    assert!(
+                        error.message.starts_with("redirect-refused: "),
+                        "{result:?}"
+                    );
+                }
+                other @ CallResult::Ok(_) => panic!("{other:?}"),
+            }
         }
         let sent = f.sent();
         assert!(

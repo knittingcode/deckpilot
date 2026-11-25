@@ -553,6 +553,12 @@ pub const RESPONSE_HEADERS: &[&str] = &[
     "ratelimit-remaining",
     "ratelimit-reset",
     "ratelimit-observed",
+    // What a token may do and when it expires (GitHub), so a plugin can
+    // explain a missing permission or warn about an over-privileged or
+    // expiring token. Scope names and a date, never a secret.
+    "x-oauth-scopes",
+    "x-accepted-oauth-scopes",
+    "github-authentication-token-expiration",
 ];
 
 /// Whether a response header (any case) is handed to plugins
@@ -1660,7 +1666,6 @@ mod tests {
             "x-api-key",
             "private-token",
             "x-auth-token",
-            "x-oauth-scopes",
             "location",
             "content-location",
             "x-ratelimit-token",
@@ -1669,6 +1674,15 @@ mod tests {
             "",
         ] {
             assert!(!is_response_header(name), "{name}");
+        }
+        // A token's scopes and expiry are names and a date, which plugins
+        // need to explain a missing permission (plugin API 1.14).
+        for name in [
+            "x-oauth-scopes",
+            "X-Accepted-OAuth-Scopes",
+            "github-authentication-token-expiration",
+        ] {
+            assert!(is_response_header(name), "{name}");
         }
         let unique: std::collections::BTreeSet<_> = RESPONSE_HEADERS.iter().collect();
         assert_eq!(unique.len(), RESPONSE_HEADERS.len());

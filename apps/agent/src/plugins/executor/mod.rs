@@ -1289,9 +1289,16 @@ impl Executor {
             match session.authorize_redirect(&current, &location, hop) {
                 Decision::Allow(Allowed::Fetch(next)) => current = next,
                 Decision::Deny(reason) => {
+                    // A connection's refusals start with their code
+                    // (`redirect-refused: …`), which plugins read.
+                    let message = if current.connection.is_some() {
+                        reason.to_string()
+                    } else {
+                        format!("a redirect was refused by the permission broker ({reason})")
+                    };
                     return CallResult::error_with_kind(
                         reason.call_error_code(),
-                        format!("a redirect was refused by the permission broker ({reason})"),
+                        message,
                         reason.network_kind(),
                     );
                 }
@@ -1872,7 +1879,9 @@ mod tests {
                 "x-ratelimit-remaining",
                 "ratelimit-reset",
                 "x-total",
-                "etag"
+                "etag",
+                // Scope names (plugin API 1.14), never a secret.
+                "x-oauth-scopes"
             ]
         );
         let all = format!("{headers:?}");
