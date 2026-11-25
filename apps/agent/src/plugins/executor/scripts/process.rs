@@ -137,7 +137,13 @@ const GIT_DENIED_LONG: &[&str] = &[
     "--pathspec-from-file",
     "--exclude-from",
     "--exclude-per-directory",
+    "--ignore-revs-file",
+    "--orderfile",
 ];
+
+/// Exact options git knows that are also the start of a denied one: an
+/// exact name is that option, never an abbreviation.
+const GIT_EXACT_ALLOWED: &[&str] = &["exclude"];
 
 /// Short options, by subcommand, that run a program or read or write a
 /// file outside the repository (`rebase -x`, `grep -O`, `commit -F`, ...).
@@ -152,6 +158,7 @@ fn git_denied_letters(sub: &str) -> &'static [u8] {
         "commit" => b"Ft",
         "tag" => b"F",
         "blame" => b"S",
+        "diff" | "log" | "show" => b"O",
         "ls-files" => b"X",
         _ => b"",
     }
@@ -191,11 +198,12 @@ fn git_denied(args: &[String]) -> bool {
         if let Some(long) = lower.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or("");
             // git accepts any unique prefix of a long option, down to one
-            // letter.
+            // letter; a longer name is another option.
             return !name.is_empty()
+                && !GIT_EXACT_ALLOWED.contains(&name)
                 && GIT_DENIED_LONG
                     .iter()
-                    .any(|denied| denied[2..].starts_with(name) || name.starts_with(&denied[2..]));
+                    .any(|denied| denied[2..].starts_with(name));
         }
         false
     })
