@@ -45,6 +45,7 @@ pub mod resource;
 pub mod runtime;
 pub mod shared_layouts;
 pub mod stateful;
+pub mod target_kind;
 pub mod trigger;
 pub mod variables;
 pub mod work_session;
@@ -155,6 +156,7 @@ pub use runtime::{Engine, EngineError, StepReport, WorkflowReport, declared_outp
 pub use shared_layouts::{
     HistoryMode, LayoutCompatibility, LayoutHistory, LayoutRequirements, ModelFit, Unavailable,
 };
+pub use target_kind::{MachineTargets, NoTargets, TargetCache, TargetKind, TargetKinds};
 pub use trigger::{
     EventField, LifecycleEvent, Schedule, Scheduler, TriggerEvent, TriggerKind, TriggerValue,
     WallTime, WorkflowTrigger,
