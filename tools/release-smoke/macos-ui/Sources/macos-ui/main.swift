@@ -394,19 +394,68 @@ func isTab(_ e: AXUIElement, _ title: String) -> Bool {
   (role(e) == "AXRadioButton" || subrole(e) == "AXTabButton" || role(e) == "AXTab") && name(e).hasPrefix(title)
 }
 
-func marketplace(_ w: AXUIElement) throws {
-  if let back = first(w, { isButton($0) && name($0) == "Back to plugins" }) { try press(back) }
-  if first(w, { isTab($0, "Discover") }) == nil { try press(try button(w, "Marketplace")) }
-  _ = try find(w, "the Marketplace's tabs") { isTab($0, "Discover") }
+/// A destination of the Marketplace's sidebar (0.15.0 and later, #440) by
+/// its label: its text, or (a narrow window, icons only) its accessible
+/// name, which adds a count in parentheses ("Installed (3)").
+func isNav(_ e: AXUIElement, _ label: String) -> Bool {
+  isButton(e) && (name(e) == label || name(e).hasPrefix("\(label) ("))
 }
 
-/// Radix tabs switch on mouse down or focus.
+/// The Marketplace's own sidebar (0.15.0 and later): the navigation
+/// labelled "Marketplace" (data-slot marketplace-sidebar) with Discover,
+/// Installed, Updates, Categories, the collections and Install from file,
+/// not the toolbar's Marketplace button or the page's heading.
+func marketplaceSidebar(_ w: AXUIElement) -> AXUIElement? {
+  all(w).first { e in
+    name(e) == "Marketplace" && !isButton(e) && role(e) == kAXGroupRole as String
+      && first(e, { isNav($0, "Discover") }) != nil
+  }
+}
+
+/// The Marketplace at its sections, unless open already (a plugin's page
+/// replaces them until "Back to plugins"): the sidebar from 0.15.0, the
+/// tabs before. Returns which of them it has.
+@discardableResult
+func marketplace(_ w: AXUIElement) throws -> String {
+  if let back = first(w, { isButton($0) && name($0) == "Back to plugins" }) { try press(back) }
+  if marketplaceSidebar(w) == nil, first(w, { isTab($0, "Discover") }) == nil { try press(try button(w, "Marketplace")) }
+  return try until("the Marketplace's sidebar (from 0.15.0) or its tabs") { () -> String? in
+    if marketplaceSidebar(w) != nil { return "sidebar" }
+    return first(w, { isTab($0, "Discover") }) != nil ? "tabs" : nil
+  }
+}
+
+/// A section of the Marketplace: the sidebar's entry from 0.15.0, else
+/// the tab. Radix tabs switch on mouse down or focus.
 func tab(_ w: AXUIElement, _ title: String) throws {
+  if let sidebar = marketplaceSidebar(w) {
+    try press(try find(sidebar, "the Marketplace sidebar's '\(title)'") { isNav($0, title) })
+    pause(0.5)
+    return
+  }
   let t = try find(w, "tab '\(title)'") { isTab($0, title) }
   AXUIElementSetAttributeValue(t, kAXFocusedAttribute as CFString, kCFBooleanTrue)
   pause(0.5)
   if (attr(t, kAXValueAttribute) as? Int) != 1 { try press(t) }
   pause(0.5)
+}
+
+/// What a plugin's page shows once `pluginVersion` is installed, or nil:
+/// from 0.15.0 the version marked Installed in its Versions list (and the
+/// About strip's version), before the "Install status" group's
+/// "Installed <version>".
+func installedOnPage(_ w: AXUIElement) -> String? {
+  if let versions = first(w, { name($0) == "Versions" && role($0) == kAXListRole as String }) {
+    let row = children(versions).first { li in
+      hasText(li, pluginVersion) && hasText(li, "Installed")
+    }
+    guard let row else { return nil }
+    let about = first(w) { name($0) == "About" && !isButton($0) }.map(joined) ?? "About strip not exposed"
+    return "Versions: '\(joined(row))'; About: '\(about)'"
+  }
+  guard let group = first(w, { name($0) == "Install status" }) else { return nil }
+  let t = joined(group)
+  return t.contains("Installed \(pluginVersion)") ? "install status '\(t)'" : nil
 }
 
 func checkAll(_ w: AXUIElement) throws -> Int {
@@ -537,32 +586,60 @@ let axSteps: [(String, () throws -> String)] = [
     return "deckpilot-agent pid \(agent): menu bar item '\(itemName)' (\(count) item(s)), opened by a \(how); its menu: \(entries.joined(separator: " | ")); \(shot)"
   }),
   ("Marketplace lists the production catalog", {
-    try marketplace(mainWindow)
+    let shell = try marketplace(mainWindow)
     try tab(mainWindow, "Discover")
     let c = try until("the '\(pluginName)' card", long) { card(mainWindow) }
     let catalog = catalogNames()
+    let shot = screenshot("marketplace")
     let texts = all(mainWindow).map(name)
-    let absent = catalog.filter { n in !texts.contains { $0 == n || $0.hasPrefix("\(n) ") } }
-    if !catalog.isEmpty, !absent.isEmpty { throw Failure("catalog plugins not shown: \(absent.joined(separator: ", "))") }
-    return "card '\(name(c).prefix(80))'; production catalog (registry-index.json in the profile): \(catalog.isEmpty ? "not readable" : catalog.joined(separator: ", ")); all shown; \(screenshot("marketplace"))"
+    var cards: [String] = []
+    var where_ = "Discover"
+    if shell == "sidebar" {
+      // From 0.15.0 Discover shows the newest plugins not installed and
+      // "Your plugins" ("Details of <name>"); the Categories section names
+      // every plugin of each category on its card.
+      try tab(mainWindow, "Categories")
+      cards = try until("the Categories section's list") { () -> [String]? in
+        guard let list = first(mainWindow, { name($0) == "Categories" && role($0) == kAXListRole as String }) else { return nil }
+        let names = all(list).filter(isButton).map(name)
+        return names.isEmpty ? nil : names
+      }
+      where_ = "Discover and Categories (\(cards.joined(separator: " | ")))"
+    }
+    let absent = catalog.filter { n in
+      !texts.contains { $0 == n || $0.hasPrefix("\(n) ") || $0 == "Details of \(n)" }
+        && !cards.contains { $0.contains(n) }
+    }
+    if !catalog.isEmpty, !absent.isEmpty { throw Failure("catalog plugins not shown in \(where_): \(absent.joined(separator: ", "))") }
+    if shell == "sidebar" {
+      try tab(mainWindow, "Discover")
+      _ = try until("the '\(pluginName)' card on Discover again") { card(mainWindow) }
+    }
+    return "Marketplace with its \(shell == "sidebar" ? "sidebar (0.15.0 and later)" : "tabs (up to 0.14)"); card '\(name(c).prefix(80))'; production catalog (registry-index.json in the profile): \(catalog.isEmpty ? "not readable" : catalog.joined(separator: ", ")); all shown in \(where_); \(shot)"
   }),
   ("install \(pluginName) with consent", {
     guard let c = card(mainWindow) else { throw Failure("no card") }
     try press(c)
-    try press(try button(mainWindow, "Install \(pluginVersion)"))
+    // The plugin's page: from 0.15.0 its heading and one Install (named
+    // "Install <name>", the latest version); before, "Install <version>".
+    let install = try until("the plugin page's 'Install \(pluginName)' (0.15.0 and later) or 'Install \(pluginVersion)'") { () -> AXUIElement? in
+      if let b = first(mainWindow, { isButton($0) && name($0) == "Install \(pluginVersion)" }) { return b }
+      guard first(mainWindow, { role($0) == "AXHeading" && (name($0) == pluginName || joined($0) == pluginName) }) != nil,
+        first(mainWindow, { isButton($0) && name($0) == "Back to plugins" }) != nil
+      else { return nil }
+      return first(mainWindow) { isButton($0) && name($0) == "Install \(pluginName)" }
+    }
+    let installName = name(install)
+    try press(install)
     let confirm = try button(mainWindow, "Install")
     let consentShot = screenshot("install-consent")
     let boxes = try checkAll(mainWindow)
     try press(confirm)
     _ = try until("the consent dialog to close") { first(mainWindow) { isButton($0) && name($0) == "Install" } == nil ? true : nil }
-    let status = try until("'Installed \(pluginVersion)' in the install status", long) { () -> String? in
-      guard let group = first(mainWindow, { name($0) == "Install status" }) else { return nil }
-      let t = joined(group)
-      return t.contains("Installed \(pluginVersion)") ? t : nil
-    }
-    return "\(boxes) consent box(es) checked; install status '\(status)'; \(consentShot); \(screenshot("installed"))"
+    let status = try until("\(pluginName) \(pluginVersion) shown as installed on its page", long) { installedOnPage(mainWindow) }
+    return "'\(installName)' on the plugin's page; \(boxes) consent box(es) checked; \(status); \(consentShot); \(screenshot("installed"))"
   }),
-  ("Settings > Plugins lists \(pluginName)", {
+  ("Settings lists \(pluginName)", {
     let axBefore = windows(app).count
     let screenBefore = screenWindows(desktop).count
     let settingsButton = try find(mainWindow, "the Settings button") { isButton($0) && name($0).hasPrefix("Settings") }
@@ -585,30 +662,50 @@ let axSteps: [(String, () throws -> String)] = [
     let windowsEvidence = try noNewWindow(axBefore, screenBefore)
     let pressed = pressedState(gear(mainWindow))
     if pressed == "not pressed" { throw Failure("the Settings button is not pressed while the settings are shown") }
-    try press(try button(mainWindow, "Plugins"))
-    _ = try until("\(pluginName) v\(pluginVersion) in the installed list of Settings > Plugins") { () -> Bool? in
-      guard let list = first(mainWindow, { name($0) == "Installed plugins" && !isButton($0) }) else { return nil }
-      return hasText(list, pluginName) && hasText(list, "v\(pluginVersion)") ? true : nil
+    // Up to 0.14 Extensions > Plugins lists the installed plugins with their
+    // versions. 0.15.0 (#440) removed that page: the Marketplace's Installed
+    // manages them, and Extensions > Permissions lists every installed
+    // plugin ("Permissions of installed plugins") with its state and "Open
+    // <name> in the Marketplace".
+    let listed: String
+    let entry = try until("the settings' Plugins (up to 0.14) or Permissions") {
+      first(mainWindow) { isButton($0) && name($0) == "Plugins" } ?? first(mainWindow) { isButton($0) && name($0) == "Permissions" }
+    }
+    if name(entry) == "Plugins" {
+      try press(entry)
+      _ = try until("\(pluginName) v\(pluginVersion) in the installed list of Settings > Plugins") { () -> Bool? in
+        guard let list = first(mainWindow, { name($0) == "Installed plugins" && !isButton($0) }) else { return nil }
+        return hasText(list, pluginName) && hasText(list, "v\(pluginVersion)") ? true : nil
+      }
+      listed = "Extensions > Plugins lists \(pluginName) v\(pluginVersion)"
+    } else {
+      try press(entry)
+      let row = try until("\(pluginName) in Settings > Permissions' 'Permissions of installed plugins'", long) { () -> String? in
+        guard let list = first(mainWindow, { name($0) == "Permissions of installed plugins" && !isButton($0) }) else { return nil }
+        guard let open = first(list, { isButton($0) && name($0) == "Open \(pluginName) in the Marketplace" }) else { return nil }
+        // The list item around it (its name and state).
+        var item = open
+        while let parent = attr(item, kAXParentAttribute).map({ $0 as! AXUIElement }), !CFEqual(parent, list) { item = parent }
+        return String(joined(item).prefix(160))
+      }
+      listed = "no Extensions > Plugins page (0.15.0 and later); Extensions > Permissions lists \(pluginName) under 'Permissions of installed plugins' ('\(row)', with 'Open \(pluginName) in the Marketplace')"
     }
     let shot = screenshot("settings-plugins")
     try press(try button(mainWindow, "Marketplace"))
     _ = try until("the settings view to close") { settingsView(mainWindow) == nil ? true : nil }
-    let status = try until("the Marketplace as it was before the settings: \(pluginName)'s install status") { () -> String? in
-      guard let group = first(mainWindow, { name($0) == "Install status" }) else { return nil }
-      let t = joined(group)
-      return t.contains("Installed \(pluginVersion)") ? t : nil
-    }
+    let status = try until("the Marketplace as it was before the settings: \(pluginName)'s page, installed") { installedOnPage(mainWindow) }
     let after = pressedState(gear(mainWindow))
     if after == "pressed" { throw Failure("the Settings button stays pressed after leaving the settings") }
-    return "new UI: the Settings button (\(pressedBefore) before) showed the settings in the main window (\(marker)); \(windowsEvidence); Settings button \(pressed); Extensions > Plugins lists \(pluginName) v\(pluginVersion); the toolbar's Marketplace left them: the Marketplace is back as it was (install status '\(status)'), Settings button \(after); \(shot); \(screenshot("settings-left"))"
+    return "new UI: the Settings button (\(pressedBefore) before) showed the settings in the main window (\(marker)); \(windowsEvidence); Settings button \(pressed); \(listed); the toolbar's Marketplace left them: the Marketplace is back as it was (\(status)), Settings button \(after); \(shot); \(screenshot("settings-left"))"
   }),
   ("enable with consent", {
     try marketplace(mainWindow)
     try tab(mainWindow, "Installed")
+    let installedList = try find(mainWindow, "the installed list") { name($0) == "Installed plugins" && !isButton($0) }
     // From 0.9.0 (plugin API 1.4) the install plan activates a plugin whose
     // install consent covered all its permissions: disable it here first so
     // enabling it again goes through the consent review as before.
-    let atInstall = try find(mainWindow, "switch 'Enable \(pluginName)' or 'Disable \(pluginName)'") {
+    let atInstall = try find(installedList, "switch 'Enable \(pluginName)' or 'Disable \(pluginName)' in the installed list") {
       name($0) == "Enable \(pluginName)" || name($0) == "Disable \(pluginName)"
     }
     var disabled = ""
