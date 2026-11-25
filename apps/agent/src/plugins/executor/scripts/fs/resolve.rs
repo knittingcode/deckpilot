@@ -179,7 +179,7 @@ fn is_short_name(name: &str) -> bool {
 /// One name below a root: never empty, `.`, `..`, with a separator, NUL
 /// or `:`; on Windows never a device name, a short name or ending in a dot
 /// or a space.
-fn checked_name(name: &str) -> Result<(), ScriptFault> {
+pub(crate) fn checked_name(name: &str) -> Result<(), ScriptFault> {
     let bad = name.is_empty()
         || name == "."
         || name == ".."

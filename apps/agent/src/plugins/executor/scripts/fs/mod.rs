@@ -180,7 +180,13 @@ pub(crate) fn walk(
             let mut parts = Vec::new();
             for component in target.components() {
                 match component {
-                    std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+                    std::path::Component::Normal(n) => {
+                        // A link's names pass the same name rules as a
+                        // script's own (short names, devices).
+                        let n = n.to_string_lossy().into_owned();
+                        resolve::checked_name(&n)?;
+                        parts.push(n);
+                    }
                     std::path::Component::ParentDir => parts.push("..".into()),
                     std::path::Component::CurDir => {}
                     _ => return Err(escape()),
@@ -1657,13 +1663,23 @@ impl Pending {
             Err(e) => return Err(failure(&e, &self.name)),
         };
         let copied = std::io::copy(&mut (&mut *input).take(self.written), &mut out)
-            .and_then(|_| out.sync_all());
-        if let Err(e) = copied {
-            drop(out);
-            let _ = self.parent.remove_file(&self.name);
-            return Err(failure(&e, &self.name));
+            .and_then(|n| out.sync_all().map(|()| n));
+        match copied {
+            Ok(n) if n == self.written => Ok(()),
+            // A failure, or a temporary file cut short meanwhile: no
+            // partial target is left.
+            result => {
+                drop(out);
+                let _ = self.parent.remove_file(&self.name);
+                Err(match result {
+                    Err(e) => failure(&e, &self.name),
+                    Ok(_) => fault(
+                        codes::HOST_ERROR,
+                        format!("“{}” changed while it was written", self.name),
+                    ),
+                })
+            }
         }
-        Ok(())
     }
 
     fn abort(mut self) {
