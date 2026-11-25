@@ -4,7 +4,7 @@
 // agent once and never shown again.
 
 import { Plus } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
@@ -49,36 +49,50 @@ interface Loaded {
   connections: PluginConnections
 }
 
+/**
+ * Every installed plugin that declares connection types, with its
+ * connections; a plugin that cannot answer now is left out.
+ */
+async function loadAll(
+  client: ReturnType<typeof useConnectionsClient>,
+): Promise<{ plugins: Loaded[]; error: string | null }> {
+  try {
+    const installed = await client.listPlugins()
+    const loaded = await Promise.all(
+      installed.map(async (p) => {
+        try {
+          return { name: p.name, connections: await client.list(p.id) }
+        } catch {
+          return null
+        }
+      }),
+    )
+    return {
+      plugins: loaded.filter((p): p is Loaded => !!p && p.connections.types.length > 0),
+      error: null,
+    }
+  } catch (e) {
+    return { plugins: [], error: errorText(e) }
+  }
+}
+
 export function ConnectionsSettings() {
   const { t } = useTranslation()
   const client = useConnectionsClient()
   const [plugins, setPlugins] = useState<Loaded[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    try {
-      const installed = await client.listPlugins()
-      const loaded = await Promise.all(
-        installed.map(async (p) => {
-          try {
-            return { name: p.name, connections: await client.list(p.id) }
-          } catch {
-            // A plugin without connections, or one that cannot answer now.
-            return null
-          }
-        }),
-      )
-      setPlugins(loaded.filter((p): p is Loaded => !!p && p.connections.types.length > 0))
-      setError(null)
-    } catch (e) {
-      setError(errorText(e))
-      setPlugins([])
+  useEffect(() => {
+    let active = true
+    void loadAll(client).then((loaded) => {
+      if (!active) return
+      setPlugins(loaded.plugins)
+      setError(loaded.error)
+    })
+    return () => {
+      active = false
     }
   }, [client])
-
-  useEffect(() => {
-    void load()
-  }, [load])
 
   const replace = (plugin: string, next: PluginConnections) => {
     setPlugins((current) =>
@@ -206,7 +220,7 @@ function ConnectionRow({
   const [busy, setBusy] = useState(false)
   const [replacing, setReplacing] = useState(false)
   const [removing, setRemoving] = useState(false)
-  const state = STATES[connection.state] ?? STATES.other
+  const state = STATES[connection.state]
   const run = async (work: () => Promise<void>) => {
     setBusy(true)
     try {

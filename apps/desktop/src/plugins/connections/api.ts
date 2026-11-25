@@ -105,13 +105,17 @@ export interface ConnectionChange {
 /** One method per connection request. */
 export interface ConnectionsClient {
   /** The installed plugins (`listPlugins`), to ask each for its connections. */
-  listPlugins(): Promise<{ id: string; name: string; state: string }[]>
-  list(plugin: string): Promise<PluginConnections>
-  create(plugin: string, connection: NewConnection): Promise<PluginConnection>
-  setSecret(plugin: string, connection: string, secret: string): Promise<PluginConnection>
-  update(plugin: string, connection: string, change: ConnectionChange): Promise<PluginConnection>
-  test(plugin: string, connection: string): Promise<ConnectionTested>
-  remove(plugin: string, connection: string): Promise<PluginConnections>
+  listPlugins: () => Promise<{ id: string; name: string; state: string }[]>
+  list: (plugin: string) => Promise<PluginConnections>
+  create: (plugin: string, connection: NewConnection) => Promise<PluginConnection>
+  setSecret: (plugin: string, connection: string, secret: string) => Promise<PluginConnection>
+  update: (
+    plugin: string,
+    connection: string,
+    change: ConnectionChange,
+  ) => Promise<PluginConnection>
+  test: (plugin: string, connection: string) => Promise<ConnectionTested>
+  remove: (plugin: string, connection: string) => Promise<PluginConnections>
 }
 
 async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {

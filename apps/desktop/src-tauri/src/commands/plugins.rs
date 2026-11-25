@@ -989,7 +989,11 @@ pub async fn remove_plugin_connection(
     plugin: String,
     connection: String,
 ) -> PluginResult<deckpilot_ipc::connections::PluginConnections> {
-    plugin_connections(&state, Request::RemovePluginConnection { plugin, connection }).await
+    plugin_connections(
+        &state,
+        Request::RemovePluginConnection { plugin, connection },
+    )
+    .await
 }
 
 /// The built-in modules moving to their first-party plugins

@@ -14,6 +14,7 @@ import { resetToasts, toast } from "@/test/toast"
 
 import { PluginError } from "../api"
 import {
+  type ConnectionChange,
   type ConnectionsClient,
   ConnectionsClientContext,
   type PluginConnection,
@@ -127,7 +128,7 @@ function setup(data: PluginConnections = connections()) {
     setSecret: vi.fn((_p: string, id: string) =>
       Promise.resolve(connection({ id, state: "untested" })),
     ),
-    update: vi.fn((_p: string, id: string, change) =>
+    update: vi.fn((_p: string, id: string, change: ConnectionChange) =>
       Promise.resolve(
         connection({
           id,
@@ -138,7 +139,8 @@ function setup(data: PluginConnections = connections()) {
     ),
     test: vi.fn((_p: string, id: string) =>
       Promise.resolve({
-        connection: id === gitlab.id ? { ...gitlab, state: "ok", account: "ana" } : connection(),
+        connection:
+          id === gitlab.id ? connection({ ...gitlab, state: "ok", account: "ana" }) : connection(),
         outcome: { ok: true },
       }),
     ),
@@ -289,7 +291,9 @@ describe("Settings › Connections", () => {
 })
 
 describe("the token page", () => {
-  const type = connections().types[1]
+  const gitlab = connections().types.find((ty) => ty.id === "gitlab")
+  if (!gitlab) throw new Error("the fixture declares GitLab")
+  const type = gitlab
   it("is on the server the user entered, https only", () => {
     expect(setupUrl(type, "cloud", "")).toBe(
       "https://gitlab.com/-/user_settings/personal_access_tokens",
