@@ -28,6 +28,7 @@ import {
   type PluginConnection,
   type PluginConnections,
   connectionHost,
+  loadConnectionPlugins,
   useConnectionsClient,
 } from "./api"
 import { errorText, useTestMessage } from "./text"
@@ -49,28 +50,11 @@ interface Loaded {
   connections: PluginConnections
 }
 
-/**
- * Every installed plugin that declares connection types, with its
- * connections; a plugin that cannot answer now is left out.
- */
 async function loadAll(
   client: ReturnType<typeof useConnectionsClient>,
 ): Promise<{ plugins: Loaded[]; error: string | null }> {
   try {
-    const installed = await client.listPlugins()
-    const loaded = await Promise.all(
-      installed.map(async (p) => {
-        try {
-          return { name: p.name, connections: await client.list(p.id) }
-        } catch {
-          return null
-        }
-      }),
-    )
-    return {
-      plugins: loaded.filter((p): p is Loaded => !!p && p.connections.types.length > 0),
-      error: null,
-    }
+    return { plugins: await loadConnectionPlugins(client), error: null }
   } catch (e) {
     return { plugins: [], error: errorText(e) }
   }

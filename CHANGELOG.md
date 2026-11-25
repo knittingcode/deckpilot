@@ -17,6 +17,12 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Projects (builds with plugins): a project repository can be linked to a
+  repository on one of your connections. Choose the connection, find the
+  repository there, check what will be linked and confirm; the link keeps
+  the provider's own id (`gh:…`, `gl:…`), so a rename on the server keeps
+  it, and only the app writes it. The Repositories editor offers it once
+  its own change lands.
 - Settings › Connections (builds with plugins): the servers plugins connect
   to, per plugin that declares them, with their state (connected, token
   rejected, missing permission, can't reach the server, certificate not

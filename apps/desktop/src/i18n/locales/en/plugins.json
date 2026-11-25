@@ -444,6 +444,20 @@
     "turnOffDialog": {
       "title": "Turn off {{name}}?",
       "description": "Keys and workflows that use it stop working until you turn it on again, including actions that are running now. Its token stays on this computer."
+    },
+    "link": {
+      "title": "Link {{repository}} to a remote repository",
+      "description": "Choose the connection and the repository there. The link uses the provider's own id, so a rename on the server keeps it.",
+      "confirm": "Link",
+      "noConnections": "No connection can be used yet. Add one in Settings › Connections.",
+      "connection": "Connection",
+      "search": "Find a repository",
+      "find": "Find",
+      "nothingFound": "No repository found.",
+      "results": "Repositories found",
+      "summary": "{{path}} ({{id}}) on {{connection}} will be linked.",
+      "remoteName": "Git remote name",
+      "primary": "The primary remote"
     }
   }
 }

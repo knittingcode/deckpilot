@@ -145,6 +145,8 @@ function setup(data: PluginConnections = connections()) {
       }),
     ),
     remove: vi.fn(() => Promise.resolve(connections({ connections: [] }))),
+    listRepositories: vi.fn(() => Promise.resolve([])),
+    setRepositoryRemotes: vi.fn(() => Promise.resolve(null)),
   }
   render(
     <ConnectionsClientContext value={client}>

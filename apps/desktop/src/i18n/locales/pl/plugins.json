@@ -466,6 +466,20 @@
     "turnOffDialog": {
       "title": "Wyłączyć {{name}}?",
       "description": "Klawisze i przepływy, które go używają, przestaną działać do ponownego włączenia, także akcje uruchomione teraz. Jego token pozostaje na tym komputerze."
+    },
+    "link": {
+      "title": "Połącz {{repository}} z repozytorium zdalnym",
+      "description": "Wybierz połączenie i repozytorium na tym serwerze. Powiązanie używa własnego identyfikatora dostawcy, więc zmiana nazwy na serwerze go nie zrywa.",
+      "confirm": "Połącz",
+      "noConnections": "Nie ma jeszcze połączenia, którego można użyć. Dodaj je w Ustawieniach › Połączenia.",
+      "connection": "Połączenie",
+      "search": "Znajdź repozytorium",
+      "find": "Znajdź",
+      "nothingFound": "Nie znaleziono repozytorium.",
+      "results": "Znalezione repozytoria",
+      "summary": "{{path}} ({{id}}) w połączeniu {{connection}} zostanie powiązane.",
+      "remoteName": "Nazwa zdalnego repozytorium git",
+      "primary": "Główne zdalne repozytorium"
     }
   }
 }

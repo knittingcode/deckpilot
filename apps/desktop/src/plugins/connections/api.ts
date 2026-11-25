@@ -95,6 +95,29 @@ export interface NewConnection {
   secret?: string
 }
 
+/** A git remote of a project repository (K1–K3). */
+export interface RepositoryRemote {
+  name: string
+  primary?: boolean
+  connectionId?: string
+  /** The provider's immutable id (`gh:…`, `gl:…`), never a name. */
+  remoteRepositoryId?: string
+  remoteUrl?: string
+  defaultBranch?: string
+}
+
+/** A repository the plugin lists on a connection (`list-repositories`). */
+export interface RemoteRepositoryRecord {
+  id: string
+  path: string
+  name?: string
+  defaultBranch?: string
+  webUrl?: string
+  httpUrl?: string
+  sshUrl?: string
+  archived?: boolean
+}
+
 export interface ConnectionChange {
   displayName?: string
   enabled?: boolean
@@ -116,6 +139,31 @@ export interface ConnectionsClient {
   ) => Promise<PluginConnection>
   test: (plugin: string, connection: string) => Promise<ConnectionTested>
   remove: (plugin: string, connection: string) => Promise<PluginConnections>
+  /** The plugin's internal `list-repositories` on one connection. */
+  listRepositories: (
+    plugin: string,
+    connection: string,
+    search: string,
+  ) => Promise<RemoteRepositoryRecord[]>
+  /** `set_repository_remotes`: the link the user confirmed (K3). */
+  setRepositoryRemotes: (
+    profileId: string,
+    projectId: string,
+    repositoryId: string,
+    remotes: RepositoryRemote[],
+  ) => Promise<unknown>
+}
+
+/** An immutable provider id (K2): `gh:`, `gl:` or `bb:` and a short id. */
+export function isRemoteRepositoryId(id: string): boolean {
+  return /^(gh|gl|bb):[0-9A-Za-z{}_-]{1,64}$/.test(id)
+}
+
+interface ActionOutcome {
+  status: string
+  data?: Record<string, unknown>
+  code?: string
+  message?: string
 }
 
 async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -154,6 +202,22 @@ export function createTauriConnectionsClient(): ConnectionsClient {
       }),
     test: (plugin, connection) => call("test_plugin_connection", { plugin, connection }),
     remove: (plugin, connection) => call("remove_plugin_connection", { plugin, connection }),
+    listRepositories: async (plugin, connection, search) => {
+      const params: Record<string, string> = { connection }
+      if (search.trim()) params.search = search.trim()
+      const outcome = await call<ActionOutcome>("invoke_plugin_action", {
+        plugin,
+        action: "list-repositories",
+        params,
+      })
+      if (outcome.status !== "ok") {
+        throw new Error(outcome.message ?? outcome.code ?? "the repositories could not be listed")
+      }
+      const items = outcome.data?.items
+      return Array.isArray(items) ? (items as RemoteRepositoryRecord[]) : []
+    },
+    setRepositoryRemotes: (profileId, projectId, repositoryId, remotes) =>
+      call("set_repository_remotes", { profileId, projectId, repositoryId, remotes }),
   }
 }
 
@@ -202,4 +266,54 @@ export function setupUrl(
     return undefined
   }
   return `${origin}${template.slice("{web}".length)}`
+}
+
+export interface ConnectionPlugin {
+  name: string
+  connections: PluginConnections
+}
+
+/**
+ * Every installed plugin that declares connection types, with its
+ * connections; a plugin that cannot answer now is left out.
+ */
+export async function loadConnectionPlugins(
+  client: ConnectionsClient,
+): Promise<ConnectionPlugin[]> {
+  const installed = await client.listPlugins()
+  const loaded = await Promise.all(
+    installed.map(async (p) => {
+      try {
+        return { name: p.name, connections: await client.list(p.id) }
+      } catch {
+        return null
+      }
+    }),
+  )
+  return loaded.filter((p): p is ConnectionPlugin => !!p && p.connections.types.length > 0)
+}
+
+/**
+ * `remotes` with the chosen repository as the remote `name`: it replaces a
+ * remote of that name, and as the primary one it makes no other primary.
+ */
+export function withLink(
+  remotes: RepositoryRemote[],
+  name: string,
+  primary: boolean,
+  connectionId: string,
+  record: RemoteRepositoryRecord,
+): RepositoryRemote[] {
+  const linked: RepositoryRemote = {
+    name,
+    primary,
+    connectionId,
+    remoteRepositoryId: record.id,
+    ...(record.httpUrl ? { remoteUrl: record.httpUrl } : {}),
+    ...(record.defaultBranch ? { defaultBranch: record.defaultBranch } : {}),
+  }
+  const others = remotes
+    .filter((r) => r.name !== name)
+    .map((r) => (primary ? { ...r, primary: false } : r))
+  return [...others, linked]
 }
