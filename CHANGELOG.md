@@ -79,7 +79,8 @@ released either. 0.6.0 is the first version intended for publication.
   device previews, so a preview the agent ended by itself (a lock, a real
   call, the dismiss key, a disconnect) shows as ended. A device that takes
   no preview frame refuses it (`callsPreviewRefused`), and the preview
-  already there stays.
+  already there stays. The Calls status carries a revision, so the
+  settings never let an older status replace a newer one.
 - Calls (groundwork): Settings › Devices lists the call pages of each Calls
   layout. A control the call app does not support stays listed, disabled,
   with the reason (for Teams: Microsoft retired its device API). The

@@ -68,6 +68,14 @@ pub struct CallsStatus {
     pub controls: bool,
     pub devices: Vec<CallsDevice>,
     pub layouts: Vec<CallsLayout>,
+    /// Counts up whenever anything else in the status changes, within one
+    /// run of the agent (the same content keeps its number). An answer to
+    /// `getCallsStatus` and a `callsChanged` may reach the app in either
+    /// order: the app keeps the status with the higher revision, so an
+    /// older one never replaces a newer one. A restarted agent counts
+    /// again from the start; the app fetches anew then.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 /// One connected device.

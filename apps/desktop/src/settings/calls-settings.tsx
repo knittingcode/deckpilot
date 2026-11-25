@@ -44,6 +44,32 @@ const STATE_LABELS = {
   unknown: "devices:calls.states.unknown",
 } as const satisfies Record<CallStateName, TranslationKey>
 
+interface HeldStatus {
+  instance: string | null
+  status: CallsStatus | null
+}
+
+/**
+ * Keeps `next` as the status of the agent instance `from`, unless the one
+ * held for it has a higher revision (an answer and an event may arrive in
+ * either order). Another instance's status is always replaced.
+ */
+function keeper(
+  setHeld: (update: (prev: HeldStatus) => HeldStatus) => void,
+  from: string | null,
+): (next: CallsStatus | null) => void {
+  return (next) => {
+    setHeld((prev) =>
+      next !== null &&
+      prev.instance === from &&
+      prev.status !== null &&
+      prev.status.revision > next.revision
+        ? prev
+        : { instance: from, status: next },
+    )
+  }
+}
+
 /**
  * Calls in Settings › Devices (docs/calls.md): the call's state, the overlay
  * per device and *Restore defaults* of the managed layouts. Shown only when
@@ -55,16 +81,26 @@ export function CallsSettings() {
   const supported = agent?.running === true && agent.capabilities?.includes("calls") === true
   // A restarted agent is a new instance: its Calls are fetched again.
   const instance = agent?.status ? `${agent.status.pid}:${agent.status.startedAt}` : null
-  const [status, setStatus] = useState<CallsStatus | null>(null)
+  // The newest status of this agent instance: an answer and an event may
+  // arrive in either order, and the higher revision wins, so an older one
+  // never rolls back a newer one.
+  const [held, setHeld] = useState<HeldStatus>({ instance, status: null })
+  const status = held.instance === instance ? held.status : null
+  const setStatus = keeper(setHeld, instance)
   const [restoring, setRestoring] = useState<CallsLayout | null>(null)
   // The one preview the app holds (the backend has one at a time): the
-  // device it shows on, the page, and whether the agent's status confirmed
-  // it. Every new preview starts unconfirmed, so a confirmation of an
-  // earlier preview (of the same page too) never carries over.
+  // device it shows on, the page, whether the agent's status confirmed it,
+  // and from which status revision on that status decides (`since`: the
+  // revision the agent answered right after the begin; `null` until then).
+  // Every new preview starts unconfirmed, so a confirmation of an earlier
+  // preview (of the same page too) never carries over.
   const [preview, setPreview] = useState<{
     device: DeviceId
     page: CallsPageKind
     confirmed: boolean
+    since: number | null
+    /** The agent instance it began on: a restarted agent has none. */
+    instance: string | null
   } | null>(null)
   const [pending, setPending] = useState(false)
   // The latest preview request: a result of an older one is ignored.
@@ -84,15 +120,20 @@ export function CallsSettings() {
         entry.device.serial === device.serial &&
         entry.preview === page,
     ) === true
-  // The agent ended the preview by itself (a lock, a call, a disconnect,
-  // a dismiss, a restart): once its status named the preview, it no longer
-  // does. Followed while rendering.
-  if (preview !== null) {
-    const shown = shows(status, preview.device, preview.page)
-    if (shown && !preview.confirmed) {
-      setPreview({ ...preview, confirmed: true })
-    } else if (!shown && preview.confirmed) {
-      setPreview(null)
+  // Followed while rendering: a status from the begin on (its revision at
+  // least `since`) that shows the preview confirms it; one that does not
+  // means the agent ended it by itself (a lock, a call, a disconnect, a
+  // dismiss, a restart), confirmed or not. An older status decides nothing.
+  if (preview !== null && preview.instance !== instance) {
+    setPreview(null)
+  } else if (preview !== null && preview.since !== null && status !== null) {
+    if (status.revision >= preview.since) {
+      const shown = shows(status, preview.device, preview.page)
+      if (shown && !preview.confirmed) {
+        setPreview({ ...preview, confirmed: true })
+      } else if (!shown) {
+        setPreview(null)
+      }
     }
   }
   const togglePreview = (device: DeviceId, page: CallsPageKind) => {
@@ -112,17 +153,28 @@ export function CallsSettings() {
       () => {
         if (mine !== request.current) return
         setPending(false)
-        setPreview({ device, page, confirmed: false })
+        setPreview({ device, page, confirmed: false, since: null, instance })
         // The agent answers in order: a status asked for now is the one
-        // after the begin. If it does not show the preview, the agent ended
-        // it already (before the app could see it), and the app follows.
+        // after the begin, and from its revision on the status decides. It
+        // goes through the revision check like any other status.
+        const decide = (since: number) => {
+          if (mine !== request.current) return
+          setPreview((p) =>
+            p?.device === device && p.page === page && p.since === null ? { ...p, since } : p,
+          )
+        }
         api.getCallsStatus().then(
           (next) => {
-            if (mine !== request.current) return
             setStatus(next)
-            if (!shows(next, device, page)) setPreview(null)
+            decide(next.revision)
           },
-          () => undefined,
+          () => {
+            // Nothing could tell whether it shows: it is ended, so the
+            // app and the device agree.
+            if (mine !== request.current) return
+            setPreview(null)
+            void api.callsPreviewEnd()
+          },
         )
       },
       (e: unknown) => {
@@ -137,16 +189,17 @@ export function CallsSettings() {
   useEffect(() => {
     if (!supported) return
     let current = true
+    const keepHere = keeper(setHeld, instance)
     api.getCallsStatus().then(
       (next) => {
-        if (current) setStatus(next)
+        if (current) keepHere(next)
       },
       () => {
-        if (current) setStatus(null)
+        if (current) keepHere(null)
       },
     )
     const stop = listen<CallsStatus>(CALLS_EVENT, ({ payload }) => {
-      if (current) setStatus(payload)
+      if (current) keepHere(payload)
     })
     return () => {
       current = false
@@ -261,7 +314,7 @@ export function CallsSettings() {
             devices={status.devices
               .map((entry) => entry.device)
               .filter((device) => device.model === layout.model)}
-            previewing={preview?.device.model === layout.model ? preview.page : null}
+            previewing={preview?.device.model === layout.model ? preview : null}
             pending={pending}
             onTogglePreview={(device, page) => {
               togglePreview(device, page)

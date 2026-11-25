@@ -268,6 +268,10 @@ pub(crate) struct AgentCalls {
     next_run: u64,
     /// What `callsChanged` last sent.
     published: Option<Box<deckpilot_ipc::calls::CallsStatus>>,
+    /// The status last answered or sent, and its revision
+    /// ([`deckpilot_ipc::calls::CallsStatus::revision`]): counted up when
+    /// the content changes.
+    revision: Option<Box<deckpilot_ipc::calls::CallsStatus>>,
     /// The managed layouts as the app sees them, read from the store once
     /// and again only after [`Agent::calls_layouts_changed`] (never on the
     /// Calls tick). `None`: to be read.
@@ -797,8 +801,21 @@ impl Agent {
         layouts
     }
 
-    /// Calls as the app shows it (`getCallsStatus`, `callsChanged`).
+    /// Calls as the app shows it (`getCallsStatus`, `callsChanged`), with
+    /// its revision: the last one's when nothing changed, else one more.
     pub(super) fn calls_status(&mut self) -> deckpilot_ipc::calls::CallsStatus {
+        let mut status = self.calls_status_content();
+        let last = self.calls.revision.as_deref();
+        status.revision = last.map_or(0, |l| l.revision);
+        if last != Some(&status) {
+            status.revision += 1;
+            self.calls.revision = Some(Box::new(status.clone()));
+        }
+        status
+    }
+
+    /// [`Agent::calls_status`] without its revision.
+    fn calls_status_content(&mut self) -> deckpilot_ipc::calls::CallsStatus {
         if self.calls.service.is_none() {
             return deckpilot_ipc::calls::CallsStatus::default();
         }
@@ -854,6 +871,7 @@ impl Agent {
             controls: service.consent.control && snapshot.capabilities.controls_anything(),
             devices,
             layouts,
+            revision: 0,
         }
     }
 

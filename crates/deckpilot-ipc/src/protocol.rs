@@ -2843,7 +2843,14 @@ mod tests {
         let keys: Vec<&String> = status.as_object().unwrap().keys().collect();
         assert_eq!(
             keys,
-            ["controls", "devices", "installed", "layouts", "state"]
+            [
+                "controls",
+                "devices",
+                "installed",
+                "layouts",
+                "revision",
+                "state"
+            ]
         );
         // Nor does a device's entry: with a preview it adds only the page
         // kind, without one the field is left out.
