@@ -10,6 +10,7 @@ import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { renderWithApp } from "@/test/render"
 import { emitBackend, resetBackend } from "@/test/tauri"
+import { i18n } from "@/i18n"
 import { CALLS_EVENT } from "@/lib/calls"
 import type { BackToWork, CallsLayout, CallsStatus } from "@/lib/types"
 import { CallsSettings } from "@/settings/calls-settings"
@@ -320,5 +321,64 @@ describe("Settings › Devices › Calls", () => {
       "aria-pressed",
       "false",
     )
+  })
+
+  it("ends a preview whose begin is still pending when the settings close", async () => {
+    const user = userEvent.setup()
+    api.getCallsStatus.mockResolvedValue(status())
+    let answer: (value: null) => void = () => undefined
+    api.callsPreviewBegin.mockReturnValue(
+      new Promise<null>((resolve) => {
+        answer = resolve
+      }),
+    )
+    api.callsPreviewEnd.mockResolvedValue(null)
+    const view = renderWithApp(<CallsSettings />, { agent: agent() })
+    const show = await screen.findByRole("button", { name: "Show on the device" })
+    await user.click(show)
+    // Pending: no second begin.
+    expect(screen.getByRole("button", { name: "Show on the device" })).toBeDisabled()
+    view.rerender(<div />)
+    await waitFor(() => {
+      expect(api.callsPreviewEnd).toHaveBeenCalled()
+    })
+    // The late answer changes nothing (and the backend ends it at once).
+    act(() => {
+      answer(null)
+    })
+    expect(screen.queryByRole("button", { name: "End preview" })).not.toBeInTheDocument()
+  })
+
+  it("says why the agent refused a preview, in English and Polish", async () => {
+    const user = userEvent.setup()
+    const refusal = {
+      code: "agent.unsupported",
+      message: "a call shows on the device; it always wins over a preview",
+      params: { reason: "callsPreviewInCall" },
+    }
+    api.getCallsStatus.mockResolvedValue(status())
+    api.callsPreviewBegin.mockRejectedValue(refusal)
+    const { toast } = await import("sonner")
+    renderWithApp(<CallsSettings />, { agent: agent() })
+    await user.click(await screen.findByRole("button", { name: "Show on the device" }))
+    await waitFor(() => {
+      expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).toContain(
+        "a call always comes first",
+      )
+    })
+    cleanup()
+    vi.mocked(toast.error).mockClear()
+    await i18n.changeLanguage("pl")
+    try {
+      renderWithApp(<CallsSettings />, { agent: agent() })
+      await user.click(await screen.findByRole("button", { name: "Pokaż na urządzeniu" }))
+      await waitFor(() => {
+        expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).toContain(
+          "rozmowa ma zawsze pierwszeństwo",
+        )
+      })
+    } finally {
+      await i18n.changeLanguage("en")
+    }
   })
 })

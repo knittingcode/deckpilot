@@ -1,5 +1,5 @@
 import { RotateCcw } from "lucide-react"
-import { Fragment, useEffect, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { toast } from "sonner"
 
@@ -21,9 +21,15 @@ import { type TranslationKey, useTranslation } from "@/i18n"
 import { useFormat } from "@/i18n/format"
 import { api } from "@/lib/api"
 import { useAppContext } from "@/lib/app-context"
-import { CALLS_EVENT, type CallStateName, callStateName, OS_SIGNALS_PROVIDER } from "@/lib/calls"
+import {
+  CALLS_EVENT,
+  type CallStateName,
+  callStateName,
+  callsRefusal,
+  OS_SIGNALS_PROVIDER,
+} from "@/lib/calls"
 import { toastFailure } from "@/lib/failure"
-import type { CallsLayout, CallsStatus } from "@/lib/types"
+import type { CallsLayout, CallsPageKind, CallsStatus, DeviceId } from "@/lib/types"
 import { BackToWorkSection, CallsPagesSection } from "@/settings/calls-pages"
 
 const STATE_LABELS = {
@@ -51,6 +57,42 @@ export function CallsSettings() {
   const instance = agent?.status ? `${agent.status.pid}:${agent.status.startedAt}` : null
   const [status, setStatus] = useState<CallsStatus | null>(null)
   const [restoring, setRestoring] = useState<CallsLayout | null>(null)
+  // The one preview the app holds (the backend has one at a time).
+  const [preview, setPreview] = useState<{ model: string; page: CallsPageKind } | null>(null)
+  const [pending, setPending] = useState(false)
+  // The latest preview request: a result of an older one is ignored.
+  const request = useRef(0)
+  // The preview is the settings': it ends when they close.
+  useEffect(
+    () => () => {
+      request.current += 1
+      void api.callsPreviewEnd()
+    },
+    [],
+  )
+  const togglePreview = (model: string, device: DeviceId, page: CallsPageKind) => {
+    request.current += 1
+    const mine = request.current
+    if (preview?.model === model && preview.page === page) {
+      setPreview(null)
+      void api.callsPreviewEnd()
+      return
+    }
+    setPending(true)
+    api.callsPreviewBegin(device, page).then(
+      () => {
+        if (mine !== request.current) return
+        setPending(false)
+        setPreview({ model, page })
+      },
+      (e: unknown) => {
+        if (mine !== request.current) return
+        setPending(false)
+        setPreview(null)
+        toastFailure(t("devices:calls.previewFailed"), callsRefusal(e))
+      },
+    )
+  }
 
   useEffect(() => {
     if (!supported) return
@@ -179,6 +221,11 @@ export function CallsSettings() {
             devices={status.devices
               .map((entry) => entry.device)
               .filter((device) => device.model === layout.model)}
+            previewing={preview?.model === layout.model ? preview.page : null}
+            pending={pending}
+            onTogglePreview={(device, page) => {
+              togglePreview(layout.model, device, page)
+            }}
           />
           <BackToWorkSection
             layout={layout}

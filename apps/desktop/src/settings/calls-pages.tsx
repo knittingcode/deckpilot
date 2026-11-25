@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { useInlineNumber } from "@/components/inline-number"
 import { InlineNumberInput } from "@/components/inline-number-input"
@@ -29,8 +29,6 @@ import {
   OS_SIGNALS_PROVIDER,
   checkSeconds,
 } from "@/lib/calls"
-import { api } from "@/lib/api"
-import { toastFailure } from "@/lib/failure"
 import { controlLabel } from "@/lib/layout-model"
 import type {
   BackToWork,
@@ -64,40 +62,23 @@ export function CallsPagesSection({
   provider,
   modelName,
   devices,
+  previewing,
+  pending,
+  onTogglePreview,
 }: {
   layout: CallsLayout
   provider?: string
   modelName: string
   /** The connected devices of the layout's model, to preview a page on. */
   devices: DeviceId[]
+  /** The page of this layout shown as a preview now, if any. */
+  previewing: CallsPageKind | null
+  /** A preview is being begun (every preview button waits). */
+  pending: boolean
+  onTogglePreview: (device: DeviceId, page: CallsPageKind) => void
 }) {
   const { t } = useTranslation()
-  const [previewing, setPreviewing] = useState<CallsPageKind | null>(null)
-  // The preview is the editor's while it is open: it ends with it.
-  useEffect(
-    () => () => {
-      void api.callsPreviewEnd()
-    },
-    [],
-  )
   const [device] = devices
-  const togglePreview = (page: CallsPageKind) => {
-    if (!device) return
-    if (previewing === page) {
-      setPreviewing(null)
-      void api.callsPreviewEnd()
-      return
-    }
-    api.callsPreviewBegin(device, page).then(
-      () => {
-        setPreviewing(page)
-      },
-      (e: unknown) => {
-        setPreviewing(null)
-        toastFailure(t("devices:calls.previewFailed"), e)
-      },
-    )
-  }
   if (layout.pages.length === 0) return null
   const actionName = (action: string) => {
     const key = CALL_ACTIONS[action as keyof typeof CALL_ACTIONS] as TranslationKey | undefined
@@ -127,8 +108,9 @@ export function CallsPagesSection({
                 variant="outline"
                 size="sm"
                 aria-pressed={previewing === page.page}
+                disabled={pending}
                 onClick={() => {
-                  togglePreview(page.page)
+                  onTogglePreview(device, page.page)
                 }}
               >
                 {previewing === page.page
