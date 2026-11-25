@@ -252,8 +252,8 @@ today.
 - A template control places one of the plugin's own actions on a key,
   dial or touch zone the shape has, with parameters the action declares.
 - A plugin with `calls` declares no `network`, `credentials`, `openUrl`,
-  `tools` or `connections`: what it learns about calls leaves it only through the
-  host's faces.
+  `tools` or `connections`: what it learns about calls leaves it only
+  through the host's faces.
 
 ## Always allowed (no permission)
 

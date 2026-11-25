@@ -818,7 +818,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Plugin API 1.16 (engines.pluginApi ^1.16), the bundled Calls plugin (deckpilot.calls) only. The focused call's sanitised state as the host's providers observe it (call.state, calls:observe, medium); with control, asking the host to answer, reject, end, mute or switch the camera of the focused call (call.control, calls:control, high, asked for on its own). A plugin with calls declares no network, credentials, openUrl or tools.",
+          "description": "Plugin API 1.16 (engines.pluginApi ^1.16), the bundled Calls plugin (deckpilot.calls) only. The focused call's sanitised state as the host's providers observe it (call.state, calls:observe, medium); with control, asking the host to answer, reject, end, mute or switch the camera of the focused call (call.control, calls:control, high, asked for on its own). A plugin with calls declares no network, credentials, openUrl, tools or connections.",
           "properties": {
             "kind": { "const": "calls" },
             "control": { "type": "boolean" },

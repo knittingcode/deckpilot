@@ -8,8 +8,8 @@
 //!   only the plugin `deckpilot.calls` declares them.
 //! - The overlay and the templates need the `calls` permission, the
 //!   templates the overlay, and a template's pages are pages of the overlay.
-//! - A plugin with `calls` declares no `network`, `credentials`, `openUrl`
-//!   or `tools`: what it learns about calls leaves it only through the
+//! - A plugin with `calls` declares no `network`, `credentials`, `openUrl`,
+//!   `tools` or `connections`: what it learns about calls leaves it only through the
 //!   host's own faces.
 //! - A template places only the plugin's own actions, with parameters
 //!   those actions declare, on controls a model of its shape has.
