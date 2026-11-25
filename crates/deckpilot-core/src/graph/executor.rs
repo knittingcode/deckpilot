@@ -1447,7 +1447,8 @@ impl Executor<'_> {
                 | ParameterKind::Lines { .. }
                 | ParameterKind::Pairs { .. }
                 | ParameterKind::Code { .. }
-                | ParameterKind::Credential => ParameterValue::Text(text),
+                | ParameterKind::Credential
+                | ParameterKind::Script => ParameterValue::Text(text),
                 ParameterKind::Integer { .. } => ParameterValue::Integer(
                     text.trim()
                         .parse()
@@ -1564,6 +1565,7 @@ fn expects(kind: &ParameterKind) -> &'static str {
         ParameterKind::Resource { .. } => "a resource",
         ParameterKind::Project => "a project",
         ParameterKind::Credential => "a credential",
+        ParameterKind::Script => "a script",
     }
 }
 

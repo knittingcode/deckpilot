@@ -1032,16 +1032,15 @@ mod tests {
     /// `run` action is refused as an action type, never offered with a
     /// wrong kind; `check`'s `javascript` code is the core's text `code`.
     #[test]
-    fn script_kinds_wait_for_the_core() {
+    fn the_scripts_kinds_become_core_kinds() {
         let manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
             "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/scripts-manifest.json"
         ))
         .unwrap();
         let actions = manifest.contributes.actions();
-        assert!(
-            action_type("deckpilot.scripts", &actions[0]).is_err(),
-            "run"
-        );
+        // `run`: its `script` parameter is the core's script kind.
+        let run = action_type("deckpilot.scripts", &actions[0]).unwrap();
+        assert_eq!(run.parameters[0].kind, deckpilot_core::ParameterKind::Script);
         let check = action_type("deckpilot.scripts", &actions[1]).unwrap();
         assert!(matches!(
             &check.parameters[0].kind,

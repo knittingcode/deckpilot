@@ -697,7 +697,8 @@ fn convert_output(kind: &ParameterKind, text: &str, profile: &Profile) -> Option
         | ParameterKind::Lines { .. }
         | ParameterKind::Pairs { .. }
         | ParameterKind::Code { .. }
-        | ParameterKind::Credential => ParameterValue::Text(text.to_owned()),
+        | ParameterKind::Credential
+        | ParameterKind::Script => ParameterValue::Text(text.to_owned()),
     })
 }
 

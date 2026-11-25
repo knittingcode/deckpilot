@@ -115,6 +115,10 @@ pub enum ParameterKind {
     /// The name of a credential stored on this computer, stored as text.
     /// The secret itself is never part of the action.
     Credential,
+    /// A script of the profile the action belongs to (the Scripts plugin's
+    /// `script` parameter, plugin API 1.13), by id, stored as text: the
+    /// action names the script, never holds its source.
+    Script,
 }
 
 /// Whether a name looks like it holds a secret (`Authorization`, cookies,
@@ -558,6 +562,19 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
                 .map(|_| ())
                 .map_err(|_| invalid(format!("“{text}” is not a credential name")))
         }
+        (ParameterKind::Script, ParameterValue::Text(text)) => {
+            let text = text.trim();
+            if text.is_empty() {
+                return if spec.required {
+                    Err(ParameterError::Missing(key()))
+                } else {
+                    Ok(())
+                };
+            }
+            text.parse::<crate::ScriptId>()
+                .map(|_| ())
+                .map_err(|_| invalid(format!("“{text}” is not a script")))
+        }
         (ParameterKind::Resource { .. }, ParameterValue::Resource(reference)) => match reference {
             ResourceRef::ProjectRole { role } if role.trim().is_empty() => {
                 if spec.required {
@@ -575,7 +592,8 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
                 | ParameterKind::Lines { .. }
                 | ParameterKind::Pairs { .. }
                 | ParameterKind::Code { .. }
-                | ParameterKind::Credential => "text",
+                | ParameterKind::Credential
+                | ParameterKind::Script => "text",
                 ParameterKind::Integer { .. } => "integer",
                 ParameterKind::Boolean => "boolean",
                 ParameterKind::Choice { .. } => "choice",
