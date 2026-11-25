@@ -293,8 +293,15 @@ mod tests {
 
     #[test]
     fn the_record_round_trips_and_is_strict() {
-        let json = r#"{"projectsRead":true,"fs":[{"root":{"repository":"cms"},"access":"delete"},{"root":{"directory":{"path":"/work/out","label":"out"}},"access":"read","rootDestructive":true}],"process":[{"command":"git","cwd":"repositories","env":"none"}],"shell":{"shells":["sh"]},"destructive":"allow","limits":{"timeoutMs":1000,"memoryMiB":32,"maxOutputKiB":64}}"#;
-        let g: ScriptGrants = serde_json::from_str(json).unwrap();
+        // An absolute path of this platform.
+        let dir = if cfg!(windows) {
+            r"C:\\work\\out"
+        } else {
+            "/work/out"
+        };
+        let json = r#"{"projectsRead":true,"fs":[{"root":{"repository":"cms"},"access":"delete"},{"root":{"directory":{"path":"DIR","label":"out"}},"access":"read","rootDestructive":true}],"process":[{"command":"git","cwd":"repositories","env":"none"}],"shell":{"shells":["sh"]},"destructive":"allow","limits":{"timeoutMs":1000,"memoryMiB":32,"maxOutputKiB":64}}"#
+            .replace("DIR", dir);
+        let g: ScriptGrants = serde_json::from_str(&json).unwrap();
         g.validate().unwrap();
         assert_eq!(g.fs[0].access, FsAccess::Delete);
         assert!(FsAccess::Delete > FsAccess::Write && FsAccess::Write > FsAccess::Read);

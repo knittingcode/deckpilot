@@ -305,10 +305,17 @@ impl Call<'_> {
     /// The run's project (pinned at `script.load`) with its repositories.
     pub fn project(&self) -> Result<Option<RunProject>, ScriptFault> {
         let pinned = self.run.state().project.clone();
-        match pinned {
-            Some(id) => self.run.host.project(Some(&id)),
-            None => Ok(None),
-        }
+        let project = match pinned {
+            Some(id) => self.run.host.project(Some(&id))?,
+            None => None,
+        };
+        // One path form for every comparison (no `\\?\` on Windows).
+        Ok(project.map(|mut p| {
+            for r in &mut p.repositories {
+                r.folder = r.folder.take().map(fs::protected::simplify);
+            }
+            p
+        }))
     }
 
     /// Time left until the run's deadline (or the invocation's).

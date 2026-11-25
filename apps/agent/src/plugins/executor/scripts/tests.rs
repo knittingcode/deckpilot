@@ -25,6 +25,7 @@ pub(crate) mod support {
         Executor, Opener, OwnVariables, PrivilegedAudit, PrivilegedEntry, PublishedVariables,
         Transport,
     };
+    use super::super::fs::protected::canonical;
     use super::super::{
         Protected, Refusal, RunProject, RunRepository, ScriptHost, ScriptRun, StoredScript,
     };
@@ -91,7 +92,9 @@ pub(crate) mod support {
     impl Fixture {
         pub fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
-            let root = std::fs::canonicalize(tmp.path()).unwrap();
+            // One form on every platform (no `\\?\` on Windows), as the
+            // agent compares and as a script would name it.
+            let root = canonical(tmp.path()).unwrap();
             if let Some(real) = std::env::home_dir()
                 && let Ok(real) = std::fs::canonicalize(real)
             {
@@ -159,7 +162,7 @@ pub(crate) mod support {
                         name: key.to_uppercase(),
                         description: None,
                         is_default: i == 0,
-                        folder: Some(std::fs::canonicalize(path).unwrap()),
+                        folder: Some(canonical(&path).unwrap()),
                         remote: None,
                     }
                 })
@@ -174,8 +177,9 @@ pub(crate) mod support {
 
         pub fn protected(&self) -> Arc<Protected> {
             let mut roots = vec![self.home.clone()];
-            #[cfg(unix)]
-            roots.extend(["/", "/usr", "/etc", "/var", "/tmp"].map(PathBuf::from));
+            if cfg!(unix) {
+                roots.extend(["/", "/usr", "/etc", "/var", "/tmp"].map(PathBuf::from));
+            }
             Arc::new(Protected::with_roots(roots).with_private([self.root.join("appdata")]))
         }
 
