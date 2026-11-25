@@ -11,7 +11,9 @@
 //! names, at most one primary; K2: prefixed ids only, URLs without a
 //! password, a query or a fragment).
 
-use deckpilot_core::{CatalogError, ProfileId, ProjectId, Repository, RepositoryId, RepositoryRemote};
+use deckpilot_core::{
+    CatalogError, ProfileId, ProjectId, Repository, RepositoryId, RepositoryRemote,
+};
 use tauri::State;
 
 use super::modify_profile;
@@ -38,13 +40,17 @@ pub(crate) fn set_remotes(
     repository_id: RepositoryId,
     remotes: Vec<RepositoryRemote>,
 ) -> CommandResult<Repository> {
-    if let Some(remote) = remotes
-        .iter()
-        .find(|r| r.connection_id.as_deref().is_some_and(|id| !is_connection_id(id)))
-    {
+    if let Some(remote) = remotes.iter().find(|r| {
+        r.connection_id
+            .as_deref()
+            .is_some_and(|id| !is_connection_id(id))
+    }) {
         return Err(CommandError::invalid(
             "repositoryRemoteConnection",
-            format!("remote `{}` names a connection that is not a connection id", remote.name),
+            format!(
+                "remote `{}` names a connection that is not a connection id",
+                remote.name
+            ),
         ));
     }
     let project = profile
@@ -126,7 +132,7 @@ mod tests {
         assert_eq!(p.projects[0].repositories[0].remotes.len(), 1);
         // Unlinking: no remotes.
         set_remotes(&mut p, project, repository, Vec::new()).unwrap();
-        assert!(p.projects[0].repositories[0].remotes.is_empty());
+        assert_eq!(p.projects[0].repositories[0].remotes, Vec::new());
     }
 
     /// K1/K2 and the connection id: names are never ids, ids are prefixed,
@@ -156,8 +162,16 @@ mod tests {
             let before = p.clone();
             assert!(set_remotes(&mut p, project, repository, remotes).is_err());
             assert_eq!(
-                p.projects[0].repositories.iter().map(|r| r.remotes.len()).sum::<usize>(),
-                before.projects[0].repositories.iter().map(|r| r.remotes.len()).sum::<usize>()
+                p.projects[0]
+                    .repositories
+                    .iter()
+                    .map(|r| r.remotes.len())
+                    .sum::<usize>(),
+                before.projects[0]
+                    .repositories
+                    .iter()
+                    .map(|r| r.remotes.len())
+                    .sum::<usize>()
             );
         }
         assert!(set_remotes(&mut p, ProjectId::new(), repository, Vec::new()).is_err());
