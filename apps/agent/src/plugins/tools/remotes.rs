@@ -444,12 +444,36 @@ mod tests {
             &repo,
             &["remote", "add", "origin", "git@gitlab.com:shop/main.git"],
         );
-        std::os::unix::fs::symlink(&repo, home.join("shop-link")).unwrap();
-        let out = detect(&host(&git, &home), &home.join("shop-link"), soon()).unwrap();
-        assert_eq!(
-            out,
-            vec![remote("origin", "git@gitlab.com:shop/main.git", None)]
-        );
+        #[cfg(unix)]
+        let linked = {
+            std::os::unix::fs::symlink(&repo, home.join("shop-link")).unwrap();
+            true
+        };
+        // Windows: a directory symbolic link needs the privilege to create
+        // one (CI runners have it). Skipped, and said so, only when this
+        // account may not create links; any other failure fails the test.
+        #[cfg(windows)]
+        let linked = match std::os::windows::fs::symlink_dir(&repo, home.join("shop-link")) {
+            Ok(()) => true,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    || error.raw_os_error() == Some(1314) =>
+            {
+                eprintln!(
+                    "skipped \"a link to a repository is read as that repository\": \
+                     this account may not create directory links ({error})"
+                );
+                false
+            }
+            Err(error) => panic!("creating the directory link: {error}"),
+        };
+        if linked {
+            let out = detect(&host(&git, &home), &home.join("shop-link"), soon()).unwrap();
+            assert_eq!(
+                out,
+                vec![remote("origin", "git@gitlab.com:shop/main.git", None)]
+            );
+        }
 
         // A `.git` file pointing at another repository's git directory is
         // refused before the listing.
