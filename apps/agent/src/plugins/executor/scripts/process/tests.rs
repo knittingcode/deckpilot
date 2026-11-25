@@ -409,6 +409,19 @@ fn git_options_that_change_its_programs_are_refused() {
         vec!["bisect", "run", "touch x"],
         vec!["difftool", "-x", "touch"],
         vec!["merge", "-s", "evil", "x"],
+        // The re-review's.
+        vec!["rebase", "-qx", "touch x", "HEAD~1"],
+        vec!["grep", "-Otouch x", "hello"],
+        vec!["grep", "--open-files-in-pager=touch", "hello"],
+        vec!["ls-remote", "--u=touch x", "ssh://h/x"],
+        vec!["blame", "--contents", "/outside/secret", "--", "f"],
+        vec!["commit", "--allow-empty", "-F", "/outside/secret"],
+        vec!["commit", "--file=/outside/secret"],
+        vec!["tag", "-F", "/outside/secret", "v1"],
+        vec!["add", "--pathspec-from-file=/outside/x"],
+        vec!["grep", "-f", "/outside/x"],
+        vec!["ls-files", "--exclude-from=/outside/x"],
+        vec!["pull", "-Xours"],
     ] {
         assert_eq!(
             code(&call(&mut e, &run("git", &args))),
