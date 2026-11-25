@@ -539,6 +539,11 @@ pub(crate) struct PluginActionHandler {
     /// names is missing or disabled. It then fails at once, never reaching
     /// the plugin.
     unmet: Option<String>,
+    /// The keys of its `connection` parameters (plugin API 1.14): their
+    /// values must be what the user chose, never a mapped or referenced
+    /// value, so no workflow input or other plugin's value can steer the
+    /// action onto another of the user's connections.
+    connections: Vec<String>,
 }
 
 impl PluginActionHandler {
@@ -553,6 +558,17 @@ impl PluginActionHandler {
             invoker,
             state: None,
             unmet: None,
+            connections: action
+                .parameters
+                .iter()
+                .filter(|p| {
+                    matches!(
+                        p.kind,
+                        deckpilot_plugin_manifest::ParameterKind::Connection { .. }
+                    )
+                })
+                .map(|p| p.key.clone())
+                .collect(),
         })
     }
 
@@ -676,6 +692,18 @@ impl PluginActionHandler {
     }
 
     fn run(&self, parameters: &ActionParameters, context: &ExecutionContext<'_>) -> ActionResult {
+        if let Some(key) = self.connections.iter().find(|key| {
+            parameters.get(key).is_some()
+                && !context.provenance().is_some_and(|p| p.is_literal(key))
+        }) {
+            return ActionResult::error(
+                "invalid-parameters",
+                format!(
+                    "`{key}` must be a connection chosen in the action's settings, never a \
+                     mapped or referenced value"
+                ),
+            );
+        }
         let params = match params(parameters) {
             Ok(params) => params,
             Err(problem) => return ActionResult::error("invalid-parameters", problem),
@@ -1317,6 +1345,67 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// Plugin API 1.14: a `connection` parameter takes only the value the
+    /// user chose (T8): a mapped, referenced or templated value, or one of
+    /// unknown origin, never reaches the plugin.
+    #[test]
+    fn a_connection_is_never_a_mapped_or_referenced_value() {
+        use deckpilot_core::resolution::{Provenance, Provenances};
+        use deckpilot_core::{MachineConfig, ParameterValue, Profile};
+        let manifest = deckpilot_plugin_manifest::Manifest::from_json(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/connections-manifest.json"
+        ))
+        .unwrap();
+        let action = manifest
+            .contributes
+            .actions()
+            .iter()
+            .find(|a| a.id == "pipeline-status")
+            .unwrap();
+        let handler = PluginActionHandler::new(
+            manifest.id.as_str(),
+            action,
+            super::super::worker::Invoker::detached(),
+        )
+        .unwrap();
+        let parameters = ActionParameters::new()
+            .with(
+                "connection",
+                ParameterValue::Text("cn_01JD7Q0000000000000000000A".into()),
+            )
+            .with("repository", ParameterValue::Text("gl:4711".into()));
+        let profile = Profile::new("P");
+        let machine = MachineConfig::new(deckpilot_core::Os::Linux);
+        let base = ExecutionContext::new(&profile, None, &machine);
+        let code = |provenance: Option<Provenance>| {
+            let provenances =
+                Provenances::from_entries(provenance.map(|p| ("connection".to_owned(), p)));
+            let context = match provenance {
+                Some(_) => base.with_provenance(&provenances),
+                None => base,
+            };
+            handler.run(&parameters, &context).code
+        };
+        // A literal one passes the check (the worker is gone here).
+        assert_eq!(
+            code(Some(Provenance::Literal)).as_deref(),
+            Some("plugin-unavailable")
+        );
+        for provenance in [
+            None,
+            Some(Provenance::Mapped),
+            Some(Provenance::Reference),
+            Some(Provenance::Template),
+            Some(Provenance::Default),
+        ] {
+            assert_eq!(
+                code(provenance).as_deref(),
+                Some("invalid-parameters"),
+                "{provenance:?}"
+            );
+        }
     }
 
     #[test]

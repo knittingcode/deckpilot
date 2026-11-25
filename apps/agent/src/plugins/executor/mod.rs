@@ -1246,7 +1246,7 @@ impl Executor {
             let auth = match (&current.connection, &current.auth) {
                 // Plugin API 1.14: the connection's own secret, read for
                 // every hop (the broker kept the hop on its server).
-                (Some(connection), _) => match self.connection_auth(plugin, connection) {
+                (Some(connection), _) => match self.connection_auth(plugin, connection, &current) {
                     Ok(auth) => Some(auth),
                     Err(refused) => return refused,
                 },

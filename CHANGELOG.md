@@ -26,7 +26,8 @@ released either. 0.6.0 is the first version intended for publication.
   the encrypted plugin database, protected like the configuration (its key
   derives from the configuration's), are never sent back to the app, logged, exported or handed to
   the plugin, and are injected by the agent only into requests to their
-  own server; a redirect off that server ends the request, certificates
+  own server, and only to a connection the user chose for the action (never
+  one a workflow maps in); a redirect off that server ends the request, certificates
   are checked against the system's trust store with no way to skip it,
   and a server on a private network needs its own consent (this computer
   and link-local addresses never). A plugin reaches only the connections

@@ -115,6 +115,12 @@ pub(super) enum Message {
 pub(crate) struct Invoker(mpsc::Sender<Message>, super::key_state::StateBook);
 
 impl Invoker {
+    /// An invoker whose worker is gone: every invocation is `None`.
+    #[cfg(test)]
+    pub fn detached() -> Self {
+        Self(mpsc::channel().0, super::key_state::StateBook::default())
+    }
+
     /// Queues an invocation of a run that `run` describes; `None` when the
     /// worker is gone. The answer arrives on the returned channel;
     /// dropping it discards a late one.

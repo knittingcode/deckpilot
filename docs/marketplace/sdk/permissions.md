@@ -233,7 +233,13 @@ The rules the host enforces once it carries connections out:
   refused for connections until a user name is stored with them.
 - Rate limits: 60 requests a minute on each connection and 180 a minute on
   all of a plugin's connections together, apart from the plugin's other
-  `http.fetch` (60 a minute).
+  `http.fetch` (60 a minute); `connections.reportStatus` 12 a minute.
+- A `connection` parameter takes only the value the user chose for the
+  saved action: a key, gesture or workflow run whose value for it is mapped
+  from another node, a reference, a template or a workflow node's override
+  fails with `invalid-parameters` before the plugin runs, so no workflow
+  input or other plugin's value can move an action onto another of the
+  user's connections.
 - Internal actions (`"internal": true`) are never in the Action Library,
   on a key, a gesture or a workflow node: the agent leaves them out of the
   engine and refuses them from it. The app invokes them (a connection's

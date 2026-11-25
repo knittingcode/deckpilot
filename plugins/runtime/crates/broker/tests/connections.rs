@@ -467,6 +467,28 @@ fn sleeping_is_bounded() {
     assert_eq!(d.denial(), Some(DenyReason::NotInStateCall));
 }
 
+/// `connections.reportStatus` has its own small rate, so a plugin cannot
+/// flood the store or keep overwriting what the user sees.
+#[test]
+fn status_reports_are_rate_limited() {
+    let (_, s, _) = fixture(RateLimits {
+        connection_report: Rate::new(2, Duration::from_secs(60)),
+        ..RateLimits::default()
+    });
+    let report = CapabilityRequest::ConnectionReportStatus(ConnectionStatusReport {
+        connection: GITLAB.into(),
+        status: ConnectionStatus::Ok,
+        detail: None,
+    });
+    let ids = bound(&[GITLAB]);
+    assert!(s.authorize_bound(&report, Some(&key()), &ids).is_allowed());
+    assert!(s.authorize_bound(&report, Some(&key()), &ids).is_allowed());
+    assert_eq!(
+        s.authorize_bound(&report, Some(&key()), &ids).denial(),
+        Some(DenyReason::RateLimited)
+    );
+}
+
 #[test]
 fn malformed_connection_requests_stay_bad_requests() {
     let s = session();
