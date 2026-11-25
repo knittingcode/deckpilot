@@ -5579,7 +5579,9 @@ impl StubAgent {
         }
     }
 
-    /// The requests other than the handshake's runtime check and reloads.
+    /// The requests other than the handshake's runtime check and the
+    /// reload a saved change announces (sent in the background, so it may
+    /// arrive late and is not counted).
     fn requests(&self) -> Vec<deckpilot_ipc::Request> {
         self.requests
             .lock()
@@ -5601,8 +5603,9 @@ impl StubAgent {
 /// through the command layer, against an agent that lists the plugin's
 /// connections. A link is stored only for a connection on this computer
 /// that is turned on, has a token and is of the id's provider; every
-/// refusal leaves the profile exactly as it was, and the command never
-/// asks the agent for anything but the connections.
+/// refusal leaves the profile exactly as it was, and the command asks the
+/// agent for nothing but the connections (besides the reload every saved
+/// change announces).
 // A single end-to-end scenario reads better than artificially split helpers.
 #[allow(clippy::too_many_lines)]
 #[test]
@@ -5713,53 +5716,65 @@ fn a_remote_is_linked_only_to_a_usable_connection_of_its_provider() {
 
     // Refusals: each one leaves the profile exactly as it was.
     let before = profile();
+    // Each case has a label, so no refusal prints its URL.
     let refusals = [
-        // Not on this computer.
         (
+            "not on this computer",
             remote("fork", ELSEWHERE, "gl:1", false),
             "not on this computer",
         ),
-        // Turned off, or without a token.
         (
+            "turned off",
             remote("fork", OFF, "gl:1", false),
             "turned off or has no token",
         ),
         (
+            "no token",
             remote("fork", NO_TOKEN, "gl:1", false),
             "turned off or has no token",
         ),
-        // An id of another provider than the connection's.
         (
+            "a GitHub id on GitLab",
             remote("fork", GITLAB, "gh:1", false),
             "not of the connection's provider",
         ),
         (
+            "a GitLab id on GitHub",
             remote("fork", GITHUB, "gl:1", false),
             "not of the connection's provider",
         ),
-        // A name is never an id (K2), even on a usable connection.
-        (remote("fork", GITLAB, "group/app", false), ""),
+        // A path is never an id (K2), even with the right prefix on a
+        // usable connection: the core refuses it.
+        (
+            "a path as the id",
+            remote("fork", GITLAB, "gl:group/app", false),
+            "not valid (remoteRepositoryId)",
+        ),
         // A URL with a password (K2).
         (
+            "a URL with a password",
             json!({ "name": "fork", "connectionId": GITLAB, "remoteRepositoryId": "gl:1",
                 "remoteUrl": "https://user:pw@code.example.com/group/app.git" }),
-            "",
+            "not valid (remoteUrl)",
         ),
-        // A link names both its connection and the provider's id.
+        // A link names both its connection and the provider's id; without
+        // both the agent is not asked.
         (
+            "no provider id",
             json!({ "name": "fork", "connectionId": GITLAB }),
             "names a connection",
         ),
         (
+            "no connection",
             json!({ "name": "fork", "remoteRepositoryId": "gl:1" }),
             "names a connection",
         ),
     ];
-    for (remote, message) in refusals {
-        let error = link(remote.clone()).expect_err(&remote.to_string());
+    for (label, remote, message) in refusals {
+        let error = link(remote).expect_err(label);
         let error = error.as_str().unwrap_or_default().to_owned();
-        assert!(error.contains(message), "{remote}: {error}");
-        assert_eq!(profile(), before, "{remote}");
+        assert!(error.contains(message), "{label}: {error}");
+        assert_eq!(profile(), before, "{label}");
     }
     // An unknown project or repository changes nothing either.
     for (project, repository) in [
@@ -5780,14 +5795,17 @@ fn a_remote_is_linked_only_to_a_usable_connection_of_its_provider() {
         .unwrap_err();
         assert_eq!(profile(), before);
     }
-    // Only connection lists were ever asked for: no other request, no
-    // profile write through the agent (K3: the app writes the link).
+    // Only connection lists were ever asked for, once per link that names
+    // both a connection and an id: 3 links, 7 such refusals and the 2
+    // unknown targets. No other request and no profile write through the
+    // agent (K3: the app writes the link).
+    let requests = agent.requests();
+    assert_eq!(requests.len(), 3 + 7 + 2, "{requests:?}");
     assert!(
-        agent.requests().iter().all(|r| matches!(
+        requests.iter().all(|r| matches!(
             r,
             deckpilot_ipc::Request::ListPluginConnections { plugin } if plugin == PLUGIN
         )),
-        "{:?}",
-        agent.requests()
+        "{requests:?}"
     );
 }
