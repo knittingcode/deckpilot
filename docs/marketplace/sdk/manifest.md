@@ -414,8 +414,8 @@ run.
 | `allowPartial` | no | Default `false`: a control that cannot produce every gesture refuses the preset. `true`: the gestures it can take are applied and the app says which were left out |
 | `gestures` | yes | 1-6 entries, each gesture at most once |
 | `gestures[].gesture` | yes | `click` (single press), `doubleClick`, `longPress`, `release`, `rotateClockwise`, `rotateCounterClockwise`. `release` never next to `doubleClick` or `longPress` (a control reacts either to its raw press and release or to gestures) |
-| `gestures[].action` | yes | An id of `contributes.actions`; the action must be able to run from the gesture (its `controls`, else keys with every key input) and, when it declares [contexts](../../action-contexts.md), declare the gesture's: `gesture` for `doubleClick` and `longPress`, `key` for the others |
-| `gestures[].parameters` | no | Only the action's parameters, each a literal value that fits it (as a `default`); every required parameter without a default must be given |
+| `gestures[].action` | yes | An id of `contributes.actions`; the action must be able to run from the gesture (its `controls`, else keys with every key input) and, when it declares [contexts](../../action-contexts.md), declare the gesture's: `gesture` for `doubleClick` and `longPress`, `key` for the others. Never an [internal](#plugin-api-114-connections) action (plugin API 1.14): it is never on a key |
+| `gestures[].parameters` | no | Only the action's parameters, each a literal value that fits it (as a `default`); every required parameter without a default must be given. Never a value for a `connection` parameter (plugin API 1.14): a connection has no literal value, the user picks it |
 | `gestures[].label` | yes | 1-64 characters, translatable: what the gesture does ("Dim to 30%"). It names the action the app creates for it |
 
 Applying a preset (dropping it on a key) creates, or reuses, one ordinary

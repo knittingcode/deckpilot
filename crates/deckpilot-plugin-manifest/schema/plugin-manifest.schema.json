@@ -1108,7 +1108,7 @@
         },
         "internal": {
           "type": "boolean",
-          "description": "Plugin API 1.14, first-party bundled plugins only: not in the Action Library, never on a key or a workflow node. The app and the plugin's own parameter options invoke it. No controls, state, title, editorNavigation or replacedBy."
+          "description": "Plugin API 1.14, first-party bundled plugins only: not in the Action Library, never on a key or a workflow node. The app and the plugin's own parameter options invoke it. No controls, state, title, editorNavigation, replacedBy, contexts or node.changesContext."
         }
       }
     },
