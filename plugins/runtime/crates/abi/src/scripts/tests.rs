@@ -185,6 +185,12 @@ fn paths_are_one_form_and_never_escape_lexically() {
     assert!(!ok(PathArg::in_repository("cms", "a:stream")));
     assert!(!ok(PathArg::absolute("a".repeat(MAX_PATH + 1))));
     assert!(!ok(PathArg::default()));
+    for hidden in ['\u{200b}', '\u{2028}', '\u{feff}', '\u{061c}', '\u{202e}'] {
+        assert!(
+            !ok(PathArg::absolute(format!("/tmp/a{hidden}b"))),
+            "{hidden:?}"
+        );
+    }
 }
 
 #[test]
@@ -328,6 +334,18 @@ fn the_env_denylist_matches_the_design() {
         "HTTPS_PROXY",
         "SSL_CERT_FILE",
         "DOCKER_CONFIG",
+        "DOTNET_STARTUP_HOOKS",
+        "COR_PROFILER",
+        "OPENSSL_CONF",
+        "CLASSPATH",
+        "PHPRC",
+        "GOFLAGS",
+        "MAKEFLAGS",
+        "LESSOPEN",
+        "GEM_PATH",
+        "PIP_INDEX_URL",
+        "KUBECONFIG",
+        "AWS_PROFILE",
     ] {
         assert!(env_denied(name), "{name}");
     }

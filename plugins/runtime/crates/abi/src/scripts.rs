@@ -276,7 +276,11 @@ fn is_hidden_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
-            '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{feff}'
         )
 }
 
@@ -583,6 +587,15 @@ pub fn env_denied(name: &str) -> bool {
         "SSL_CERT_",
         "LUA_",
         "TCL",
+        "DOTNET_",
+        "COR_",
+        "CORECLR_",
+        "PHP",
+        "GEM_",
+        "BUNDLE_",
+        "PIP_",
+        "AWS_",
+        "ELECTRON_",
     ];
     const EXACT: &[&str] = &[
         "PATH",
@@ -631,6 +644,16 @@ pub fn env_denied(name: &str) -> bool {
         "HOSTALIASES",
         "RES_OPTIONS",
         "LOCALDOMAIN",
+        "OPENSSL_CONF",
+        "CLASSPATH",
+        "GOFLAGS",
+        "MAKEFLAGS",
+        "MFLAGS",
+        "LESSOPEN",
+        "LESSCLOSE",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "KUBECONFIG",
     ];
     /// `GIT_*` names that only label a commit.
     const GIT_ALLOWED: &[&str] = &[
