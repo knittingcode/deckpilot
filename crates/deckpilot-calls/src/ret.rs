@@ -99,6 +99,26 @@ impl ReturnMode {
         })
     }
 
+    /// The mode with its time brought into its range ([`TIMER_RANGE`],
+    /// [`MAX_TIMEOUT_RANGE`]): the variants' fields are public, so a mode
+    /// built without [`ReturnMode::timer`] or
+    /// [`ReturnMode::completion_or_timeout`] is clamped where it is used.
+    #[must_use]
+    pub fn clamped(self) -> Self {
+        let clamp = |d: Duration, (min, max): (u64, u64)| {
+            d.clamp(Duration::from_secs(min), Duration::from_secs(max))
+        };
+        match self {
+            Self::Timer { after } => Self::Timer {
+                after: clamp(after, TIMER_RANGE),
+            },
+            Self::CompletionOrTimeout { max } => Self::CompletionOrTimeout {
+                max: clamp(max, MAX_TIMEOUT_RANGE),
+            },
+            Self::Completion => Self::Completion,
+        }
+    }
+
     fn deadline(self, now: Instant) -> Option<Instant> {
         match self {
             Self::Timer { after } => Some(now.after(after)),
@@ -297,6 +317,8 @@ impl<D: Ord + Clone> ReturnController<D> {
         settings: ReturnSettings,
         now: Instant,
     ) -> (ReturnId, Option<ReturnEnded<D>>) {
+        let mut settings = settings;
+        settings.mode = settings.mode.clamped();
         let id = ReturnId(self.next_id);
         self.next_id += 1;
         let session = ReturnSession {
