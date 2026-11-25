@@ -830,8 +830,12 @@ pub enum LegacyImport {
         with_secret: bool,
     },
     /// The old plugin's settings are a connection already (its
-    /// `legacy_source`): nothing was written.
-    Existing { connection: String },
+    /// `legacy_source`): nothing was written. `has_secret`: it has a token
+    /// (a later import never adds one).
+    Existing {
+        connection: String,
+        has_secret: bool,
+    },
 }
 
 /// The oldest connection of `id` that `source`'s settings became.
@@ -877,7 +881,11 @@ pub(crate) fn import_legacy(
         return invalid(id, "an import reads only, as the old plugin did");
     }
     if let Some(connection) = by_legacy_source(conn, id, source)? {
-        return Ok(LegacyImport::Existing { connection });
+        let has_secret = secret(conn, id, &connection)?.is_some();
+        return Ok(LegacyImport::Existing {
+            connection,
+            has_secret,
+        });
     }
     insert(conn, id, new, consent_by, now)?;
     let secret = match secret_slot {
@@ -1321,7 +1329,8 @@ mod tests {
             assert_eq!(
                 outcome,
                 LegacyImport::Existing {
-                    connection: ID.into()
+                    connection: ID.into(),
+                    has_secret: true
                 }
             );
         }
@@ -1362,6 +1371,27 @@ mod tests {
         tx.commit().unwrap();
         let rows = load(db.connection(), &p).unwrap();
         assert_eq!(rows[0].status, ConnectionStatus::NeedsReconnect);
+        assert!(secret(db.connection(), &p, ID).unwrap().is_none());
+        // A later import never adds the token, and says it has none.
+        let tx = db.write().unwrap();
+        let again = import_legacy(
+            &tx,
+            &p,
+            &source(),
+            &legacy(OTHER),
+            Some("token"),
+            "user:migration",
+            30,
+        )
+        .unwrap();
+        assert_eq!(
+            again,
+            LegacyImport::Existing {
+                connection: ID.into(),
+                has_secret: false
+            }
+        );
+        drop(tx);
         assert!(secret(db.connection(), &p, ID).unwrap().is_none());
     }
 

@@ -33,6 +33,7 @@
 use std::collections::BTreeMap;
 
 use deckpilot_ipc::{ErrorCode, IpcError, Response};
+use deckpilot_plugin_broker::UserOrigin;
 use deckpilot_plugin_manifest::{HttpMethod, Manifest, PluginId};
 use deckpilot_plugin_store::{Deployment, LegacyImport, NewConnection, StoredUserOrigin};
 use serde_json::Value;
@@ -106,6 +107,13 @@ pub(crate) enum NotImportable {
     /// A server on a private network without the old plugin's recorded
     /// consent to exactly it with its private network.
     PrivateNetwork,
+    /// The token was asked for, but the old plugin never had the user's
+    /// consent to send it to this server (the server may still be imported
+    /// without it).
+    TokenConsent,
+    /// Imported before without its token; the token is added in Settings ›
+    /// Connections, never by a second import.
+    AlreadyImported,
 }
 
 impl NotImportable {
@@ -115,6 +123,8 @@ impl NotImportable {
             Self::Server(_) => "invalid-server",
             Self::DataResidency => "data-residency",
             Self::PrivateNetwork => "private-network-consent",
+            Self::TokenConsent => "token-consent",
+            Self::AlreadyImported => "already-imported",
         }
     }
 }
@@ -153,24 +163,53 @@ pub(crate) fn plan(
         .filter(|u| !u.is_empty())
         .unwrap_or(source.cloud_api)
         .trim_end_matches('/');
-    if data_residency(api_url) {
+    // Parsed first: case, a default port or a trailing dot never decide.
+    let parsed = UserOrigin::parse(api_url).map_err(|_| {
+        NotImportable::Server(format!(
+            "`{}` is not a server address DeckPilot can connect to",
+            source.server_setting
+        ))
+    })?;
+    if data_residency(&parsed.origin().to_string()) {
         return Err(NotImportable::DataResidency);
     }
-    let deployment = if api_url.eq_ignore_ascii_case(source.cloud_api) {
-        Deployment::Cloud
-    } else {
-        Deployment::SelfHosted
-    };
+    let cloud = UserOrigin::parse(source.cloud_api)
+        .map_err(|_| NotImportable::Server("the public API does not parse".into()))?;
+    let deployment =
+        if parsed.origin() == cloud.origin() && parsed.path_prefix() == cloud.path_prefix() {
+            Deployment::Cloud
+        } else {
+            Deployment::SelfHosted
+        };
     let address = super::connections::address(ty, deployment, Some(api_url))
         .map_err(NotImportable::Server)?;
-    let private_network = deployment == Deployment::SelfHosted
-        && consents.iter().any(|c| {
+    // The old plugin's recorded consent to exactly this server: its
+    // origin, a path prefix the connection's lies within, reading.
+    let consented: Vec<_> = consents
+        .iter()
+        .filter(|c| {
+            let prefix = c.consent.path_prefix.as_deref().unwrap_or("");
+            let ours = address.path_prefix.as_deref().unwrap_or("");
             c.consent.setting == source.server_setting
                 && c.consent.origin == address.origin
-                && c.consent.private_network
-        });
+                && (ours == prefix || ours.starts_with(&format!("{prefix}/")) || prefix.is_empty())
+                && c.consent.methods.contains(&HttpMethod::Get)
+        })
+        .collect();
+    let private_network = deployment == Deployment::SelfHosted
+        && address.private_host
+        && consented.iter().any(|c| c.consent.private_network);
     if address.private_host && !private_network {
         return Err(NotImportable::PrivateNetwork);
+    }
+    // The old plugin sent its token to a server the user entered only
+    // after they allowed exactly that server for it; so does the import.
+    let token_allowed = deployment == Deployment::Cloud
+        || consented
+            .iter()
+            .any(|c| c.consent.credentials.iter().any(|k| k == source.token_slot));
+    if approval.token && !token_allowed {
+        return Err(NotImportable::TokenConsent);
     }
     let display_name = match deployment {
         Deployment::Cloud => source.label.to_owned(),
@@ -203,14 +242,18 @@ pub(crate) fn plan(
 }
 
 /// `api.<x>.ghe.com`: GitHub Enterprise Cloud with data residency (OD-7).
+/// Given a parsed origin; checked again on the lower-case host without a
+/// trailing dot.
 fn data_residency(api_url: &str) -> bool {
-    let host = api_url
+    let lower = api_url.to_ascii_lowercase();
+    let host = lower
         .strip_prefix("https://")
-        .unwrap_or(api_url)
+        .unwrap_or(&lower)
         .split(['/', ':'])
         .next()
         .unwrap_or_default()
-        .to_ascii_lowercase();
+        .trim_end_matches('.')
+        .to_owned();
     host.strip_prefix("api.")
         .and_then(|rest| rest.strip_suffix(".ghe.com"))
         .is_some_and(|tenant| !tenant.is_empty() && !tenant.contains('.'))
@@ -241,6 +284,32 @@ pub(crate) fn successor_settings(_legacy: &BTreeMap<String, Value>) -> BTreeMap<
 /// plugin (`user:migration:plugin:<id>`), never derived.
 fn decided_by(source: &LegacySource) -> String {
     format!("user:migration:plugin:{}", source.plugin)
+}
+
+/// A refusal of an import as the app gets it: its reason code and why.
+fn refusal(legacy: &LegacySource, why: &NotImportable) -> IpcError {
+    let message = match why {
+        NotImportable::NoConnectionType => {
+            format!("Git Providers has no {} connections", legacy.label)
+        }
+        NotImportable::Server(problem) => format!("the {} server {problem}", legacy.label),
+        NotImportable::DataResidency => format!(
+            "{} Enterprise Cloud with data residency cannot be connected yet; add the \
+                 connection in Settings › Connections once it can",
+            legacy.label
+        ),
+        NotImportable::PrivateNetwork => format!(
+            "the {} server is on a private network; add it in Settings › Connections, \
+                 where you are asked to allow that",
+            legacy.label
+        ),
+        NotImportable::TokenConsent | NotImportable::AlreadyImported => format!(
+            "the {} plugin's token was never allowed for this server; import the \
+                 server without it and add the token in Settings › Connections",
+            legacy.label
+        ),
+    };
+    error(ErrorCode::Failed, why.code(), message)
 }
 
 impl PluginService {
@@ -283,25 +352,7 @@ impl PluginService {
             Approval { token },
             super::connections::new_id()?,
         )
-        .map_err(|why| {
-            let message = match &why {
-                NotImportable::NoConnectionType => {
-                    format!("Git Providers has no {} connections", legacy.label)
-                }
-                NotImportable::Server(problem) => format!("the {} server {problem}", legacy.label),
-                NotImportable::DataResidency => format!(
-                    "{} Enterprise Cloud with data residency cannot be connected yet; add the \
-                     connection in Settings › Connections once it can",
-                    legacy.label
-                ),
-                NotImportable::PrivateNetwork => format!(
-                    "the {} server is on a private network; add it in Settings › Connections, \
-                     where you are asked to allow that",
-                    legacy.label
-                ),
-            };
-            error(ErrorCode::Failed, why.code(), message)
-        })?;
+        .map_err(|why| refusal(legacy, &why))?;
         // TODO(A9): nothing is carried today (`successor_settings`); when
         // it is, it is written in the same transaction as the connection.
         debug_assert!(planned.successor_settings.is_empty());
@@ -335,7 +386,24 @@ impl PluginService {
                 self.changed(&successor);
                 connection.clone()
             }
-            LegacyImport::Existing { connection } => connection.clone(),
+            LegacyImport::Existing {
+                connection,
+                has_secret,
+            } => {
+                if token && !has_secret {
+                    let why = NotImportable::AlreadyImported;
+                    return Err(error(
+                        ErrorCode::Failed,
+                        why.code(),
+                        format!(
+                            "the {} server was imported without its token; add the token in \
+                             Settings › Connections",
+                            legacy.label
+                        ),
+                    ));
+                }
+                connection.clone()
+            }
         };
         self.connection_response(&successor, &connection)
     }
@@ -479,7 +547,7 @@ mod tests {
             github(),
             &settings(Some("https://ghe.example.com/api/v3"), 20),
             &[],
-            true,
+            false,
         )
         .unwrap();
         assert_eq!(p.connection.path_prefix.as_deref(), Some("/api/v3"));
@@ -570,6 +638,114 @@ mod tests {
             let p = planned(github(), &settings(None, timeout), &[], false).unwrap();
             assert!(p.successor_settings.is_empty(), "{timeout}");
         }
-        assert_eq!(LEGACY_TIMEOUT_SECONDS, 20);
+    }
+
+    fn consent_to(origin: &str, prefix: Option<&str>, credentials: &[&str]) -> StoredUserOrigin {
+        let mut c = consent(origin, false);
+        c.consent.path_prefix = prefix.map(str::to_owned);
+        c.consent.credentials = credentials.iter().map(|k| (*k).to_owned()).collect();
+        c
+    }
+
+    /// The token of a server the user entered is copied only when the old
+    /// plugin had the consent to send it there: the same origin, a prefix
+    /// the connection's lies within, the token slot. The public services
+    /// need none (the old plugin's manifest names them).
+    #[test]
+    fn a_token_follows_only_the_old_plugins_consent() {
+        let server = settings(Some("https://code.example.com/gitlab/api/v4"), 20);
+        for allowed in [
+            consent_to(
+                "https://code.example.com",
+                Some("/gitlab/api/v4"),
+                &["token"],
+            ),
+            consent_to("https://code.example.com", Some("/gitlab"), &["token"]),
+            consent_to("https://code.example.com", None, &["token"]),
+        ] {
+            let p = planned(gitlab(), &server, &[allowed], true).unwrap();
+            assert_eq!(p.secret_slot, Some("token"));
+        }
+        for refused in [
+            Vec::new(),
+            vec![consent_to(
+                "https://code.example.com",
+                Some("/gitlab/api/v4"),
+                &[],
+            )],
+            vec![consent_to(
+                "https://code.example.com",
+                Some("/other"),
+                &["token"],
+            )],
+            vec![consent_to(
+                "https://code.example.com",
+                Some("/git"),
+                &["token"],
+            )],
+            vec![consent_to(
+                "https://evil.example.com",
+                Some("/gitlab/api/v4"),
+                &["token"],
+            )],
+        ] {
+            assert_eq!(
+                planned(gitlab(), &server, &refused, true).unwrap_err(),
+                NotImportable::TokenConsent,
+                "{refused:?}"
+            );
+            // The server alone still imports.
+            assert!(planned(gitlab(), &server, &refused, false).is_ok());
+        }
+        assert_eq!(
+            planned(github(), &settings(None, 20), &[], true)
+                .unwrap()
+                .secret_slot,
+            Some("token")
+        );
+    }
+
+    /// Case, a default port or a trailing dot never change what is
+    /// decided: the public API stays the cloud, data residency stays
+    /// refused; a private network only on a private host.
+    #[test]
+    fn spelling_never_decides() {
+        for url in ["https://api.github.com:443", "HTTPS://API.GITHUB.COM/"] {
+            let p = planned(github(), &settings(Some(url), 20), &[], true).unwrap();
+            assert_eq!(p.connection.deployment, Deployment::Cloud, "{url}");
+            assert_eq!(p.connection.path_prefix, None, "{url}");
+        }
+        assert_eq!(
+            planned(
+                github(),
+                &settings(Some("HTTPS://api.acme.ghe.com"), 20),
+                &[],
+                false
+            )
+            .unwrap_err(),
+            NotImportable::DataResidency
+        );
+        // A trailing dot: refused (never imported as a guess), whichever
+        // check stops it; the check itself ignores the dot too.
+        assert!(
+            planned(
+                github(),
+                &settings(Some("https://api.acme.ghe.com./"), 20),
+                &[],
+                false
+            )
+            .is_err()
+        );
+        assert!(data_residency("https://api.acme.ghe.com."));
+        let mut public = consent_to("https://code.example.com", Some("/api/v4"), &["token"]);
+        public.consent.private_network = true;
+        let p = planned(
+            gitlab(),
+            &settings(Some("https://code.example.com/api/v4"), 20),
+            &[public],
+            true,
+        )
+        .unwrap();
+        assert!(!p.connection.private_network);
     }
 }
