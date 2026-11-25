@@ -428,7 +428,7 @@ mod tests {
         let mut executor = f.executor(&routes, &[GITLAB, GITHUB]);
         let result = f.call(&mut executor, &fetch(PROJECTS, GITLAB));
         let answer = ok(&result).to_string();
-        assert!(!answer.contains(TOKEN), "{answer}");
+        assert!(!answer.contains(TOKEN), "the answer holds the token");
         assert!(answer.contains("[redacted]"));
         assert!(
             f.sent()
@@ -442,9 +442,12 @@ mod tests {
         // Each secret went to its own server only.
         for line in sent.lines() {
             if line.starts_with("https://api.github.com") {
-                assert!(!line.contains(TOKEN), "{line}");
+                assert!(!line.contains(TOKEN), "the GitLab token went to GitHub");
             } else {
-                assert!(!line.contains(GITHUB_TOKEN), "{line}");
+                assert!(
+                    !line.contains(GITHUB_TOKEN),
+                    "the GitHub token went elsewhere"
+                );
             }
         }
     }
@@ -480,8 +483,14 @@ mod tests {
             assert!(message(&result).contains("redirect-refused"), "{result:?}");
         }
         let sent = f.sent();
-        assert!(!sent.contains("collector.example"), "{sent}");
-        assert!(!sent.contains("https://api.github.com"), "{sent}");
+        assert!(
+            !sent.contains("collector.example"),
+            "a request went to the collector"
+        );
+        assert!(
+            !sent.contains("https://api.github.com"),
+            "a request went to GitHub"
+        );
     }
 
     /// A connection that is off in the store is refused even if the broker

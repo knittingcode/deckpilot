@@ -914,7 +914,7 @@ async fn a_protocol_18_agent_is_never_sent_a_connection_or_its_token() {
         !serde_json::to_string(&received)
             .unwrap()
             .contains("dp-test-never-sent"),
-        "{received:?}"
+        "the token reached the agent"
     );
     assert!(matches!(
         client.request(Request::GetStatus).await,
