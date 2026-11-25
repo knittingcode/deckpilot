@@ -122,7 +122,37 @@ pub fn validate(
     }
     validate_variables(payload)?;
     validate_library(payload, catalog, &mut warnings)?;
+    validate_scripts(payload, &profile_ids)?;
     Ok(warnings)
+}
+
+/// The scripts of an untrusted payload: each of an exported profile, valid
+/// as the store would take it, unique by id and name in its profile, at
+/// most [`MAX_SCRIPTS`](deckpilot_core::script::MAX_SCRIPTS) per profile.
+fn validate_scripts(
+    payload: &Payload,
+    profile_ids: &HashSet<ProfileId>,
+) -> Result<(), PortabilityError> {
+    use deckpilot_core::script::MAX_SCRIPTS;
+    let invalid = |message: String| Err(PortabilityError::Invalid(message));
+    let mut per_profile: BTreeMap<ProfileId, (HashSet<String>, HashSet<String>)> = BTreeMap::new();
+    for exported in &payload.scripts {
+        let script = &exported.script;
+        if !profile_ids.contains(&exported.profile) {
+            return invalid("a script belongs to no exported profile".into());
+        }
+        if let Err(e) = script.validate() {
+            return invalid(format!("script “{}”: {e}", script.name));
+        }
+        let (ids, names) = per_profile.entry(exported.profile).or_default();
+        if !ids.insert(script.id.to_string()) || !names.insert(script.name.to_lowercase()) {
+            return invalid(format!("script “{}” appears twice", script.name));
+        }
+        if ids.len() > MAX_SCRIPTS {
+            return invalid(format!("a profile has more than {MAX_SCRIPTS} scripts"));
+        }
+    }
+    Ok(())
 }
 
 /// Checks the key labels of `layouts` as saving does
@@ -435,6 +465,21 @@ pub struct ImportPreview {
     /// ([`ImportOptions::confirmed_close_actions`]): its application key
     /// could name an application bound on this computer.
     pub close_actions: Vec<CloseActionPreview>,
+    /// Every script in the export. Each arrives untrusted, with no grants,
+    /// and never runs until the user reviews it on the Scripts page;
+    /// nothing runs on import.
+    pub scripts: Vec<ScriptPreview>,
+}
+
+/// One script of an export, as the preview lists it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptPreview {
+    pub profile: ProfileId,
+    pub id: deckpilot_core::ScriptId,
+    pub name: String,
+    /// Size of its source, in bytes.
+    pub bytes: usize,
 }
 
 /// The Close Application action type (`system.close-app`).
@@ -758,6 +803,16 @@ pub fn preview(
             .map(|l| l.name.clone())
             .collect(),
         close_actions: closes,
+        scripts: payload
+            .scripts
+            .iter()
+            .map(|s| ScriptPreview {
+                profile: s.profile,
+                id: s.script.id,
+                name: s.script.name.clone(),
+                bytes: s.script.source.len(),
+            })
+            .collect(),
     })
 }
 
@@ -871,6 +926,9 @@ pub struct ImportSummary {
     /// Close Application actions imported unbound because they were not
     /// confirmed.
     pub unbound_close_actions: Vec<String>,
+    /// Scripts that were written, as named here: each untrusted, until
+    /// reviewed.
+    pub scripts: Vec<String>,
 }
 
 /// How the layouts, actions and icons of an import relate to the shared
@@ -1025,6 +1083,69 @@ impl SharedIds {
         }
         self.apply(library)
     }
+}
+
+/// The scripts of the imported profiles, in the profile each ended up as.
+/// Each is written untrusted (an existing one's grants stay dormant), with
+/// a name no other script of that profile has here. Nothing runs.
+fn plan_scripts(
+    payload: &Payload,
+    store: &SqliteStore,
+    moved: &BTreeMap<ProfileId, ProfileId>,
+    removed: &BTreeSet<ProfileId>,
+    changes: &mut ConfigChanges,
+    summary: &mut ImportSummary,
+) -> Result<(), PortabilityError> {
+    let mut taken: BTreeMap<ProfileId, BTreeMap<String, deckpilot_core::ScriptId>> =
+        BTreeMap::new();
+    for exported in &payload.scripts {
+        let Some(target) = moved.get(&exported.profile).copied() else {
+            continue;
+        };
+        let names = match taken.entry(target) {
+            std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::btree_map::Entry::Vacant(e) => {
+                let local = if removed.contains(&target) {
+                    Vec::new()
+                } else {
+                    store.scripts(target)?
+                };
+                e.insert(
+                    local
+                        .into_iter()
+                        .map(|s| (s.script.name.to_lowercase(), s.script.id))
+                        .collect(),
+                )
+            }
+        };
+        let mut script = exported.script.clone();
+        // The one it replaces (same id) gives its name up.
+        names.retain(|_, id| *id != script.id);
+        if names.contains_key(&script.name.to_lowercase()) {
+            script.name = unique_script_name(&script.name, names);
+        }
+        names.insert(script.name.to_lowercase(), script.id);
+        summary.scripts.push(script.name.clone());
+        changes.scripts.push((target, script));
+    }
+    Ok(())
+}
+
+/// `name (imported)`, `name (imported 2)`, …, cut to the script name
+/// limit, not in `taken` (lowercase).
+fn unique_script_name(name: &str, taken: &BTreeMap<String, deckpilot_core::ScriptId>) -> String {
+    let cut = |suffix: &str| {
+        let room = deckpilot_core::script::MAX_NAME.saturating_sub(suffix.chars().count());
+        let head: String = name.chars().take(room).collect();
+        format!("{}{suffix}", head.trim_end())
+    };
+    let mut candidate = cut(" (imported)");
+    let mut n = 2;
+    while taken.contains_key(&candidate.to_lowercase()) {
+        candidate = cut(&format!(" (imported {n})"));
+        n += 1;
+    }
+    candidate
 }
 
 fn unique_name(name: &str, taken: &BTreeSet<String>) -> String {
@@ -1274,6 +1395,14 @@ pub fn plan(
         store,
         options.app_settings,
         &moved,
+        &mut changes,
+        &mut summary,
+    )?;
+    plan_scripts(
+        payload,
+        store,
+        &moved_profiles,
+        &removed,
         &mut changes,
         &mut summary,
     )?;

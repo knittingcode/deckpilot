@@ -32,7 +32,14 @@ use crate::{PortabilityError, archive};
 /// repositories. An export whose projects have only that derived
 /// repository leaves it out (the importer derives it again) and is
 /// written as before.
-pub const PAYLOAD_VERSION: u32 = 5;
+/// Version 6 marks an export with scripts ([`Payload::scripts`]): a release
+/// that reads at most 5 refuses it instead of dropping them. An export
+/// without scripts keeps its version.
+pub const PAYLOAD_VERSION: u32 = 6;
+
+/// The version of an export without scripts whose projects have
+/// repositories.
+pub const PAYLOAD_VERSION_WITH_REPOSITORIES: u32 = 5;
 
 /// The version of an export without repositories whose layouts have key
 /// labels.
@@ -47,7 +54,11 @@ pub const PAYLOAD_VERSION_WITH_LIBRARY: u32 = 3;
 pub const PAYLOAD_VERSION_WITHOUT_LIBRARY: u32 = 2;
 
 /// The version an export is written as: the oldest that holds it.
-pub fn payload_version(profiles: &[Profile], library: &LibraryExport) -> u32 {
+pub fn payload_version(
+    profiles: &[Profile],
+    library: &LibraryExport,
+    scripts: &[ExportedScript],
+) -> u32 {
     let labelled = |layouts: &[deckpilot_core::DeviceLayout]| {
         layouts.iter().any(|layout| {
             layout
@@ -67,8 +78,10 @@ pub fn payload_version(profiles: &[Profile], library: &LibraryExport) -> u32 {
         .iter()
         .flat_map(|profile| &profile.projects)
         .any(|project| !project.repositories.is_empty() || project.default_repository.is_some());
-    if with_repositories {
+    if !scripts.is_empty() {
         PAYLOAD_VERSION
+    } else if with_repositories {
+        PAYLOAD_VERSION_WITH_REPOSITORIES
     } else if profiles.iter().any(|profile| labelled(&profile.layouts))
         || labelled(&library.layouts)
     {
@@ -148,6 +161,21 @@ pub struct Payload {
     /// is shared again when both are imported. Payload version 3.
     #[serde(default, skip_serializing_if = "LibraryExport::is_empty")]
     pub library: LibraryExport,
+    /// The scripts of the exported profiles: name, source and settings
+    /// only. Whether a script is trusted, and its grants, never leave the
+    /// computer; an imported script arrives untrusted, with no grants, and
+    /// never runs until the user reviews it. Payload version 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<ExportedScript>,
+}
+
+/// One script of an exported profile ([`Payload::scripts`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportedScript {
+    pub profile: ProfileId,
+    /// Strict: a script record has no place for trust or grants.
+    pub script: deckpilot_core::script::Script,
 }
 
 /// Layouts of no profile in an export ([`Payload::library`]).
@@ -414,9 +442,24 @@ pub fn export(
             library.layouts.push(stored.layout);
         }
     }
+    // Scripts as they are, without their trust or grants (machine-local,
+    // `script_trust`), which this never reads.
+    let mut scripts = Vec::new();
+    for profile in &selected {
+        for stored in store.scripts(profile.id)? {
+            scripts.push(ExportedScript {
+                profile: profile.id,
+                script: deckpilot_core::script::Script {
+                    revision: 1,
+                    ..stored.script
+                },
+            });
+        }
+    }
     Ok(Payload {
         variables,
-        version: payload_version(&selected, &library),
+        version: payload_version(&selected, &library, &scripts),
+        scripts,
         library,
         exported_at,
         app_version: app_version.into(),

@@ -200,6 +200,10 @@ pub struct ConfigChanges {
     /// Afterwards, delete the layouts no profile uses, except
     /// `unassigned_layouts` (an import that replaces everything).
     pub delete_unused_layouts: bool,
+    /// Scripts to create or replace, after the profiles: never trusted,
+    /// whatever their source (`scripts::put_untrusted`); an existing
+    /// script's grants stay dormant.
+    pub scripts: Vec<(ProfileId, deckpilot_core::script::Script)>,
 }
 
 impl SqliteStore {
@@ -731,6 +735,9 @@ impl SqliteStore {
         }
         for (key, scope, value) in &changes.variable_values {
             crate::variables::set_value(&tx, key, scope, value)?;
+        }
+        for (profile, script) in &changes.scripts {
+            crate::scripts::put_untrusted(&tx, *profile, script)?;
         }
         tx.commit()?;
         Ok(())

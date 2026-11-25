@@ -198,7 +198,10 @@ impl CommandError {
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "one arm per storage error, exhaustive")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per storage error, exhaustive"
+)]
 fn storage_code(error: &StorageError) -> (String, Params) {
     use StorageError as E;
     let (kind, values): (&str, Params) = match error {
