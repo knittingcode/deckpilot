@@ -130,7 +130,11 @@ const EMPTY_PLACES: &[u32] = &[15];
 /// database on disk outside the temporary folder, whatever its data
 /// directory; release builds holding one do not compile at all.
 fn empty_place_passed(current: u32, supported: u32, path: Option<&Path>) -> Option<u32> {
-    let throwaway = path.is_none_or(|p| starts_within(p, &std::env::temp_dir()) || in_scratch(p));
+    // A temporary folder that is empty or a root (a broken `TMPDIR`)
+    // counts for nothing.
+    let temp = std::env::temp_dir();
+    let usable = temp.parent().is_some() && !temp.as_os_str().is_empty();
+    let throwaway = path.is_none_or(|p| usable && starts_within(p, &temp));
     if throwaway {
         return None;
     }
@@ -146,12 +150,6 @@ fn starts_within(path: &Path, dir: &Path) -> bool {
     let parent = path.parent().map(canonical);
     path.starts_with(dir)
         || parent.is_some_and(|p| p.starts_with(canonical(dir)) || p.starts_with(dir))
-}
-
-/// The scratch folders tests use besides the system's temporary folder
-/// (`CARGO_TARGET_TMPDIR`).
-fn in_scratch(path: &Path) -> bool {
-    option_env!("CARGO_TARGET_TMPDIR").is_some_and(|dir| starts_within(path, Path::new(dir)))
 }
 
 /// Runs `step` again while SQLite reports the database busy, for up to
@@ -2194,6 +2192,11 @@ mod tests {
         let real = std::path::Path::new("/srv/deckpilot/deckpilot.db");
         assert_eq!(empty_place_passed(14, 16, Some(real)), Some(15));
         assert_eq!(empty_place_passed(3, 16, Some(real)), Some(15));
+        assert_eq!(
+            empty_place_passed(0, 16, Some(real)),
+            Some(15),
+            "a new one too"
+        );
         // Already past it, in memory, or a throwaway database: no refusal.
         assert_eq!(empty_place_passed(15, 16, Some(real)), None);
         assert_eq!(empty_place_passed(14, 16, None), None);

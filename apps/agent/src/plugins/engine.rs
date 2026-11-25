@@ -1054,6 +1054,12 @@ mod tests {
             run.parameters[0].kind,
             deckpilot_core::ParameterKind::Script
         );
+        // Any other plugin's `script` parameter is refused here too.
+        assert!(
+            action_type("acme.other", &actions[0])
+                .unwrap_err()
+                .contains("Scripts plugin")
+        );
         let check = action_type("deckpilot.scripts", &actions[1]).unwrap();
         assert!(matches!(
             &check.parameters[0].kind,

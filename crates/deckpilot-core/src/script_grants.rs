@@ -271,6 +271,14 @@ pub const CONTAINER_RUNTIMES: &[&str] = &[
     "tart",
     "hyperkit",
     "krunvm",
+    "vboxheadless",
+    "virtualboxvm",
+    "prlsrvctl",
+    "kvm",
+    "apptainer",
+    "singularity",
+    "distrobox",
+    "toolbox",
 ];
 
 /// Programs that act as another user: never grantable.
@@ -287,6 +295,8 @@ pub const ELEVATION: &[&str] = &[
     "gsudo",
     "osascript",
     "launchctl",
+    "sudo-rs",
+    "pfexec",
 ];
 
 /// Shells: only through `shell.run` and its own grant, never as a
@@ -310,6 +320,9 @@ pub const PROCESS_SHELLS: &[&str] = &[
     // A shell among their applets.
     "busybox",
     "toybox",
+    "ash",
+    "rbash",
+    "yash",
 ];
 
 /// Programs that run any other program (interpreters, launchers, build
@@ -369,9 +382,22 @@ pub fn command_class(command: &str) -> CommandClass {
     let name = program_name(command);
     let base = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-');
     let is = |list: &[&str]| list.contains(&name.as_str()) || list.contains(&base);
-    let helper = ["docker-", "podman-", "lxc-", "qemu-"]
-        .iter()
-        .any(|prefix| name.starts_with(prefix));
+    // Their helpers (`docker-compose`, `dockerd-rootless.sh`,
+    // `containerd-shim-runc-v2`, `qemu-img`, `lxc-attach`) and Lima's
+    // wrappers (`nerdctl.lima`).
+    let helper = [
+        "docker-",
+        "dockerd-",
+        "containerd-",
+        "podman-",
+        "lxc-",
+        "qemu-",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+        || std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("lima"));
     if is(CONTAINER_RUNTIMES) || helper || name == "qemu" {
         CommandClass::ContainerRuntime
     } else if is(ELEVATION) {
@@ -414,12 +440,11 @@ impl ScriptGrants {
                     // Absolute and canonical in form: no `.` or `..`.
                     if !path.is_absolute()
                         || path.as_os_str().is_empty()
-                        || path.components().any(|c| {
-                            matches!(
-                                c,
-                                std::path::Component::ParentDir | std::path::Component::CurDir
-                            )
-                        })
+                        // By its text: `components` hides a `.` inside.
+                        || path
+                            .to_string_lossy()
+                            .split(['/', '\\'])
+                            .any(|part| part == "." || part == "..")
                     {
                         return Err(GrantsError::DirectoryPath);
                     }
@@ -620,6 +645,13 @@ mod tests {
             "vagrant",
             "utmctl",
             "prlctl",
+            "nerdctl.lima",
+            "docker.lima",
+            "dockerd-rootless.sh",
+            "containerd-shim-runc-v2",
+            "kvm",
+            "apptainer",
+            "distrobox",
         ] {
             assert_eq!(
                 command_class(command),
@@ -654,6 +686,8 @@ mod tests {
             "systemd-run",
             "runas.exe",
             "osascript",
+            "sudo-rs",
+            "pfexec",
         ] {
             assert_eq!(command_class(command), CommandClass::Elevation, "{command}");
             assert_eq!(refused(command), Err(GrantsError::Elevation), "{command}");
@@ -666,6 +700,8 @@ mod tests {
             "cmd.exe",
             "fish",
             "busybox",
+            "ash",
+            "yash",
         ] {
             assert_eq!(command_class(command), CommandClass::Shell, "{command}");
             assert_eq!(
@@ -691,6 +727,21 @@ mod tests {
         );
         assert_eq!(refused("doc\u{212A}er"), Err(GrantsError::ContainerRuntime));
         assert_eq!(refused("g\u{00EF}t"), Err(GrantsError::Command));
+        // A folder scope is canonical in form: no `.` or `..`.
+        for path in ["/srv/work/../etc", "/srv/./work"] {
+            let scope = ScriptGrants {
+                fs: vec![FsScope {
+                    root: FsRoot::Directory {
+                        path: path.into(),
+                        label: "Work".into(),
+                    },
+                    access: FsAccess::Read,
+                    root_destructive: false,
+                }],
+                ..ScriptGrants::default()
+            };
+            assert_eq!(scope.validate(), Err(GrantsError::DirectoryPath), "{path}");
+        }
         // git's unrestricted arguments are git's only; a command once.
         let with = |command: &str, unrestricted: bool| ProcessGrant {
             command: command.into(),

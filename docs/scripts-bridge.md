@@ -39,7 +39,9 @@ Status:
   available to scripts yet"), a program acting as another user and a
   shell as a program, and flagging a launcher as running any program;
   the core's `script` parameter kind (`ParameterKind::Script`, a script
-  id stored as text, so the Scripts plugin's `run` action now converts
+  id stored as text, only ever a script chosen for the action: a
+  reference, template or node output is refused when it resolves, when
+  the workflow is checked and when it runs, so the Scripts plugin's `run` action now converts
   to an action type) with its picker; and the Action Library's "Run …"
   entries, one per script, each placing an action that names the script
   by id;
@@ -441,8 +443,9 @@ runs of the plugin at once.
     `finch`, Rancher Desktop's and OrbStack's tools, Apple's `container`,
     `wsl`, `lxc`/`lxd`/`incus`, `multipass`, `nsenter`, `unshare`,
     `chroot`, `systemd-nspawn`, `lxc-*`, `machinectl`, QEMU (`qemu-*`),
-    `virsh`, VirtualBox, Parallels, VMware's `vmrun`, UTM, Vagrant, Tart,
-    and every `docker-*` or `podman-*` helper (`CONTAINER_RUNTIMES`). They are effectively full access to
+    `virsh`, `kvm`, VirtualBox, Parallels, VMware's `vmrun`, UTM, Vagrant,
+    Tart, Apptainer/Singularity, Distrobox, Toolbox, Lima's `*.lima`
+    wrappers, and every `docker-*`, `dockerd-*`, `containerd-*` or `podman-*` helper (`CONTAINER_RUNTIMES`). They are effectively full access to
     the computer; when the owner decides, they become a high-risk
     consent or stay off;
   - programs that act as another user (`sudo`, `sudoedit`, `doas`,

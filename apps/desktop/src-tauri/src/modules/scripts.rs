@@ -344,3 +344,59 @@ pub fn revoke_script_grants<R: Runtime>(
 pub fn script_command_class(command: String) -> CommandClass {
     command_class(&command)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_folder, no_program_twice};
+    use deckpilot_core::script_grants::{ProcessCwd, ProcessEnv, ProcessGrant, ScriptGrants};
+
+    fn grants(commands: &[&str]) -> ScriptGrants {
+        ScriptGrants {
+            process: commands
+                .iter()
+                .map(|c| ProcessGrant {
+                    command: (*c).into(),
+                    cwd: ProcessCwd::Repositories,
+                    env: ProcessEnv::None,
+                    unrestricted_args: false,
+                })
+                .collect(),
+            ..ScriptGrants::default()
+        }
+    }
+
+    #[test]
+    fn a_program_is_granted_once_however_it_is_named() {
+        // Not found here: by name, without case.
+        assert!(no_program_twice(&grants(&["no-such-tool-x", "NO-SUCH-TOOL-X"])).is_err());
+        assert!(no_program_twice(&grants(&["no-such-tool-x", "no-such-tool-y"])).is_ok());
+        // Found here: by the file it stands for.
+        #[cfg(unix)]
+        {
+            let sh = std::fs::canonicalize("/bin/sh").unwrap();
+            assert!(no_program_twice(&grants(&["/bin/sh", &sh.to_string_lossy()])).is_err());
+        }
+    }
+
+    #[test]
+    fn a_folder_grant_is_the_folder_itself_now() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        let real = canonical_folder(&work).unwrap();
+        assert_eq!(real, std::fs::canonicalize(&work).unwrap());
+        // A link is resolved now: pointing it elsewhere later moves nothing.
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&work, &link).unwrap();
+            assert_eq!(canonical_folder(&link).unwrap(), real);
+        }
+        // `..` is resolved away; a file or a missing folder is refused.
+        let dotted = work.join("..").join("work");
+        assert_eq!(canonical_folder(&dotted).unwrap(), real);
+        std::fs::write(dir.path().join("file"), b"x").unwrap();
+        assert!(canonical_folder(&dir.path().join("file")).is_err());
+        assert!(canonical_folder(&dir.path().join("missing")).is_err());
+    }
+}

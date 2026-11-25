@@ -1338,7 +1338,7 @@ fn a_script_parameter_takes_only_a_chosen_script() {
             "{failure:?}"
         );
     }
-    let resolved = resolve_parameters(
+    let chosen = resolve_parameters(
         Probe::new().definition(),
         &ActionParameters::new().with("script", ParameterValue::Text(id.clone())),
         &resolver,
@@ -1346,5 +1346,5 @@ fn a_script_parameter_takes_only_a_chosen_script() {
         &f.profile,
     )
     .unwrap();
-    assert_eq!(resolved.parameters.text("script"), Some(id.as_str()));
+    assert_eq!(chosen.parameters.text("script"), Some(id.as_str()));
 }
