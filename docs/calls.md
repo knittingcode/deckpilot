@@ -143,6 +143,20 @@ them, with `^1.16`, and a plugin with `calls` has no `network`,
 `credentials`, `openUrl`, `tools` or `connections`. `Manifest::privileged_usages` lists
 all three, so the reviewed privileged policy pins them like the 1.9 kinds.
 
+**End to end (T-P2,
+`crates/deckpilot-plugin-registry/tests/calls_privileged.rs`).** The Calls
+plugin's own manifest (deckpilot-plugins `official/calls`) is run through
+`package --first-party`, `release sign`'s preflight and `release verify`,
+signed by two throwaway keys:
+
+- This build refuses it everywhere: the compiled policy has no Calls entry.
+- An approved test policy with its exact entry still refuses it, because
+  `deckpilot.calls` is not a privileged plugin id. Adding the id and the
+  entry is the owner's release step.
+- The public rules, another id, `calls` with a way out, and an API below
+  1.16 are refused by the manifest rules themselves.
+- No release-relevant build enables the test-only open gate (`cargo tree`).
+
 | Grant | Tier | |
 | --- | --- | --- |
 | `calls` (`calls:observe`) | medium | the focused call's state |
