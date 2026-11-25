@@ -111,6 +111,7 @@ use super::variables::{PublishedVariables, typed};
 mod open;
 pub(super) mod project;
 pub(super) mod resources;
+pub(crate) mod scripts;
 mod tools;
 
 /// The plugin data connection the executors share; `None` once the store
@@ -594,6 +595,9 @@ pub(super) struct Executor {
     /// without it the project operations and `profile.read` are
     /// `unavailable`.
     projects: Option<Arc<dyn crate::service::plugin_projects::ProjectHost>>,
+    /// The script run of an invocation of `deckpilot.scripts` (plugin API
+    /// 1.13, `scripts/`); without it every bridge call is refused.
+    scripts: Option<scripts::ScriptRun>,
 }
 
 /// One audit record of a plugin API 1.9 operation the executor carried
@@ -714,6 +718,7 @@ impl Executor {
             audit: Arc::new(log_privileged),
             tools: super::tools::ToolHost::from_agent(),
             projects: None,
+            scripts: None,
         }
     }
 
@@ -1493,6 +1498,7 @@ impl Executor {
             | Allowed::ProjectSelect { .. }
             | Allowed::ProjectCycle { .. }
             | Allowed::ProfileRead { .. } => self.project(plugin, allowed),
+            Allowed::Script(call) => self.script(plugin, call, interrupt),
             Allowed::TimeNow => super::ambient::now(),
             Allowed::RandomBytes { length } => super::ambient::random(*length),
             Allowed::RunContext(context) => serde_json::to_value(context).map_or_else(

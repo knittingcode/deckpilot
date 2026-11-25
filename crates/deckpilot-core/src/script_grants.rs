@@ -298,8 +298,7 @@ mod tests {
         g.validate().unwrap();
         assert_eq!(g.fs[0].access, FsAccess::Delete);
         assert!(FsAccess::Delete > FsAccess::Write && FsAccess::Write > FsAccess::Read);
-        let back: ScriptGrants =
-            serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        let back: ScriptGrants = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
         assert_eq!(back, g);
         assert!(serde_json::from_str::<ScriptGrants>(r#"{"everything":true}"#).is_err());
     }

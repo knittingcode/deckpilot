@@ -284,6 +284,14 @@ deadline; such replies are immediate, so no guest that waits on the
 agent is affected. No frame cap, IPC protocol, schema, document or
 export change, and `PLUGIN_API` stays 1.11.
 
+Part 2 adds the `scripts` permission to the broker (the ceiling, for
+`deckpilot.scripts` only) and the agent's executor for the run's own
+operations, the projects and the file system. No manifest can declare
+`scripts` yet (part 4), and the agent keeps no scripts yet (P7), so
+nothing changes for an installed plugin. The agent gains the `cap-std` and
+`cap-fs-ext` dependencies (Apache-2.0 WITH LLVM-exception, Apache-2.0 or
+MIT). No IPC protocol, schema, document or export change.
+
 The plugin store goes from schema 5 to 6 with the extraction's cut-over
 (`docs/marketplace/module-migration.md` §7 X13): an additive
 `host_settings` table, after the usual encrypted backup in

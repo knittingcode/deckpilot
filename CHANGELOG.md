@@ -82,7 +82,11 @@ released either. 0.6.0 is the first version intended for publication.
   existing message size limits. The Scripts plugin alone can be given a
   larger budget of calls per run, and its polling and logging never
   extend its continuous CPU limit, so a busy script is still stopped
-  after 2 seconds.
+  after 2 seconds. The agent checks every file operation of a script
+  against that script's own folders and access, never follows a link
+  out of them, never changes a `.git` folder, the home folder, system
+  folders or DeckPilot's own, and asks before it deletes or replaces
+  files, showing what it computed itself.
 
 ### Changed
 

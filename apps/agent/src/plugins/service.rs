@@ -2837,6 +2837,9 @@ impl PluginService {
                 return;
             }
         };
+        // The Scripts bridge (plugin API 1.13): the run of the action's own
+        // script, if it names one.
+        let executor = super::executor::scripts::attach(executor, id.as_str(), &params);
         let plugin = id.to_string();
         let name = action.to_owned();
         let done: Done = Box::new(move |result| {
@@ -2931,6 +2934,7 @@ impl PluginService {
         };
         let (executor, handles) =
             executor.with_resources(record.id.as_str(), &version, resource_kinds, resources);
+        let executor = super::executor::scripts::attach(executor, record.id.as_str(), &params);
         params.extend(
             handles
                 .into_iter()

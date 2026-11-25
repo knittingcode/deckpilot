@@ -9,10 +9,16 @@ the host side of the contract; the guest side is "The bridge contract" in
 the plugin's README. The design is `design-projects-scripts.md` §4.5, §5
 and §7.
 
-Status: the ABI and the host engine are in place (this page's first two
-sections). The agent's executor (file system, processes), the `scripts`
-permission and the manifest kinds follow in their own pull requests; until
-then the broker refuses every bridge operation to every plugin.
+Status:
+
+- in place: the ABI and the host engine; the `scripts` permission in the
+  broker; the agent's executor for the run's own operations, the
+  projects and the file system;
+- next: processes (`process.run`, `shell.run`, answered `unavailable`
+  until then), the manifest kinds (no manifest can declare `scripts` yet,
+  so nothing is granted in practice), and the script store (P7; until
+  then the agent keeps no scripts and every run ends with
+  `scriptMissing`).
 
 ## Operations
 
@@ -150,3 +156,120 @@ caps of D1, the script detail) and `plugins/runtime/crates/host/tests/scripts_br
 (a poll loop and a log loop trap at the deadline, a malformed poll gives no
 time back, a loop of slow `process.run` calls finishes, 4,097 calls trap,
 polls are counted apart, the budgets are per invocation and clamped).
+
+## The broker: the `scripts` permission (the ceiling)
+
+`ApprovedPermission::Scripts {fs, process, shell}` (plugin API 1.13,
+bundled first-party only through the manifest) becomes the plugin's
+ceiling. The broker allows a bridge operation only for `deckpilot.scripts`,
+only with the permission, and only within the sub-ceiling it needs: `fs`
+for the `fs.*` operations, `process` for `process.run`, `shell` for
+`shell.run` and `shell.available`; the run's own operations and the
+projects with any. `project.list` is the bridge's for a plugin with
+`scripts` and without `projectContext`. Revoking the permission refuses
+every operation at the next call. The bridge has its own rate (2,000 calls
+per second, `RateLimits::scripts`) in place of the shared 200, since a run
+polls and logs often and the host already bounds each run.
+
+## The agent: what every call is checked against
+
+`apps/agent/src/plugins/executor/scripts/` decides each allowed call again:
+
+1. the plugin is `deckpilot.scripts`, and the invocation has a script run:
+   the action's own `script` parameter (`scripts::attach`);
+2. the script's **current** machine-local grants (`ScriptGrants` in
+   `deckpilot-core`, from the `ScriptHost`, read at every call, `None` for
+   a script that is not trusted). An invalid record counts as no grants;
+3. `script.load` comes first, once, for that script only, and refuses an
+   untrusted (`scriptNeedsReview`) or missing (`scriptMissing`) one;
+4. the run's time: the script's `timeoutMs` from its start, never past the
+   invocation's deadline; a Stop or a past deadline ends every later call
+   (`cancelled`, `timedOut`);
+5. the operation's own rules (below).
+
+Every call but `script.poll` and `script.log` writes one audit line: the
+operation, the run id, the scope's label, the outcome and counts; never a
+path, a file's content or an environment value.
+
+- `script.load` answers the source, the platform, the settings, the run
+  (`id`, `origin`: `key`, `gesture`, `editor`, `workflow` or `trigger`,
+  `userInitiated`) and the grant summary, which names a directory scope by
+  its label and an absolute command by its file name, never a path.
+- `script.poll` answers `cancelled`, `remainingMs` and `nowUs`.
+- `script.log` keeps the first 1,000 lines or 256 KiB of the run, then one
+  marker, and writes kept lines to the agent's log with control characters
+  escaped.
+- `script.sleep` waits in 25 ms slices, at most the run's time left.
+- `project.list` and `project.repositories` need `projects.read`, answer
+  the active profile only, and give a repository's folder only with
+  `repositories.paths`.
+
+## The file system
+
+Paths are resolved against the script's scopes: each repository scope
+(`{"repository": "<key>"}` or `"*"`, every repository of the run's
+current project that has a folder here) and each directory scope (a folder
+picked with the native picker, by its canonical path and a label). The
+longest scope root that is a prefix of the path decides; an absolute path
+counts inside a repository's scope only with `repositories.paths`; nothing
+else is reachable (`outsideScope`). Access is `read`, `write` or `delete`.
+
+The scope's root is opened with `cap-std`, then checked: its canonical path
+must be the recorded one and, on Unix, the opened folder must be the one at
+that path; a root swapped for a link is refused (`outsideScope`, "scope
+moved"). Every operation then works relative to that open folder:
+
+- **reads** (`exists`, `stat`, `list`, `readFile`) may pass through a
+  relative link that stays inside the scope; one that leads out, and every
+  absolute link, is refused (`symlinkEscape`). `stat` and `list` never
+  follow the final name. `readFile` opens without blocking (a FIFO never
+  hangs the run) and reads only a regular file;
+- **changes** never pass through a link: each folder of the path is opened
+  without following it. A link is removed, replaced or copied as a link,
+  never followed;
+- **`.git`**: no change to a path inside a `.git` folder (OD-6, also
+  writes, so no script plants a hook), and no removal or overwrite of a
+  tree that holds one;
+- **protected roots**: no change that removes, empties or replaces the file
+  system or a drive root, the user's home or a folder holding it, the
+  system's folders, DeckPilot's data and logs or the app; no removal of a
+  repository's folder or a tree holding one; a scope's root is never
+  removed, moved or replaced, and emptied (`removeContents`) only with
+  `rootDestructive`;
+- **destructive operations** (`remove` of a folder that is not empty,
+  `removeContents`, `copy` or `move` over an existing target): `delete`
+  access (`write` for an overwrite). `dryRun` returns the plan (counts,
+  bytes, up to 50 sample paths, relative to the scope's label) with read
+  access and changes nothing. With `destructive: "ask"` (the default) the
+  first request is answered `needsConfirmation` with a token for the
+  agent's plan; `script.confirm` shows that plan in a dialog, only in a run
+  the user started; the repeated request with the token is carried out.
+  The token is 128 random bits, kept in the run only, bound to the op and a
+  digest of its resolved paths and options, single-use (removed before
+  anything else is checked), refused unconfirmed, declined or after
+  120 s, and dropped with the run. The plan is computed again before the
+  operation runs; a plan that grew is refused and a new token issued. A
+  run nobody started is refused (`notUserInitiated`) unless the script's
+  grant says `destructive: "allow"`, which needs no token. A removal
+  stops if more entries appear than were planned;
+- **writes** go to a temporary file in the target's folder, renamed over
+  the target on commit (with `createOnly`, linked to it, which never
+  replaces an existing file); a folder is never written over. An abort, a
+  revoked grant between chunks, or the end of the run removes the
+  temporary file;
+- **limits**: 4 MiB per file read or written (`maxBytes`, the chunked
+  total), 512 KiB per read and its JSON within the reply cap (text that
+  escapes heavily is read in shorter pieces), at most 4 open chunked
+  writes, 10,000 entries per `list`, 100,000 per removal, 1 GiB copied per
+  run, 128 folders deep.
+
+Tests (temporary folders only; the fixture checks the folder is not inside
+the real home, and a protected "home" inside it stands for the real one):
+`apps/agent/src/plugins/executor/scripts/tests.rs` (load, poll, log,
+sleep, projects, the token's single use, binding, decline, growth, expiry
+and the run nobody started, the audit) and `.../scripts/fs/tests.rs`
+(`scripts_fs_mkdir_*`, `scripts_fs_remove_file_*`,
+`scripts_fs_remove_recursive_*`, `scripts_fs_remove_contents_*`,
+`scripts_fs_protected_*`, `scripts_fs_traversal_*`, `scripts_fs_symlink_*`
+with a thread that swaps a folder for a link to the protected home during
+removals, chunked reads and writes, copy and move, revocation).

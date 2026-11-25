@@ -174,7 +174,7 @@ fn every_decision_is_audited() {
     s.authorize(&stat());
     s.authorize(&run());
     let records = audit.records();
-    let ops: Vec<_> = records.iter().map(|r| (r.op, r.decision.clone())).collect();
+    let ops: Vec<_> = records.iter().map(|r| (r.op, r.decision)).collect();
     assert_eq!(
         ops,
         vec![
