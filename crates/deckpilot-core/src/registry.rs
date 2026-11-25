@@ -89,6 +89,21 @@ pub trait ActionHandler: Send + Sync {
         face
     }
 
+    /// The icon a key running this action shows when neither the user nor
+    /// the action chose one ([`crate::KeyFace::symbol`]), from what its
+    /// target is on this computer: Open shows a folder for a folder and a
+    /// document for a file. `targets` looks at filesystem metadata only and
+    /// is [`crate::NoTargets`] for a module without
+    /// [`Capability::MachineResources`]. `None` (the default): the type's
+    /// icon. Never stored: computed with every face.
+    fn automatic_symbol(
+        &self,
+        _parameters: &ActionParameters,
+        _targets: &dyn crate::TargetKinds,
+    ) -> Option<String> {
+        None
+    }
+
     /// Whether keys running this action show a live [`ButtonState`], and
     /// how often it may be refreshed. `None` (the default): no live state,
     /// and [`ActionHandler::button_state`] is never called.
@@ -344,6 +359,16 @@ impl ActionHandler for AliasHandler {
         }
     }
 
+    fn automatic_symbol(
+        &self,
+        parameters: &ActionParameters,
+        targets: &dyn crate::TargetKinds,
+    ) -> Option<String> {
+        self.translate(parameters)
+            .ok()
+            .and_then(|parameters| self.target.automatic_symbol(&parameters, targets))
+    }
+
     fn state_policy(&self, parameters: &ActionParameters) -> Option<RefreshPolicy> {
         self.target.state_policy(&self.translate(parameters).ok()?)
     }
@@ -526,6 +551,24 @@ impl ActionRegistry {
         let handler = self.handler(action_type)?;
         let project = project.filter(|_| self.allows(action_type, Capability::ProfileRead));
         Some(handler.decorate_face(face, parameters, template, project))
+    }
+
+    /// The automatic icon of a key that runs `action_type`
+    /// ([`ActionHandler::automatic_symbol`]). Modules without
+    /// [`Capability::MachineResources`] are told nothing about this
+    /// computer's targets. `None`: no automatic icon (the type's shows).
+    pub fn automatic_symbol(
+        &self,
+        action_type: &ActionTypeId,
+        parameters: &ActionParameters,
+        targets: &dyn crate::TargetKinds,
+    ) -> Option<String> {
+        let handler = self.handler(action_type)?;
+        if self.allows(action_type, Capability::MachineResources) {
+            handler.automatic_symbol(parameters, targets)
+        } else {
+            handler.automatic_symbol(parameters, &crate::NoTargets)
+        }
     }
 
     /// The refresh policy of `action_type`'s live state, if it has one.
