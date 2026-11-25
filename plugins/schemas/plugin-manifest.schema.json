@@ -505,7 +505,7 @@
         "id": { "$ref": "#/$defs/navigationId" },
         "kind": {
           "enum": ["variables", "actions", "settings", "workflows", "projects", "scripts"],
-          "description": "variables: the plugin's variables, live; actions: the Action Library filtered to the plugin; settings: the plugin's configuration page; workflows and projects (plugin API 1.9, first-party bundled plugins with the hostViews permission only): the app's own Workflows and Projects screens, which the plugin activates."
+          "description": "variables: the plugin's variables, live; actions: the Action Library filtered to the plugin; settings: the plugin's configuration page; workflows and projects (plugin API 1.9, first-party bundled plugins with the hostViews permission only): the app's own Workflows and Projects screens, which the plugin activates; scripts (plugin API 1.13, deckpilot.scripts only, with hostViews): the app's Scripts page."
         },
         "context": {
           "enum": ["none", "device", "profile", "device+profile"],

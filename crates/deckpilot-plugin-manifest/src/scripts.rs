@@ -48,6 +48,20 @@ fn usages(m: &Manifest) -> Vec<(String, String)> {
             ));
         }
     }
+    for (index, setting) in m.contributes.settings().iter().enumerate() {
+        if matches!(
+            setting.kind,
+            ParameterKind::Code {
+                language: CodeLanguage::Javascript,
+                ..
+            }
+        ) {
+            found.push((
+                format!("contributes.settings.fields[{index}].kind"),
+                "the `javascript` language".to_owned(),
+            ));
+        }
+    }
     for (index, view) in m.contributes.views().iter().enumerate() {
         if view.kind == ViewKind::Scripts {
             found.push((
@@ -111,6 +125,15 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
         }
     }
     runtime(c, m, scripts_plugin);
+    for (index, view) in m.contributes.views().iter().enumerate() {
+        if view.kind == ViewKind::Scripts && !scripts_plugin {
+            only_scripts(
+                c,
+                format!("contributes.views[{index}].kind"),
+                "the `scripts` view",
+            );
+        }
+    }
     // A `script` parameter names a script the `scripts` permission runs.
     let declared = m.permission(PermissionKind::Scripts).is_some();
     for (a, action) in m.contributes.actions().iter().enumerate() {

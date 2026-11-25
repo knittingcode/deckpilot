@@ -517,7 +517,7 @@ fn host_views(c: &mut Checker, m: &Manifest) {
     } else if declared && !used {
         c.warn(
             "permissions",
-            "`hostViews` grants nothing without a `workflows` or `projects` view, \
+            "`hostViews` grants nothing without a `workflows`, `projects` or `scripts` view, \
              `statusItems` or `dashboardCards`",
         );
     }

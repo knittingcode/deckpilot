@@ -304,6 +304,21 @@ impl GrantScope {
                 })
             }
             (Self::Storage { quota_kb: old }, Self::Storage { quota_kb: new }) => new <= old,
+            // The Scripts bridge's ceiling covers a narrower one.
+            (
+                Self::Scripts {
+                    fs: old_fs,
+                    process: old_process,
+                    shell: old_shell,
+                },
+                Self::Scripts {
+                    fs: new_fs,
+                    process: new_process,
+                    shell: new_shell,
+                },
+            ) => {
+                (!new_fs || *old_fs) && (!new_process || *old_process) && (!new_shell || *old_shell)
+            }
             (
                 Self::Background {
                     min_interval_seconds: old,
@@ -1173,6 +1188,16 @@ mod tests {
     /// per tool and sub-grant, the tiers of the security reviews, and all
     /// of them first-party only.
     #[test]
+    fn a_scripts_ceiling_covers_a_narrower_one_only() {
+        let scope = |fs, process, shell| GrantScope::Scripts { fs, process, shell };
+        assert!(scope(true, true, false).covers(&scope(true, false, false)));
+        assert!(scope(true, true, false).covers(&scope(true, true, false)));
+        assert!(!scope(true, true, false).covers(&scope(true, true, true)));
+        assert!(!scope(false, true, false).covers(&scope(true, false, false)));
+        assert_eq!(scope(false, false, true).tier(), Tier::High);
+    }
+
+    #[test]
     fn the_privileged_kinds_of_1_9_have_the_reviewed_keys_and_tiers() {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/example-manifest.json")).unwrap();
@@ -1194,6 +1219,8 @@ mod tests {
             serde_json::json!({"kind": "hostViews", "justification": "Shows the Projects screen."}),
             serde_json::json!({"kind": "openUrl", "hosts": [], "fromParams": true,
                 "justification": "Opens the links you typed."}),
+            serde_json::json!({"kind": "scripts", "fs": true, "process": true,
+                "justification": "Runs your scripts on this computer."}),
         ]);
         let manifest = Manifest::from_json(&value.to_string()).unwrap();
         let set = GrantSet::from_manifest(&manifest);
@@ -1214,6 +1241,7 @@ mod tests {
             ("projectContext:select", Tier::High),
             ("hostViews", Tier::Low),
             ("openUrl:from-params", Tier::Medium),
+            ("scripts", Tier::High),
         ]
         .into_iter()
         .map(|(k, t)| (k.to_owned(), t))

@@ -94,7 +94,12 @@ fn only_the_scripts_plugin_declares_its_permission_and_runtime() {
     let mut value = scripts();
     value["id"] = json!("deckpilot.other");
     let errors = parse(&value).validate_bundled().unwrap_err();
-    for path in ["permissions[0]", "runtime.limits", "runtime.hostCalls"] {
+    for path in [
+        "permissions[0]",
+        "runtime.limits",
+        "runtime.hostCalls",
+        "contributes.views[0].kind",
+    ] {
         assert!(
             errors.has(path, IssueCode::InvalidValue),
             "{path}: {errors}"
@@ -182,4 +187,20 @@ fn a_manifest_without_them_validates_as_before() {
         serde_json::from_str(include_str!("fixtures/example-manifest.json")).unwrap();
     assert!(schema_ok(&example));
     parse(&example).validate().unwrap();
+}
+
+#[test]
+fn a_javascript_setting_needs_plugin_api_1_13() {
+    let mut example: Value =
+        serde_json::from_str(include_str!("fixtures/example-manifest.json")).unwrap();
+    example["contributes"]["settings"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            json!({"key": "snippet", "label": "Snippet", "required": false,
+                     "kind": {"type": "code", "language": "javascript"},
+                     "portability": "portable"}),
+        );
+    let errors = parse(&example).validate().unwrap_err();
+    assert!(errors.to_string().contains("^1.13"), "{errors}");
 }

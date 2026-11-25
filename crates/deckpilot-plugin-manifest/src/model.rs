@@ -239,10 +239,12 @@ pub enum ProfileScope {
 
 /// One declared permission (architecture section 5.2).
 ///
-/// Only these kinds exist in plugin API 1. File system, process execution
-/// or inspection, clipboard, raw device access, workflow triggering and
-/// custom UI are never grantable, so they have no variant: a manifest that
-/// names them does not parse.
+/// Only these kinds exist in plugin API 1. General file system, process
+/// execution or inspection, clipboard, raw device access, workflow
+/// triggering and custom UI are never grantable, so they have no variant:
+/// a manifest that names them does not parse. The one exception is the
+/// `scripts` ceiling of plugin API 1.13, for `deckpilot.scripts` only,
+/// whose file and process operations each script's own grant decides.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Permission {
