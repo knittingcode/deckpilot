@@ -17,16 +17,32 @@
 use std::path::{Component, Path, PathBuf};
 
 /// The protected roots of this computer.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct Protected {
     roots: Vec<PathBuf>,
     private: Vec<PathBuf>,
     /// The file identities of the private folders, and of every folder
-    /// holding one: a folder reached under another name (a firmlink such
-    /// as `/System/Volumes/Data`, a bind mount, a share of this computer)
-    /// is still recognized (re-check of #469).
-    private_ids: Vec<FileId>,
-    holder_ids: Vec<FileId>,
+    /// holding one, so a folder reached under another name (a firmlink
+    /// such as `/System/Volumes/Data`, a bind mount, a share of this
+    /// computer) is still recognized. Learned when each folder is first
+    /// seen, so one made after the agent started counts too (P7 blocker
+    /// 4 of #469).
+    known: std::sync::Mutex<std::collections::HashMap<PathBuf, (FileId, Vec<FileId>)>>,
+}
+
+impl Clone for Protected {
+    fn clone(&self) -> Self {
+        Self {
+            roots: self.roots.clone(),
+            private: self.private.clone(),
+            known: std::sync::Mutex::new(
+                self.known
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ),
+        }
+    }
 }
 
 /// A folder's identity: its volume (`dev`, the volume serial on Windows)
@@ -37,6 +53,11 @@ pub(crate) type FileId = (u64, u64);
 /// The identity of the folder at `path` (following links), if it is one.
 pub(crate) fn folder_id(path: &Path) -> Option<FileId> {
     let dir = cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority()).ok()?;
+    handle_id(&dir)
+}
+
+/// The identity of an open folder.
+pub(crate) fn handle_id(dir: &cap_std::fs::Dir) -> Option<FileId> {
     let meta = dir.dir_metadata().ok()?;
     let id = (
         cap_fs_ext::MetadataExt::dev(&meta),
@@ -233,11 +254,6 @@ impl Protected {
     pub fn with_private(mut self, private: impl IntoIterator<Item = PathBuf>) -> Self {
         for root in private {
             if let Ok(real) = canonical(&root) {
-                if let Some(id) = folder_id(&real) {
-                    self.private_ids.push(id);
-                    self.holder_ids
-                        .extend(real.ancestors().skip(1).filter_map(folder_id));
-                }
                 self.private.push(real);
             }
             self.private.push(simplify(root));
@@ -245,11 +261,76 @@ impl Protected {
         self
     }
 
+    /// The identities of the private folders that exist now, and of the
+    /// folders holding them.
+    fn identities(&self) -> (Vec<FileId>, Vec<FileId>) {
+        let mut known = self
+            .known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for path in &self.private {
+            if known.contains_key(path) {
+                continue;
+            }
+            if let Some(id) = folder_id(path) {
+                let holders = canonical(path)
+                    .map(|real| real.ancestors().skip(1).filter_map(folder_id).collect())
+                    .unwrap_or_default();
+                known.insert(path.clone(), (id, holders));
+            }
+        }
+        let private = known.values().map(|(id, _)| *id).collect();
+        let holders = known
+            .values()
+            .flat_map(|(_, h)| h.iter().copied())
+            .collect();
+        (private, holders)
+    }
+
+    /// Whether the open folder `dir` is a private folder (or, with
+    /// `holding`, holds one).
+    pub fn forbids_handle(&self, dir: &cap_std::fs::Dir, holding: bool) -> bool {
+        let Some(id) = handle_id(dir) else {
+            return false;
+        };
+        let (private, holders) = self.identities();
+        private.contains(&id) || (holding && holders.contains(&id))
+    }
+
+    /// Whether the open folder `dir`, or a folder above it (walked up
+    /// through its own `..`, handle by handle), is a private folder.
+    pub fn forbids_above(&self, dir: &cap_std::fs::Dir) -> bool {
+        let (private, _) = self.identities();
+        if private.is_empty() {
+            return false;
+        }
+        let Ok(mut current) = dir.try_clone() else {
+            return true;
+        };
+        for _ in 0..256 {
+            let Some(id) = handle_id(&current) else {
+                return false;
+            };
+            if private.contains(&id) {
+                return true;
+            }
+            let Ok(parent) = current.open_parent_dir(cap_std::ambient_authority()) else {
+                return false;
+            };
+            if handle_id(&parent) == Some(id) {
+                return false;
+            }
+            current = parent;
+        }
+        true
+    }
+
     /// [`Protected::forbids`] by identity: `target` (or, when it does not
     /// exist, the nearest folder above it that does), or a folder above
     /// it, is a private folder; or `target` itself holds one.
     pub fn forbids_identity(&self, target: &Path) -> bool {
-        if self.private_ids.is_empty() {
+        let (private, holders) = self.identities();
+        if private.is_empty() {
             return false;
         }
         let mut path = target.to_path_buf();
@@ -263,12 +344,12 @@ impl Protected {
                 return false;
             }
         };
-        if exists && folder_id(&real).is_some_and(|id| self.holder_ids.contains(&id)) {
+        if exists && folder_id(&real).is_some_and(|id| holders.contains(&id)) {
             return true;
         }
         real.ancestors()
             .filter_map(folder_id)
-            .any(|id| self.private_ids.contains(&id))
+            .any(|id| private.contains(&id))
     }
 
     /// Whether any operation on `target` (or what it holds) would touch a

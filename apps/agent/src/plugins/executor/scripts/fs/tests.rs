@@ -1393,6 +1393,25 @@ fn scripts_fs_shares_of_this_computer_are_refused() {
     assert!(local("fileserver", "C$"));
     assert!(local("fileserver", "ADMIN$"));
     assert!(!local("fileserver", "projects"));
+    // P7 blocker 3 of #469: every other spelling of this computer.
+    for server in [
+        "0.0.0.0",
+        "2130706433",
+        "0x7f000001",
+        "10.0.0.5",
+        "192.168.1.20",
+        "fe80--1.ipv6-literal.net",
+        "localhost.",
+        "::1",
+    ] {
+        assert!(local(server, "projects"), "{server}");
+    }
+    if let Ok(name) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
+        assert!(local(&name, "projects"));
+        assert!(local(&format!("{name}.local"), "projects"));
+        assert!(local(&format!("{name}."), "projects"));
+    }
+    assert!(!local("files.example.com", "projects"));
 }
 
 /// A repository folder in Windows' verbatim form (`\\?\C:\…`, what
@@ -1432,4 +1451,41 @@ fn scripts_fs_a_verbatim_repository_folder_resolves() {
         ),
     );
     assert_eq!(code(&r), "protectedPath");
+}
+
+#[test]
+fn scripts_fs_a_private_folder_made_after_the_start_is_known() {
+    use super::protected::Protected;
+    let f = Fixture::new();
+    let data = f.path("later");
+    let p = Protected::default().with_private([data.clone()]);
+    std::fs::create_dir_all(&data).unwrap();
+    let dir = cap_std::fs::Dir::open_ambient_dir(&data, cap_std::ambient_authority()).unwrap();
+    assert!(p.forbids_handle(&dir, false));
+    assert!(p.forbids_above(&dir));
+    let root = cap_std::fs::Dir::open_ambient_dir(&f.root, cap_std::ambient_authority()).unwrap();
+    assert!(p.forbids_handle(&root, true), "holds it");
+    assert!(!p.forbids_handle(&root, false));
+}
+
+/// The private folder reached through this computer's own share: refused
+/// by its identity whatever the text says (needs the administrative share
+/// the CI runner has).
+#[cfg(windows)]
+#[test]
+fn scripts_fs_a_private_folder_through_localhost_is_refused_by_identity() {
+    use super::protected::Protected;
+    let f = Fixture::new();
+    let data = f.path("appdata");
+    std::fs::create_dir_all(&data).unwrap();
+    let p = Protected::default().with_private([data.clone()]);
+    let text = data.to_string_lossy().into_owned();
+    let (drive, rest) = text.split_at(2);
+    let unc = std::path::PathBuf::from(format!(r"\\localhost\{}${rest}", &drive[..1]));
+    if cap_std::fs::Dir::open_ambient_dir(&unc, cap_std::ambient_authority()).is_err() {
+        eprintln!("no administrative share here; skipped");
+        return;
+    }
+    assert!(!p.forbids(&unc), "the text does not match");
+    assert!(p.forbids_identity(&unc), "the identity does");
 }

@@ -74,6 +74,63 @@ const MAX_DEPTH: usize = 48;
 /// envelope).
 const READ_REPLY_ROOM: usize = (1 << 20) - 4096;
 
+thread_local! {
+    /// The protected folders of the call this thread carries out (set by
+    /// [`Guard::enter`] for the call's duration).
+    static GUARD: std::cell::RefCell<Option<std::sync::Arc<protected::Protected>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The protected folders of one call, for the checks made on the open
+/// handles themselves (P7 blocker 1 of #469: no window between a check by
+/// path and the handle used).
+pub(crate) struct Guard;
+
+impl Guard {
+    pub fn enter(protected: std::sync::Arc<protected::Protected>) -> Self {
+        GUARD.with(|g| *g.borrow_mut() = Some(protected));
+        Self
+    }
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        GUARD.with(|g| *g.borrow_mut() = None);
+    }
+}
+
+/// Refuses an open folder that is one of DeckPilot's private folders (or,
+/// with `holding`, holds one), by its identity. Without a call's guard
+/// nothing is allowed.
+pub(crate) fn check_handle(dir: &Dir, holding: bool, shown: &str) -> Result<(), ScriptFault> {
+    let refused = GUARD.with(|g| {
+        g.borrow()
+            .as_ref()
+            .is_none_or(|p| p.forbids_handle(dir, holding))
+    });
+    if refused {
+        Err(fault(
+            codes::PROTECTED_PATH,
+            format!(
+                "“{shown}” is or holds one of DeckPilot's own folders, never read or changed by scripts"
+            ),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Opens `names` below `dir`, each a folder (a relative link inside it
+/// may be followed, never out of it), each checked by its identity.
+pub(crate) fn open_follow(dir: &Dir, names: &[String], shown: &str) -> Result<Dir, ScriptFault> {
+    let mut current = dir.try_clone().map_err(|e| failure(&e, shown))?;
+    for name in names {
+        current = current.open_dir(name).map_err(|e| failure(&e, shown))?;
+        check_handle(&current, false, shown)?;
+    }
+    Ok(current)
+}
+
 /// Whether a name is `.git` (OD-6), as the file system compares it.
 fn is_git(name: &str) -> bool {
     name.eq_ignore_ascii_case(".git")
@@ -110,6 +167,7 @@ pub(super) fn call(
     notes: &mut Notes,
 ) -> Result<Value, ScriptFault> {
     use CapabilityRequest as R;
+    let _guard = Guard::enter(call.run.protected.clone());
     let project = project(call)?;
     let fs = Fs {
         call,
@@ -171,6 +229,7 @@ fn open_nofollow(dir: &Dir, names: &[String], shown: &str) -> Result<Dir, Script
                 )
             }
         })?;
+        check_handle(&current, false, shown)?;
     }
     Ok(current)
 }
@@ -317,6 +376,7 @@ fn plan_dir(
             let sub = dir
                 .open_dir_nofollow(entry.file_name())
                 .map_err(|e| failure(&e, &path))?;
+            check_handle(&sub, false, &path)?;
             plan_dir(&sub, &path, &[], false, plan, depth + 1)?;
         } else {
             plan.count(path, false, meta.len(), identity(&meta))?;
@@ -363,6 +423,7 @@ fn empty_dir(
             let sub = dir
                 .open_dir_nofollow(&name)
                 .map_err(|e| failure(&e, &shown))?;
+            check_handle(&sub, false, &shown)?;
             empty_dir(&sub, &[], false, budget, depth + 1)?;
             // Closed first: Windows removes no folder that is open.
             drop(sub);
@@ -386,6 +447,9 @@ fn plan_entry(parent: &Dir, name: &str, shown: &str) -> Result<(Plan, bool), Scr
         let dir = parent
             .open_dir_nofollow(name)
             .map_err(|e| failure(&e, shown))?;
+        // Removing or replacing it as a whole: never one that holds a
+        // private folder.
+        check_handle(&dir, true, shown)?;
         plan_dir(&dir, "", &[], false, &mut plan, 0)?;
         plan.count(String::new(), true, 0, identity(&meta))?;
         plan.sample.retain(|s| !s.is_empty());
@@ -402,6 +466,7 @@ fn remove_entry(parent: &Dir, name: &str, dir: bool, mut budget: u64) -> Result<
         let sub = parent
             .open_dir_nofollow(name)
             .map_err(|e| failure(&e, name))?;
+        check_handle(&sub, true, name)?;
         empty_dir(&sub, &[], false, &mut budget, 0)?;
         drop(sub);
         parent.remove_dir(name).map_err(|e| failure(&e, name))
@@ -554,20 +619,30 @@ impl Fs<'_> {
 
     fn exists(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let t = self.resolve(path, FsAccess::Read, notes)?;
-        let exists = match t.root.symlink_metadata(t.rel_path()) {
-            Ok(_) => true,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(failure(&e, &t.shown())),
+        let exists = match t.rel.split_last() {
+            None => true,
+            Some((last, parents)) => match open_follow(&t.root, parents, &t.shown()) {
+                Ok(parent) => match parent.symlink_metadata(last) {
+                    Ok(_) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                    Err(e) => return Err(failure(&e, &t.shown())),
+                },
+                Err(f) if f.code == codes::NOT_FOUND => false,
+                Err(f) => return Err(f),
+            },
         };
         Ok(json!({ "exists": exists }))
     }
 
     fn stat(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let t = self.resolve(path, FsAccess::Read, notes)?;
-        let meta = if t.rel.is_empty() {
-            t.root.dir_metadata()
-        } else {
-            t.root.symlink_metadata(t.rel_path())
+        let meta = match t.rel.split_last() {
+            None => t.root.dir_metadata(),
+            Some((last, parents)) => match open_follow(&t.root, parents, &t.shown()) {
+                Ok(parent) => parent.symlink_metadata(last),
+                Err(f) if f.code == codes::NOT_FOUND => return Ok(json!({ "stat": null })),
+                Err(f) => return Err(f),
+            },
         };
         let stat = match meta {
             Ok(meta) => Some(FsStat {
@@ -583,12 +658,8 @@ impl Fs<'_> {
 
     fn list(&self, path: &PathArg, notes: &mut Notes) -> Result<Value, ScriptFault> {
         let t = self.resolve(path, FsAccess::Read, notes)?;
-        let dir = if t.rel.is_empty() {
-            t.root.try_clone()
-        } else {
-            t.root.open_dir(t.rel_path())
-        }
-        .map_err(|e| failure(&e, &t.shown()))?;
+        let dir = open_follow(&t.root, &t.rel, &t.shown())?;
+        check_handle(&dir, true, &t.shown())?;
         let mut entries = Vec::new();
         let mut bytes = 0usize;
         for entry in dir.entries().map_err(|e| failure(&e, &t.shown()))? {
@@ -659,9 +730,13 @@ impl Fs<'_> {
         let mut options = OpenOptions::new();
         options.read(true);
         nonblocking(&mut options);
-        let mut file = t
-            .root
-            .open_with(t.rel_path(), &options)
+        let (last, parents) = t
+            .rel
+            .split_last()
+            .ok_or_else(|| fault(codes::INVALID_ARGUMENT, format!("“{shown}” is not a file")))?;
+        let parent = open_follow(&t.root, parents, &shown)?;
+        let mut file = parent
+            .open_with(last, &options)
             .map_err(|e| failure(&e, &shown))?;
         let meta = file.metadata().map_err(|e| failure(&e, &shown))?;
         if !meta.is_file() {
@@ -925,6 +1000,7 @@ impl Fs<'_> {
         let t = self.resolve(&r.path, need, notes)?;
         self.may_destroy(&t, true)?;
         let dir = open_nofollow(&t.root, &t.rel, &t.shown())?;
+        check_handle(&dir, true, &t.shown())?;
         let mut keep = r.keep.clone();
         keep.sort();
         keep.dedup();
@@ -1165,6 +1241,7 @@ fn links_stay(
         }
     } else if meta.is_dir() {
         let sub = dir.open_dir_nofollow(name).map_err(|e| failure(&e, name))?;
+        check_handle(&sub, false, name)?;
         let mut inside = at.to_vec();
         inside.push(as_name.to_owned());
         for entry in sub.entries().map_err(|e| failure(&e, name))? {
@@ -1262,6 +1339,8 @@ fn copy_entry(
         dst.create_dir(to).map_err(|e| failure(&e, to))?;
         let from = src.open_dir_nofollow(name).map_err(|e| failure(&e, name))?;
         let into = dst.open_dir_nofollow(to).map_err(|e| failure(&e, to))?;
+        check_handle(&from, false, name)?;
+        check_handle(&into, false, to)?;
         let mut inside = at.to_vec();
         inside.push(to.to_owned());
         for entry in from.entries().map_err(|e| failure(&e, name))? {
@@ -1425,19 +1504,12 @@ impl Pending {
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     Err(fault(codes::EXISTS, format!("“{}” exists", self.name)))
                 }
-                // A volume without hard links (FAT, some shares): checked,
-                // then renamed (a file made in between is replaced).
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::Unsupported | std::io::ErrorKind::PermissionDenied
-                    ) && self.parent.symlink_metadata(&self.name).is_err() =>
-                {
-                    self.parent
-                        .rename(&self.temp, &self.parent, &self.name)
-                        .map_err(|e| failure(&e, &self.name))
-                }
-                Err(e) => Err(failure(&e, &self.name)),
+                // A volume without hard links (FAT, exFAT, some shares):
+                // the target is created exclusively and the content copied
+                // into it. Never a check then a rename, so nothing made
+                // meanwhile is replaced (P7 blocker 2 of #469); the content
+                // is not atomic there.
+                Err(_) => self.copy_exclusively(),
             }
         } else {
             self.parent
@@ -1447,6 +1519,31 @@ impl Pending {
         let _ = self.parent.remove_file(&self.temp);
         self.temp.clear();
         result
+    }
+
+    /// Creates the target exclusively (`O_EXCL`, `CREATE_NEW`) and copies
+    /// the written content into it.
+    fn copy_exclusively(&self) -> Result<(), ScriptFault> {
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let mut out = match self.parent.open_with(&self.name, &options) {
+            Ok(out) => out,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(fault(codes::EXISTS, format!("“{}” exists", self.name)));
+            }
+            Err(e) => return Err(failure(&e, &self.name)),
+        };
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let mut input = self
+            .parent
+            .open_with(&self.temp, &options)
+            .map_err(|e| failure(&e, &self.name))?;
+        std::io::copy(&mut input, &mut out).map_err(|e| failure(&e, &self.name))?;
+        out.sync_all().map_err(|e| failure(&e, &self.name))
     }
 
     fn abort(mut self) {

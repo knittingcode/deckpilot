@@ -770,6 +770,9 @@ fn cwd(
             )?,
         },
     };
+    // Every folder of the way, by its identity on the handle.
+    let _guard = super::fs::Guard::enter(call.run.protected.clone());
+    super::fs::open_follow(&target.root, &target.rel, &target.shown())?;
     let real = canonical(&target.absolute()).map_err(|_| {
         fault(
             codes::NOT_FOUND,
