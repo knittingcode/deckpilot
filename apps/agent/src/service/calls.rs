@@ -242,6 +242,9 @@ struct Service {
     /// Models whose managed layout is loaded, or that have none (no
     /// template, or an error that does not pass).
     seeded: BTreeSet<DeviceModelId>,
+    /// The saved per-device overlay settings were read from the store
+    /// ([`OVERLAY_SETTING`]).
+    overlay_loaded: bool,
     /// Models to be tried again once the database is free.
     retries: BTreeMap<DeviceModelId, SeedRetry>,
     /// The consent the user gave (from the plugin's grants).
@@ -287,6 +290,45 @@ pub(crate) struct AgentCalls {
     /// Test hooks: how often a managed layout was stored or tried.
     #[cfg(feature = "test-hooks")]
     seed_attempts: u64,
+}
+
+/// The `settings` key of the per-device overlay settings: a JSON array of
+/// `{"device": {"model", "serial"}, "on"}`, only the settings the user made.
+/// Machine-local (device serials): of the `settings` table an export carries
+/// only the update preferences, never this key.
+pub(crate) const OVERLAY_SETTING: &str = "calls.overlay.devices";
+
+/// Most saved per-device settings: the first 64 by device id (model, then
+/// serial) are kept, the rest dropped (devices rarely change, so this only
+/// bounds a damaged or hostile value).
+const MAX_OVERLAY_SETTINGS: usize = 64;
+
+/// The saved settings in `text`; anything that does not parse is left
+/// out (the default applies), never an error.
+fn overlay_settings_of(text: &str) -> Vec<(DeviceId, bool)> {
+    let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(text) else {
+        warn!("the saved Calls overlay settings do not parse; the defaults apply");
+        return Vec::new();
+    };
+    values
+        .into_iter()
+        .filter_map(|v| {
+            let device: DeviceId = serde_json::from_value(v.get("device")?.clone()).ok()?;
+            let on = v.get("on")?.as_bool()?;
+            (!device.serial.is_empty() && device.serial.len() <= deckpilot_ipc::calls::MAX_SERIAL)
+                .then_some((device, on))
+        })
+        .take(MAX_OVERLAY_SETTINGS)
+        .collect()
+}
+
+fn overlay_settings_text(settings: &BTreeMap<DeviceId, bool>) -> String {
+    let saved: Vec<serde_json::Value> = settings
+        .iter()
+        .take(MAX_OVERLAY_SETTINGS)
+        .map(|(device, on)| serde_json::json!({"device": device, "on": on}))
+        .collect();
+    serde_json::Value::Array(saved).to_string()
 }
 
 fn not_installed() -> deckpilot_ipc::IpcError {
@@ -359,6 +401,7 @@ impl Agent {
             origin: self.runtime.folder_clock(),
             templates,
             seeded: BTreeSet::new(),
+            overlay_loaded: false,
             retries: BTreeMap::new(),
             consent,
         }));
@@ -487,10 +530,52 @@ impl Agent {
         loaded
     }
 
+    /// Reads the saved per-device overlay settings into the driver, once,
+    /// as soon as the store is open. A setting the user changed meanwhile
+    /// wins over the saved one.
+    fn calls_load_overlay_settings(&mut self) {
+        let Some(service) = self.calls.service.as_mut() else {
+            return;
+        };
+        if service.overlay_loaded {
+            return;
+        }
+        let Some(store) = self.store.as_ref() else {
+            return;
+        };
+        service.overlay_loaded = true;
+        let saved = match deckpilot_storage::ConfigStore::setting(store, OVERLAY_SETTING) {
+            Ok(Some(text)) => overlay_settings_of(&text),
+            Ok(None) => return,
+            Err(error) => {
+                warn!(%error, "the saved Calls overlay settings could not be read");
+                return;
+            }
+        };
+        service.driver.load_device_settings(saved);
+    }
+
+    /// Saves every per-device overlay setting the user made (machine-local:
+    /// the `settings` table, of which an export carries only the update
+    /// preferences).
+    fn calls_save_overlay_settings(&mut self) {
+        let (Some(service), Some(store)) = (self.calls.service.as_ref(), self.store.as_ref())
+        else {
+            return;
+        };
+        let text = overlay_settings_text(service.driver.device_settings());
+        if let Err(error) =
+            deckpilot_storage::ConfigStore::set_setting(store, OVERLAY_SETTING, &text)
+        {
+            warn!(%error, "the Calls overlay setting could not be saved; it holds until the agent restarts");
+        }
+    }
+
     /// Handles what is due and says how long until Calls next has to be
     /// looked at (`None`: Calls is not installed).
     pub(super) fn calls_wake(&mut self) -> Option<Duration> {
         let now = self.calls_now()?;
+        self.calls_load_overlay_settings();
         if self.calls_seed_connected()
             && let Some(service) = self.calls.service.as_mut()
         {
@@ -948,10 +1033,13 @@ impl Agent {
         if !self.runtime.devices().connected().any(|d| d == device) {
             return Err(unknown_device());
         }
+        // Saved settings first, so the one saved now keeps the others.
+        self.calls_load_overlay_settings();
         let service = self.calls.service.as_mut().ok_or_else(not_installed)?;
         service
             .driver
             .set_device_enabled(&mut self.runtime, device, on, now);
+        self.calls_save_overlay_settings();
         self.render_all();
         self.calls_publish();
         Ok(deckpilot_ipc::Response::CallsStatus {
@@ -1223,6 +1311,41 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The saved overlay settings round-trip, and anything damaged is left
+    /// out instead of failing (the default applies).
+    #[test]
+    fn saved_overlay_settings_round_trip_and_tolerate_damage() {
+        let device = |serial: &str| DeviceId {
+            model: DeviceModelId::new("elgato.mk2"),
+            serial: serial.into(),
+        };
+        let settings = BTreeMap::from([(device("A1"), false), (device("B2"), true)]);
+        let text = overlay_settings_text(&settings);
+        assert_eq!(
+            overlay_settings_of(&text),
+            vec![(device("A1"), false), (device("B2"), true)]
+        );
+        assert_eq!(overlay_settings_of("not json"), Vec::new());
+        let long = "x".repeat(deckpilot_ipc::calls::MAX_SERIAL + 1);
+        let damaged = serde_json::json!([
+            {"device": {"model": "elgato.mk2", "serial": "A1"}, "on": false},
+            {"device": {"model": "elgato.mk2", "serial": ""}, "on": false},
+            {"device": {"model": "elgato.mk2", "serial": long}, "on": false},
+            {"device": {"model": "elgato.mk2", "serial": "C3"}, "on": "no"},
+            {"on": true},
+            7,
+        ])
+        .to_string();
+        assert_eq!(overlay_settings_of(&damaged), vec![(device("A1"), false)]);
+        let many: String = serde_json::Value::Array(
+            (0..100)
+                .map(|n| serde_json::json!({"device": {"model": "elgato.mk2", "serial": format!("S{n}")}, "on": false}))
+                .collect(),
+        )
+        .to_string();
+        assert_eq!(overlay_settings_of(&many).len(), MAX_OVERLAY_SETTINGS);
+    }
 
     #[test]
     fn a_detached_runs_end_counts_as_it_ended() {

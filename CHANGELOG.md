@@ -248,6 +248,9 @@ released either. 0.6.0 is the first version intended for publication.
   or duplicated one is never trusted and never runs until reviewed. A
   script can never be granted a container runtime (Docker, Podman and
   the like) in this version.
+- Calls (groundwork): the per-device "show calls on this device" setting
+  survives a restart of DeckPilot. It is kept on this computer only, and
+  no export includes it.
 
 ### Changed
 
