@@ -241,6 +241,12 @@ pub(crate) enum Command {
         edit: calls::CallsMockEdit,
         reply: oneshot::Sender<()>,
     },
+    /// The next seeds of a managed layout fail as if busy (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsFailSeeds {
+        count: u32,
+        reply: oneshot::Sender<()>,
+    },
     /// What Calls shows (tests).
     #[cfg(feature = "test-hooks")]
     CallsView {
@@ -536,6 +542,20 @@ impl AgentHandle {
                 edit: calls::CallsMockEdit(Box::new(edit)),
                 reply,
             })
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    /// The next `count` seeds of a managed Calls layout fail as if another
+    /// connection held the database (tests).
+    #[cfg(feature = "test-hooks")]
+    pub async fn calls_fail_seeds(&self, count: u32) {
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::CallsFailSeeds { count, reply })
             .is_ok()
         {
             let _ = done.await;
@@ -1202,6 +1222,12 @@ impl Agent {
             #[cfg(feature = "test-hooks")]
             Command::CallsMock { edit, reply } => {
                 self.calls_edit_mock(edit);
+                let _ = reply.send(());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsFailSeeds { count, reply } => {
+                self.calls_fail_seeds(count);
                 let _ = reply.send(());
                 Flow::Continue
             }

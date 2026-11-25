@@ -1421,6 +1421,7 @@ fn an_observation_at_the_end_instant_is_late() {
     )));
     assert_eq!(h.state(), CallState::Idle);
     assert!(!matches!(h.engine.overlay(), OverlayIntent::Shown { .. }));
+    assert_eq!(h.engine.tracks().len(), 0, "the late one started nothing");
     h.see("a", P::Connected, None);
     assert_eq!(h.state(), CallState::Active, "after the end: a new call");
 }

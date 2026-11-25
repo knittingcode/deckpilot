@@ -38,6 +38,29 @@ use super::Agent;
 /// How often an installed provider is polled at most apart.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// The first wait before a managed layout that could not be stored is
+/// tried again; it doubles up to [`SEED_RETRY_MAX`].
+const SEED_RETRY_FIRST: Duration = Duration::from_secs(1);
+const SEED_RETRY_MAX: Duration = Duration::from_secs(60);
+
+/// A model whose managed layout could not be stored because the database
+/// was busy: when it is tried again (Calls clock), and the wait so far.
+#[derive(Debug, Clone, Copy)]
+struct SeedRetry {
+    not_before: Instant,
+    wait: Duration,
+}
+
+/// Whether `error` may pass by itself (another connection holds the
+/// database): only then is seeding tried again.
+fn passes(error: &deckpilot_storage::StorageError) -> bool {
+    matches!(
+        error,
+        deckpilot_storage::StorageError::Database(rusqlite::Error::SqliteFailure(e, _))
+            if matches!(e.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
 /// A provider, and a way to reach its concrete type (the test hooks
 /// script the mock).
 pub(crate) trait Provider: CallProvider {
@@ -78,8 +101,11 @@ struct Service {
     origin: std::time::Instant,
     /// The templates of the managed layouts (the plugin's).
     templates: Vec<Template>,
-    /// Models whose managed layout is loaded.
+    /// Models whose managed layout is loaded, or that have none (no
+    /// template, or an error that does not pass).
     seeded: BTreeSet<DeviceModelId>,
+    /// Models to be tried again once the database is free.
+    retries: BTreeMap<DeviceModelId, SeedRetry>,
 }
 
 impl std::fmt::Debug for Service {
@@ -108,6 +134,12 @@ pub(crate) struct AgentCalls {
     layouts: Option<Vec<deckpilot_ipc::calls::CallsLayout>>,
     /// How often the layouts were read from the store (test hooks).
     layouts_reads: u64,
+    /// Test hooks: the next seeds fail as if the database were busy.
+    #[cfg(feature = "test-hooks")]
+    fail_seeds: u32,
+    /// Test hooks: how often a managed layout was stored or tried.
+    #[cfg(feature = "test-hooks")]
+    seed_attempts: u64,
 }
 
 fn not_installed() -> deckpilot_ipc::IpcError {
@@ -176,6 +208,7 @@ impl Agent {
             origin: self.runtime.folder_clock(),
             templates,
             seeded: BTreeSet::new(),
+            retries: BTreeMap::new(),
         }));
         self.calls_wake();
     }
@@ -186,6 +219,9 @@ impl Agent {
     /// driver, so the user's edits are what the overlay shows. While the
     /// configuration is locked nothing is seeded; it is tried again.
     fn calls_seed_connected(&mut self) {
+        let Some(now) = self.calls_now() else {
+            return;
+        };
         let Some(service) = self.calls.service.as_mut() else {
             return;
         };
@@ -198,6 +234,8 @@ impl Agent {
             .connected()
             .map(|d| d.model.clone())
             .filter(|m| !service.seeded.contains(m))
+            // Busy before: not before its wait is over.
+            .filter(|m| service.retries.get(m).is_none_or(|r| now >= r.not_before))
             .collect();
         for model_id in models {
             let Some(model) = self.runtime.catalog().get(&model_id) else {
@@ -218,23 +256,69 @@ impl Agent {
                 }
             };
             let version = format!("{}.0.0", template.version);
-            match store
-                .seed_managed_layout(OWNER, &generated.layout, &generated.actions, &version)
-                .and_then(|_| store.managed_layout(OWNER, &model.id))
-            {
+            #[cfg(feature = "test-hooks")]
+            let failed = {
+                self.calls.seed_attempts += 1;
+                (self.calls.fail_seeds > 0).then(|| {
+                    self.calls.fail_seeds -= 1;
+                    deckpilot_storage::StorageError::Database(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                        None,
+                    ))
+                })
+            };
+            #[cfg(not(feature = "test-hooks"))]
+            let failed: Option<deckpilot_storage::StorageError> = None;
+            let stored = match failed {
+                Some(error) => Err(error),
+                None => store
+                    .seed_managed_layout(OWNER, &generated.layout, &generated.actions, &version)
+                    .and_then(|_| store.managed_layout(OWNER, &model.id)),
+            };
+            match stored {
                 Ok(Some(stored)) => {
                     // Seeded: done for this model. The stored layout is
                     // used, found by its own ids (an edited one of an
                     // earlier template version too).
+                    if service.retries.remove(&model_id).is_some() {
+                        info!(model = %model.id, "the Calls layout is stored now");
+                    }
                     service.seeded.insert(model_id.clone());
                     let used = generated.with_stored(stored.layout, stored.actions);
                     service.driver.set_layout(model.id.clone(), used);
                     self.calls.layouts = None;
                 }
-                Ok(None) => {}
-                // Not stored: tried again at the next look.
+                // Seeded, yet not there to read: nothing to show for the
+                // model, and nothing to gain by writing it again.
+                Ok(None) => {
+                    warn!(model = %model.id, "the Calls layout was stored but cannot be read");
+                    service.seeded.insert(model_id.clone());
+                }
+                // The database is busy: tried again later, with a wait that
+                // doubles up to a minute. Logged once per streak.
+                Err(error) if passes(&error) => {
+                    let wait = service
+                        .retries
+                        .get(&model_id)
+                        .map_or(SEED_RETRY_FIRST, |r| (r.wait * 2).min(SEED_RETRY_MAX));
+                    if !service.retries.contains_key(&model_id) {
+                        warn!(model = %model.id, %error, "the Calls layout could not be stored yet; tried again later");
+                    }
+                    service.retries.insert(
+                        model_id.clone(),
+                        SeedRetry {
+                            not_before: now.after(wait),
+                            wait,
+                        },
+                    );
+                }
+                // Anything else does not pass by itself: not tried again
+                // until the next agent start (the overlay is not shown on
+                // the model meanwhile).
                 Err(error) => {
                     warn!(model = %model.id, %error, "the Calls layout could not be stored");
+                    service.retries.remove(&model_id);
+                    service.seeded.insert(model_id.clone());
                 }
             }
         }
@@ -617,6 +701,8 @@ pub struct CallsView {
     pub scheduled_returns: usize,
     /// How often the managed layouts were read from the store for the app.
     pub layouts_reads: u64,
+    /// How often a managed layout was stored or tried.
+    pub seed_attempts: u64,
 }
 
 /// An edit of the installed mock provider (test hooks).
@@ -671,7 +757,14 @@ impl Agent {
             layouts,
             scheduled_returns: self.calls_driver().map_or(0, |d| d.returns().scheduled()),
             layouts_reads: self.calls.layouts_reads,
+            seed_attempts: self.calls.seed_attempts,
         }
+    }
+
+    /// The next `count` seeds of a managed layout fail as if another
+    /// connection held the database.
+    pub(super) fn calls_fail_seeds(&mut self, count: u32) {
+        self.calls.fail_seeds = count;
     }
 
     /// Applies a test edit to the installed mock (with the engine clock's
