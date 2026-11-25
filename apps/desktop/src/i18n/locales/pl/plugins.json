@@ -479,7 +479,8 @@
       "results": "Znalezione repozytoria",
       "summary": "{{path}} ({{id}}) w połączeniu {{connection}} zostanie powiązane.",
       "remoteName": "Nazwa zdalnego repozytorium git",
-      "primary": "Główne zdalne repozytorium"
+      "primary": "Główne zdalne repozytorium",
+      "replaces": "To zastąpi zapisane repozytorium zdalne „{{name}}”."
     }
   }
 }

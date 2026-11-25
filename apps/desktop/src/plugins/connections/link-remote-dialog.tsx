@@ -252,6 +252,12 @@ export function LinkRemoteDialog({
                   setName(e.target.value)
                 }}
               />
+              {remotes.some((r) => r.name === name.trim()) && (
+                // The link takes the place of the stored remote of that name.
+                <p className="text-caption text-muted-foreground" role="note">
+                  {t("plugins:connections.link.replaces", { name: name.trim() })}
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Checkbox

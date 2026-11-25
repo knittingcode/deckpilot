@@ -25,7 +25,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog, FormDialog } from "@/components/dialogs"
@@ -565,6 +565,8 @@ function ProjectForm({
     Object.fromEntries((project?.repositories ?? []).map((r) => [r.id, r.remotes ?? []])),
   )
   const [linked, setLinked] = useState(false)
+  // A save already reloads the page (`onDone`), linked or not.
+  const submitted = useRef(false)
   // The role/key pairs are advanced once a project has repositories.
   const [rolesOpen, setRolesOpen] = useState(initialRepositories.length === 0)
   const initialRows = Object.entries(project?.resources ?? {}).map(([role, resource]) => ({
@@ -640,6 +642,7 @@ function ProjectForm({
         failed.push(`${row.key}: ${failureDetail(e)}`)
       }
     }
+    submitted.current = true
     if (failed.length > 0) {
       toast.error(t("workspace:projects.repositories.bindFailed"), {
         description: failed.join("\n"),
@@ -667,7 +670,10 @@ function ProjectForm({
       canSubmit={Boolean(key.trim()) && rowsValid(repositories)}
       dirty={dirty}
       // A link was written already: the list shows it once the form closes.
-      onClose={linked ? onDone : onClose}
+      onClose={() => {
+        if (linked && !submitted.current) onDone()
+        else onClose()
+      }}
       onSubmit={submit}
       describeError={(e) =>
         e instanceof InvalidInput

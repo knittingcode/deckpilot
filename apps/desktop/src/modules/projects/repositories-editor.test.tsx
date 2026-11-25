@@ -11,7 +11,7 @@ import { proposeKey, rowProblems, type RepositoryRow } from "@/modules/projects/
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { profileView, project } from "@/test/fixtures"
-import { renderWithApp } from "@/test/render"
+import { type AppRender, renderWithApp } from "@/test/render"
 import { resetToasts, toast } from "@/test/toast"
 
 const dialog = vi.hoisted(() => ({ open: vi.fn() }))
@@ -459,6 +459,76 @@ describe("Repositories in the project form", () => {
       expect(screen.queryByRole("dialog", { name: "Edit SHOP" })).toBeNull()
     })
     expect(context.refresh).toHaveBeenCalled()
+  })
+
+  /** Links Online Shop (MAIN) to gl:4711 through the dialog. */
+  async function linkMain(form: HTMLElement, user: AppRender["user"]) {
+    await user.click(
+      within(row(form, "Online Shop")).getByRole("button", { name: "Link remote for Online Shop" }),
+    )
+    const linkDialog = within(
+      await screen.findByRole("dialog", { name: "Link Online Shop to a remote repository" }),
+    )
+    await user.click(await linkDialog.findByRole("radio", { name: "Work GitLab" }))
+    await user.click(linkDialog.getByRole("button", { name: "Find" }))
+    await user.click(await linkDialog.findByRole("button", { name: "shop/main" }))
+    await user.click(linkDialog.getByRole("button", { name: "Link" }))
+    await within(row(form, "Online Shop")).findByText("linked (gl:4711)")
+  }
+
+  it("never sends remotes when the form is saved after a link", async () => {
+    const { form, user, context } = await openEditor()
+    await linkMain(form, user)
+    const name = within(row(form, "CMS")).getByRole("textbox", { name: "Repository name" })
+    await user.type(name, "!")
+    await user.click(within(form).getByRole("button", { name: "Save" }))
+    await waitFor(() => {
+      expect(api.updateProject).toHaveBeenCalledTimes(1)
+    })
+    const sent = api.updateProject.mock.calls[0]?.[2].repositories ?? []
+    expect(sent).toHaveLength(2)
+    for (const repository of sent) expect(repository).not.toHaveProperty("remotes")
+    // Let a second close (if any) run before counting.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // One reload for the save, not a second one for the link.
+    await waitFor(() => {
+      expect(context.refresh).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it("asks before discarding edits made after a link, and reloads", async () => {
+    const { form, user, context } = await openEditor()
+    await linkMain(form, user)
+    const name = within(row(form, "CMS")).getByRole("textbox", { name: "Repository name" })
+    await user.type(name, "!")
+    await user.click(within(form).getByRole("button", { name: "Cancel" }))
+    const ask = within(await screen.findByRole("alertdialog"))
+    expect(context.refresh).not.toHaveBeenCalled()
+    await user.click(ask.getByRole("button", { name: "Discard" }))
+    await waitFor(() => {
+      expect(context.refresh).toHaveBeenCalledTimes(1)
+    })
+    expect(api.updateProject).not.toHaveBeenCalled()
+  })
+
+  it("shows stored remote text without invisible format characters", async () => {
+    const spoofed: Project = {
+      ...shop,
+      repositories: [
+        { id: MAIN, key: "main", name: "Online Shop", resource: "shop.repository" },
+        {
+          id: CMS,
+          key: "cms",
+          name: "CMS",
+          resource: "shop.cms",
+          remotes: [{ name: "origin", remoteUrl: "https://example.com/\u202egnp.cms.git" }],
+        },
+      ],
+    }
+    const { form } = await openEditor([spoofed])
+    expect(
+      within(row(form, "CMS")).getByText("https://example.com/gnp.cms.git"),
+    ).toBeInTheDocument()
   })
 
   it("writes nothing when the Link remote dialog is cancelled", async () => {

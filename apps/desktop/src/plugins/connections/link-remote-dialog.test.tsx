@@ -176,6 +176,27 @@ describe("linking a repository to a remote one", () => {
     expect(choice).toBeEnabled()
   })
 
+  it("says when the link replaces a stored remote of the same name", async () => {
+    const { user } = setup([
+      { name: "origin", primary: true, remoteUrl: "https://old.example.com/a.git" },
+    ])
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Link App to a remote repository" }),
+    )
+    await user.click(await dialog.findByRole("radio", { name: "Work GitLab (code.example.com)" }))
+    await user.click(dialog.getByRole("button", { name: "Find" }))
+    await user.click(await dialog.findByRole("button", { name: "group/app" }))
+    const name = dialog.getByLabelText("Git remote name")
+    expect(dialog.queryByRole("note")).toBeNull()
+    await user.type(name, "origin")
+    expect(dialog.getByRole("note")).toHaveTextContent(
+      "This replaces the remote “origin” stored now.",
+    )
+    await user.clear(name)
+    await user.type(name, "upstream")
+    expect(dialog.queryByRole("note")).toBeNull()
+  })
+
   it("writes nothing when cancelled", async () => {
     const { c, onClose, user } = setup()
     const dialog = within(

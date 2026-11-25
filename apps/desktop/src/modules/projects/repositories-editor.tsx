@@ -192,6 +192,7 @@ export function RepositoriesEditor({
                   // Only a repository the profile has (saved, or the one its
                   // role stands for) can be linked.
                   linkable={link !== null && savedRows.some((r) => r.id === row.id)}
+                  savedName={savedRows.find((r) => r.id === row.id)?.name ?? null}
                   onLink={() => {
                     setLinking(row)
                   }}
@@ -252,6 +253,14 @@ export function RepositoriesEditor({
   )
 }
 
+/**
+ * Stored text as shown: without bidirectional and other invisible format
+ * characters, so a URL from an imported profile cannot read as another.
+ */
+function shown(text: string): string {
+  return text.replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "")
+}
+
 function RepositoryItem({
   row,
   index,
@@ -265,6 +274,7 @@ function RepositoryItem({
   check,
   remotes,
   linkable,
+  savedName,
   onLink,
   onChange,
   onDefault,
@@ -289,6 +299,8 @@ function RepositoryItem({
   remotes: RepositoryRemote[]
   /** Whether it can be linked now (it is saved). */
   linkable: boolean
+  /** Its name as saved: the link is made on the stored repository. */
+  savedName: string | null
   onLink: () => void
   onChange: (patch: Partial<RepositoryRow>) => void
   onDefault: () => void
@@ -500,7 +512,9 @@ function RepositoryItem({
             size="sm"
             disabled={!linkable}
             title={linkable ? undefined : t("workspace:projects.repositories.linkNeedsSave")}
-            aria-label={t("workspace:projects.repositories.linkFor", { name: label })}
+            aria-label={t("workspace:projects.repositories.linkFor", {
+              name: savedName || label,
+            })}
             onClick={onLink}
           >
             <Link2 /> {t("workspace:projects.repositories.link")}
@@ -514,7 +528,7 @@ function RepositoryItem({
           <ul className="grid gap-1 text-xs" aria-labelledby={`${ids}-remotes`}>
             {remotes.map((remote) => (
               <li key={remote.name} className="flex flex-wrap items-baseline gap-x-2">
-                <span className="font-mono font-medium">{remote.name}</span>
+                <span className="font-mono font-medium">{shown(remote.name)}</span>
                 {remote.primary && (
                   <span className="text-muted-foreground">
                     {t("workspace:projects.repositories.primaryRemote")}
@@ -522,13 +536,13 @@ function RepositoryItem({
                 )}
                 {remote.remoteUrl && (
                   <span className="font-mono break-all text-muted-foreground">
-                    {remote.remoteUrl}
+                    {shown(remote.remoteUrl)}
                   </span>
                 )}
                 {remote.connectionId && remote.remoteRepositoryId && (
                   <span className="text-muted-foreground">
                     {t("workspace:projects.repositories.linkedRemote", {
-                      id: remote.remoteRepositoryId,
+                      id: shown(remote.remoteRepositoryId),
                     })}
                   </span>
                 )}

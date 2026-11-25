@@ -457,7 +457,8 @@
       "results": "Repositories found",
       "summary": "{{path}} ({{id}}) on {{connection}} will be linked.",
       "remoteName": "Git remote name",
-      "primary": "The primary remote"
+      "primary": "The primary remote",
+      "replaces": "This replaces the remote “{{name}}” stored now."
     }
   }
 }
