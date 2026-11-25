@@ -381,6 +381,49 @@ fn git_options_that_change_its_programs_are_refused() {
         vec!["clone", "-c", "core.hooksPath=/x", "x"],
         vec!["clone", "ext::sh -c touch% /tmp/x", "y"],
         vec!["archive", "--exec=evil", "--remote=x"],
+        // The security review's bypasses of #472.
+        vec![
+            "clone",
+            "--conf",
+            "core.sshCommand=touch x; false",
+            "ssh://h/x",
+            "d",
+        ],
+        vec!["fetch", "--upload-p=evil", "origin"],
+        vec![
+            "--attr-source",
+            "HEAD",
+            "clone",
+            "-c",
+            "core.sshCommand=x",
+            "a",
+            "b",
+        ],
+        vec!["rebase", "-x", "touch x", "HEAD~1"],
+        vec!["rebase", "--exec=touch x", "HEAD~1"],
+        vec!["config", "alias.x", "!touch x"],
+        vec!["x"],
+        vec!["diff", "--output=/tmp/out"],
+        vec!["diff", "--no-index", "/etc/passwd", "/dev/null"],
+        vec!["submodule", "foreach", "touch x"],
+        vec!["bisect", "run", "touch x"],
+        vec!["difftool", "-x", "touch"],
+        vec!["merge", "-s", "evil", "x"],
+        // The re-review's.
+        vec!["rebase", "-qx", "touch x", "HEAD~1"],
+        vec!["grep", "-Otouch x", "hello"],
+        vec!["grep", "--open-files-in-pager=touch", "hello"],
+        vec!["ls-remote", "--u=touch x", "ssh://h/x"],
+        vec!["blame", "--contents", "/outside/secret", "--", "f"],
+        vec!["commit", "--allow-empty", "-F", "/outside/secret"],
+        vec!["commit", "--file=/outside/secret"],
+        vec!["tag", "-F", "/outside/secret", "v1"],
+        vec!["add", "--pathspec-from-file=/outside/x"],
+        vec!["grep", "-f", "/outside/x"],
+        vec!["ls-files", "--exclude-from=/outside/x"],
+        vec!["pull", "-Xours"],
+        vec!["blame", "--ignore-revs-file=/outside/secret", "f"],
+        vec!["diff", "-O/outside/order"],
     ] {
         assert_eq!(
             code(&call(&mut e, &run("git", &args))),
@@ -419,6 +462,23 @@ fn the_git_denylist_reads_positions() {
     assert!(!git_denied(&v(&["status", "-uall"])));
     assert!(git_denied(&v(&["fetch", "-u", "x"])));
     assert!(git_denied(&v(&["push", "--receive-pack=x"])));
+    assert!(
+        git_denied(&v(&["push", "--receive-p", "x"])),
+        "a prefix git accepts"
+    );
+    assert!(!git_denied(&v(&[
+        "log",
+        "--oneline",
+        "--stat",
+        "--topo-order"
+    ])));
+    assert!(!git_denied(&v(&["branch", "--contains", "HEAD"])));
+    assert!(!git_denied(&v(&["rebase", "--continue"])));
+    assert!(!git_denied(&v(&["diff", "--exit-code"])));
+    assert!(!git_denied(&v(&["pull", "--ff-only"])));
+    assert!(!git_denied(&v(&["grep", "--files-with-matches", "x"])));
+    assert!(!git_denied(&v(&["log", "--exclude=refs/x", "--all"])));
+    assert!(!git_denied(&v(&["diff", "--output-indicator-new=+"])));
 }
 
 #[test]
@@ -473,4 +533,86 @@ fn processes_are_refused_without_the_ceiling() {
         code(&call(&mut e, &run("echoargs", &[]))),
         "call:NotPermitted"
     );
+}
+
+#[test]
+fn the_host_s_git_environment_wins_and_stops_at_the_scope() {
+    let f = Fixture::new();
+    f.project(&[("cms", "w/cms")]);
+    let bin = bin(&f);
+    // A git that prints the variables the host sets.
+    let git = bin.join("git");
+    std::fs::write(
+        &git,
+        "#!/bin/sh\necho \"GCM=$GCM_INTERACTIVE CEIL=$GIT_CEILING_DIRECTORIES PROMPT=$GIT_TERMINAL_PROMPT\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    f.grant(grants(vec![grant(
+        "git",
+        ProcessCwd::Repositories,
+        ProcessEnv::Allowed,
+    )]));
+    let mut e = f.executor(RunContext::direct(RunTrigger::Key)).with_tools(
+        ToolHost::for_test()
+            .with_executable(deckpilot_plugin_abi::privileged::Tool::Git, git)
+            .with_environment(&[("PATH", "/usr/bin:/bin")]),
+    );
+    ok(&call(
+        &mut e,
+        &json!({"op":"script.load","args":{"script": SCRIPT}}),
+    ));
+    let r = call(
+        &mut e,
+        &json!({"op":"process.run","args":{"command":"git","args":["status"],"env":{"GCM_INTERACTIVE":"always"},"cwd":{"repository":"cms","relative":""}}}),
+    );
+    assert_eq!(code(&r), "notGranted", "GCM_* is refused");
+    let r = ok(&call(
+        &mut e,
+        &json!({"op":"process.run","args":{"command":"git","args":["status"],"env":{"CI":"1"},"cwd":{"repository":"cms","relative":""}}}),
+    ));
+    let out = r["stdout"].as_str().unwrap();
+    let parent = super::super::fs::protected::canonical(&f.path("w")).unwrap();
+    assert!(
+        out.contains("GCM=never") && out.contains("PROMPT=0"),
+        "{out}"
+    );
+    assert!(out.contains(&format!("CEIL={}", parent.display())), "{out}");
+}
+
+#[test]
+fn credentials_in_urls_never_reach_the_script() {
+    let (f, bin) = setup(vec![grant(
+        "echoargs",
+        ProcessCwd::Repositories,
+        ProcessEnv::None,
+    )]);
+    let mut e = loaded(&f, &bin);
+    let r = ok(&call(
+        &mut e,
+        &run("echoargs", &["https://me:s3cret@example.com/x.git"]),
+    ));
+    let out = r["stdout"].as_str().unwrap();
+    assert!(!out.contains("s3cret"), "{out}");
+}
+
+#[test]
+fn narrowing_the_grant_mid_run_stops_the_program() {
+    let (f, bin) = setup(vec![grant(
+        "slow",
+        ProcessCwd::Repositories,
+        ProcessEnv::None,
+    )]);
+    let mut e = loaded(&f, &bin);
+    let host = f.host.clone();
+    let narrower = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        let mut grants = host.grants.lock().unwrap();
+        grants.as_mut().unwrap().process[0].env = ProcessEnv::Allowed;
+    });
+    let started = Instant::now();
+    let r = call(&mut e, &run("slow", &[]));
+    narrower.join().unwrap();
+    assert_eq!(code(&r), "notGranted");
+    assert!(started.elapsed() < Duration::from_secs(10));
 }

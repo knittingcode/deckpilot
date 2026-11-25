@@ -94,15 +94,6 @@ pub(crate) struct Target {
 }
 
 impl Target {
-    /// The path below the root, for `cap-std` (`.` for the root).
-    pub fn rel_path(&self) -> PathBuf {
-        if self.rel.is_empty() {
-            PathBuf::from(".")
-        } else {
-            self.rel.iter().collect()
-        }
-    }
-
     /// The target's absolute path (the root's canonical path and the
     /// names); real for an operation that follows no link below the root.
     pub fn absolute(&self) -> PathBuf {
@@ -119,6 +110,45 @@ impl Target {
             format!("{}/{}", self.scope.label, self.rel.join("/"))
         }
     }
+}
+
+/// A UNC share of this computer: `localhost`, a loopback address, its own
+/// name, or an administrative share (`C$`, `ADMIN$`).
+pub(crate) fn is_local_share(server: &std::ffi::OsStr, share: &std::ffi::OsStr) -> bool {
+    let server = server.to_string_lossy().to_ascii_lowercase();
+    let server = server.trim_end_matches('.');
+    let share = share.to_string_lossy();
+    // This computer's own names: its NetBIOS name, its DNS host name with
+    // or without its domain, its `.local` name.
+    let own_names: Vec<String> = ["COMPUTERNAME", "HOSTNAME"]
+        .iter()
+        .filter_map(|var| std::env::var(var).ok())
+        .map(|name| name.to_ascii_lowercase())
+        .collect();
+    let domain = std::env::var("USERDNSDOMAIN")
+        .ok()
+        .map(|d| d.to_ascii_lowercase());
+    let own = own_names.iter().any(|name| {
+        server == name
+            || server == format!("{name}.local")
+            || domain
+                .as_ref()
+                .is_some_and(|d| server == format!("{name}.{d}"))
+    });
+    // An address of any kind is never a share's server: this computer's
+    // own (loopback, `0.0.0.0`, its LAN addresses, a number like
+    // `2130706433`) cannot be told from another's by its text.
+    let address = server.parse::<std::net::IpAddr>().is_ok()
+        || (server.bytes().next().is_some_and(|b| b.is_ascii_digit())
+            && server
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() || b == b'.' || b == b'x'))
+        || server.ends_with(".ipv6-literal.net")
+        || server.contains(':');
+    own || address
+        || share.ends_with('$')
+        || matches!(server, "localhost" | "." | "?" | "")
+        || server.ends_with(".localhost")
 }
 
 /// Windows names that are devices whatever the folder.
@@ -216,8 +246,14 @@ fn absolute(path: &str) -> Result<PathBuf, ScriptFault> {
                 use std::path::Prefix;
                 match prefix.kind() {
                     Prefix::Disk(_) => {}
-                    // A share needs its server and its name.
-                    Prefix::UNC(server, share) if !server.is_empty() && !share.is_empty() => {}
+                    // A share needs its server and its name, and is never
+                    // one of this computer's own (an administrative `C$`
+                    // share or `localhost`): the same folders under
+                    // another name.
+                    Prefix::UNC(server, share)
+                        if !server.is_empty()
+                            && !share.is_empty()
+                            && !is_local_share(server, share) => {}
                     _ => return Err(invalid()),
                 }
                 out.push(component);
@@ -333,7 +369,7 @@ pub(crate) fn resolve(
             "DeckPilot's own folders are never read or changed by scripts",
         )
     };
-    if protected.forbids(&candidate) {
+    if protected.forbids(&candidate) || protected.forbids_identity(&candidate) {
         return Err(private());
     }
     // Where a link inside the scope leads (a read may follow one).
@@ -346,6 +382,10 @@ pub(crate) fn resolve(
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
     let root = open_root(&scope)?;
+    // The open root, and every folder above it, by identity.
+    if protected.forbids_above(&root) {
+        return Err(private());
+    }
     Ok(Target { scope, rel, root })
 }
 

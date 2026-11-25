@@ -60,51 +60,184 @@ const MAX_STREAM: usize = 512 << 10;
 /// the envelope).
 const REPLY_ROOM: usize = (1 << 20) - 4096;
 
-/// git's global options (before the subcommand) a script may not pass
-/// without `unrestrictedArgs`: they set configuration or point git at
-/// another repository, work tree or set of programs. `-c` and `-C` are
-/// refused in every spelling there.
-const GIT_GLOBAL_DENIED: &[&str] = &[
-    "--config-env",
-    "--exec-path",
-    "--git-dir",
-    "--work-tree",
-    "--namespace",
-    "--super-prefix",
-    "--list-cmds",
+/// The git subcommands a script may run without `unrestrictedArgs`
+/// (OD-8, security review of #472): working in the repository the run is
+/// in. Never `config` (aliases, `core.sshCommand`), `clone`, `init` or
+/// `worktree` (they write where a path says), `submodule`, `bisect`,
+/// `difftool`, `mergetool`, `filter-branch`, `instaweb`, `archive`,
+/// `format-patch`, `bundle` or `help`, which run programs or write files
+/// outside it.
+const GIT_SUBCOMMANDS: &[&str] = &[
+    "add",
+    "blame",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "commit",
+    "describe",
+    "diff",
+    "fetch",
+    "gc",
+    "grep",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "merge",
+    "mv",
+    "pull",
+    "push",
+    "rebase",
+    "remote",
+    "reset",
+    "restore",
+    "rev-parse",
+    "revert",
+    "rm",
+    "shortlog",
+    "show",
+    "stash",
+    "status",
+    "switch",
+    "tag",
 ];
 
-/// Options of any subcommand that choose a program git runs or the
-/// configuration of a new repository.
-const GIT_DENIED: &[&str] = &[
+/// Long options of any subcommand a script may not pass without
+/// `unrestrictedArgs`, nor any prefix of them git would accept as one
+/// (`--upload-p`): they run a program, read or write files elsewhere, or
+/// change git's configuration.
+const GIT_DENIED_LONG: &[&str] = &[
     "--upload-pack",
     "--receive-pack",
     "--exec",
     "--template",
     "--separate-git-dir",
     "--config",
+    "--config-env",
+    "--output",
+    "--output-directory",
+    "--ext-diff",
+    "--textconv",
+    "--extcmd",
+    "--tool",
+    "--no-index",
+    "--git-dir",
+    "--work-tree",
+    "--exec-path",
+    "--namespace",
+    "--super-prefix",
+    "--attr-source",
+    "--strategy",
+    "--strategy-option",
+    "--gpg-sign",
+    "--signoff-command",
+    "--open-files-in-pager",
+    "--contents",
+    "--file",
+    "--pathspec-from-file",
+    "--exclude-from",
+    "--exclude-per-directory",
+    "--ignore-revs-file",
+    "--orderfile",
 ];
 
-/// Whether `args` (of git) hold a denied option, or name the `ext::` or
-/// `fd::` transport.
+/// Exact options git knows that are also the start of a denied one: an
+/// exact name is that option, never an abbreviation.
+const GIT_EXACT_ALLOWED: &[&str] = &["exclude"];
+
+/// Short options, by subcommand, that run a program or read or write a
+/// file outside the repository (`rebase -x`, `grep -O`, `commit -F`, ...).
+fn git_denied_letters(sub: &str) -> &'static [u8] {
+    match sub {
+        "rebase" => b"xsX",
+        "fetch" | "ls-remote" => b"u",
+        "pull" => b"usX",
+        "merge" => b"sXF",
+        "cherry-pick" | "revert" => b"sX",
+        "grep" => b"Of",
+        "commit" => b"Ft",
+        "tag" => b"F",
+        "blame" => b"S",
+        "diff" | "log" | "show" => b"O",
+        "ls-files" => b"X",
+        _ => b"",
+    }
+}
+
+/// Whether a single-dash argument holds a denied letter anywhere in its
+/// cluster (`-qx` is `-q -x`); over-refusing a value is fine.
+fn git_denied_short(sub: &str, arg: &str) -> bool {
+    match arg.strip_prefix('-') {
+        Some(cluster) if !cluster.starts_with('-') => cluster
+            .bytes()
+            .any(|b| git_denied_letters(sub).contains(&b)),
+        _ => false,
+    }
+}
+
+/// Whether git with `args` steps outside what a script may ask without
+/// `unrestrictedArgs`: the first argument must be one of
+/// [`GIT_SUBCOMMANDS`] (no global option at all: the host sets its own),
+/// no [`GIT_DENIED_LONG`] option or a prefix of one, no denied short
+/// option, and no `ext::`/`fd::` transport.
 fn git_denied(args: &[String]) -> bool {
-    let subcommand = args.iter().position(|a| !a.starts_with('-'));
-    let sub = subcommand.map(|i| args[i].to_ascii_lowercase());
-    args.iter().enumerate().any(|(i, arg)| {
+    let Some(sub) = args.first() else {
+        return false;
+    };
+    if !GIT_SUBCOMMANDS.contains(&sub.as_str()) {
+        return true;
+    }
+    args.iter().skip(1).any(|arg| {
         let lower = arg.to_ascii_lowercase();
-        let is = |opt: &str| lower == opt || lower.starts_with(&format!("{opt}="));
-        let short = |c: &str| arg.starts_with(c) && !arg.starts_with("--");
-        let global = subcommand.is_none_or(|s| i < s);
-        lower.contains("ext::")
-            || lower.starts_with("fd::")
-            || (global && (short("-c") || short("-C") || GIT_GLOBAL_DENIED.iter().any(|o| is(o))))
-            || GIT_DENIED.iter().any(|o| is(o))
-            // `-u <program>`: the upload-pack of these subcommands.
-            || (matches!(sub.as_deref(), Some("clone" | "fetch" | "pull" | "ls-remote" | "archive"))
-                && short("-u"))
-            // `clone -c key=value` sets the new repository's configuration.
-            || (sub.as_deref() == Some("clone") && i > subcommand.unwrap_or(0) && short("-c"))
+        if lower.contains("ext::") || lower.contains("fd::") {
+            return true;
+        }
+        if git_denied_short(sub, arg) {
+            return true;
+        }
+        if let Some(long) = lower.strip_prefix("--") {
+            let name = long.split('=').next().unwrap_or("");
+            // git accepts any unique prefix of a long option, down to one
+            // letter; a longer name is another option.
+            return !name.is_empty()
+                && !GIT_EXACT_ALLOWED.contains(&name)
+                && GIT_DENIED_LONG
+                    .iter()
+                    .any(|denied| denied[2..].starts_with(name));
+        }
+        false
     })
+}
+
+/// Environment names the agent refuses on top of the ABI's denylist
+/// (security review of #472): credential managers' traces, TLS key logs,
+/// compilers and build tools' options, editors' start-up commands, and
+/// tools' own configuration files.
+fn env_denied_here(name: &str) -> bool {
+    const PREFIXES: &[&str] = &["GCM_", "GO", "COMPOSE_", "MAVEN_", "GRADLE_", "CURL_", "HG"];
+    const EXACT: &[&str] = &[
+        "SSLKEYLOGFILE",
+        "CC",
+        "CXX",
+        "CPP",
+        "LD",
+        "AR",
+        "CFLAGS",
+        "CXXFLAGS",
+        "CPPFLAGS",
+        "LDFLAGS",
+        "RUSTFLAGS",
+        "VIMINIT",
+        "EXINIT",
+        "GLIBC_TUNABLES",
+        "WGETRC",
+        "NPMRC",
+        "YARNRC",
+        "BUNDLE_GEMFILE",
+        "KUBECTL_EXTERNAL_DIFF",
+    ];
+    let upper = name.to_ascii_uppercase();
+    PREFIXES.iter().any(|p| upper.starts_with(p)) || EXACT.contains(&upper.as_str())
 }
 
 /// The file name of a command, without `.exe`.
@@ -147,27 +280,34 @@ impl Executor {
     /// canonicalized.
     fn lookup(&self, name: &str) -> Option<PathBuf> {
         let mut names = vec![name.to_owned()];
-        if cfg!(windows) && Path::new(name).extension().is_none() {
-            names = [".exe", ".com"]
-                .iter()
-                .map(|e| format!("{name}{e}"))
-                .collect();
+        if cfg!(windows) {
+            let runnable_ext = Path::new(name)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("com"));
+            if !runnable_ext {
+                // `python3.12` is a name, not an extension.
+                names = [".exe", ".com"]
+                    .iter()
+                    .map(|e| format!("{name}{e}"))
+                    .collect();
+            }
         }
         self.tools
             .path_entries()
             .into_iter()
             .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
             .find(|candidate| candidate.is_file() && runnable(candidate))
-            .and_then(|found| std::fs::canonicalize(found).ok())
     }
 
-    /// The program a granted command runs.
-    fn program(&self, grant: &ProcessGrant) -> Result<PathBuf, ScriptFault> {
+    /// The program a granted command runs: the path to start (as found,
+    /// so a program that reads its own name sees the granted one) and the
+    /// file it is (canonical, checked).
+    fn program(&self, grant: &ProcessGrant) -> Result<(PathBuf, PathBuf), ScriptFault> {
         let not_found = |code: &str, what: &str| ScriptFault {
             command: Some(grant.command.clone()),
             ..fault(code, format!("{what} was not found on this computer"))
         };
-        let path = match grant.command.as_str() {
+        let (code, path) = match grant.command.as_str() {
             "git" | "docker" => {
                 let (tool, code) = if grant.command == "git" {
                     (Tool::Git, codes::GIT_UNAVAILABLE)
@@ -178,21 +318,22 @@ impl Executor {
                     .tools
                     .executable(tool)
                     .map_err(|_| not_found(code, &grant.command))?;
-                std::fs::canonicalize(path).map_err(|_| not_found(code, &grant.command))?
+                (code, path)
             }
             command if Path::new(command).is_absolute() => {
-                let real = std::fs::canonicalize(command)
-                    .map_err(|_| not_found(codes::COMMAND_NOT_FOUND, command))?;
-                if !real.is_file() || !runnable(&real) {
-                    return Err(not_found(codes::COMMAND_NOT_FOUND, command));
-                }
-                real
+                (codes::COMMAND_NOT_FOUND, PathBuf::from(command))
             }
-            command => self
-                .lookup(command)
-                .ok_or_else(|| not_found(codes::COMMAND_NOT_FOUND, command))?,
+            command => (
+                codes::COMMAND_NOT_FOUND,
+                self.lookup(command)
+                    .ok_or_else(|| not_found(codes::COMMAND_NOT_FOUND, command))?,
+            ),
         };
-        if is_batch(&path.to_string_lossy()) {
+        let real = canonical(&path).map_err(|_| not_found(code, &grant.command))?;
+        if !real.is_file() || !runnable(&real) {
+            return Err(not_found(code, &grant.command));
+        }
+        if is_batch(&path.to_string_lossy()) || is_batch(&real.to_string_lossy()) {
             return Err(ScriptFault {
                 command: Some(grant.command.clone()),
                 ..fault(
@@ -201,7 +342,7 @@ impl Executor {
                 )
             });
         }
-        Ok(path)
+        Ok((path, real))
     }
 
     /// `process.run`.
@@ -225,22 +366,25 @@ impl Executor {
                     format!("the script may not run `{}`", request.command),
                 )
             })?;
-        let program = self.program(&grant)?;
-        notes.add("command", stem(&program));
+        let (program, real) = self.program(&grant)?;
+        notes.add("command", stem(&real));
         notes.add("args", request.args.len().to_string());
-        let git = stem(&program) == "git";
+        // git by its grant, its name or the file it is: a link named
+        // otherwise is still git.
+        let git = grant.command == "git" || stem(&program) == "git" || stem(&real) == "git";
         if git && !grant.unrestricted_args && git_denied(&request.args) {
             return Err(ScriptFault {
                 command: Some(request.command.clone()),
                 ..fault(
                     codes::NOT_GRANTED,
-                    "this git option changes git's configuration, programs or repository; \
-                     it needs unrestrictedArgs",
+                    "this git subcommand or option runs other programs, reaches beyond the \
+                     repository or changes git's configuration; it needs unrestrictedArgs",
                 )
             });
         }
         let project = call.project()?;
-        let (cwd, cwd_check) = cwd(call, project.as_ref(), grant.cwd, request.cwd.as_ref())?;
+        let (cwd, cwd_check, ceiling) =
+            cwd(call, project.as_ref(), grant.cwd, request.cwd.as_ref())?;
         let mut args: Vec<OsString> = Vec::new();
         let mut extra = vec!["LANG", "SSH_AUTH_SOCK"];
         if git {
@@ -252,16 +396,26 @@ impl Executor {
         }
         args.extend(request.args.iter().map(OsString::from));
         let mut env = self.tools.environment(&extra, &program);
+        script_env(&mut env, &request.env, grant.env == ProcessEnv::Allowed)?;
         if git {
-            for (name, value) in [
-                ("GIT_TERMINAL_PROMPT", "0"),
-                ("GCM_INTERACTIVE", "never"),
-                ("GIT_ASKPASS", ""),
-            ] {
-                env.push((name.into(), value.into()));
+            // The host's, after the script's, so none is overridden.
+            let mut forced: Vec<(&str, OsString)> = vec![
+                ("GIT_TERMINAL_PROMPT", "0".into()),
+                ("GCM_INTERACTIVE", "never".into()),
+                ("GIT_ASKPASS", "".into()),
+                ("GIT_OPTIONAL_LOCKS", "0".into()),
+                ("GIT_PROTOCOL_FROM_USER", "0".into()),
+            ];
+            // git never looks for a repository above the scope the run is
+            // in (a dotfiles repository in the home folder).
+            if let Some(ceiling) = cwd_check.as_ref().and(ceiling.as_ref()) {
+                forced.push(("GIT_CEILING_DIRECTORIES", ceiling.as_os_str().to_owned()));
+            }
+            for (name, value) in forced {
+                env.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+                env.push((name.into(), value));
             }
         }
-        script_env(&mut env, &request.env, grant.env == ProcessEnv::Allowed)?;
         let prepared = Prepared {
             program,
             args,
@@ -271,12 +425,14 @@ impl Executor {
         };
         let stdin = request.stdin.as_ref().map(|s| s.as_bytes().to_vec());
         let script = call.script.to_owned();
-        let command = grant.command.clone();
+        let granted = grant.clone();
         let host = call.run.host.clone();
+        // The very grant the run started under: narrowing it (its cwd
+        // rule, env, unrestrictedArgs) stops the program too.
         let still_granted = move || {
             host.grants(&script)
                 .filter(|g| g.validate().is_ok())
-                .is_some_and(|g| g.process.iter().any(|p| p.command == command))
+                .is_some_and(|g| g.process.contains(&granted))
         };
         self.start(
             plugin,
@@ -322,7 +478,7 @@ impl Executor {
         } else {
             ProcessCwd::FsScopes
         };
-        let (cwd, cwd_check) = cwd(call, project.as_ref(), rule, request.cwd.as_ref())?;
+        let (cwd, cwd_check, _) = cwd(call, project.as_ref(), rule, request.cwd.as_ref())?;
         let mut args: Vec<OsString> = match request.shell.as_str() {
             "pwsh" | "powershell" => vec![
                 "-NoProfile".into(),
@@ -495,6 +651,10 @@ impl Executor {
             }
             Err(d) => return Err(denial(&d)),
         };
+        // Credentials in URLs (`https://user:token@…`) never reach the
+        // script, as with tool.run.
+        result.stdout = runner::redact_userinfo(&result.stdout);
+        result.stderr = runner::redact_userinfo(&result.stderr);
         fit(&mut result);
         notes.add(
             "exit",
@@ -561,7 +721,7 @@ fn script_env(
         ));
     }
     for (name, value) in entries {
-        if !is_env_name(name) || env_denied(name) || value.contains('\0') {
+        if !is_env_name(name) || env_denied(name) || env_denied_here(name) || value.contains('\0') {
             return Err(fault(
                 codes::NOT_GRANTED,
                 format!("the variable {name} may never be set by a script"),
@@ -575,16 +735,17 @@ fn script_env(
 
 /// The working folder of a run under `rule`, canonical, a directory, and
 /// (but `any`) inside a scope; with the path to check again before the
-/// start. Without `cwd`: an empty folder of the agent's.
+/// start, and the folder above its scope's root (git's ceiling). Without
+/// `cwd`: an empty folder of the agent's.
 fn cwd(
     call: &Call<'_>,
     project: Option<&RunProject>,
     rule: ProcessCwd,
     cwd: Option<&PathArg>,
-) -> Result<(PathBuf, Option<PathBuf>), ScriptFault> {
+) -> Result<(PathBuf, Option<PathBuf>, Option<PathBuf>), ScriptFault> {
     let Some(path) = cwd else {
         return runner::neutral_directory()
-            .map(|dir| (dir, None))
+            .map(|dir| (dir, None, None))
             .map_err(|d| denial(&d));
     };
     // The scopes the rule allows, at read access: the script's own, or
@@ -629,7 +790,8 @@ fn cwd(
                         "the working folder is not a folder",
                     ));
                 }
-                return Ok((real.clone(), Some(real)));
+                // No scope to stop at: git finds the folder's repository.
+                return Ok((real.clone(), Some(real), None));
             }
             None => resolve(
                 path,
@@ -640,6 +802,9 @@ fn cwd(
             )?,
         },
     };
+    // Every folder of the way, by its identity on the handle.
+    let _guard = super::fs::Guard::enter(call.run.protected.clone());
+    super::fs::open_follow(&target.root, &target.rel, &target.shown())?;
     let real = canonical(&target.absolute()).map_err(|_| {
         fault(
             codes::NOT_FOUND,
@@ -661,7 +826,8 @@ fn cwd(
             format!("“{}” is not a folder", target.shown()),
         ));
     }
-    Ok((real.clone(), Some(real)))
+    let ceiling = target.scope.root.parent().map(Path::to_path_buf);
+    Ok((real.clone(), Some(real), ceiling))
 }
 
 #[cfg(unix)]

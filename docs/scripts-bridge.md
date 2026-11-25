@@ -226,7 +226,20 @@ moved"). Every operation then works relative to that open folder:
   token, its logs, configuration and caches, and the app) are never read
   or changed, nor anything that holds them, also through a link: a scope
   over the home folder still never reaches them, and listing the home
-  folder itself (or `~/Library`) is refused for the same reason;
+  folder itself (or `~/Library`) is refused for the same reason. They are
+  recognized by their text and by their **file identity** (volume and
+  file number) checked **on the handles the operation uses**: the scope's
+  open root and each folder above it (walked up through `..`), and each
+  folder of the path as it is opened, one at a time, so no rename between
+  a check by path and the open slips through, and another name for the
+  same folder (macOS's `/System/Volumes/Data` firmlink, a bind mount, a
+  share) is refused too. A folder made after the agent started is learned
+  when it first exists. Shares of this computer are never paths: by any
+  of its names (NetBIOS, DNS with or without its domain, `.local`, a
+  trailing dot), `localhost`, any address (loopback, `0.0.0.0`, LAN
+  addresses, numeric forms such as `2130706433`, `*.ipv6-literal.net`)
+  or an administrative `C$` share; reads follow a relative link only
+  within the folder it is in;
 - **names**: an 8.3 short name (`GIT~1`) is refused everywhere (Windows
   shares resolve them on every system), and on Windows a device name and a
   name ending in a dot or a space, so no name reaches a folder under
@@ -259,7 +272,8 @@ moved"). Every operation then works relative to that open folder:
   run nobody started is refused (`notUserInitiated`) unless the script's
   grant says `destructive: "allow"`, which needs no token; with `ask`, a
   run nobody started removes or replaces nothing at all, not even one
-  file (a write over an existing file included). The token is bound to every entry of the plan (its path, kind,
+  file: no write over an existing file (a chunked write commits only if
+  nothing appeared at its target meanwhile), and no move; The token is bound to every entry of the plan (its path, kind,
   size, file id and time), not only to the counts: other files in place
   of the confirmed ones are asked again. Replacing a folder that is not
   empty needs `delete` access. A removal stops if more entries appear
@@ -267,13 +281,15 @@ moved"). Every operation then works relative to that open folder:
   root; elsewhere a tree holding one is never emptied. Note that `delete`
   access removes single files and empty folders without a confirmation in
   runs the user starts;
-- **copies** re-create a link only when it is relative, of the form
-  `../../name/…` (every `..` first), and still leads inside the scope
-  from its new place; any other link is refused;
+- **copies and moves** carry a link only when it is relative, of the
+  form `../../name/…` (every `..` first), and still leads inside the
+  scope from its new place; a move of a link, or of a folder holding a
+  link, that would lead out (or any absolute link) is refused;
 - **writes** go to a temporary file in the target's folder, renamed over
   the target on commit (with `createOnly`, linked to it, which never
-  replaces an existing file; on a volume without links, checked and
-  renamed); a folder is never written over. An abort, a
+  replaces an existing file; on a volume without hard links, the target
+  is created exclusively and the content copied into it, never a check
+  then a rename); a folder is never written over. An abort, a
   revoked grant between chunks, or the end of the run removes the
   temporary file;
 - **limits**: 4 MiB per file read or written (`maxBytes`, the chunked
@@ -319,17 +335,39 @@ runs of the plugin at once.
   `.com`, on Windows); an absolute grant must exist
   (`commandNotFound`). The file found is canonicalized and is never a
   batch file.
-- **Arguments** are an array; there is no shell, glob or expansion. For
-  `git`, unless the grant says `unrestrictedArgs` (OD-8): the global
-  options `-c`, `-C`, `--config-env`, `--exec-path`, `--git-dir`,
-  `--work-tree`, `--namespace`, `--super-prefix`; anywhere
-  `--upload-pack`, `--receive-pack`, `--exec`, `--template`,
-  `--separate-git-dir`, `--config`; `-u` of `clone`, `fetch`, `pull`,
-  `ls-remote` and `archive`; `-c` of `clone`; and the `ext::` and `fd::`
-  transports are refused. `tool.run`'s hardening (`core.fsmonitor=false`,
-  the allowed protocols, no prompts) is prepended, and
-  `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and an empty
-  `GIT_ASKPASS` are set.
+- **Arguments** are an array; there is no shell, glob or expansion.
+- **git** without `unrestrictedArgs` (OD-8) is limited to work in the
+  run's repository: the first argument is one of `add`, `blame`,
+  `branch`, `checkout`, `cherry-pick`, `clean`, `commit`, `describe`,
+  `diff`, `fetch`, `gc`, `grep`, `log`, `ls-files`, `ls-remote`, `merge`,
+  `mv`, `pull`, `push`, `rebase`, `remote`, `reset`, `restore`,
+  `rev-parse`, `revert`, `rm`, `shortlog`, `show`, `stash`, `status`,
+  `switch`, `tag` (no global option: the host sets its own). Never
+  `config` (aliases, `core.sshCommand`), `clone`, `init`, `worktree`,
+  `submodule`, `bisect`, `difftool`, `mergetool`, `filter-branch`,
+  `archive`, `format-patch`, `bundle` or `help`. The options that run a
+  program, read or write elsewhere or change the configuration
+  (`--upload-pack`, `--receive-pack`, `--exec`, `--output`, `--no-index`,
+  `--ext-diff`, `--textconv`, `--config`, `--template`, `--strategy`,
+  `--open-files-in-pager`, and those that read a file from anywhere:
+  `--contents`, `--file`, `--pathspec-from-file`, `--exclude-from`, …)
+  are refused, and so is every prefix of them git would accept, down to
+  one letter (`--u=`); so are, by subcommand and anywhere in a cluster of
+  short options (`-qx`), `rebase -x/-s/-X`, `pull -u/-s/-X`, `fetch` and
+  `ls-remote -u`, `merge -s/-X/-F`, `grep -O/-f`, `commit -F/-t`,
+  `tag -F`, `blame -S`, `ls-files -X`, and the `ext::` and `fd::`
+  transports. `tool.run`'s hardening (`core.fsmonitor=false`, the allowed
+  protocols, no prompts) is prepended. The host's variables
+  (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, an empty
+  `GIT_ASKPASS`, `GIT_OPTIONAL_LOCKS=0`, `GIT_PROTOCOL_FROM_USER=0`, and
+  `GIT_CEILING_DIRECTORIES` at the folder above the scope, so git never
+  uses a repository above it; not with `cwd: any`, which has no scope) are set after the script's and win.
+  Restricted git still runs the repository's own hooks and filters (the
+  user's repository); with `unrestrictedArgs` a git grant runs any
+  program the user could, and is shown as such.
+- **docker** has no argument limits: a docker grant can start containers
+  with the host's folders mounted, so it is effectively full access to
+  the computer, and is shown as such.
 - **`cwd`** follows the grant's rule: `repositories` (a repository of the
   run's project), `fsScopes` (one of the script's scopes) or `any` (an
   existing folder, never one of DeckPilot's private folders). It is
@@ -346,7 +384,12 @@ runs of the plugin at once.
   user and temporary folders, Windows' system variables, `LC_ALL=C`; no
   secrets), `LANG` and `SSH_AUTH_SOCK`, plus the script's entries when
   the grant says `env: "allowed"`, each a valid name the denylist does not
-  refuse. `shell.run` takes the script's entries under the shell grant.
+  refuse, nor the agent's own additions (`GCM_*`, `GO*`, `COMPOSE_*`,
+  `SSLKEYLOGFILE`, compilers and their flags, `VIMINIT`, `EXINIT`,
+  `GLIBC_TUNABLES`, `CURL_*`, `WGETRC`, `HG*`, …). `shell.run` takes the
+  script's entries under the shell grant. Credentials in URLs
+  (`https://user:token@…`) are removed from the output, as with
+  `tool.run`.
 - **Time**: `min(timeoutMs or the script's timeout, the run's time
   left)`; a timeout is a result with `timedOut: true`. **Output**: the
   script's `maxOutputKiB` per stream, at most 512 KiB, then shortened
@@ -355,7 +398,18 @@ runs of the plugin at once.
 - **`shell.run`** needs the shell in the script's `shell` grant and a
   shell this computer has; the script is one argument (`-c`, `-Command`
   with `-NoProfile -NonInteractive`, or `/d /c`). `shell.available`
-  lists the granted shells that exist.
+  lists the granted shells that exist. On Windows `cmd` receives the
+  script with Rust's standard quoting, which `cmd.exe` parses its own
+  way: a script with quotes may need care.
+- **Known gaps** (documented, not closed here): a descendant that leaves
+  the process group (`setsid`, a daemon) survives the stop, and on Windows
+  `taskkill /T` misses orphans of a child that already exited (a job
+  object would close this); such a descendant also keeps the run's
+  output and stdin threads alive, and is not counted in the 4 concurrent
+  runs. The program is started by the path it was found at (so a program
+  that reads its own name sees the granted one); the file it is is
+  checked. Narrowing a grant while a program runs (its cwd rule, env,
+  `unrestrictedArgs`) stops it like a revocation.
 
 Tests (Unix, harmless stand-ins only: shell scripts for `git` and other
 tools in a temporary `bin`, `sh` for the shell; never docker compose,
