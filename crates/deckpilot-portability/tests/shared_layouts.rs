@@ -217,3 +217,51 @@ fn layouts_of_no_profile_are_checked_like_a_profiles() {
     };
     assert!(validate(&twice, &ModelCatalog::builtin()).is_err());
 }
+
+/// Managed layouts (the Calls plugin's) are machine and plugin data: an
+/// export of everything leaves them out, and the importing machine seeds
+/// its own without a clash ("exists and is not managed").
+#[test]
+fn managed_layouts_stay_out_of_exports_and_the_target_seeds_its_own() {
+    let (store, _, _, _, spare) = configuration();
+    let mut calls = DeviceLayout::new("Calls", mk2());
+    let mic = action("Mic");
+    let page = calls.home_page;
+    calls
+        .page_mut(page)
+        .unwrap()
+        .bindings
+        .push(ControlBinding::new(
+            ControlId::Key { index: 0 },
+            Trigger::Press,
+            BindingTarget::action(mic.id),
+        ));
+    store
+        .seed_managed_layout(
+            "deckpilot.calls",
+            &calls,
+            std::slice::from_ref(&mic),
+            "1.0.0",
+        )
+        .unwrap();
+    let payload = sealed(&payload::export(&store, &modules(), None, OPTIONS, 1, "test").unwrap());
+    assert_eq!(payload.library.layouts, vec![spare], "only the user's own");
+    assert!(payload.library.actions.iter().all(|a| a.id != mic.id));
+
+    let target = SqliteStore::open_in_memory().unwrap();
+    import(&target, &payload, ImportMode::Replace);
+    assert_eq!(
+        target
+            .seed_managed_layout("deckpilot.calls", &calls, &[mic], "1.0.0")
+            .unwrap(),
+        deckpilot_storage::managed_layouts::Seeded::Created
+    );
+    // A replacing import keeps the target's managed layout.
+    import(&target, &payload, ImportMode::Replace);
+    assert!(
+        target
+            .managed_layout("deckpilot.calls", &mk2())
+            .unwrap()
+            .is_some()
+    );
+}

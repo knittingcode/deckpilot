@@ -569,11 +569,19 @@ base32 characters; `BadRequest` without a host call). Only connections the
 invocation is bound to are reachable: the connection its `connection`
 parameter names, or the one the app names for its own screens.
 
-**Status: the ABI and the SDK are in place; no agent carries the
-operations out yet.** The broker answers all four `unsupported-op`
-(`CapabilityErrorKind::Unsupported`) whatever the grants, including a
-fetch that names a connection, which is never checked as an ordinary
-fetch. The agent provides plugin API 1.10 until the host side lands.
+**Status: the agent carries the operations out** (the plugin store's
+connections, schema 7; the broker's per-connection grants; the executor).
+Every call on a connection the invocation is not bound to, or one the user
+removed, is `not-permitted` with the code `connection-missing` in its
+message; a connection the user turned off is `unavailable` with
+`connection-disabled`; a redirect off the connection's origin or path
+prefix ends the request with `redirect-refused` (the plugin reads these
+codes from the message). A connection without a token sends nothing
+(`unavailable`). A fetch that names a connection is never checked as an
+ordinary fetch. `time.sleep` is rate limited to 30 a minute. The agent's
+`PLUGIN_API` still reports the level it fully provides, so a `^1.14`
+plugin installs only once the agent's level reaches 1.14 (with plugin
+API 1.12 and 1.13, `docs/compatibility.md`).
 
 ## What there is not (ABI 1)
 

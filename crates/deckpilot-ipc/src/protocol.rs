@@ -26,8 +26,8 @@ use deckpilot_core::{
 use deckpilot_device::{ConnectionState, ControlId, ControlInput, DeviceDescriptor, DeviceId};
 
 use crate::plugin_dialogs::check_answer_ids;
-use crate::plugins;
 use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessionSummary};
+use crate::{connections, plugins};
 
 /// Protocol spoken by this build.
 ///
@@ -193,7 +193,19 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// `json` without members or keys, no members-only entries, a structured
 /// preview as `redacted` JSON and the nearest older reason
 /// ([`Response::for_protocol`]); no request changes.
-pub const PROTOCOL_VERSION: u32 = 18;
+///
+/// Version 20 (19 is the Calls event's): plugin connections (capability
+/// `pluginConnections`, [`crate::connections`], plugin API 1.14):
+/// `listPluginConnections`, `createPluginConnection`,
+/// `setPluginConnectionSecret`, `updatePluginConnection`,
+/// `testPluginConnection` and `removePluginConnection`. A token goes from
+/// the app to the agent only; no answer carries one. A client of protocol
+/// 19 or older never sends them (refused locally, and by the agent from
+/// such a connection); nothing older clients receive changes.
+pub const PROTOCOL_VERSION: u32 = CONNECTIONS_PROTOCOL;
+
+/// The protocol of plugin connections ([`Capability::PluginConnections`]).
+pub const CONNECTIONS_PROTOCOL: u32 = 20;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -389,10 +401,15 @@ pub enum Capability {
     /// members, member entries in catalogs, `structured` previews.
     /// Protocol 18.
     StructuredVariables,
+    /// Plugin connections (plugin API 1.14): `listPluginConnections` and
+    /// the requests that create, test and remove them. Without it the app
+    /// shows no Connections settings. Protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    PluginConnections,
 }
 
 impl Capability {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -412,6 +429,7 @@ impl Capability {
         Self::DisplayTemplates,
         Self::KeyLabels,
         Self::StructuredVariables,
+        Self::PluginConnections,
     ];
 
     /// The protocol that introduced the capability.
@@ -434,6 +452,7 @@ impl Capability {
             Self::LivePreview => 16,
             Self::DisplayTemplates | Self::KeyLabels => 17,
             Self::StructuredVariables => 18,
+            Self::PluginConnections => CONNECTIONS_PROTOCOL,
         }
     }
 
@@ -929,6 +948,73 @@ pub enum Request {
         plugin: String,
         setting: String,
     },
+    /// A plugin's connections and the connection types it declares (plugin
+    /// API 1.14). Answers `pluginConnections`. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    ListPluginConnections {
+        plugin: String,
+    },
+    /// Creates a connection: the user's consent to exactly the server
+    /// `url` names (the address they open in the browser; ignored for the
+    /// cloud), and, only with `private_network`, to reach it on a private
+    /// network. It reads until `allow_changes`. `secret`, the token, is
+    /// stored with it and never sent back. Answers `pluginConnection`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`].
+    #[serde(rename_all = "camelCase")]
+    CreatePluginConnection {
+        plugin: String,
+        connection_type: String,
+        deployment: connections::ConnectionDeployment,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        display_name: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        allow_changes: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        private_network: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<plugins::PluginSecret>,
+    },
+    /// Stores (or replaces: reconnect) a connection's token; the id,
+    /// consent and references stay, and it is untested again. Answers
+    /// `pluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
+    SetPluginConnectionSecret {
+        plugin: String,
+        connection: String,
+        secret: plugins::PluginSecret,
+    },
+    /// Renames a connection, turns it off or on, lets it make changes or
+    /// only read, or makes it the default of its type. The server cannot
+    /// change: that is a new connection. Answers `pluginConnection`. Since
+    /// protocol [`CONNECTIONS_PROTOCOL`].
+    #[serde(rename_all = "camelCase")]
+    UpdatePluginConnection {
+        plugin: String,
+        connection: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allow_changes: Option<bool>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        make_default: bool,
+    },
+    /// Tests a connection: the plugin checks the server and the token, and
+    /// the state, account and capabilities it found are stored. Answers
+    /// `pluginConnectionTested` once the plugin is done. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    TestPluginConnection {
+        plugin: String,
+        connection: String,
+    },
+    /// Deletes a connection and its token. Saved actions that name it stay
+    /// as they are and show it as removed. Answers `pluginConnections`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`].
+    RemovePluginConnection {
+        plugin: String,
+        connection: String,
+    },
     /// Answers a plugin dialog this connection received
     /// ([`plugins::PluginEvent::DialogOpened`]). Only on a connection that
     /// announced [`plugin_dialogs::FEATURE`](crate::plugin_dialogs::FEATURE);
@@ -1128,6 +1214,12 @@ impl Request {
             | Self::InstallPluginPlan { .. }
             | Self::PlanPluginRemoval { .. }
             | Self::RemovePlugin { .. } => plugins::check_request(self),
+            Self::ListPluginConnections { .. }
+            | Self::CreatePluginConnection { .. }
+            | Self::SetPluginConnectionSecret { .. }
+            | Self::UpdatePluginConnection { .. }
+            | Self::TestPluginConnection { .. }
+            | Self::RemovePluginConnection { .. } => connections::check_request(self),
             Self::InstallPlugin { source, consent } => {
                 source.check()?;
                 plugins::check_consent(consent)
@@ -1453,6 +1545,25 @@ pub enum Response {
     PluginCredentials {
         plugin: String,
         credentials: Vec<plugins::PluginCredentialSlot>,
+    },
+    /// Answer to `listPluginConnections` and `removePluginConnection`.
+    /// Never a secret. Since protocol [`CONNECTIONS_PROTOCOL`].
+    PluginConnections {
+        connections: Box<connections::PluginConnections>,
+    },
+    /// Answer to `createPluginConnection`, `setPluginConnectionSecret` and
+    /// `updatePluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
+    PluginConnection {
+        plugin: String,
+        connection: Box<connections::PluginConnection>,
+    },
+    /// Answer to `testPluginConnection`: the connection as it stands after
+    /// the test, and what the test found. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    PluginConnectionTested {
+        plugin: String,
+        connection: Box<connections::PluginConnection>,
+        outcome: connections::ConnectionTestOutcome,
     },
     /// Answer to `listModuleMigrations`. Since protocol 10.
     ModuleMigrations {
@@ -1843,6 +1954,12 @@ impl Request {
             | Self::EndLivePreview { .. }
             | Self::InspectMockDevice { .. } => 16,
             Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
+            Self::ListPluginConnections { .. }
+            | Self::CreatePluginConnection { .. }
+            | Self::SetPluginConnectionSecret { .. }
+            | Self::UpdatePluginConnection { .. }
+            | Self::TestPluginConnection { .. }
+            | Self::RemovePluginConnection { .. } => CONNECTIONS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices
@@ -2813,7 +2930,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 18);
+        assert_eq!(PROTOCOL_VERSION, 20);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),

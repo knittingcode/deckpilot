@@ -156,7 +156,10 @@ fn the_upgrade_reserves_back_keys_without_losing_bindings() {
     schema_10(&path, &encryption, &f);
 
     let store = SqliteStore::open(&path, &encryption).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        SqliteStore::supported_schema_version()
+    );
     let history = store.migration_history().unwrap();
     assert_eq!(
         (
@@ -164,7 +167,7 @@ fn the_upgrade_reserves_back_keys_without_losing_bindings() {
             history[0].to_version,
             history[0].result.as_str()
         ),
-        (10, 14, "ok")
+        (10, SqliteStore::supported_schema_version(), "ok")
     );
     let backup = history[0].backup.clone().unwrap();
     assert!(backup.contains("deckpilot-schema10-"), "{backup}");

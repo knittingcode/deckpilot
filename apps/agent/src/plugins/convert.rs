@@ -822,7 +822,7 @@ pub fn params(values: &BTreeMap<String, serde_json::Value>) -> Result<Params, St
         .collect()
 }
 
-fn json(value: &ParamValue) -> serde_json::Value {
+pub(super) fn json(value: &ParamValue) -> serde_json::Value {
     match value {
         ParamValue::Bool(b) => serde_json::Value::Bool(*b),
         ParamValue::Integer(i) => serde_json::Value::from(*i),
@@ -924,10 +924,16 @@ pub fn approved_with(
                 PermissionKind::Tools
                 | PermissionKind::Resources
                 | PermissionKind::ProjectContext
-                | PermissionKind::Profile,
+                | PermissionKind::Profile
+                | PermissionKind::Scripts
+                // Plugin API 1.14: passed as the user's connections
+                // themselves (`connections.rs`), each within these grants.
+                | PermissionKind::Connections,
                 _,
             )
             | (PermissionKind::OpenUrl, GrantScope::OpenUrlFromParams) => {}
+            (PermissionKind::OpenUrl, GrantScope::OpenUrl)
+                if key.key == deckpilot_plugin_store::OPEN_URL_CONNECTIONS_KEY => {}
             (PermissionKind::Network, GrantScope::Host { methods }) => match origin_of(&key.key) {
                 Some(origin) => out.push(ApprovedPermission::Network {
                     origin,
@@ -1011,6 +1017,16 @@ fn privileged(effective: &[(GrantKey, GrantScope)]) -> Vec<ApprovedPermission> {
     }
     if has(&GrantScope::OpenUrlFromParams) {
         out.push(ApprovedPermission::OpenUrlFromParams {});
+    }
+    // Plugin API 1.13: the Scripts bridge's ceiling.
+    for (_, scope) in effective {
+        if let GrantScope::Scripts { fs, process, shell } = scope {
+            out.push(ApprovedPermission::Scripts {
+                fs: *fs,
+                process: *process,
+                shell: *shell,
+            });
+        }
     }
     if has(&GrantScope::ProjectRead) {
         out.push(ApprovedPermission::ProjectContext {
