@@ -137,6 +137,17 @@ async fn actions_within(events: &mut AgentClient, within: Duration) -> Vec<Strin
     names
 }
 
+/// Waits until `device` has been opened `attempts` times and the agent
+/// has recorded the failure of the last open: the mock counts an open
+/// before the agent reads the clock for its failure, and a request is
+/// answered only after the rescan that made the open finished, so the
+/// clock is never moved in between.
+async fn failed_open(agent: &TestAgent, mock: &MockBackend, device: &DeviceId, attempts: usize) {
+    wait_until("the open", || mock.open_attempts(device) >= attempts).await;
+    assert_eq!(mock.open_attempts(device), attempts, "one open per wait");
+    status(agent).await;
+}
+
 /// Opens of `device` after the clock stood still for [`QUIET`]: the count
 /// no longer changes.
 async fn settled_attempts(mock: &MockBackend, device: &DeviceId) -> usize {
@@ -159,19 +170,19 @@ async fn a_device_that_cannot_be_opened_is_retried_with_growing_waits() {
     let agent = TestAgent::start_with_device_retry(&paths, &key_material, &mock, policy, &clock);
     agent.unlock().await;
 
-    wait_until("first open", || mock.open_attempts(&device) == 1).await;
+    failed_open(&agent, &mock, &device, 1).await;
     // Rescans every 50 ms do not retry before the wait is over.
     assert_eq!(settled_attempts(&mock, &device).await, 1);
     // First wait: 2 s ±20%.
     clock.advance(Duration::from_millis(1500));
     assert_eq!(settled_attempts(&mock, &device).await, 1);
     clock.advance(Duration::from_millis(1000));
-    wait_until("second open", || mock.open_attempts(&device) == 2).await;
+    failed_open(&agent, &mock, &device, 2).await;
     // Second wait: 4 s ±20%, so not yet after 3 s.
     clock.advance(Duration::from_secs(3));
     assert_eq!(settled_attempts(&mock, &device).await, 2);
     clock.advance(Duration::from_secs(2));
-    wait_until("third open", || mock.open_attempts(&device) == 3).await;
+    failed_open(&agent, &mock, &device, 3).await;
 
     // Ten simulated minutes, one wait at a time: after the n-th failed
     // open the next comes no sooner than 0.8 and no later than 1.2 times
@@ -184,8 +195,9 @@ async fn a_device_that_cannot_be_opened_is_retried_with_growing_waits() {
     while elapsed < Duration::from_secs(600) {
         let base = policy.base_delay(u32::try_from(attempts).unwrap());
         let earliest = base.mul_f64(0.8).saturating_sub(Duration::from_millis(1));
-        // A millisecond of slack each side for float rounding.
-        let latest = (base.mul_f64(1.2) + Duration::from_millis(1)).min(policy.max);
+        // Slack for float rounding: the factor at its top is
+        // 1.2000000000000002, and the fake clock moves in whole ms.
+        let latest = (base.mul_f64(1.2) + Duration::from_millis(2)).min(policy.max);
         clock.advance(earliest);
         assert_eq!(
             settled_attempts(&mock, &device).await,
@@ -195,7 +207,7 @@ async fn a_device_that_cannot_be_opened_is_retried_with_growing_waits() {
         clock.advance(latest.saturating_sub(earliest));
         elapsed += latest;
         attempts += 1;
-        wait_until("the next open", || mock.open_attempts(&device) == attempts).await;
+        failed_open(&agent, &mock, &device, attempts).await;
     }
     // The waits grew to 60 s: far fewer opens than the 300 a fixed 2 s
     // retry would make (3 + 3 waits up to 38.4 s + 9 of 60 s).
