@@ -1567,6 +1567,86 @@ impl PluginManager {
         })
     }
 
+    /// Imports the server and, only with `secret_slot`, the token of the
+    /// old plugin `source` (`deckpilot.github`, `deckpilot.gitlab`) as a
+    /// connection of `id` (Git Providers design §11.2, PR-10), in one
+    /// transaction: idempotent (a connection whose `legacy_source` is
+    /// `source` already is answered as [`LegacyImport::Existing`] and
+    /// nothing is written), read-only (`GET`, as the old plugin was), and
+    /// all or nothing. The old plugin, its settings, its credential row and
+    /// its consents are never changed or deleted.
+    ///
+    /// `decided_by` is the user's decision of the migration item that
+    /// named the server (and the token, with `secret_slot`); a copy of the
+    /// secret is never derived. The connection is checked like one the
+    /// user creates, and needs the `connections` grant.
+    pub fn import_legacy_connection(
+        &mut self,
+        id: &PluginId,
+        source: &PluginId,
+        new: &crate::connections::NewConnection,
+        secret_slot: Option<&str>,
+        decided_by: &str,
+    ) -> Result<crate::connections::LegacyImport> {
+        let plugin = self.plugin(id)?;
+        let active = active_of(&plugin)?;
+        crate::connections::check(id, &active.manifest, new)?;
+        let key = GrantKey::new(deckpilot_plugin_manifest::PermissionKind::Connections, "");
+        let granted = self
+            .store
+            .grants(id)?
+            .iter()
+            .any(|row| row.key == key && row.status == GrantStatus::Granted);
+        if !granted {
+            return Err(StoreError::ConsentRequired {
+                id: id.clone(),
+                missing: vec![key],
+            });
+        }
+        let version = active.version.to_string();
+        self.tx(|tx, ctx| {
+            if store::load_plugin(tx, source)?.is_none() {
+                return Err(StoreError::NotInstalled(source.clone()));
+            }
+            ensure_idle(tx, id)?;
+            let outcome = crate::connections::import_legacy(
+                tx,
+                id,
+                source,
+                new,
+                secret_slot,
+                decided_by,
+                ctx.now,
+            )?;
+            if let crate::connections::LegacyImport::Created {
+                connection,
+                with_secret,
+            } = &outcome
+            {
+                // The connection, the server and the source; never the
+                // secret.
+                let shown = format!(
+                    "{connection} {}{} from {source}{}",
+                    new.origin,
+                    new.path_prefix.as_deref().unwrap_or(""),
+                    if *with_secret { " with its token" } else { "" }
+                );
+                ctx.audit(
+                    tx,
+                    id,
+                    event(
+                        Some(&version),
+                        "connection.import",
+                        Some(&key),
+                        "granted",
+                        Some(&shown),
+                    ),
+                )?;
+            }
+            Ok(outcome)
+        })
+    }
+
     /// Stores (or replaces: a reconnect) a connection's secret. The id,
     /// consent and references stay; the status becomes `untested`. The
     /// audit records the connection, never the secret.

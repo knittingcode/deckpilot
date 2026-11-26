@@ -974,6 +974,18 @@ pub enum Request {
     ListPluginConnections {
         plugin: String,
     },
+    /// Makes the server of the old plugin `from` (`deckpilot.github`,
+    /// `deckpilot.gitlab`) a Git Providers connection, and with `token`
+    /// copies its saved token into it inside the agent (Git Providers
+    /// design §11.2): the user's opt-in, item by item. Importing again
+    /// changes nothing; the old plugin is never changed. Answers
+    /// `pluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`], with
+    /// the [`plugins::feature::LEGACY_IMPORT`] feature.
+    ImportPluginConnection {
+        from: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        token: bool,
+    },
     /// The git remotes of a project repository's folder on this computer,
     /// read by the agent with `git remote -v` (read-only, no network), with
     /// every URL's credentials removed: what "Link remote" suggests
@@ -1317,6 +1329,7 @@ impl Request {
             | Self::UpdatePluginConnection { .. }
             | Self::TestPluginConnection { .. }
             | Self::RemovePluginConnection { .. } => connections::check_request(self),
+            Self::ImportPluginConnection { from, .. } => plugins::check_text("from", from),
             Self::InstallPlugin { source, consent } => {
                 source.check()?;
                 plugins::check_consent(consent)
@@ -2086,6 +2099,7 @@ impl Request {
             | Self::UpdatePluginConnection { .. }
             | Self::TestPluginConnection { .. }
             | Self::RemovePluginConnection { .. }
+            | Self::ImportPluginConnection { .. }
             | Self::ListRepositoryRemotes { .. } => CONNECTIONS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus

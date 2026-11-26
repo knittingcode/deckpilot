@@ -139,6 +139,10 @@ pub mod feature {
     /// An agent without it knows no storefront; the app then shows the
     /// catalog only.
     pub const STOREFRONT: &str = "storefront";
+    /// `importPluginConnection` (protocol 20): the old GitHub and GitLab
+    /// plugins' server and token as a Git Providers connection, on the
+    /// user's request.
+    pub const LEGACY_IMPORT: &str = "legacyImport";
     /// `listRepositoryRemotes` (protocol 20): the agent reads a project
     /// repository's git remotes for "Link remote". The app suggests them
     /// only when the agent lists it.

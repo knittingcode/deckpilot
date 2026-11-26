@@ -302,6 +302,14 @@ writing anything and runs without plugins; going back means restoring the
 database, documents and exports do not change: connections and their
 tokens are machine-local and never exported. The agent's `PLUGIN_API`
 stays 1.11, so `^1.14` plugins are still reported `incompatible`.
+Also in protocol 20, with the plugin runtime feature `legacyImport`:
+`importPluginConnection {from, token}` makes the server of the old
+`deckpilot.github` or `deckpilot.gitlab` plugin a Git Providers connection
+(read-only, `legacy_source` set) and, only with `token`, copies its saved
+token into it inside the agent. It is idempotent and all or nothing, and
+the old plugin's settings, token and consents are kept unchanged; its keys
+and workflows keep running on it.
+
 Also in protocol 20, with the plugin runtime feature `repositoryRemotes`:
 `listRepositoryRemotes {profile, project, repository}` answers the git
 remotes of that repository's bound folder (`repositoryRemotes`, at most 16,
