@@ -183,12 +183,19 @@ app open. The second process ends with exit code 0.
 - **Windows and Linux** use `tauri-plugin-single-instance`: a named mutex
   and a message window in the user's session (Windows), and the name
   `io.github.knittingcode.deckpilot.SingleInstance` on the user's session
-  bus (Linux). Without a session bus the app starts as before.
+  bus (Linux). Without a session bus the app starts as before. A first
+  app that hangs is waited for: up to 10 s on Windows, after which the
+  second launch ends; up to about 25 s on Linux (the D-Bus call timeout),
+  after which the second launch fails with an error.
+- A second launch while the first app is still starting is ignored; the
+  starting app shows its window or the prompt anyway.
 - **macOS** relies on LaunchServices, which keeps one process per
   application (see above). The plugin is not used there, because it would
   listen on a socket at a fixed path in the shared `/tmp`. A start of the
-  executable itself, not through LaunchServices, is not guarded.
-- Not guarded: a process started for one window (`--window <id>`, the
+  executable itself, not through LaunchServices, is not guarded. The
+  agent's launcher starts it that way, but only when no app is connected.
+- Not guarded: debug builds (so a development build does not hand over to
+  an installed DeckPilot), a process started for one window (`--window <id>`, the
   agent's password prompt while no app runs), which ends with its window,
   and any data directory other than the default one (`DECKPILOT_DATA_DIR`:
   development sessions and the tests), because the plugin knows one app

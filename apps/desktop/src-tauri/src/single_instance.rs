@@ -7,19 +7,26 @@
 //!   user's session bus on Linux, `io.github.knittingcode.deckpilot.SingleInstance`).
 //!   The second process hands its arguments to the first and exits with
 //!   code 0; the first shows itself as for the agent's "Open DeckPilot"
-//!   ([`launch_target`]). Without a session bus (Linux) the plugin finds no
-//!   other instance and the app starts as before.
+//!   ([`on_second_launch`]). Without a session bus (Linux) the plugin finds
+//!   no other instance and the app starts as before. A first instance that
+//!   hangs is waited for: up to 10 s on Windows (the second then exits
+//!   with code 0), up to D-Bus's call timeout (about 25 s) on Linux, where
+//!   the second then fails to start with an error.
 //! - **macOS**: `LaunchServices` already opens a running app instead of
 //!   starting another (Finder, the Dock, Spotlight, `open`), and the app
 //!   shows itself on that reopen (`lifecycle::on_run_event`). The plugin is
 //!   not used there: it would listen on a socket at a fixed path in the
-//!   shared `/tmp`.
+//!   shared `/tmp`. The agent's launcher starts the executable directly
+//!   (`apps/agent/src/launcher.rs`), which is not guarded on macOS; it
+//!   starts an app only when none is connected.
 //!
 //! The guard is left out for:
 //!
 //! - a process started for one window (`--window <id>`, the agent's
 //!   password prompt while no app runs). It ends with its window, and it
 //!   must not swallow the launch of the full app;
+//! - a debug build, so a development build does not hand over to an
+//!   installed DeckPilot;
 //! - a data directory other than the default one (`DECKPILOT_DATA_DIR`:
 //!   development sessions, the end-to-end tests, the release smoke test),
 //!   because the plugin knows one app identity only, while the agent keeps
@@ -34,10 +41,16 @@
 #![cfg_attr(target_os = "macos", allow(dead_code))]
 
 /// Whether this process takes part in the single-instance guard: a full
-/// app (`window_only` is `None`) on the default data directory
-/// (`data_dir_override` is the value of `DECKPILOT_DATA_DIR`, if any).
-pub fn applies(window_only: Option<&str>, data_dir_override: Option<&std::ffi::OsStr>) -> bool {
-    window_only.is_none() && data_dir_override.is_none_or(std::ffi::OsStr::is_empty)
+/// app (`window_only` is `None`) of a release build (`debug` is false: a
+/// development build must not hand over to an installed DeckPilot) on the
+/// default data directory (`data_dir_override` is the value of
+/// `DECKPILOT_DATA_DIR`, if any).
+pub fn applies(
+    window_only: Option<&str>,
+    data_dir_override: Option<&std::ffi::OsStr>,
+    debug: bool,
+) -> bool {
+    window_only.is_none() && !debug && data_dir_override.is_none_or(std::ffi::OsStr::is_empty)
 }
 
 /// [`applies`] for this process.
@@ -46,31 +59,21 @@ pub fn applies_here(window_only: Option<&str>) -> bool {
     applies(
         window_only,
         std::env::var_os(deckpilot_ipc::paths::DATA_DIR_ENV).as_deref(),
+        cfg!(debug_assertions),
     )
 }
 
-/// What the running app shows when it is launched again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaunchTarget {
-    /// Bring the main window to the front.
-    Main,
-    /// No main window any more (closed while another window kept the app
-    /// running): create it. The user asked for the app, so the launch is
-    /// never lost, unlike the agent's "Open DeckPilot", which an app
-    /// without a main window ignores on Windows and Linux.
-    CreateMain,
-    /// The configuration is locked: the password prompt.
-    Prompt,
-}
+/// Set at the end of the app's setup, once its first window exists. The
+/// plugin holds the instance before the setup runs, so a second launch
+/// (a double click) can arrive while the app is still starting; it is
+/// ignored then, since the setup shows the main window or the password
+/// prompt anyway. Creating the main window from both places would make two.
+#[derive(Debug, Default)]
+pub struct Started(pub std::sync::atomic::AtomicBool);
 
-/// [`LaunchTarget`] for an app whose configuration is `unlocked` and which
-/// `has_main` window.
-pub fn launch_target(unlocked: bool, has_main: bool) -> LaunchTarget {
-    match (unlocked, has_main) {
-        (false, _) => LaunchTarget::Prompt,
-        (true, true) => LaunchTarget::Main,
-        (true, false) => LaunchTarget::CreateMain,
-    }
+/// Whether a second launch arriving now is acted on ([`Started`]).
+pub fn acts_on_launch(started: Option<&Started>) -> bool {
+    started.is_some_and(|s| s.0.load(std::sync::atomic::Ordering::SeqCst))
 }
 
 /// The plugin, with [`on_second_launch`] as its callback. Registered before
@@ -89,53 +92,57 @@ pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     })
 }
 
-/// The app was launched again: it comes to the front ([`launch_target`]).
+/// The app was launched again: once it has started, it comes to the front
+/// as for the agent's "Open DeckPilot": the main window, the password
+/// prompt while locked, and a new main window (on every platform: the user
+/// asked for the app) if the old one was closed while another window kept
+/// the app running.
 pub fn on_second_launch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
-    let state = app.try_state::<crate::state::AppState>();
-    let unlocked = state.as_ref().is_none_or(|state| state.is_unlocked());
-    let has_main = app.get_webview_window(crate::windows::MAIN).is_some();
-    match launch_target(unlocked, has_main) {
-        LaunchTarget::Prompt => {
-            if let Some(state) = state {
-                let id = crate::commands::security::prompt_window(&state);
-                if let Err(error) = crate::commands::windows::open_by_id(app, &state, id, None) {
-                    eprintln!("cannot open the password prompt: {error}");
-                }
-            }
-        }
-        LaunchTarget::Main => {
-            crate::windows::show_main(app);
-        }
-        LaunchTarget::CreateMain => {
-            if let Err(error) = crate::create_main_window(app) {
-                eprintln!("cannot open the main window: {error}");
-            }
-        }
+    if !acts_on_launch(app.try_state::<Started>().as_deref()) {
+        return;
     }
+    crate::agent::show_window_on(app, true);
 }
 
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
+    use std::sync::atomic::Ordering;
 
     use super::*;
+    use crate::lifecycle::{ShowTarget, show_target};
 
     #[test]
-    fn only_a_full_app_on_the_default_data_directory_is_guarded() {
-        assert!(applies(None, None));
-        assert!(applies(None, Some(OsStr::new(""))));
+    fn only_a_full_release_app_on_the_default_data_directory_is_guarded() {
+        assert!(applies(None, None, false));
+        assert!(applies(None, Some(OsStr::new("")), false));
         // The password prompt the agent starts while no app runs.
-        assert!(!applies(Some("security.unlock"), None));
+        assert!(!applies(Some("security.unlock"), None, false));
         // Development sessions, end-to-end and smoke tests.
-        assert!(!applies(None, Some(OsStr::new("/tmp/deckpilot-dev"))));
+        assert!(!applies(
+            None,
+            Some(OsStr::new("/tmp/deckpilot-dev")),
+            false
+        ));
+        // A development build next to an installed DeckPilot.
+        assert!(!applies(None, None, true));
+    }
+
+    #[test]
+    fn a_launch_during_startup_is_ignored() {
+        assert!(!acts_on_launch(None));
+        let started = Started::default();
+        assert!(!acts_on_launch(Some(&started)));
+        started.0.store(true, Ordering::SeqCst);
+        assert!(acts_on_launch(Some(&started)));
     }
 
     #[test]
     fn a_second_launch_always_shows_something() {
-        assert_eq!(launch_target(true, true), LaunchTarget::Main);
-        assert_eq!(launch_target(true, false), LaunchTarget::CreateMain);
-        assert_eq!(launch_target(false, true), LaunchTarget::Prompt);
-        assert_eq!(launch_target(false, false), LaunchTarget::Prompt);
+        assert_eq!(show_target(true, true, true), ShowTarget::Main);
+        assert_eq!(show_target(true, false, true), ShowTarget::CreateMain);
+        assert_eq!(show_target(false, true, true), ShowTarget::Prompt);
+        assert_eq!(show_target(false, false, true), ShowTarget::Prompt);
     }
 }

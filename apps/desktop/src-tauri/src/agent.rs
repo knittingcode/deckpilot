@@ -761,11 +761,18 @@ async fn unlock_if_needed<R: Runtime>(
 /// process started for one window only creates its main window on macOS,
 /// so the request is never lost and no second app is started.
 pub(crate) fn show_window<R: Runtime>(app: &AppHandle<R>) {
-    use crate::lifecycle::{MACOS, ShowTarget, show_target};
+    show_window_on(app, crate::lifecycle::MACOS);
+}
+
+/// [`show_window`], creating a missing main window on every platform when
+/// `create_main` (a second launch of the app, `single_instance.rs`), and
+/// on macOS only otherwise.
+pub(crate) fn show_window_on<R: Runtime>(app: &AppHandle<R>, create_main: bool) {
+    use crate::lifecycle::{ShowTarget, show_target};
     let state = app.try_state::<crate::state::AppState>();
     let unlocked = state.as_ref().is_none_or(|state| state.is_unlocked());
     let main = app.get_webview_window(crate::windows::MAIN);
-    match show_target(unlocked, main.is_some(), MACOS) {
+    match show_target(unlocked, main.is_some(), create_main) {
         ShowTarget::Prompt => {
             if let Some(state) = state {
                 let id = crate::commands::security::prompt_window(&state);

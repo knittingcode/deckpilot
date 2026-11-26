@@ -126,6 +126,7 @@ fn main() {
         .manage(updates::UpdateManager::default())
         .manage(windows::WindowRegistry::default())
         .manage(lifecycle::MainPresented::default())
+        .manage(single_instance::Started::default())
         .manage(commands::portability::PendingImport::default())
         .manage(commands::plugins::PluginEvents::default())
         .manage(commands::locale::AgentLocale::default())
@@ -159,6 +160,10 @@ fn main() {
                     });
                 }
             }
+            // From now on a second launch is acted on (`single_instance.rs`).
+            app.state::<single_instance::Started>()
+                .0
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Start the agent on first launch if it is not running yet,
