@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use deckpilot_ipc::client::request_once;
-use deckpilot_ipc::paths::RUN_AGENT_ARG;
+use deckpilot_ipc::paths::{QUIET_STDERR_ARG, RUN_AGENT_ARG};
 use deckpilot_ipc::plugins::PluginEvent;
 use deckpilot_ipc::{
     AgentClient, AgentEvent, AgentPaths, AgentStatus, Capability, ClientError, ClientKind,
@@ -320,11 +320,13 @@ pub fn agent_executable() -> Option<PathBuf> {
 /// How to start the agent: inside an AppImage through the AppImage file
 /// with [`RUN_AGENT_ARG`], so the agent runs as that AppImage's main process
 /// and its files stay mounted as long as it runs (the mount of this app goes
-/// away when the app closes); otherwise the executable itself.
+/// away when the app closes); otherwise the executable itself. Either way
+/// with [`QUIET_STDERR_ARG`]: its standard error goes to the output file
+/// (`agent_output.rs`), and its log records are in its log files already.
 fn agent_command(appimage: Option<PathBuf>, executable: PathBuf) -> (PathBuf, Vec<&'static str>) {
     match appimage {
-        Some(file) => (file, vec![RUN_AGENT_ARG]),
-        None => (executable, Vec::new()),
+        Some(file) => (file, vec![RUN_AGENT_ARG, QUIET_STDERR_ARG]),
+        None => (executable, vec![QUIET_STDERR_ARG]),
     }
 }
 
@@ -374,16 +376,22 @@ pub fn start_agent_by_user() -> Result<(), String> {
 }
 
 /// Starts the agent process, detached from this process (its own process
-/// group, no console, no standard streams).
+/// group, no console, no standard input), with its standard output and
+/// error going to `logs/output.log` (`agent_output.rs`), or nowhere if
+/// that file cannot be opened.
 pub(crate) fn spawn_agent_process() -> Result<std::process::Child, String> {
     let executable = agent_executable().ok_or("the DeckPilot agent executable was not found")?;
     let (path, args) = agent_command(deckpilot_ipc::paths::appimage(), executable);
+    let (stdout, stderr) = crate::agent_output::streams(
+        AgentPaths::resolve(),
+        deckpilot_ipc::paths::MAX_OUTPUT_LOG_BYTES,
+    );
     let mut command = Command::new(&path);
     command
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(stdout)
+        .stderr(stderr);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -869,10 +877,10 @@ mod launch_tests {
             PathBuf::from("/tmp/.mount_X/usr/bin/deckpilot-agent"),
         );
         assert_eq!(program, PathBuf::from("/home/u/Apps/DeckPilot.AppImage"));
-        assert_eq!(args, [RUN_AGENT_ARG]);
+        assert_eq!(args, [RUN_AGENT_ARG, QUIET_STDERR_ARG]);
         // Installed packages (.deb, .rpm: /usr/bin) start the executable.
         let (program, args) = agent_command(None, PathBuf::from("/usr/bin/deckpilot-agent"));
         assert_eq!(program, PathBuf::from("/usr/bin/deckpilot-agent"));
-        assert_eq!(args, Vec::<&str>::new());
+        assert_eq!(args, [QUIET_STDERR_ARG]);
     }
 }
