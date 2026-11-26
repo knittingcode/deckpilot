@@ -182,13 +182,7 @@ fn setup(
             session: ProviderSession(1),
         })
         .unwrap();
-    engine.on_event(
-        &provider.id(),
-        ProviderEvent::Connected {
-            session: ProviderSession(1),
-        },
-        Instant::ZERO,
-    );
+    // The provider reports `Connected` from its first poll (`run`).
     (provider, engine)
 }
 
@@ -389,7 +383,7 @@ fn nothing_is_sampled_without_consent_or_after_disconnect() {
 }
 
 /// A failure before a disconnect is not carried into the next session: the
-/// first good sample after reconnecting reports no extra `Connected`.
+/// reconnect reports its new session once and no extra `Connected`.
 #[test]
 fn a_reconnect_does_not_carry_an_old_failure() {
     let teams = parse_wasapi_sessions(WASAPI_TEAMS).unwrap();
@@ -399,7 +393,12 @@ fn a_reconnect_does_not_carry_an_old_failure() {
     );
     assert!(matches!(
         provider.poll(Instant::ZERO).as_slice(),
-        [ProviderEvent::Disconnected { .. }]
+        [
+            ProviderEvent::Connected {
+                session: ProviderSession(1)
+            },
+            ProviderEvent::Disconnected { .. }
+        ]
     ));
     provider.disconnect();
     provider
@@ -408,12 +407,26 @@ fn a_reconnect_does_not_carry_an_old_failure() {
             session: ProviderSession(2),
         })
         .unwrap();
+    // The new session is reported once, by itself: nothing of the old
+    // failure is carried over.
     let events = provider.poll(Instant::from_secs(1));
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, ProviderEvent::Connected { .. })),
+        matches!(
+            events.as_slice(),
+            [
+                ProviderEvent::Connected {
+                    session: ProviderSession(2)
+                },
+                ProviderEvent::Call(_)
+            ]
+        ),
         "{events:?}"
     );
-    assert!(matches!(events.as_slice(), [ProviderEvent::Call(_)]));
+    assert!(
+        !provider
+            .poll(Instant::from_secs(2))
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Connected { .. })),
+        "reported once"
+    );
 }
