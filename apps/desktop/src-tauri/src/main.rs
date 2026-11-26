@@ -16,6 +16,7 @@ mod lifecycle;
 mod marketplace_e2e;
 mod modules;
 mod plugin_actions;
+mod single_instance;
 mod state;
 mod supervisor;
 #[cfg(test)]
@@ -89,6 +90,12 @@ fn main() {
     agent::run_agent_if_requested();
     let window_only = requested_window();
     let mut builder = tauri::Builder::default();
+    // First of all plugins: a second launch hands over to the running app
+    // and ends here (`single_instance.rs`).
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    if single_instance::applies_here(window_only.as_deref()) {
+        builder = builder.plugin(single_instance::plugin());
+    }
     if tauri::is_dev() {
         builder = builder.register_uri_scheme_protocol(dev_server::SCHEME, |ctx, request| {
             let app = ctx.app_handle();
