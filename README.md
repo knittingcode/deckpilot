@@ -236,7 +236,8 @@ real configuration. `pnpm dev` runs the same session in the foreground. All comm
 - Only one pre-release has been published; automatic installation of updates stays off by default
   until an update between two real releases has been tested.
 - Windows installers are not code-signed yet.
-- Device discovery rescans every two seconds instead of using hotplug notifications.
+- Device discovery rescans every two seconds instead of using hotplug notifications;
+  a device that fails to open or keeps disconnecting is retried less often (up to every 60 s).
 - On Linux desktops without AppIndicator support the tray icon is not shown (the agent keeps
   working).
 - Touch ID on macOS is the only system authentication; Windows Hello and polkit are not integrated.
