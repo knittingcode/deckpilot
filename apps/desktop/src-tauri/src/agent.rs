@@ -499,7 +499,15 @@ impl<R: Runtime> crate::supervisor::Environment for SupervisorEnv<R> {
     }
 
     fn changed(&self) {
-        let _ = self.app.emit(STATUS_EVENT, AgentConnection::stopped());
+        // The real state: after a skipped restart another agent may run.
+        let (app, paths) = (self.app.clone(), self.paths.clone());
+        tauri::async_runtime::spawn(async move {
+            let current = match connection(&paths).await {
+                Ok(current) => current,
+                Err(_) => AgentConnection::stopped(),
+            };
+            let _ = app.emit(STATUS_EVENT, current);
+        });
     }
 }
 

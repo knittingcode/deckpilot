@@ -381,7 +381,8 @@ pub trait Environment: Sync {
     fn agent_answers(&self) -> impl Future<Output = bool> + Send;
     /// Whether the instance lock is free within [`LOCK_WAIT`].
     fn lock_free(&self) -> impl Future<Output = bool> + Send;
-    /// What [`Supervisor::supervision`] says changed: tell the windows.
+    /// What [`Supervisor::supervision`] says changed: tell the windows the
+    /// agent's actual state.
     fn changed(&self);
 }
 
@@ -448,10 +449,10 @@ pub async fn step(supervisor: &Supervisor, env: &impl Environment) -> Option<Res
             env.changed();
             env.sleep(delay).await;
             let outcome = restart(supervisor, env).await;
-            // Only a restart that failed has something new to show. After
-            // the others an agent runs or is about to (the bridge reports
-            // it), and a "stopped" status would overwrite a running one.
-            if outcome == Restart::Failed {
+            // A started agent is reported by the bridge once it answers.
+            // Otherwise the "restarting" notice must go (the app sends the
+            // real state, not "stopped", which could hide a running agent).
+            if outcome != Restart::Started {
                 env.changed();
             }
             Some(outcome)
@@ -806,6 +807,28 @@ mod tests {
         assert_eq!(run_step(&supervisor, &env), Some(Restart::Started));
         // Only the "restarting" notice before the wait.
         assert_eq!(env.changes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_agent_started_right_after_activation_is_supervised() {
+        // main.rs activates before the first-launch start, before `run`.
+        let launcher = FakeLauncher::default();
+        let supervisor = Supervisor::new(Box::new(launcher.clone()));
+        supervisor.activate();
+        supervisor.start().unwrap();
+        assert!(supervisor.owns_running_agent());
+    }
+
+    #[test]
+    fn a_skipped_restart_tells_the_windows() {
+        let (supervisor, launcher, env) = setup();
+        supervisor.start().unwrap();
+        env.update.store(true, Ordering::SeqCst);
+        launcher.exit_last(CRASH);
+        assert_eq!(run_step(&supervisor, &env), Some(Restart::UpdateInProgress));
+        // The "restarting" notice, then the state after the skip.
+        assert_eq!(env.changes.load(Ordering::SeqCst), 2);
+        assert_eq!(supervisor.supervision(), None);
     }
 
     #[test]
