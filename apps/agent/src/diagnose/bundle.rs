@@ -225,29 +225,47 @@ fn cut(line: &str, max: usize) -> String {
 /// What a field's value may look like in a log line: `\"…\"` (JSON inside
 /// a quoted string), `"…"`, `'…'`, a quote not closed before the end of the
 /// line, `Type { … }`, `Type(…)` (`Some("…")`), `{ … }`, `( … )`, `[ … ]`
-/// (one level of nesting), or a bare word.
-const FIELD_VALUE: &str = concat!(
-    r#"(?:\\"(?:[^\\]|\\[^"])*\\""#,
-    r#"|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'"#,
-    r#"|"[^"]*$|'[^']*$"#,
-    r"|[A-Za-z_][A-Za-z0-9_:]*\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
-    r"|[A-Za-z_][A-Za-z0-9_:]*\((?:[^()]|\([^()]*\))*\)",
-    r"|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
-    r"|\((?:[^()]|\([^()]*\))*\)",
-    r"|\[[^\[\]]*\]",
-    r"|[^\s&,;)}\]:][^\s&,;)}\]]*)",
-);
+/// (nested up to four levels), or a bare word.
+static FIELD_VALUE: LazyLock<String> = LazyLock::new(|| {
+    let parens = nested(r"\(", r"\)", "()");
+    let braces = nested(r"\{", r"\}", "{}");
+    let brackets = nested(r"\[", r"\]", r"\[\]");
+    [
+        r#"\\"(?:[^\\]|\\[^"])*\\""#.to_owned(),
+        r#""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'"#.to_owned(),
+        r#""(?:[^"\\]|\\.)*$|'(?:[^'\\]|\\.)*$"#.to_owned(),
+        format!(r"[A-Za-z_][A-Za-z0-9_:]*\s*{braces}"),
+        format!(r"[A-Za-z_][A-Za-z0-9_:]*{parens}"),
+        braces,
+        parens,
+        brackets,
+        r"[^\s&,;)}\]:][^\s&,;)}\]]*".to_owned(),
+    ]
+    .join("|")
+});
+
+/// A bracketed group (`open`, `close`, both in `class` form) with up to
+/// four levels of nesting.
+fn nested(open: &str, close: &str, class: &str) -> String {
+    let mut pattern = format!("{open}[^{class}]*{close}");
+    for _ in 0..3 {
+        pattern = format!("{open}(?:[^{class}]|{pattern})*{close}");
+    }
+    pattern
+}
 
 /// Between a field's name and its value: `=`, `:`, `=>`, `->`, `%3D`,
 /// after an optional closing quote (also `\"`).
 const FIELD_SEPARATOR: &str = r#"(\\?["']?\s*(?:=>|->|%3[Dd]|[=:])\s*)"#;
 
-/// Secret fields: a field (`key=value`, `key: value`, `"key": "value"`,
-/// `key => value`) whose name contains one of the words, or ends in one of
-/// the short ones, has its value redacted.
+/// Secret fields: a field (`name=value`, `name: value`, `"name": "value"`,
+/// `name => value`) whose name contains one of the words, is or ends in one
+/// of the short ones, or ends in `_key`, has its value redacted. A name
+/// right after `::` is a module path (a log target), not a field.
 static SECRET_FIELD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?i)\b((?:[A-Za-z0-9_.-]*(?:token|passw(?:or)?d|passphrase|pwd|secret|credential|api[_-]?key|private[_-]?key|access[_-]?key|auth|cookie|session|signature|bearer)[A-Za-z0-9_.-]*)|(?:[A-Za-z0-9.-]*[_.-])?(?:key|sig|pass|pw|pin|otp)){FIELD_SEPARATOR}({FIELD_VALUE})"
+        r"(?i)(^|[^:A-Za-z0-9_])((?:[A-Za-z0-9_.-]*(?:token|passw(?:or)?d|passphrase|pwd|secret|credential|api[_-]?key|private[_-]?key|access[_-]?key|auth|cookie|session|signature|bearer)[A-Za-z0-9_.-]*)|(?:[A-Za-z0-9.-]*[_.-])?(?:sig|pass|pw|pin|otp)|[A-Za-z0-9.-]*[_.-]key){FIELD_SEPARATOR}({value})",
+        value = *FIELD_VALUE,
     ))
     .expect("valid regex")
 });
@@ -292,8 +310,11 @@ static OPAQUE: LazyLock<Regex> =
 
 /// The same with `/` (base64, a PEM line): redacted only when it mixes
 /// upper and lower case and digits, which paths rarely do.
-static OPAQUE_SLASHED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/=_-]{32,}").expect("valid regex"));
+/// It must start a word (after a space, a quote, `=`, `:` …), so a path
+/// or URL that goes on after a `.` is not taken for one.
+static OPAQUE_SLASHED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(^|[\s"'=:(\[,;])([A-Za-z0-9+/=_-]{32,})"#).expect("valid regex")
+});
 
 /// A device ID as the agent logs it: `<model>#<serial>`, the model a dotted
 /// ID (`elgato.streamdeck.mk2`).
@@ -416,11 +437,14 @@ fn public_host(host: &str) -> bool {
 
 /// Removes what may identify the user from log lines (module docs).
 pub struct LogRedactor {
-    home: Vec<String>,
+    /// The home directory's spellings, compiled once.
+    home: Vec<Regex>,
     user: Option<String>,
     hosts: Vec<String>,
-    serials: Vec<String>,
+    /// Each known serial (without case) and its pseudonym.
+    serials: Vec<(Regex, String)>,
     machine_id: Option<String>,
+    machine_id_pattern: Option<Regex>,
 }
 
 impl std::fmt::Debug for LogRedactor {
@@ -455,16 +479,26 @@ impl LogRedactor {
             }
             hosts.sort_by_key(|host| std::cmp::Reverse(host.len()));
         }
+        let machine_id = env.machine_id.clone().filter(|id| id.len() >= 8);
+        let serials = env
+            .known_serials()
+            .into_iter()
+            .filter(|serial| serial.len() >= 4)
+            .filter_map(|serial| {
+                let pattern = literal_ignore_case(&serial)?;
+                Some((pattern, serial_pseudonym(&serial, machine_id.as_deref())))
+            })
+            .collect();
         Self {
-            home,
+            home: home
+                .iter()
+                .filter_map(|prefix| path_prefix(prefix))
+                .collect(),
             user: env.user.clone(),
             hosts,
-            serials: env
-                .known_serials()
-                .into_iter()
-                .filter(|serial| serial.len() >= 4)
-                .collect(),
-            machine_id: env.machine_id.clone().filter(|id| id.len() >= 8),
+            serials,
+            machine_id_pattern: machine_id.as_deref().and_then(literal_ignore_case),
+            machine_id,
         }
     }
 
@@ -512,7 +546,7 @@ impl LogRedactor {
             .into_owned();
         SECRET_FIELD
             .replace_all(&text, |c: &Captures<'_>| {
-                format!("{}{}{REDACTED}", &c[1], &c[2])
+                format!("{}{}{}{REDACTED}", &c[1], &c[2], &c[3])
             })
             .into_owned()
     }
@@ -536,6 +570,7 @@ impl LogRedactor {
                 // after a space.
                 let spaced = c[2].trim().is_empty();
                 if raw.starts_with("sha256:")
+                    || raw.eq_ignore_ascii_case("sha256")
                     || raw.is_empty()
                     || (spaced && !raw.chars().any(|ch| ch.is_ascii_digit()))
                 {
@@ -545,11 +580,13 @@ impl LogRedactor {
                 }
             })
             .into_owned();
-        for serial in &self.serials {
-            text = replace_ignore_case(&text, serial, &self.pseudonym(serial));
+        for (pattern, pseudonym) in &self.serials {
+            text = pattern
+                .replace_all(&text, regex::NoExpand(pseudonym))
+                .into_owned();
         }
-        if let Some(id) = &self.machine_id {
-            text = replace_ignore_case(&text, id, "<machine-id>");
+        if let Some(pattern) = &self.machine_id_pattern {
+            text = pattern.replace_all(&text, "<machine-id>").into_owned();
         }
         text
     }
@@ -557,7 +594,9 @@ impl LogRedactor {
     /// Paths, names and addresses.
     fn names(&self, mut text: String) -> String {
         for home in &self.home {
-            text = replace_path_prefix(&text, home, "~");
+            text = home
+                .replace_all(&text, |c: &Captures<'_>| format!("~{}", &c["end"]))
+                .into_owned();
         }
         text = USER_DIRECTORY
             .replace_all(&text, |c: &Captures<'_>| {
@@ -606,7 +645,7 @@ impl LogRedactor {
     /// Last: whatever long opaque string is left.
     fn opaque(text: &str) -> String {
         let text = OPAQUE_SLASHED.replace_all(text, |c: &Captures<'_>| {
-            let run = &c[0];
+            let run = &c[2];
             // A run that starts with `/` is a path (`/var/folders/…/T/…`).
             let mixed = run.contains('/')
                 && !run.starts_with('/')
@@ -614,9 +653,9 @@ impl LogRedactor {
                 && run.chars().any(|ch| ch.is_ascii_uppercase())
                 && run.chars().any(|ch| ch.is_ascii_lowercase());
             if mixed {
-                REDACTED.to_owned()
+                format!("{}{REDACTED}", &c[1])
             } else {
-                run.to_owned()
+                c[0].to_owned()
             }
         });
         OPAQUE
@@ -650,32 +689,21 @@ impl LogRedactor {
     }
 }
 
-/// `needle` replaced without case.
-fn replace_ignore_case(text: &str, needle: &str, replacement: &str) -> String {
-    let pattern = format!("(?i){}", regex::escape(needle));
-    match Regex::new(&pattern) {
-        Ok(regex) => regex.replace_all(text, replacement).into_owned(),
-        Err(_) => text.replace(needle, replacement),
-    }
+/// A pattern that finds `needle` without case.
+fn literal_ignore_case(needle: &str) -> Option<Regex> {
+    Regex::new(&format!("(?i){}", regex::escape(needle))).ok()
 }
 
-/// `prefix` (a directory) replaced with `replacement` where it is a whole
-/// path: followed by a separator or by something that cannot be part of a
-/// file name. Without case (macOS and Windows file systems are usually
+/// A pattern that finds `prefix` (a directory) where it is a whole path:
+/// followed by a separator or by something that cannot be part of a file
+/// name (`end`). Without case (macOS and Windows file systems are usually
 /// case-insensitive).
-fn replace_path_prefix(text: &str, prefix: &str, replacement: &str) -> String {
-    let pattern = format!(
+fn path_prefix(prefix: &str) -> Option<Regex> {
+    Regex::new(&format!(
         r#"(?i){}(?P<end>[/\\\s"',;:)\]}}]|$)"#,
         regex::escape(prefix)
-    );
-    match Regex::new(&pattern) {
-        Ok(regex) => regex
-            .replace_all(text, |c: &Captures<'_>| {
-                format!("{replacement}{}", &c["end"])
-            })
-            .into_owned(),
-        Err(_) => text.replace(prefix, replacement),
-    }
+    ))
+    .ok()
 }
 
 #[cfg(test)]

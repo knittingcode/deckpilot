@@ -136,7 +136,7 @@ export function ExportDiagnosticsDialog({ onClose }: { onClose: () => void }) {
           <p className="text-muted-foreground">{t("settings:diagnostics.export.redacted")}</p>
           <p className="text-muted-foreground">{t("settings:diagnostics.export.review")}</p>
           <pre
-            className="max-h-72 overflow-auto rounded-md bg-muted px-3 py-2 font-mono text-xs leading-5 whitespace-pre select-text"
+            className="relative max-h-72 overflow-auto rounded-md bg-muted px-3 py-2 font-mono text-xs leading-5 whitespace-pre select-text"
             aria-label={t("settings:diagnostics.export.content")}
             tabIndex={0}
           >

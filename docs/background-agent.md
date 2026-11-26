@@ -624,17 +624,21 @@ redaction filter (`apps/agent/src/diagnose/bundle.rs`):
 - secret values:
   - the value of a field whose name contains `token`, `password`,
     `passphrase`, `secret`, `credential`, `api_key`, `private_key`,
-    `access_key`, `auth`, `cookie`, `session` or `signature`, or ends in
-    `key`, `sig`, `pass`, `pw`, `pin` or `otp`. This covers `k=v`, `k: v`,
-    `"k": "v"`, `k => v`, `k -> v`, escaped JSON (`\"k\":\"v\"`), `Some(…)`,
-    `Type { … }`, tuples, a quote left open, and `%3D`;
+    `access_key`, `auth`, `cookie`, `session` or `signature`, is or ends in
+    `sig`, `pass`, `pw`, `pin` or `otp`, or ends in `_key`. This covers
+    `k=v`, `k: v`, `"k": "v"`, `k => v`, `k -> v`, escaped JSON
+    (`\"k\":\"v\"`), `Some(…)`, `Type { … }`, tuples and lists nested up
+    to four levels, a quote left open, and `%3D`. A name right after `::`
+    is a module path (a log target), not a field. Only the first word of a
+    bare value that contains spaces is removed;
   - the value of such a command-line option (`--password X`);
   - the credential after `Bearer`, `Basic` and `Digest`;
   - tokens with a known prefix (`ghp_`, `github_pat_`, `glpat-`, `xox?-`,
     `sk-`, `AKIA`) and JSON web tokens;
   - any run of 32 or more letters, digits and `+=_-` that mixes letters and
-    digits, and any such run with `/` (base64) that mixes upper and lower
-    case and digits and does not start with `/`;
+    digits, and any such run with `/` (base64) that starts a word and mixes
+    upper and lower case and digits (a path that starts with `/` or goes on
+    after a `.` is kept);
 - URLs: user and password go. A host other than GitHub's or loopback
   becomes `<host>`, every query value `<redacted>`, and the path after
   `/webhooks/`, `/services/` or `/hooks/` `<redacted>`;

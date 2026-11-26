@@ -435,6 +435,22 @@ fn secrets_in_other_forms_are_removed() {
             "FAKEpass",
         ),
         ("unclosed quote", r#"password="abc FAKEtail"#, "FAKEtail"),
+    ] {
+        let output = redactor.line(input).to_lowercase();
+        assert!(
+            !output.contains(&secret.to_lowercase()),
+            "a secret is left: {label}"
+        );
+    }
+}
+
+/// URLs, addresses, keys and serials in other forms.
+#[test]
+fn secrets_in_urls_addresses_and_serials_are_removed() {
+    let root = root();
+    let env = fixture(root.path());
+    let redactor = LogRedactor::new(&env);
+    for (label, input, secret) in [
         (
             "query key",
             "https://api.example/x?key=FAKEKEY123&sig=FAKESIG",
@@ -485,6 +501,26 @@ fn secrets_in_other_forms_are_removed() {
             "ZZ99XX77",
         ),
         ("unc server", r"opened \\fileserver\share\x", "fileserver"),
+        (
+            "option-wrapped tuple",
+            r#"auth: Some(("bob", Some("FAKEnested")))"#,
+            "FAKEnested",
+        ),
+        (
+            "nested newtypes",
+            r#"token: Some(Secret(Inner("a FAKEinner")))"#,
+            "FAKEinner",
+        ),
+        (
+            "unclosed with an escape",
+            r#"password="abc \"FAKEesc"#,
+            "FAKEesc",
+        ),
+        (
+            "deep struct",
+            r#"c: Credentials { u: "b", i: I { d: D { pass: "FAKEdeep" } } }"#,
+            "FAKEdeep",
+        ),
     ] {
         let output = redactor.line(input).to_lowercase();
         assert!(
@@ -492,7 +528,14 @@ fn secrets_in_other_forms_are_removed() {
             "a secret is left: {label}"
         );
     }
-    // What stays readable.
+}
+
+/// What support needs stays readable.
+#[test]
+fn ordinary_text_stays_readable() {
+    let root = root();
+    let env = fixture(root.path());
+    let redactor = LogRedactor::new(&env);
     for (label, input) in [
         ("timestamps", "2026-11-26T10:00:00.123Z"),
         ("module paths", "deckpilot_agent::service::device_retry"),
@@ -506,6 +549,21 @@ fn secrets_in_other_forms_are_removed() {
             r"C:\\Users\\<user>\\x",
         ),
         ("exit codes", "exited with code=1"),
+        (
+            "release urls",
+            "https://github.com/knittingcode/DeckPilot/releases/download/v0.15.0/DeckPilot_0.15.0_aarch64.dmg",
+        ),
+        (
+            "relative paths",
+            "io.github.knittingcode.deckpilot/Plugins/Com9Example/Data",
+        ),
+        ("key bindings", "ControlBinding { key: Key { index: 3 } }"),
+        ("translation keys", "missing key=label.title"),
+        (
+            "log targets",
+            "INFO deckpilot_agent::service::work_session: work session started",
+        ),
+        ("a pseudonym stays", "serial=sha256:0123456789abcdef"),
     ] {
         assert!(redactor.line(input) == input, "changed: {label}");
     }
