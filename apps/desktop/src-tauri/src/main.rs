@@ -157,6 +157,11 @@ fn main() {
                 // Start the agent on first launch if it is not running yet,
                 // unless a development session manages it.
                 let managed = std::env::var_os("DECKPILOT_NO_AGENT_AUTOSTART").is_some();
+                // Before the first start, so that the agent started here is
+                // supervised too.
+                if !managed {
+                    agent::spawn_supervisor(handle.clone(), paths.clone());
+                }
                 if !managed
                     && let Ok(connection) = agent::connection(&paths).await
                     && !connection.running
@@ -164,9 +169,6 @@ fn main() {
                     && let Err(error) = agent::start_agent()
                 {
                     eprintln!("{error}");
-                }
-                if !managed {
-                    agent::spawn_supervisor(handle.clone(), paths.clone());
                 }
                 agent::spawn_bridge(handle.clone(), paths);
                 // Finishes or reports an update the previous run recorded.

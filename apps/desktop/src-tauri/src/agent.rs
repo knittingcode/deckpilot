@@ -443,6 +443,8 @@ pub fn spawn_bridge<R: Runtime>(app: AppHandle<R>, paths: AgentPaths) {
 /// bounded number of times (`supervisor.rs`). Agents started otherwise are
 /// only reconnected to by [`spawn_bridge`].
 pub fn spawn_supervisor<R: Runtime>(app: AppHandle<R>, paths: AgentPaths) {
+    // At once, not in the task: an agent started right after is recorded.
+    crate::supervisor::global().activate();
     tauri::async_runtime::spawn(async move {
         let env = SupervisorEnv { app, paths };
         crate::supervisor::run(crate::supervisor::global(), &env).await;

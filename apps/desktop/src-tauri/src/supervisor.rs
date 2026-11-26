@@ -460,6 +460,7 @@ pub async fn step(supervisor: &Supervisor, env: &impl Environment) -> Option<Res
 }
 
 /// Supervises the agents this app starts, for as long as the app runs.
+/// [`Supervisor::activate`] must have been called before the first start.
 pub async fn run(supervisor: &Supervisor, env: &impl Environment) {
     supervisor.activate();
     loop {
