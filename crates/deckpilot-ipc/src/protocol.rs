@@ -487,8 +487,11 @@ pub fn negotiate(client: u32, agent: u32) -> u32 {
     client.min(agent)
 }
 
-/// What kind of program is connecting. Used for diagnostics and to decide
-/// whether the configuration window is already open.
+/// What kind of program is connecting, **as the client itself declares** in
+/// its `hello`. Used for diagnostics, to decide whether the configuration
+/// window is already open, and as a policy guard (only `Desktop` receives
+/// `callsChanged` or may preview a call page). It is not authentication:
+/// the IPC token is, and any holder of the token can declare `Desktop`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ClientKind {
@@ -1179,6 +1182,30 @@ pub enum Request {
         model: deckpilot_device::DeviceModelId,
         copy_name: String,
     },
+    /// Sets the *Back to work* settings of `model`'s managed Calls layout
+    /// (the parameters of its "Back to work" action; the layout counts as
+    /// edited afterwards). Answers [`Response::CallsStatus`]. Since
+    /// protocol 19.
+    SetCallsBackToWork {
+        model: deckpilot_device::DeviceModelId,
+        back: crate::calls::BackToWork,
+    },
+    /// The Device Editor's preview of a call page of `device`'s managed
+    /// Calls layout: fixed placeholder faces, no call, no provider. Only
+    /// from a connection that declares itself a desktop client (a policy
+    /// guard; the token is the access boundary); refused while locked or while a real call
+    /// shows, which always wins. Ends with `endCallsPreview`, when the
+    /// connection closes, on lock, a real call or the device's disconnect.
+    /// Answers [`Response::Ok`]. Since protocol 19.
+    PreviewCallsPage {
+        device: DeviceId,
+        page: crate::calls::CallsPageKind,
+    },
+    /// Ends this connection's preview on `device`. Answers
+    /// [`Response::Ok`]. Since protocol 19.
+    EndCallsPreview {
+        device: DeviceId,
+    },
 }
 
 impl Request {
@@ -1243,6 +1270,15 @@ impl Request {
                 Err(format!(
                     "the copy's name is 1 to {} characters, without control characters",
                     crate::calls::MAX_COPY_NAME
+                ))
+            }
+            Self::SetCallsBackToWork { back, .. } if back.validate().is_err() => back.validate(),
+            Self::PreviewCallsPage { device, .. } | Self::EndCallsPreview { device }
+                if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
+            {
+                Err(format!(
+                    "device serial must be 1 to {} bytes",
+                    crate::calls::MAX_SERIAL
                 ))
             }
             Self::SetCallsOverlay { device, .. }
@@ -1980,6 +2016,7 @@ pub enum AgentEvent {
 impl Request {
     /// The first protocol that has this request. Clients do not send it on
     /// a connection with an older protocol, and the agent refuses it there.
+    #[allow(clippy::too_many_lines)] // One arm per request, exhaustive on purpose.
     pub fn since_protocol(&self) -> u32 {
         match self {
             Self::StartWorkflow { .. }
@@ -2052,7 +2089,10 @@ impl Request {
             Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
             Self::GetCallsStatus
             | Self::SetCallsOverlay { .. }
-            | Self::RestoreCallsLayout { .. } => CALLS_PROTOCOL,
+            | Self::RestoreCallsLayout { .. }
+            | Self::SetCallsBackToWork { .. }
+            | Self::PreviewCallsPage { .. }
+            | Self::EndCallsPreview { .. } => CALLS_PROTOCOL,
             Self::ListPluginConnections { .. }
             | Self::CreatePluginConnection { .. }
             | Self::SetPluginConnectionSecret { .. }
@@ -2872,6 +2912,66 @@ mod tests {
         );
     }
 
+    /// `setCallsBackToWork` on the wire, and its times checked at the
+    /// boundaries of their ranges.
+    #[test]
+    fn back_to_work_is_set_in_range_only() {
+        use crate::calls::{BackToWork, BackToWorkMode};
+        let set = |mode| Request::SetCallsBackToWork {
+            model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+            back: BackToWork {
+                mode,
+                ..BackToWork::default()
+            },
+        };
+        let json =
+            serde_json::to_value(set(BackToWorkMode::CompletionOrMax { max_seconds: 60 })).unwrap();
+        assert_eq!(json["type"], "setCallsBackToWork");
+        assert_eq!(
+            json["back"],
+            serde_json::json!({
+                "mode": { "kind": "completionOrMax", "maxSeconds": 60 },
+                "onFailure": "resume",
+                "onCancel": "stay",
+                "allDevices": false,
+            })
+        );
+        let timer = serde_json::to_value(set(BackToWorkMode::Timer { seconds: 20 })).unwrap();
+        assert_eq!(
+            timer["back"]["mode"],
+            serde_json::json!({"kind": "timer", "seconds": 20})
+        );
+        for (seconds, ok) in [
+            (4, false),
+            (5, true),
+            (600, true),
+            (601, false),
+            (u32::MAX, false),
+        ] {
+            assert_eq!(
+                set(BackToWorkMode::Timer { seconds }).validate().is_ok(),
+                ok,
+                "timer {seconds}"
+            );
+        }
+        for (max_seconds, ok) in [
+            (9, false),
+            (10, true),
+            (1800, true),
+            (1801, false),
+            (u32::MAX, false),
+        ] {
+            assert_eq!(
+                set(BackToWorkMode::CompletionOrMax { max_seconds })
+                    .validate()
+                    .is_ok(),
+                ok,
+                "maximum {max_seconds}"
+            );
+        }
+        assert!(set(BackToWorkMode::Completion).validate().is_ok());
+    }
+
     /// Protocol 18: structured variables reach only clients that know
     /// them; an older client gets `json` without members, no member
     /// entries, a redacted preview and the nearest older reasons.
@@ -3026,8 +3126,26 @@ mod tests {
         assert_eq!(shown.clone().for_protocol(18), shown);
     }
 
+    /// A layout of an agent before the call pages (no `pages`, no `back`)
+    /// reads as none of either.
     #[test]
-    fn calls_need_protocol_19_and_carry_no_private_text() {
+    fn a_calls_layout_without_pages_or_back_reads_as_none() {
+        let layout: crate::calls::CallsLayout = serde_json::from_value(serde_json::json!({
+            "model": "elgato.streamdeck.mk2",
+            "layout": "0b6f3f3e-6c51-4d0e-9a55-2f1f0c1d9a01",
+            "name": "Calls",
+            "edited": false,
+            "templateVersion": "1.0.0",
+        }))
+        .unwrap();
+        assert_eq!(layout.pages.len(), 0);
+        assert_eq!(layout.back, None);
+        let json = serde_json::to_value(&layout).unwrap();
+        assert!(json.get("back").is_none(), "no back key: {json}");
+    }
+
+    #[test]
+    fn calls_need_protocol_19() {
         assert!(!Capability::of_protocol(18).contains(&Capability::Calls));
         assert!(Capability::of_protocol(19).contains(&Capability::Calls));
         assert_eq!(serde_json::to_value(Capability::Calls).unwrap(), "calls");
@@ -3044,10 +3162,26 @@ mod tests {
                 model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
                 copy_name: "Rozmowy (moja wersja)".into(),
             },
+            Request::SetCallsBackToWork {
+                model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                back: crate::calls::BackToWork::default(),
+            },
         ] {
             assert_eq!(request.since_protocol(), 19);
             request.validate().unwrap();
         }
+        let event = AgentEvent::CallsChanged {
+            status: Box::default(),
+        };
+        assert!(event.desktop_only());
+        assert!(!AgentEvent::ShowWindow.desktop_only());
+        assert!(event.clone().for_protocol(18).is_none());
+        assert!(event.for_protocol(19).is_some());
+    }
+
+    /// The Calls requests refuse a bad copy name and an over-long serial.
+    #[test]
+    fn calls_requests_refuse_bad_names_and_serials() {
         let json = serde_json::to_value(Request::RestoreCallsLayout {
             model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
             copy_name: "Mine".into(),
@@ -3088,20 +3222,56 @@ mod tests {
             .is_err()
         );
         assert!(crate::calls::valid_copy_name("  Rozmowy (moja wersja)  "));
-        let event = AgentEvent::CallsChanged {
-            status: Box::default(),
-        };
-        assert!(event.desktop_only());
-        assert!(!AgentEvent::ShowWindow.desktop_only());
-        assert!(event.clone().for_protocol(18).is_none());
-        assert!(event.for_protocol(19).is_some());
+    }
+
+    /// The Calls status and each device's entry carry no private text: no
+    /// title, participant or process, and a preview only as its page kind.
+    #[test]
+    fn calls_status_and_device_entries_carry_no_private_text() {
         // The status names no title, participant or process.
         let status = serde_json::to_value(crate::calls::CallsStatus::default()).unwrap();
         let keys: Vec<&String> = status.as_object().unwrap().keys().collect();
         assert_eq!(
             keys,
-            ["controls", "devices", "installed", "layouts", "state"]
+            [
+                "controls",
+                "devices",
+                "installed",
+                "layouts",
+                "revision",
+                "state"
+            ]
         );
+        // Nor does a device's entry: with a preview it adds only the page
+        // kind, without one the field is left out.
+        let entry = |preview| crate::calls::CallsDevice {
+            device: deckpilot_device::DeviceId {
+                model: deckpilot_device::DeviceModelId::new("elgato.mk2"),
+                serial: "A1".into(),
+            },
+            overlay: true,
+            shown: false,
+            suspended: false,
+            preview,
+        };
+        let keys = |value: serde_json::Value| -> Vec<String> {
+            value.as_object().unwrap().keys().cloned().collect()
+        };
+        let with = serde_json::to_value(entry(Some(crate::calls::CallsPageKind::Active))).unwrap();
+        assert_eq!(
+            keys(with.clone()),
+            ["device", "overlay", "preview", "shown", "suspended"]
+        );
+        assert_eq!(with["preview"], "active");
+        assert_eq!(keys(with["device"].clone()), ["model", "serial"]);
+        let without = serde_json::to_value(entry(None)).unwrap();
+        assert_eq!(
+            keys(without.clone()),
+            ["device", "overlay", "shown", "suspended"]
+        );
+        // An entry from an agent without the field reads as no preview.
+        let old: crate::calls::CallsDevice = serde_json::from_value(without).unwrap();
+        assert_eq!(old, entry(None));
     }
 
     #[test]

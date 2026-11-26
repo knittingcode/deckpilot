@@ -190,6 +190,16 @@ pub(crate) enum Command {
         request: Request,
         reply: oneshot::Sender<Result<Response, IpcError>>,
     },
+    /// A Calls page preview request of connection `viewer` (`server.rs`).
+    CallsPreview {
+        viewer: u64,
+        request: Request,
+        reply: oneshot::Sender<Result<Response, IpcError>>,
+    },
+    /// The connection `viewer` closed: its Calls previews end.
+    CallsPreviewClosed {
+        viewer: u64,
+    },
     /// The connection `viewer` closed: its live preview sessions end.
     LivePreviewClosed {
         viewer: u64,
@@ -236,6 +246,8 @@ pub(crate) enum Command {
         mock: Box<deckpilot_calls::testing::MockProvider>,
         /// The parameters of "Back to work" in the templates.
         back: deckpilot_core::ActionParameters,
+        /// The consent the test grants.
+        consent: deckpilot_calls::provider::ConsentState,
         reply: oneshot::Sender<()>,
     },
     /// Edits the installed mock provider (tests).
@@ -383,6 +395,26 @@ impl AgentHandle {
             .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?
     }
 
+    /// A Calls page preview request of connection `viewer`.
+    pub async fn calls_preview(&self, viewer: u64, request: Request) -> Result<Response, IpcError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(Command::CallsPreview {
+                viewer,
+                request,
+                reply,
+            })
+            .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?;
+        response
+            .await
+            .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?
+    }
+
+    /// The connection `viewer` closed: its Calls previews end.
+    pub fn calls_preview_closed(&self, viewer: u64) {
+        let _ = self.commands.send(Command::CallsPreviewClosed { viewer });
+    }
+
     /// The connection `viewer` closed: its live preview sessions end and
     /// their devices show the saved configuration again.
     pub fn live_preview_closed(&self, viewer: u64) {
@@ -515,12 +547,30 @@ impl AgentHandle {
         mock: deckpilot_calls::testing::MockProvider,
         back: deckpilot_core::ActionParameters,
     ) {
+        let full = deckpilot_calls::provider::ConsentState {
+            observe: true,
+            control: true,
+            titles: false,
+        };
+        self.install_calls_mock_with(mock, back, full).await;
+    }
+
+    /// [`AgentHandle::install_calls_mock`] with the consent `consent`
+    /// (tests: observe only, say).
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_mock_with(
+        &self,
+        mock: deckpilot_calls::testing::MockProvider,
+        back: deckpilot_core::ActionParameters,
+        consent: deckpilot_calls::provider::ConsentState,
+    ) {
         let (reply, done) = oneshot::channel();
         if self
             .commands
             .send(Command::CallsInstallMock {
                 mock: Box::new(mock),
                 back,
+                consent,
                 reply,
             })
             .is_ok()
@@ -1137,6 +1187,18 @@ impl Agent {
                 let _ = reply.send(self.live_preview(viewer, request));
                 Flow::Continue
             }
+            Command::CallsPreview {
+                viewer,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.calls_preview(viewer, &request));
+                Flow::Continue
+            }
+            Command::CallsPreviewClosed { viewer } => {
+                self.calls_preview_closed(viewer);
+                Flow::Continue
+            }
             Command::LivePreviewClosed { viewer } => {
                 self.live_preview_closed(viewer);
                 Flow::Continue
@@ -1211,13 +1273,13 @@ impl Agent {
                 Flow::Continue
             }
             #[cfg(feature = "test-hooks")]
-            Command::CallsInstallMock { mock, back, reply } => {
+            Command::CallsInstallMock {
+                mock,
+                back,
+                consent,
+                reply,
+            } => {
                 // Tests only: the consent a test grants.
-                let consent = deckpilot_calls::provider::ConsentState {
-                    observe: true,
-                    control: true,
-                    titles: false,
-                };
                 self.install_calls(mock, consent, calls::templates_with_back(&back));
                 let _ = reply.send(());
                 Flow::Continue
@@ -1394,6 +1456,9 @@ impl Agent {
                 status: Box::new(self.calls_status()),
             }),
             Request::SetCallsOverlay { device, on } => self.set_calls_overlay(&device, on),
+            Request::SetCallsBackToWork { model, back } => {
+                self.set_calls_back_to_work(&model, &back)
+            }
             Request::RestoreCallsLayout { model, copy_name } => {
                 self.restore_calls_layout(&model, &copy_name)
             }
@@ -1516,6 +1581,13 @@ impl Agent {
                 Ok(Response::Ok)
             }
             Request::InspectMockDevice { device } => self.inspect_mock_device(&device),
+            // Per connection: the preview belongs to it (`server.rs`).
+            Request::PreviewCallsPage { .. } | Request::EndCallsPreview { .. } => {
+                Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "Calls previews belong to a connection",
+                ))
+            }
             // Per connection: the session belongs to it (`server.rs`).
             Request::BeginLivePreview { .. }
             | Request::ApplyLivePreview { .. }
@@ -1556,6 +1628,7 @@ impl Agent {
             | Request::GetCallsStatus
             | Request::SetCallsOverlay { .. }
             | Request::RestoreCallsLayout { .. }
+            | Request::SetCallsBackToWork { .. }
             | Request::GetAutostart
             | Request::Subscribe
             | Request::SubscribePluginEvents { .. }
@@ -2340,7 +2413,7 @@ impl Agent {
             device: device.clone(),
         });
         info!(%device, "device disconnected");
-        self.calls_device_disconnected();
+        self.calls_device_disconnected(device);
         self.publish();
         self.publish_device_context(Some(device.clone()));
     }

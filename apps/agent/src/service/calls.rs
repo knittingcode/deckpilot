@@ -35,6 +35,144 @@ use tracing::{debug, info, warn};
 
 use super::Agent;
 
+/// The Calls action (id without the plugin's prefix) of `action`.
+fn calls_action(action: &deckpilot_core::ActionInstance) -> Option<&str> {
+    action
+        .action_type
+        .as_str()
+        .strip_prefix(OWNER)
+        .and_then(|rest| rest.strip_prefix('.'))
+}
+
+/// A managed layout's call pages as the app shows them: each control with
+/// its Calls action (support is filled in from the provider when the
+/// status is built, [`with_support`]).
+fn layout_pages(
+    managed: &deckpilot_storage::managed_layouts::ManagedLayout,
+) -> Vec<deckpilot_ipc::calls::CallsPage> {
+    use deckpilot_calls::layouts::{Page, page_id};
+    use deckpilot_ipc::calls::{CallsControl, CallsPage, CallsPageKind};
+    [
+        (Page::Incoming, CallsPageKind::Incoming),
+        (Page::Outgoing, CallsPageKind::Outgoing),
+        (Page::Active, CallsPageKind::Active),
+    ]
+    .into_iter()
+    .filter_map(|(page, kind)| {
+        let layout_page = managed.layout.page(page_id(managed.layout.id, page))?;
+        let controls = layout_page
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                let id = binding.target.action_id()?;
+                let action = managed.actions.iter().find(|a| a.id == id)?;
+                Some(CallsControl {
+                    control: binding.control,
+                    action: calls_action(action)?.to_owned(),
+                    supported: true,
+                    reason: None,
+                })
+            })
+            .collect();
+        Some(CallsPage {
+            page: kind,
+            name: layout_page.name.clone(),
+            controls,
+        })
+    })
+    .collect()
+}
+
+/// `pages` with each control's support by a provider of `capabilities`
+/// now (an action that controls no call is always supported).
+fn with_support(
+    mut pages: Vec<deckpilot_ipc::calls::CallsPage>,
+    capabilities: &deckpilot_calls::provider::CapabilitySet,
+    consent: ConsentState,
+) -> Vec<deckpilot_ipc::calls::CallsPage> {
+    for control in pages.iter_mut().flat_map(|p| p.controls.iter_mut()) {
+        let refused =
+            match deckpilot_calls::ops::control_support(&control.action, capabilities, consent) {
+                Some(Err(reason)) => Some(reason.code().to_owned()),
+                Some(Ok(())) | None => None,
+            };
+        control.supported = refused.is_none();
+        control.reason = refused;
+    }
+    pages
+}
+
+/// The "Back to work" actions a managed layout binds (one in every
+/// template; a user may have bound it to more keys, or to none).
+fn back_actions(
+    managed: &deckpilot_storage::managed_layouts::ManagedLayout,
+) -> Vec<&deckpilot_core::ActionInstance> {
+    let bound: BTreeSet<deckpilot_core::ActionInstanceId> =
+        managed.layout.bound_actions().into_iter().collect();
+    managed
+        .actions
+        .iter()
+        .filter(|a| calls_action(a) == Some("return-to-work") && bound.contains(&a.id))
+        .collect()
+}
+
+/// The engine's *Back to work* settings as the app sees them.
+fn ipc_back(settings: &deckpilot_calls::ret::ReturnSettings) -> deckpilot_ipc::calls::BackToWork {
+    use deckpilot_calls::ret::{AfterRun, ReturnMode};
+    use deckpilot_ipc::calls as ipc;
+    let seconds = |d: Duration| u32::try_from(d.as_secs()).unwrap_or(u32::MAX);
+    let after = |a: AfterRun| match a {
+        AfterRun::Resume => ipc::AfterRun::Resume,
+        AfterRun::Stay => ipc::AfterRun::Stay,
+    };
+    ipc::BackToWork {
+        mode: match settings.mode.clamped() {
+            ReturnMode::Timer { after } => ipc::BackToWorkMode::Timer {
+                seconds: seconds(after),
+            },
+            ReturnMode::Completion => ipc::BackToWorkMode::Completion,
+            ReturnMode::CompletionOrTimeout { max } => ipc::BackToWorkMode::CompletionOrMax {
+                max_seconds: seconds(max),
+            },
+        },
+        on_failure: after(settings.on_failure),
+        on_cancel: after(settings.on_cancel),
+        all_devices: settings.all_devices,
+    }
+}
+
+/// `back` over `base` (what `back` does not name, such as whether
+/// navigation counts, stays as it was).
+fn engine_back(
+    back: &deckpilot_ipc::calls::BackToWork,
+    base: deckpilot_calls::ret::ReturnSettings,
+) -> deckpilot_calls::ret::ReturnSettings {
+    use deckpilot_calls::ret::{AfterRun, ReturnMode};
+    use deckpilot_ipc::calls as ipc;
+    let after = |a: ipc::AfterRun| match a {
+        ipc::AfterRun::Resume => AfterRun::Resume,
+        ipc::AfterRun::Stay => AfterRun::Stay,
+    };
+    deckpilot_calls::ret::ReturnSettings {
+        mode: match back.mode {
+            ipc::BackToWorkMode::Timer { seconds } => ReturnMode::Timer {
+                after: Duration::from_secs(u64::from(seconds)),
+            },
+            ipc::BackToWorkMode::Completion => ReturnMode::Completion,
+            ipc::BackToWorkMode::CompletionOrMax { max_seconds } => {
+                ReturnMode::CompletionOrTimeout {
+                    max: Duration::from_secs(u64::from(max_seconds)),
+                }
+            }
+        }
+        .clamped(),
+        on_failure: after(back.on_failure),
+        on_cancel: after(back.on_cancel),
+        all_devices: back.all_devices,
+        ..base
+    }
+}
+
 /// How often an installed provider is polled at most apart.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -106,6 +244,8 @@ struct Service {
     seeded: BTreeSet<DeviceModelId>,
     /// Models to be tried again once the database is free.
     retries: BTreeMap<DeviceModelId, SeedRetry>,
+    /// The consent the user gave (from the plugin's grants).
+    consent: ConsentState,
 }
 
 impl std::fmt::Debug for Service {
@@ -128,12 +268,19 @@ pub(crate) struct AgentCalls {
     next_run: u64,
     /// What `callsChanged` last sent.
     published: Option<Box<deckpilot_ipc::calls::CallsStatus>>,
+    /// The status last answered or sent, and its revision
+    /// ([`deckpilot_ipc::calls::CallsStatus::revision`]): counted up when
+    /// the content changes.
+    revision: Option<Box<deckpilot_ipc::calls::CallsStatus>>,
     /// The managed layouts as the app sees them, read from the store once
     /// and again only after [`Agent::calls_layouts_changed`] (never on the
     /// Calls tick). `None`: to be read.
     layouts: Option<Vec<deckpilot_ipc::calls::CallsLayout>>,
     /// How often the layouts were read from the store (test hooks).
     layouts_reads: u64,
+    /// The editor's Calls page previews: by device, the connection that
+    /// asked (one per device).
+    previews: BTreeMap<DeviceId, u64>,
     /// Test hooks: the next seeds fail as if the database were busy.
     #[cfg(feature = "test-hooks")]
     fail_seeds: u32,
@@ -213,6 +360,7 @@ impl Agent {
             templates,
             seeded: BTreeSet::new(),
             retries: BTreeMap::new(),
+            consent,
         }));
         self.calls_wake();
     }
@@ -326,7 +474,11 @@ impl Agent {
                 // until the next agent start (the overlay is not shown on
                 // the model meanwhile).
                 Err(error) => {
-                    warn!(model = %model.id, %error, "the Calls layout could not be stored");
+                    warn!(
+                        model = %model.id,
+                        %error,
+                        "the Calls layout could not be stored; not tried again until the agent restarts"
+                    );
                     service.retries.remove(&model_id);
                     service.seeded.insert(model_id.clone());
                 }
@@ -359,6 +511,7 @@ impl Agent {
             service.driver.tick(&mut self.runtime, now);
         }
         if due || changed {
+            self.calls_prune_previews();
             self.render_all();
             self.calls_publish();
         }
@@ -414,6 +567,12 @@ impl Agent {
             }
             RuntimeOutcome::OverlayDismissed { session, .. } => {
                 service.driver.dismissed(device, *session);
+                // A dismissed preview is over, and the app is told.
+                if !service.driver.previews().any(|d| d == device)
+                    && self.calls.previews.remove(device).is_some()
+                {
+                    self.calls_publish();
+                }
                 true
             }
             _ => false,
@@ -529,9 +688,122 @@ impl Agent {
         self.calls_run_ended(run, end);
     }
 
-    /// A device went: the app's device list changes.
-    pub(super) fn calls_device_disconnected(&mut self) {
+    /// A device went: the app's device list changes, and its preview ends.
+    pub(super) fn calls_device_disconnected(&mut self, device: &DeviceId) {
+        if self.calls.previews.remove(device).is_some()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.end_preview(&mut self.runtime, device);
+        }
         self.calls_publish();
+    }
+
+    /// `previewCallsPage` and `endCallsPreview` of the desktop connection
+    /// `viewer` (`server.rs` refuses any other client).
+    pub(super) fn calls_preview(
+        &mut self,
+        viewer: u64,
+        request: &deckpilot_ipc::Request,
+    ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
+        use deckpilot_calls::driver::PreviewError;
+        use deckpilot_calls::layouts::Page;
+        use deckpilot_ipc::calls::CallsPageKind;
+        use deckpilot_ipc::{ErrorCode, IpcError, Request, Response};
+        match request {
+            Request::PreviewCallsPage { device, page } => {
+                if self.store.is_none() {
+                    return Err(IpcError::new(
+                        ErrorCode::Locked,
+                        "the configuration is locked",
+                    ));
+                }
+                if !self.runtime.devices().connected().any(|d| d == device) {
+                    return Err(unknown_device());
+                }
+                let service = self.calls.service.as_mut().ok_or_else(not_installed)?;
+                let page = match page {
+                    CallsPageKind::Incoming => Page::Incoming,
+                    CallsPageKind::Outgoing => Page::Outgoing,
+                    CallsPageKind::Active => Page::Active,
+                };
+                service
+                    .driver
+                    .preview(&mut self.runtime, device, page)
+                    .map_err(|error| match error {
+                        PreviewError::InCall => IpcError::new(
+                            ErrorCode::Unsupported,
+                            "a call shows on the device; it always wins over a preview",
+                        )
+                        .with_reason(deckpilot_ipc::calls::reason::PREVIEW_IN_CALL),
+                        PreviewError::NoLayout => no_layout(),
+                        PreviewError::Refused => {
+                            IpcError::new(ErrorCode::Failed, "the device took no preview")
+                                .with_reason(deckpilot_ipc::calls::reason::PREVIEW_REFUSED)
+                        }
+                    })?;
+                // One per device: a new one replaces the old, whoever asked.
+                self.calls.previews.insert(device.clone(), viewer);
+                self.render_all();
+                self.calls_publish();
+                Ok(Response::Ok)
+            }
+            Request::EndCallsPreview { device } => {
+                if self.calls.previews.get(device) == Some(&viewer) {
+                    self.calls.previews.remove(device);
+                    if let Some(service) = self.calls.service.as_mut() {
+                        service.driver.end_preview(&mut self.runtime, device);
+                    }
+                    self.render_all();
+                    self.calls_publish();
+                }
+                Ok(Response::Ok)
+            }
+            _ => Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "not a Calls preview request",
+            )),
+        }
+    }
+
+    /// The connection `viewer` closed: its previews end, no frame stays.
+    pub(super) fn calls_preview_closed(&mut self, viewer: u64) {
+        let devices: Vec<DeviceId> = self
+            .calls
+            .previews
+            .iter()
+            .filter(|(_, v)| **v == viewer)
+            .map(|(d, _)| d.clone())
+            .collect();
+        for device in &devices {
+            self.calls.previews.remove(device);
+            if let Some(service) = self.calls.service.as_mut() {
+                service.driver.end_preview(&mut self.runtime, device);
+            }
+        }
+        if !devices.is_empty() {
+            self.render_all();
+            self.calls_publish();
+        }
+    }
+
+    /// Every preview ends (the configuration locked).
+    pub(super) fn calls_end_previews(&mut self) {
+        self.calls.previews.clear();
+        if let Some(service) = self.calls.service.as_mut() {
+            service.driver.end_previews(&mut self.runtime);
+        }
+        self.calls_publish();
+    }
+
+    /// Forgets the previews the driver ended by itself (a real call came,
+    /// a dismiss on the device).
+    fn calls_prune_previews(&mut self) {
+        if let Some(service) = self.calls.service.as_ref() {
+            let live: BTreeSet<DeviceId> = service.driver.previews().cloned().collect();
+            self.calls
+                .previews
+                .retain(|device, _| live.contains(device));
+        }
     }
 
     /// The managed layouts may have changed (seeding, *Restore defaults*,
@@ -557,6 +829,10 @@ impl Agent {
             .unwrap_or_default()
             .into_iter()
             .map(|m| deckpilot_ipc::calls::CallsLayout {
+                pages: layout_pages(&m),
+                back: back_actions(&m)
+                    .first()
+                    .map(|a| ipc_back(&deckpilot_calls::driver::settings_of(&a.parameters))),
                 model: m.model,
                 layout: m.layout.id.to_string(),
                 name: m.layout.name,
@@ -568,8 +844,21 @@ impl Agent {
         layouts
     }
 
-    /// Calls as the app shows it (`getCallsStatus`, `callsChanged`).
+    /// Calls as the app shows it (`getCallsStatus`, `callsChanged`), with
+    /// its revision: the last one's when nothing changed, else one more.
     pub(super) fn calls_status(&mut self) -> deckpilot_ipc::calls::CallsStatus {
+        let mut status = self.calls_status_content();
+        let last = self.calls.revision.as_deref();
+        status.revision = last.map_or(0, |l| l.revision);
+        if last != Some(&status) {
+            status.revision += 1;
+            self.calls.revision = Some(Box::new(status.clone()));
+        }
+        status
+    }
+
+    /// [`Agent::calls_status`] without its revision.
+    fn calls_status_content(&mut self) -> deckpilot_ipc::calls::CallsStatus {
         if self.calls.service.is_none() {
             return deckpilot_ipc::calls::CallsStatus::default();
         }
@@ -594,16 +883,38 @@ impl Agent {
                     overlay: service.driver.overlay_enabled(&self.runtime, device),
                     shown: views.iter().any(|v| v.visible),
                     suspended: views.iter().any(|v| v.suspended),
+                    preview: service.driver.preview_page(device).map(|page| match page {
+                        deckpilot_calls::layouts::Page::Incoming => {
+                            deckpilot_ipc::calls::CallsPageKind::Incoming
+                        }
+                        deckpilot_calls::layouts::Page::Outgoing => {
+                            deckpilot_ipc::calls::CallsPageKind::Outgoing
+                        }
+                        deckpilot_calls::layouts::Page::Active => {
+                            deckpilot_ipc::calls::CallsPageKind::Active
+                        }
+                    }),
                 }
+            })
+            .collect();
+        // The controls' support changes with the provider, not with the
+        // stored layout: filled in now, not cached.
+        let layouts = layouts
+            .into_iter()
+            .map(|mut layout| {
+                layout.pages = with_support(layout.pages, &snapshot.capabilities, service.consent);
+                layout
             })
             .collect();
         deckpilot_ipc::calls::CallsStatus {
             installed: true,
             state: snapshot.state.name().to_owned(),
             provider: snapshot.provider.map(|p| p.to_string()),
-            controls: snapshot.capabilities.controls_anything(),
+            // Nothing controls without the control consent.
+            controls: service.consent.control && snapshot.capabilities.controls_anything(),
             devices,
             layouts,
+            revision: 0,
         }
     }
 
@@ -643,6 +954,78 @@ impl Agent {
             .set_device_enabled(&mut self.runtime, device, on, now);
         self.render_all();
         self.calls_publish();
+        Ok(deckpilot_ipc::Response::CallsStatus {
+            status: Box::new(self.calls_status()),
+        })
+    }
+
+    /// `setCallsBackToWork`: the *Back to work* settings of `model`'s
+    /// managed layout, written as the parameters of its "Back to work"
+    /// action (a user edit: the layout counts as edited), loaded into the
+    /// driver and used from the next press.
+    pub(super) fn set_calls_back_to_work(
+        &mut self,
+        model: &DeviceModelId,
+        back: &deckpilot_ipc::calls::BackToWork,
+    ) -> Result<deckpilot_ipc::Response, deckpilot_ipc::IpcError> {
+        use deckpilot_ipc::{ErrorCode, IpcError};
+        // Refused, never clamped: the app shows what it set.
+        back.validate()
+            .map_err(|message| IpcError::new(ErrorCode::InvalidRequest, message))?;
+        if self.calls.service.is_none() {
+            return Err(not_installed());
+        }
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| IpcError::new(ErrorCode::Locked, "the configuration is locked"))?;
+        let managed = store
+            .managed_layout(OWNER, model)
+            .map_err(|error| IpcError::new(ErrorCode::Failed, error.to_string()))?
+            .ok_or_else(no_layout)?;
+        let actions = back_actions(&managed);
+        if actions.is_empty() {
+            return Err(IpcError::new(
+                ErrorCode::NotFound,
+                "this Calls layout has no Back to work key",
+            )
+            .with_reason(deckpilot_ipc::calls::reason::NO_BACK_TO_WORK));
+        }
+        // Every "Back to work" key of the layout gets the settings, in one
+        // transaction; each keeps the parameters these do not name (merged,
+        // not replaced).
+        let changes: Vec<_> = actions
+            .into_iter()
+            .map(|action| {
+                let settings = engine_back(
+                    back,
+                    deckpilot_calls::driver::settings_of(&action.parameters),
+                );
+                let mut parameters = action.parameters.clone();
+                for (key, value) in deckpilot_calls::driver::parameters_of(&settings).iter() {
+                    parameters = parameters.with(key.clone(), value.clone());
+                }
+                (action.id, parameters)
+            })
+            .collect();
+        store
+            .set_managed_actions_parameters(OWNER, model, &changes)
+            .map_err(|error| match error {
+                deckpilot_storage::StorageError::UnknownLayout => no_layout(),
+                other => IpcError::new(ErrorCode::Failed, other.to_string()),
+            })?;
+        // Loaded again from the store (the edited layout is kept as it is).
+        if let Some(service) = self.calls.service.as_mut() {
+            service.seeded.remove(model);
+        }
+        self.calls_seed_connected();
+        if let Some(now) = self.calls_now()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.sync(&mut self.runtime, now);
+        }
+        self.render_all();
+        self.calls_layouts_changed();
         Ok(deckpilot_ipc::Response::CallsStatus {
             status: Box::new(self.calls_status()),
         })
@@ -741,6 +1124,8 @@ pub struct CallsView {
     /// The name of the overlay layout each device shows (the stored
     /// managed layout's).
     pub layouts: Vec<String>,
+    /// The devices with an editor preview.
+    pub previews: usize,
     /// How many Calls overlay frames are stacked, on every device.
     pub frames: usize,
     pub scheduled_returns: usize,
@@ -804,10 +1189,11 @@ impl Agent {
             .filter(|view| view.owner == deckpilot_core::OverlayOwner::Calls)
             .count();
         CallsView {
+            previews: self.calls.previews.len(),
+            frames,
             state,
             devices,
             layouts,
-            frames,
             scheduled_returns: self.calls_driver().map_or(0, |d| d.returns().scheduled()),
             layouts_reads: self.calls.layouts_reads,
             seed_attempts: self.calls.seed_attempts,

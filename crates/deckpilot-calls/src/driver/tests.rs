@@ -497,6 +497,145 @@ fn dismissed_while_ringing_stays_gone_through_ticks() {
     assert!(!w.shows(&mk2));
 }
 
+/// The *Back to work* parameters written by `parameters_of` read back as
+/// the same settings, for every mode and outcome; out-of-range times are
+/// clamped on the way.
+#[test]
+fn back_to_work_parameters_round_trip() {
+    use crate::ret::{AfterRun, Qualify, ReturnMode, ReturnSettings};
+    use std::time::Duration;
+    let modes = [
+        ReturnMode::timer(20).unwrap(),
+        ReturnMode::timer(45).unwrap(),
+        ReturnMode::Completion,
+        ReturnMode::completion_or_timeout(60).unwrap(),
+        ReturnMode::completion_or_timeout(600).unwrap(),
+    ];
+    for mode in modes {
+        for (on_failure, on_cancel, all_devices) in [
+            (AfterRun::Resume, AfterRun::Stay, false),
+            (AfterRun::Stay, AfterRun::Resume, true),
+        ] {
+            let settings = ReturnSettings {
+                mode,
+                qualify: Qualify::default(),
+                on_failure,
+                on_cancel,
+                all_devices,
+            };
+            assert_eq!(settings_of(&parameters_of(&settings)), settings, "{mode:?}");
+        }
+    }
+    let wild = ReturnSettings {
+        mode: ReturnMode::Timer {
+            after: Duration::from_secs(1),
+        },
+        ..ReturnSettings::default()
+    };
+    assert_eq!(
+        settings_of(&parameters_of(&wild)).mode,
+        ReturnMode::timer(5).unwrap()
+    );
+}
+
+/// The editor's preview of a call page: its own frame on the page asked
+/// for, nothing of a call in its faces, its keys run nothing; a real call
+/// takes over, and ending it leaves no frame.
+#[test]
+fn a_preview_shows_a_page_and_gives_way_to_a_real_call() {
+    let mut w = World::new();
+    let mk2 = w.mk2.clone();
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Incoming)
+        .unwrap();
+    assert!(w.shows(&mk2));
+    assert_eq!(w.page(&mk2), Some(Page::Incoming));
+    // Replaced, never stacked.
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Active)
+        .unwrap();
+    assert_eq!(w.page(&mk2), Some(Page::Active));
+    assert_eq!(
+        w.runtime
+            .all_overlays()
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum::<usize>(),
+        1
+    );
+    // Its keys run nothing.
+    let mic = w.control_of(&mk2, "mic-toggle");
+    let (_, handled) = w.tap(&mk2, mic);
+    assert!(
+        matches!(handled, None | Some(KeyOutcome::Ignored)),
+        "{handled:?}"
+    );
+    // A real call takes over: the preview goes, the call's frame shows.
+    w.active("m");
+    assert_eq!(w.driver.previews().count(), 0);
+    assert!(w.shows(&mk2) && w.shows(&w.plus.clone()));
+    assert_eq!(
+        w.runtime
+            .all_overlays()
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum::<usize>(),
+        2,
+        "one frame per device: the call's"
+    );
+    assert_eq!(
+        w.driver.preview(&mut w.runtime, &mk2, Page::Active),
+        Err(PreviewError::InCall),
+        "never during a call"
+    );
+    w.end("m");
+    w.at(10);
+    assert_eq!(w.runtime.all_overlays().len(), 0, "no frame left");
+    // Ended by hand: no frame left.
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Outgoing)
+        .unwrap();
+    w.driver.end_preview(&mut w.runtime, &mk2);
+    assert_eq!(w.runtime.all_overlays().len(), 0);
+    // Calls cleared (the plugin disabled): a preview goes too.
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Active)
+        .unwrap();
+    w.driver.clear(&mut w.runtime);
+    assert_eq!(w.driver.previews().count(), 0);
+    assert_eq!(w.runtime.all_overlays().len(), 0);
+}
+
+/// A preview the device does not take keeps the one it replaces: the old
+/// frame stays, known, on its page (pushed first, popped only after).
+#[test]
+fn a_refused_preview_keeps_the_previous_one() {
+    let mut w = World::new();
+    let mk2 = w.mk2.clone();
+    w.driver
+        .preview(&mut w.runtime, &mk2, Page::Incoming)
+        .unwrap();
+    w.driver.fail_next_preview = true;
+    assert_eq!(
+        w.driver.preview(&mut w.runtime, &mk2, Page::Active),
+        Err(PreviewError::Refused)
+    );
+    assert_eq!(w.driver.preview_page(&mk2), Some(Page::Incoming));
+    assert_eq!(w.page(&mk2), Some(Page::Incoming));
+    assert_eq!(
+        w.runtime
+            .all_overlays()
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum::<usize>(),
+        1
+    );
+    // Still the driver's: the watchdog leaves it alone.
+    w.at(5);
+    assert_eq!(w.driver.preview_page(&mk2), Some(Page::Incoming));
+    assert!(w.shows(&mk2));
+}
+
 /// Hidden (the configuration locked): every frame goes at once, no
 /// device shows any call while hidden, whatever the call does, a device
 /// that went back to work does not come back behind the lock, and shown

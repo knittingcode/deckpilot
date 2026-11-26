@@ -784,8 +784,12 @@ async fn a_protocol_18_agent_is_never_asked_about_calls() {
             on: false,
         },
         Request::RestoreCallsLayout {
-            model,
+            model: model.clone(),
             copy_name: "Mine".into(),
+        },
+        Request::SetCallsBackToWork {
+            model,
+            back: deckpilot_ipc::calls::BackToWork::default(),
         },
     ] {
         let refused = client.request(request).await;

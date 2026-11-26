@@ -122,6 +122,7 @@ fn main() {
         .manage(commands::plugins::PluginEvents::default())
         .manage(commands::locale::AgentLocale::default())
         .manage(commands::live_preview::LivePreview::default())
+        .manage(commands::calls::CallsPreview::default())
         .manage(commands::unsaved::UnsavedEdits::default())
         .setup(move |app| {
             // Same location as the agent; `DECKPILOT_DATA_DIR` overrides it.
