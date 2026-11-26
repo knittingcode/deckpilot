@@ -44,6 +44,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
+    # The agent's standard handles (`native_windows::keep_std_handles_from_children`).
+    "Win32_System_Console",
     "Win32_System_LibraryLoader",
     "Win32_System_RemoteDesktop",
     "Win32_Storage_FileSystem",

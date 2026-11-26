@@ -27,6 +27,7 @@ DeckPilot background agent
 
 Usage:
   deckpilot-agent [--headless] [--mock-devices [<models>]] [--no-usb] [--log-level <level>]
+                  [--quiet-stderr]
                   [--disable-plugins] [--plugin-host <path>] [--bundled-plugins <dir>]
                   [--plugin-registry <dir> | --plugin-registry-url <https url>]
                   [--plugin-registry-releases-url <https url>]
@@ -42,6 +43,10 @@ Options:
   --no-usb            Do not open USB devices, e.g. for tests with simulated
                       devices while a Stream Deck is plugged in
   --log-level <level> error, warn, info (default), debug or trace
+  --quiet-stderr      Write log records and panics to the log files only,
+                      not to standard error as well (the configuration app
+                      starts the agent so, with standard output and error
+                      going to logs/output.log)
   --disable-plugins   Do not answer plugin requests and leave the plugins/
                       directory alone. Builds with the `plugins` feature
                       answer them by default; builds without it never do
@@ -89,6 +94,8 @@ struct Args {
     /// Open USB devices through the HID driver (off with `--no-usb`).
     usb: bool,
     level: LevelFilter,
+    /// Log records and panics to the log files only (`--quiet-stderr`).
+    quiet_stderr: bool,
     plugins: deckpilot_agent::plugins::PluginSettings,
     /// Test only (feature `test-hooks`): Calls with the mock provider in a
     /// meeting from the start, and "Back to work" with these parameters.
@@ -164,6 +171,7 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
         mock_models: Vec::new(),
         usb: true,
         level: LevelFilter::INFO,
+        quiet_stderr: false,
         plugins: deckpilot_agent::plugins::PluginSettings::from_env(),
         #[cfg(feature = "test-hooks")]
         calls_mock: None,
@@ -183,6 +191,7 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
         match arg.as_str() {
             "--headless" => parsed.headless = true,
             "--no-usb" => parsed.usb = false,
+            deckpilot_ipc::paths::QUIET_STDERR_ARG => parsed.quiet_stderr = true,
             switch if parsed.plugins.apply_switch(switch) => {}
             "--plugin-host" => match path(&mut args, "--plugin-host") {
                 Ok(p) => parsed.plugins.host = Some(p),
@@ -333,10 +342,13 @@ fn autostart_command(action: Option<&str>) -> ExitCode {
     }
 }
 
-/// Logs to stderr and to daily-rotated files in the data directory.
+/// Logs to daily-rotated files in the data directory, and to stderr unless
+/// `quiet_stderr` (`--quiet-stderr`) says otherwise. Without the files the
+/// records go to stderr in any case.
 fn init_logging(
     paths: &AgentPaths,
     level: LevelFilter,
+    quiet_stderr: bool,
 ) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let file = tracing_appender::rolling::Builder::new()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
@@ -357,13 +369,14 @@ fn init_logging(
             (None, None)
         }
     };
+    let stderr_layer = (!quiet_stderr || file_layer.is_none()).then(|| {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+            .with_writer(std::io::stderr)
+    });
     tracing_subscriber::registry()
         .with(level)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-                .with_writer(std::io::stderr),
-        )
+        .with(stderr_layer)
         .with(file_layer)
         .init();
     guard
@@ -385,10 +398,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let guard = init_logging(&paths, args.level);
-    // Panics reach the log, not only standard error (which goes nowhere
-    // when the configuration app starts the agent).
-    deckpilot_agent::crash::install_panic_hook();
+    let guard = init_logging(&paths, args.level, args.quiet_stderr);
+    // Panics reach the log, not only standard error (which the
+    // configuration app sends to logs/output.log).
+    deckpilot_agent::crash::install_panic_hook(if args.quiet_stderr {
+        deckpilot_agent::crash::PanicStderr::Summary
+    } else {
+        deckpilot_agent::crash::PanicStderr::Default
+    });
+    // The output file stays bounded during the run too.
+    if args.quiet_stderr {
+        deckpilot_agent::output::spawn_cap(&paths.output_log());
+    }
 
     // A previous agent may still be finishing its shutdown (a restart or an
     // update starts the next one as soon as the endpoint closes).

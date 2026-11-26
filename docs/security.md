@@ -18,7 +18,9 @@ unencrypted mode.
 
 Not encrypted: `deckpilot.vault.json` (which protection is used, with its
 non-secret parameters), logs (which never contain configuration values,
-keys or passwords), the IPC token file (protected by file permissions),
+keys or passwords; `logs/output.log` also holds what the Rust runtime and
+system libraries print, unfiltered, see `background-agent.md`), the IPC
+token file (protected by file permissions),
 and `deckpilot.unencrypted-backup*.db`: the original of a database from an
 earlier, unencrypted version, kept after its migration until the user
 deletes it (see

@@ -8,18 +8,24 @@
 //!   checked first, so a reused process id is never ended;
 //! - [`aumid_of`]: a packaged application's `AppUserModelID`;
 //! - [`session_of`]: the login session of a process;
-//! - [`elevated`]: whether this process runs elevated.
+//! - [`elevated`]: whether this process runs elevated;
+//! - [`keep_std_handles_from_children`]: this process's standard output
+//!   and error are no longer inherited by every program it starts.
 //!
 //! Every handle is closed by [`Handle`]'s `Drop`.
 #![allow(unsafe_code)]
 
 use std::path::PathBuf;
 
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, HWND, LPARAM};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_SUCCESS, HANDLE, HANDLE_FLAG_INHERIT, HWND, INVALID_HANDLE_VALUE, LPARAM,
+    SetHandleInformation,
+};
 use windows_sys::Win32::Security::{
     GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
 };
 use windows_sys::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
+use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
@@ -225,6 +231,29 @@ pub fn terminate(process: &ProcessInfo) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+/// Clears the inherit flag of this process's standard output and error
+/// handles. `std::process::Command` starts programs with handle
+/// inheritance on, so every program a process starts gets each of its
+/// inheritable handles, whatever that program's own standard streams are.
+/// The agent calls this when the configuration app gave it a log file as
+/// its output (`--quiet-stderr`): programs launched from a key must not
+/// hold that file open. A program started with `Stdio::inherit()` still
+/// gets the streams: the standard library passes it a new inheritable
+/// duplicate.
+pub fn keep_std_handles_from_children() {
+    for id in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle only reads this process's table of standard
+        // handles; the handle it returns is not closed here.
+        let handle = unsafe { GetStdHandle(id) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            continue;
+        }
+        // SAFETY: the handle is this process's own and open; only its
+        // inherit flag changes. A failure leaves it as it was.
+        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+    }
 }
 
 #[cfg(test)]

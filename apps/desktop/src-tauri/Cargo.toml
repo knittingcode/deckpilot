@@ -57,6 +57,14 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
+# A second launch brings the running app to the front instead of starting a
+# second one (`single_instance.rs`). Windows: a named mutex and a message
+# window; Linux: a name on the session bus. Not on macOS, where
+# LaunchServices already keeps one app and the plugin would use a socket
+# in the shared /tmp.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2.5"
+
 [dev-dependencies]
 deckpilot-keystore.workspace = true
 # The marketplace end-to-end tests (tests/support/marketplace.rs): a local
