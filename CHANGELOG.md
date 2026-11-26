@@ -17,6 +17,15 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- The configuration app restarts the background agent it started when the
+  agent ends unexpectedly. It restarts it at most 3 times in 10 minutes,
+  after 1, 5 and then 30 seconds. After that, Settings shows
+  "DeckPilot agent stopped" with a Restart button. The app never restarts
+  the agent after a Quit or a stop you asked for, and never restarts an
+  agent it did not start, such as one started at login: it reconnects to
+  that one, as before. A restarted agent starts locked, like any agent, and
+  is unlocked only while the app is unlocked.
+
 - Git Providers (builds with plugins, not bundled yet): the agent can make
   the server of the GitHub or GitLab plugin a Git Providers connection when
   you ask, and, only if you also choose so, use the token saved there. It
