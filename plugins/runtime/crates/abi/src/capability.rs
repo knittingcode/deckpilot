@@ -609,8 +609,28 @@ pub const RESPONSE_HEADERS: &[&str] = &[
     "ratelimit-observed",
 ];
 
-/// Whether a response header (any case) is handed to plugins
-/// ([`RESPONSE_HEADERS`]).
+/// Response headers handed to plugins **on a connection's responses only**
+/// (plugin API 1.14), besides [`RESPONSE_HEADERS`]: what the connection's
+/// token may do and when it expires (GitHub), so a plugin can name a
+/// missing permission or warn about an over-privileged or expiring token.
+/// Scope names and a date, never a secret. A fetch with a credential slot
+/// never receives them (least privilege).
+pub const CONNECTION_RESPONSE_HEADERS: &[&str] = &[
+    "x-oauth-scopes",
+    "x-accepted-oauth-scopes",
+    "github-authentication-token-expiration",
+];
+
+/// Whether a response header (any case) is handed to plugins on a
+/// connection's responses only ([`CONNECTION_RESPONSE_HEADERS`]).
+pub fn is_connection_response_header(name: &str) -> bool {
+    CONNECTION_RESPONSE_HEADERS
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(name))
+}
+
+/// Whether a response header (any case) is handed to plugins on every
+/// response ([`RESPONSE_HEADERS`]).
 pub fn is_response_header(name: &str) -> bool {
     RESPONSE_HEADERS
         .iter()
@@ -1800,6 +1820,26 @@ mod tests {
         ] {
             assert!(!is_response_header(name), "{name}");
         }
+        // A token's scopes and expiry: on a connection's responses only
+        // (plugin API 1.14), never on every fetch.
+        for name in [
+            "x-oauth-scopes",
+            "X-Accepted-OAuth-Scopes",
+            "github-authentication-token-expiration",
+        ] {
+            assert!(is_connection_response_header(name), "{name}");
+            assert!(!is_response_header(name), "{name}");
+        }
+        for name in ["authorization", "private-token", "x-oauth-scope", ""] {
+            assert!(!is_connection_response_header(name), "{name}");
+        }
+        let unique: std::collections::BTreeSet<_> = CONNECTION_RESPONSE_HEADERS.iter().collect();
+        assert_eq!(unique.len(), CONNECTION_RESPONSE_HEADERS.len());
+        assert!(
+            CONNECTION_RESPONSE_HEADERS
+                .iter()
+                .all(|name| !is_response_header(name))
+        );
         let unique: std::collections::BTreeSet<_> = RESPONSE_HEADERS.iter().collect();
         assert_eq!(unique.len(), RESPONSE_HEADERS.len());
         assert!(RESPONSE_HEADERS.len() <= MAX_HEADERS);
