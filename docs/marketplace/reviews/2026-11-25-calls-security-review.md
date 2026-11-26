@@ -25,27 +25,30 @@ Deck.
 
 | PR | Item | Reviews (head → verdict) | Final |
 | --- | --- | --- | --- |
-| #450 | C1 contracts: types, manifest kinds `calls`, `callOverlay`, `layoutTemplates` (1.16, bundled-only, privileged) | 5739488f → CHANGES (5); 0ce3d270 → CHANGES (1 new); 9512f57a → code OK; 07e8218b → APPROVED; main merge d6f55261 → resolution check MERGE-READY; 7f934d5c → APPROVED | APPROVED |
-| #452 | C2 state engine, Back to work controller | 26620a8d → CHANGES (5 MEDIUM, 8 LOW); c01a68c5 → re-check MERGE-READY | APPROVED-PENDING-CI |
-| #457 | C3 overlay, fence, managed layouts (migration 15) | fd78b80a → CHANGES (9); 0d17852d → re-check; c0f462bc → migration-15 check MERGE-READY; 9976ca03 → delta (test only) | APPROVED-PENDING-CI |
-| #458 | C4 mock provider | d78eccd3 → MERGE-READY (3 LOW optional) | APPROVED-PENDING-CI |
-| #459 | C3b agent wiring | c5deb3c6 → CHANGES (6); ac4f38ce → re-check MERGE-READY; 105ab837, 0489b550 → delta | APPROVED-PENDING-CI |
-| #462 | follow-ups (seeding, end instant) | 5ed26366 → CHANGES (2 MEDIUM, 2 LOW); ae9aff48 → re-check MERGE-READY | APPROVED-PENDING-CI |
-| #463 | C5 Teams detection-only provider (OS signals) | b6bec3de → security review MERGE-READY after 7 LOW fixed; 258cd45e, 0be47889 → delta (merges only) | APPROVED-PENDING-CI |
-| #464 | C6a IPC 19, Settings › Devices › Calls | first review → CHANGES (3 MEDIUM, 5 LOW); a7224fe4 → re-check MERGE-READY (5 LOW); e7972593, 270b177d → delta | APPROVED-PENDING-CI |
-| #468 | C9 part: detached plugin action (T-R3), `--test-calls-mock` | 5da150a2 → MERGE-READY (5 LOW); bcb9ecb9 → delta | APPROVED-PENDING-CI |
-| #471 | a locked device never shows a call | 615562d6 → privacy review MERGE-READY (3 LOW) | APPROVED-PENDING-CI |
-| #473 | no overlay or overlay action while locked | 7addf9ed → privacy review MERGE-READY (3 LOW + nit) | APPROVED-PENDING-CI |
-| #476 | keys fenced across lock and unlock | 09d0d619 → delta (#473's LOWs) | APPROVED-PENDING-CI |
-| #474 | C7 call pages, Back to work settings | a1b8453f → CHANGES (3 MEDIUM, 3 LOW); 5ad14ded → re-check MERGE-READY (3 LOW) | APPROVED-PENDING-CI |
-| #478 | #474's lows | 7ae55cef → delta | APPROVED-PENDING-CI |
-| #480 | C6b part 1: `previewCallsPage` | 345d04dc → privacy review MERGE-READY (4 LOW) | APPROVED-PENDING-CI |
-| #482 | C6b part 2: the app's preview | 906d3dab → CHANGES (1 MEDIUM, 1 LOW-MEDIUM, 4 LOW); e1b5a0ad → re-check MERGE-READY | APPROVED-PENDING-CI |
-| #483 | T-E2E on XL and Plus; app follows previews | f8ff8cd4 → delta (test only); df80549c → CHANGES (1 MEDIUM, 5 LOW); b2e08a24 → re-check MERGE-READY (2 LOW) | APPROVED-PENDING-CI |
-| #486 | `CallsStatus.revision`, preview by device | 16e91ef6 → MERGE-READY (2 LOW) | APPROVED-PENDING-CI |
-| #490 | statuses of an earlier agent run dropped | fcd46f6b → delta (#486's LOWs) | APPROVED-PENDING-CI |
-| #489 | C9 host wiring: `call.state`, `call.control` | 97e3f4e1 → APPROVE-WITH-FIXES (1 MEDIUM, 4 LOW, 2 NIT); b207b974 → re-check APPROVE | in the queue |
-| plugins #105 | C7 `official/calls` 0.1.0 (held ahead at 1.16) | plugin coordinator's review: pending | pending |
+| #450 | C1 contracts: types, manifest kinds `calls`, `callOverlay`, `layoutTemplates` (1.16, bundled-only, privileged) | 5739488f → CHANGES (5); 0ce3d270 → CHANGES (1 new); 9512f57a → code OK; 07e8218b → APPROVED; main merge d6f55261 → resolution check MERGE-READY; 7f934d5c → APPROVED | merged (4ae13e5d) |
+| #452 | C2 state engine, Back to work controller | 26620a8d → CHANGES (5 MEDIUM, 8 LOW); c01a68c5 → re-check MERGE-READY | merged (877f4f52) |
+| #457 | C3 overlay, fence, managed layouts (migration 15) | fd78b80a → CHANGES (9); 0d17852d → re-check; c0f462bc → migration-15 check MERGE-READY; 9976ca03 → delta (test only) | merged (4bb9383d) |
+| #458 | C4 mock provider | d78eccd3 → MERGE-READY (3 LOW optional) | merged in group C1 (#476, aecc8e71) |
+| #459 | C3b agent wiring | c5deb3c6 → CHANGES (6); ac4f38ce → re-check MERGE-READY; 105ab837, 0489b550 → delta | merged in group C1 (#476, aecc8e71) |
+| #462 | follow-ups (seeding, end instant) | 5ed26366 → CHANGES (2 MEDIUM, 2 LOW); ae9aff48 → re-check MERGE-READY | merged in group C1 (#476, aecc8e71) |
+| #463 | C5 Teams detection-only provider (OS signals) | b6bec3de → security review MERGE-READY after 7 LOW fixed; 258cd45e, 0be47889 → delta (merges only) | merged (7fd13371) |
+| #464 | C6a IPC 19, Settings › Devices › Calls | first review → CHANGES (3 MEDIUM, 5 LOW); a7224fe4 → re-check MERGE-READY (5 LOW); e7972593, 270b177d → delta | merged (e22a251d) |
+| #468 | C9 part: detached plugin action (T-R3), `--test-calls-mock` | 5da150a2 → MERGE-READY (5 LOW); bcb9ecb9 → delta | merged in group C1 (#476, aecc8e71) |
+| #471 | a locked device never shows a call | 615562d6 → privacy review MERGE-READY (3 LOW) | merged in group C1 (#476, aecc8e71) |
+| #473 | no overlay or overlay action while locked | 7addf9ed → privacy review MERGE-READY (3 LOW + nit) | merged in group C1 (#476, aecc8e71) |
+| #476 | keys fenced across lock and unlock | 09d0d619 → delta (#473's LOWs) | merged in group C1 (#476, aecc8e71) |
+| #474 | C7 call pages, Back to work settings | a1b8453f → CHANGES (3 MEDIUM, 3 LOW); 5ad14ded → re-check MERGE-READY (3 LOW) | merged in group C3 (#490, 78283134) |
+| #478 | #474's lows | 7ae55cef → delta | merged in group C3 (#490, 78283134) |
+| #480 | C6b part 1: `previewCallsPage` | 345d04dc → privacy review MERGE-READY (4 LOW) | merged in group C3 (#490, 78283134) |
+| #482 | C6b part 2: the app's preview | 906d3dab → CHANGES (1 MEDIUM, 1 LOW-MEDIUM, 4 LOW); e1b5a0ad → re-check MERGE-READY | merged in group C3 (#490, 78283134) |
+| #483 | T-E2E on XL and Plus; app follows previews | f8ff8cd4 → delta (test only); df80549c → CHANGES (1 MEDIUM, 5 LOW); b2e08a24 → re-check MERGE-READY (2 LOW) | merged in group C3 (#490, 78283134) |
+| #486 | `CallsStatus.revision`, preview by device | 16e91ef6 → MERGE-READY (2 LOW) | merged in group C3 (#490, 78283134) |
+| #490 | statuses of an earlier agent run dropped | fcd46f6b → delta (#486's LOWs) | merged in group C3 (#490, 78283134) |
+| #489 | C9 host wiring: `call.state`, `call.control` | 97e3f4e1 → APPROVE-WITH-FIXES (1 MEDIUM, 4 LOW, 2 NIT); b207b974 → re-check APPROVE | closed: replaced by #504 |
+| plugins #105 | C7 `official/calls` 0.1.0 (held ahead at 1.16) | 36befd54 → plugin coordinator's review APPROVED with LOWs (16/16 green); dfd7aea8 → LOWs 2–4 and the nit fixed | merged (cff690d2) |
+| #504 | C9 re-applied onto main (replaces #489), plus the refusal codes and connections/Scripts as ways out | 93bcad4a → fresh full independent security review: pending | in the queue |
+| #496 | T-P2 end to end (tests only) | 3a46c0f3 → MERGE-READY | open |
+| #497 | the per-device overlay setting survives a restart | b2817442 → delta MERGE-READY (2 wording LOWs, fixed on its main-based successor) | open |
 
 ## Findings and fixes
 
@@ -243,6 +246,14 @@ The re-check LOWs were fixed in #478: one transaction for every key, and the fal
 
 **Re-check at b207b974: APPROVE.**
 
+**#489 was replaced by #504.** Its stacked base was squashed into main (C1, C3, #463), so its own commits were cherry-picked onto main, with three additions:
+
+- Calls is never granted together with a connection or the Scripts bridge, the two kinds main added since.
+- The distinct refusal codes `calls-not-user-started` and `calls-throttled`.
+- The run's origin is checked before the per-run count.
+
+Because C9 now sits on a changed broker, #504 gets a fresh, full independent security review of its whole diff against main.
+
 **Checked and fine:**
 
 - the plugin pin in three layers;
@@ -257,12 +268,13 @@ The re-check LOWs were fixed in #478: one transaction for every key, and the fal
 
 ### deckpilot-plugins #105 C7
 
-The plugin coordinator's review is pending. It is to check:
+**APPROVED with LOWs at 36befd54** (the plugin coordinator's review, 16/16 green), merged as cff690d2 after the fixes at dfd7aea8:
 
-- the new `AHEAD_OF_PIN` entry and its kind (a reviewed tooling change);
-- that no control capability is claimed;
-- refusal on every package, sign, release and registry path;
-- no 1.16-only kind in another manifest.
+1. **Deferred:** `callOverlay` and `layoutTemplates` join check-official's `privileged_usages` mirror with the 1.16 pin move (owner release step 2).
+2. **LOW:** the README check had a fixed column offset, and the Teams face test covered 3 of the 10 controls. Fixed: the check is built from the table header and every control action, and the face test runs over all 10, with every control unsupported and with none listed.
+3. **LOW:** the broker's run-origin refusal read as `calls-consent`, and its rate limit as `calls-unconfirmed`. Fixed: `calls-not-user-started` and `calls-throttled`, with en and pl text. The host (#504) uses the same codes.
+4. **LOW:** no check-official case refused the `calls` kind in another manifest. Fixed: two cases.
+5. **NIT:** host messages are capped at 256 bytes.
 
 The PR's own checks:
 
