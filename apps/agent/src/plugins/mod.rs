@@ -352,10 +352,14 @@ pub(crate) fn features() -> Vec<String> {
         deckpilot_ipc::plugins::feature::RESTORE_BUNDLED.to_owned(),
         deckpilot_ipc::plugins::feature::VISUAL_ASSETS.to_owned(),
         deckpilot_ipc::plugins::feature::STOREFRONT.to_owned(),
+        deckpilot_ipc::plugins::feature::REPOSITORY_REMOTES.to_owned(),
     ]
 }
 
 type Reply = oneshot::Sender<Result<Response, IpcError>>;
+
+/// What answers `listRepositoryRemotes`, run off the agent's thread.
+pub(crate) type RemotesJob = Box<dyn FnOnce() -> Result<Response, IpcError> + Send>;
 
 /// The agent's plugin runtime: settings, and with the `plugins` feature
 /// the worker that serves plugin requests.
@@ -424,6 +428,45 @@ impl PluginRuntime {
             );
             Self { settings }
         }
+    }
+
+    /// `listRepositoryRemotes` for the bound folder `folder`: what to run
+    /// off the agent's thread (it runs `git`, up to its local read limit
+    /// twice), or why it does not run: plugins are off or not built
+    /// (Git Providers is a plugin).
+    pub(crate) fn repository_remotes(&self, folder: PathBuf) -> Result<RemotesJob, IpcError> {
+        #[cfg(feature = "plugins")]
+        if self.settings.enabled {
+            // One at a time: a client cannot pile up git processes.
+            static RUNNING: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            struct Running;
+            impl Drop for Running {
+                fn drop(&mut self) {
+                    RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Err(IpcError::new(
+                    ErrorCode::Failed,
+                    "the remotes of another repository are being read; try again",
+                )
+                .with_reason("busy"));
+            }
+            let running = Running;
+            return Ok(Box::new(move || {
+                let _running = running;
+                let host = tools::ToolHost::from_agent();
+                let deadline = std::time::Instant::now() + 2 * tools::GIT_READ_TIMEOUT;
+                tools::remotes::detect(&host, &folder, deadline)
+                    .map(|remotes| Response::RepositoryRemotes { remotes })
+                    .map_err(|denial| {
+                        IpcError::new(ErrorCode::Failed, denial.message).with_reason(denial.code)
+                    })
+            }));
+        }
+        let _ = folder;
+        Err(unavailable(&self.settings))
     }
 
     /// One feature module per installed plugin, for the agent's module
