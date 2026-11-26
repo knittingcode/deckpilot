@@ -72,6 +72,17 @@ async fn wait_availability(
     }
 }
 
+async fn wait_until(predicate: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while !predicate() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition not reached in time"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn data_dir(dir: &TempDir) -> (deckpilot_ipc::AgentPaths, deckpilot_storage::DatabaseKey) {
     support::data_dir(dir, &Profile::new("Work"), &[])
 }
@@ -163,16 +174,26 @@ async fn a_device_that_keeps_dropping_goes_from_reconnecting_to_communication_er
 
     // Every connection drops at its first write.
     mock.fail_after_writes(&device, 0, DeviceError::Disconnected);
+    let base = mock.open_attempts(&device);
     mock.reenumerate(&device);
     let status = wait_availability(&agent, &device, DeviceAvailability::Reconnecting).await;
     assert_eq!(
         info(&status, &device).unwrap().state,
         ConnectionState::Disconnected
     );
-    // Two more short connections: the third makes it flapping.
-    for _ in 0..2 {
+    // Two more short connections: the third makes it flapping. Each step
+    // waits for its open and its close, never for a fixed time: with the
+    // clock moved again before a connection closed, two moves would make
+    // one connection (the next wait counts from its close).
+    for step in 1..=2 {
+        let opened = base + step;
         clock.advance(policy.max);
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        wait_until(|| mock.open_attempts(&device) >= opened).await;
+        assert_eq!(mock.open_attempts(&device), opened, "one open per move");
+        wait_status(&agent, |s| {
+            info(s, &device).is_some_and(|d| d.state == ConnectionState::Disconnected)
+        })
+        .await;
     }
     wait_availability(&agent, &device, DeviceAvailability::CommunicationError).await;
     // The next connection opens (and is held back while it settles);
