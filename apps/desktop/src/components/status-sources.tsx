@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { useStatus, useStatusItem } from "@/hooks/use-status"
 import { i18n, useTranslation } from "@/i18n"
 import { useAppContext } from "@/lib/app-context"
+import { DEVICE_STATE_LABEL, deviceAvailability } from "@/lib/device-state"
 import { formatTimestamp } from "@/lib/format"
 import { useSecurity } from "@/lib/security-context"
 import {
@@ -126,10 +127,7 @@ function DevicesDetail() {
               <span className="pl-3 text-xs text-muted-foreground">
                 {t("devices:detail.serialState", {
                   serial: device.id.serial,
-                  state:
-                    device.state === "connected"
-                      ? t("devices:detail.connected")
-                      : t("devices:detail.disconnected"),
+                  state: t(DEVICE_STATE_LABEL[deviceAvailability(device)]),
                 })}
               </span>
             </li>

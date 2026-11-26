@@ -1406,6 +1406,22 @@ export interface ControlFace {
 
 export type ConnectionState = "connected" | "disconnected"
 
+/**
+ * Why a device is, or is not, usable (IPC protocol 21, DP-USB-01); finer
+ * than `ConnectionState`. A device that is present is never
+ * `notConnected`. A value from a newer agent arrives as `unknown`.
+ */
+export type DeviceAvailability =
+  | "connected"
+  | "notConnected"
+  | "usbPresentHidUnavailable"
+  | "permissionDenied"
+  | "unsupported"
+  | "busy"
+  | "communicationError"
+  | "reconnecting"
+  | "unknown"
+
 export type LayoutStatus =
   | { type: "noProfile" }
   | { type: "unknownModel" }
@@ -1434,6 +1450,8 @@ export interface DeviceInfo {
   previousLayout?: string
   /** The id of the page shown (`page` is its name); absent from older agents. */
   pageId?: string
+  /** Why the device is (not) usable; absent from agents before protocol 21. */
+  availability?: DeviceAvailability
 }
 
 /**
@@ -1554,6 +1572,8 @@ export type AgentCapability =
   /** `object`/`map` value types, member entries, `structured` previews (protocol 18). */
   | "structuredVariables"
   | "calls"
+  /** `DeviceInfo.availability` and devices present but never opened (protocol 21). */
+  | "deviceStates"
 
 /**
  * Calls as the agent reports it (protocol 19, `deckpilot_ipc::calls`):

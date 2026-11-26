@@ -54,10 +54,28 @@
     "noneDetected": "Nie wykryto urządzenia Stream Deck.",
     "agentStopped": "Agent nie działa.",
     "simulated": "Symulowane",
-    "connected": "Podłączone",
-    "disconnected": "Odłączone",
     "serialState": "{{serial}} · {{state}}",
     "settings": "Ustawienia urządzeń"
+  },
+  "state": {
+    "connected": "Podłączone",
+    "notConnected": "Odłączone",
+    "usbPresentHidUnavailable": "Widoczne na USB, niedostępne",
+    "permissionDenied": "Brak uprawnień",
+    "unsupported": "Nieobsługiwane",
+    "busy": "Używane przez inny program",
+    "communicationError": "Błąd komunikacji",
+    "reconnecting": "Ponowne łączenie…",
+    "unknown": "Stan nieznany"
+  },
+  "stateHint": {
+    "usbPresentHidUnavailable": "Magistrala USB widzi Stream Decka, ale brakuje jego interfejsu HID, często za hubem lub stacją dokującą monitora. Podłącz go ponownie albo wyłącz i włącz hub.",
+    "permissionDenied": "System nie pozwala DeckPilotowi otworzyć urządzenia. W Linuksie sprawdź, czy reguła udev jest zainstalowana, a potem podłącz urządzenie ponownie.",
+    "unsupported": "DeckPilot nie ma jeszcze sterownika dla tego modelu.",
+    "busy": "Inny program ma otwarte to urządzenie. Zamknij go, a potem odśwież urządzenia.",
+    "communicationError": "Urządzenie się otwiera, ale ciągle zawodzi. DeckPilot ponawia próby rzadziej; sprawdź kabel lub hub.",
+    "reconnecting": "Połączenie zostało utracone. DeckPilot wkrótce ponownie otworzy urządzenie.",
+    "unknown": "Nie udało się pobrać listy urządzeń. DeckPilot próbuje dalej."
   },
   "summary": {
     "none": "Brak urządzeń",

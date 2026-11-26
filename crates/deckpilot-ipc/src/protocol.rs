@@ -23,7 +23,9 @@ use deckpilot_core::{
     ExecutionRecord, ExecutionSummary, LayoutId, LayoutStatus, PageId, ProfileId, Project,
     ProjectId, RepositoryId, WorkSessionId, WorkflowId, WorkflowReport,
 };
-use deckpilot_device::{ConnectionState, ControlId, ControlInput, DeviceDescriptor, DeviceId};
+use deckpilot_device::{
+    ConnectionState, ControlId, ControlInput, DeviceAvailability, DeviceDescriptor, DeviceId,
+};
 
 use crate::plugin_dialogs::check_answer_ids;
 use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessionSummary};
@@ -210,13 +212,27 @@ use crate::{connections, plugins};
 /// the app to the agent only; no answer carries one. A client of protocol
 /// 19 or older never sends them (refused locally, and by the agent from
 /// such a connection); nothing older clients receive changes.
-pub const PROTOCOL_VERSION: u32 = CONNECTIONS_PROTOCOL;
+///
+/// Version 21: device states (capability `deviceStates`, DP-USB-01).
+/// `DeviceInfo.availability` says why a device is or is not usable
+/// (connected, not connected, USB present but HID unavailable, permission
+/// denied, unsupported, busy, communication error, reconnecting, unknown),
+/// and the device list also holds devices that are present but were never
+/// opened (`DeviceInfo::never_opened`), so such a device is never shown as
+/// disconnected. A client of protocol 20 or older receives neither: the
+/// field is left out and those devices are dropped
+/// ([`Response::for_protocol`], [`AgentEvent::for_protocol`]), so its
+/// list is exactly what it was. No request changes.
+pub const PROTOCOL_VERSION: u32 = DEVICE_STATES_PROTOCOL;
 
 /// The protocol of Calls ([`Capability::Calls`]).
 pub const CALLS_PROTOCOL: u32 = 19;
 
 /// The protocol of plugin connections ([`Capability::PluginConnections`]).
 pub const CONNECTIONS_PROTOCOL: u32 = 20;
+
+/// The protocol of device states ([`Capability::DeviceStates`]).
+pub const DEVICE_STATES_PROTOCOL: u32 = 21;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -421,10 +437,13 @@ pub enum Capability {
     /// shows no Connections settings. Protocol
     /// [`CONNECTIONS_PROTOCOL`].
     PluginConnections,
+    /// Device states: `DeviceInfo.availability` and devices that are
+    /// present but not opened. Protocol [`DEVICE_STATES_PROTOCOL`].
+    DeviceStates,
 }
 
 impl Capability {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -446,6 +465,7 @@ impl Capability {
         Self::StructuredVariables,
         Self::Calls,
         Self::PluginConnections,
+        Self::DeviceStates,
     ];
 
     /// The protocol that introduced the capability.
@@ -470,6 +490,7 @@ impl Capability {
             Self::StructuredVariables => 18,
             Self::Calls => CALLS_PROTOCOL,
             Self::PluginConnections => CONNECTIONS_PROTOCOL,
+            Self::DeviceStates => DEVICE_STATES_PROTOCOL,
         }
     }
 
@@ -1738,6 +1759,9 @@ impl Response {
     /// variable registry (before protocol 9).
     #[must_use]
     pub fn for_protocol(mut self, protocol: u32) -> Self {
+        if protocol < DEVICE_STATES_PROTOCOL {
+            self = self.without_device_states();
+        }
         if protocol < 18 {
             self = self.without_structured(protocol);
         }
@@ -1767,6 +1791,21 @@ impl Response {
             _ => {}
         }
         self
+    }
+
+    /// The device list as a client before protocol 21 knew it: devices
+    /// that were never opened are left out, and so is `availability`.
+    fn without_device_states(self) -> Self {
+        match self {
+            Self::Status { mut status } => {
+                status.devices = without_device_states(status.devices);
+                Self::Status { status }
+            }
+            Self::Devices { devices } => Self::Devices {
+                devices: without_device_states(devices),
+            },
+            other => other,
+        }
     }
 
     /// Nothing a client before protocol 10 cannot explain: catalog entries
@@ -2173,6 +2212,10 @@ impl AgentEvent {
             return None;
         }
         match self {
+            Self::State { mut status } if protocol < DEVICE_STATES_PROTOCOL => {
+                status.devices = without_device_states(status.devices);
+                Some(Self::State { status })
+            }
             Self::SharedVariablesChanged { keys } if protocol < 10 => {
                 let keys: Vec<String> = keys
                     .into_iter()
@@ -2183,6 +2226,18 @@ impl AgentEvent {
             other => Some(other),
         }
     }
+}
+
+/// `devices` for a client before protocol 21 (see [`DEVICE_STATES_PROTOCOL`]).
+fn without_device_states(devices: Vec<DeviceInfo>) -> Vec<DeviceInfo> {
+    devices
+        .into_iter()
+        .filter(|device| !device.never_opened)
+        .map(|device| DeviceInfo {
+            availability: None,
+            ..device
+        })
+        .collect()
 }
 
 /// Whether `reference` names a plugin's variable (protocol 10).
@@ -2226,6 +2281,18 @@ pub struct DeviceInfo {
     /// out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_id: Option<PageId>,
+    /// Why the device is, or is not, usable; finer than `state`, which
+    /// stays `connected`/`disconnected`. Absent from agents before protocol
+    /// 21 and for clients before it. A newer value reads as `unknown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<DeviceAvailability>,
+    /// The agent sees the device but never opened it (no permission, in
+    /// use, no HID interface, no driver): it is not in the device registry
+    /// and has `state: disconnected`. Agent-side only, never sent: clients
+    /// before protocol 21 do not receive such devices (they listed only
+    /// devices that had connected), newer ones tell by `availability`.
+    #[serde(skip)]
+    pub never_opened: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3286,7 +3353,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 20);
+        assert_eq!(PROTOCOL_VERSION, 21);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),
@@ -3408,6 +3475,125 @@ mod tests {
         assert_eq!(json["descriptor"]["vendorId"], "elgato");
         assert_eq!(json["descriptor"]["driver"]["id"], "elgato-hid");
         assert_eq!(serde_json::from_value::<DeviceInfo>(json).unwrap(), new);
+    }
+
+    fn device(
+        serial: &str,
+        state: ConnectionState,
+        availability: DeviceAvailability,
+    ) -> DeviceInfo {
+        DeviceInfo {
+            id: DeviceId {
+                model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                serial: serial.into(),
+            },
+            model_name: "Stream Deck MK.2".into(),
+            state,
+            layout: deckpilot_core::LayoutStatus::Missing,
+            page: None,
+            source: "elgato-hid".into(),
+            descriptor: None,
+            previous_layout: None,
+            page_id: None,
+            availability: Some(availability),
+            never_opened: false,
+        }
+    }
+
+    #[test]
+    fn device_states_need_protocol_21() {
+        assert!(!Capability::of_protocol(20).contains(&Capability::DeviceStates));
+        assert!(Capability::of_protocol(21).contains(&Capability::DeviceStates));
+        assert_eq!(
+            serde_json::to_value(Capability::DeviceStates).unwrap(),
+            "deviceStates"
+        );
+        let connected = device(
+            "A",
+            ConnectionState::Connected,
+            DeviceAvailability::Connected,
+        );
+        let gone = device(
+            "B",
+            ConnectionState::Disconnected,
+            DeviceAvailability::NotConnected,
+        );
+        let denied = DeviceInfo {
+            never_opened: true,
+            ..device(
+                "C",
+                ConnectionState::Disconnected,
+                DeviceAvailability::PermissionDenied,
+            )
+        };
+        let devices = vec![connected.clone(), gone.clone(), denied.clone()];
+
+        // Protocol 21 gets everything.
+        let response = Response::Devices {
+            devices: devices.clone(),
+        };
+        assert_eq!(response.clone().for_protocol(21), response);
+        let json = serde_json::to_value(&denied).unwrap();
+        assert_eq!(json["availability"], "permissionDenied");
+        assert_eq!(json["state"], "disconnected");
+        assert!(json.get("neverOpened").is_none(), "agent-side only");
+
+        // Protocol 20: the devices it knew, without the field.
+        let old = |info: DeviceInfo| DeviceInfo {
+            availability: None,
+            ..info
+        };
+        assert_eq!(
+            response.for_protocol(20),
+            Response::Devices {
+                devices: vec![old(connected.clone()), old(gone.clone())],
+            }
+        );
+        let json = serde_json::to_value(old(gone.clone())).unwrap();
+        assert!(json.get("availability").is_none());
+
+        let status = |devices: Vec<DeviceInfo>| {
+            let mut status: AgentStatus = serde_json::from_str(PREVIOUS_STATUS).unwrap();
+            status.devices = devices;
+            Box::new(status)
+        };
+        let event = AgentEvent::State {
+            status: status(devices.clone()),
+        };
+        assert_eq!(event.clone().for_protocol(21), Some(event.clone()));
+        assert_eq!(
+            event.for_protocol(19),
+            Some(AgentEvent::State {
+                status: status(vec![old(connected.clone()), old(gone.clone())]),
+            })
+        );
+        let response = Response::Status {
+            status: status(devices),
+        };
+        assert_eq!(
+            response.for_protocol(4),
+            Response::Status {
+                status: status(vec![old(connected), old(gone)]),
+            }
+        );
+    }
+
+    #[test]
+    fn an_older_agent_sends_no_availability_and_a_newer_state_reads_as_unknown() {
+        let json = serde_json::json!({
+            "id": {"model": "elgato.streamdeck.mk2", "serial": "A"},
+            "modelName": "Stream Deck MK.2",
+            "state": "disconnected",
+            "layout": {"type": "missing"},
+            "page": null,
+            "source": "elgato-hid"
+        });
+        let info: DeviceInfo = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(info.availability, None);
+        let mut newer = json;
+        newer["availability"] = "somethingNew".into();
+        let info: DeviceInfo = serde_json::from_value(newer).unwrap();
+        assert_eq!(info.availability, Some(DeviceAvailability::Unknown));
     }
 
     #[test]

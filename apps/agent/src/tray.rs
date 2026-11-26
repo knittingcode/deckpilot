@@ -6,7 +6,7 @@
 //! menu selections go back to the agent as [`TrayCommand`]s.
 
 use deckpilot_core::i18n::{Language, SystemText};
-use deckpilot_device::ConnectionState;
+use deckpilot_device::{ConnectionState, DeviceAvailability};
 use deckpilot_ipc::{AgentEvent, AgentStatus, LockReason, SecurityState};
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
@@ -284,10 +284,7 @@ fn labels(status: Option<&AgentStatus>) -> Labels {
             .unwrap_or_default()
             .iter()
             .map(|device| {
-                let state = match device.state {
-                    ConnectionState::Connected => SystemText::TrayConnected,
-                    ConnectionState::Disconnected => SystemText::TrayDisconnected,
-                };
+                let state = device_state_text(device.state, device.availability);
                 format!(
                     "{} ({}) – {}",
                     device.model_name,
@@ -412,6 +409,29 @@ fn icon() -> Result<Icon, String> {
     Icon::from_rgba(rgba, SIZE, SIZE).map_err(|e| e.to_string())
 }
 
+/// What the tray says about a device: the finer state where the agent
+/// knows it (DP-USB-01), else connected or disconnected.
+fn device_state_text(
+    state: ConnectionState,
+    availability: Option<DeviceAvailability>,
+) -> SystemText {
+    match availability {
+        Some(DeviceAvailability::Connected) => SystemText::TrayConnected,
+        Some(DeviceAvailability::NotConnected) => SystemText::TrayDisconnected,
+        Some(DeviceAvailability::UsbPresentHidUnavailable) => SystemText::TrayUsbWithoutHid,
+        Some(DeviceAvailability::PermissionDenied) => SystemText::TrayPermissionDenied,
+        Some(DeviceAvailability::Unsupported) => SystemText::TrayUnsupported,
+        Some(DeviceAvailability::Busy) => SystemText::TrayBusy,
+        Some(DeviceAvailability::CommunicationError) => SystemText::TrayCommunicationError,
+        Some(DeviceAvailability::Reconnecting) => SystemText::TrayReconnecting,
+        Some(DeviceAvailability::Unknown) => SystemText::TrayUnknownState,
+        None => match state {
+            ConnectionState::Connected => SystemText::TrayConnected,
+            ConnectionState::Disconnected => SystemText::TrayDisconnected,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,6 +493,67 @@ mod tests {
         );
         // Before any status: English, locked.
         assert_eq!(labels(None).open, "Open DeckPilot to Unlock…");
+    }
+
+    #[test]
+    fn device_lines_say_why_a_device_is_not_usable() {
+        let device = |serial: &str, state: &str, availability: Option<&str>| {
+            let mut json = serde_json::json!({
+                "id": {"model": "elgato.streamdeck.mk2", "serial": serial},
+                "modelName": "Stream Deck MK.2", "state": state,
+                "layout": {"type": "missing"}, "page": null, "source": "elgato-hid",
+            });
+            if let Some(availability) = availability {
+                json["availability"] = availability.into();
+            }
+            serde_json::from_value::<deckpilot_ipc::DeviceInfo>(json).unwrap()
+        };
+        let mut en = status(None, SecurityState::Unlocked);
+        en.devices = vec![
+            device("A", "connected", Some("connected")),
+            device("B", "disconnected", Some("permissionDenied")),
+            device("C", "disconnected", Some("usbPresentHidUnavailable")),
+            device("D", "disconnected", Some("busy")),
+            device("E", "disconnected", Some("reconnecting")),
+            // From an agent before device states.
+            device("F", "disconnected", None),
+        ];
+        assert_eq!(
+            labels(Some(&en)).device_lines,
+            vec![
+                "Stream Deck MK.2 (A) – connected",
+                "Stream Deck MK.2 (B) – no permission to open it",
+                "Stream Deck MK.2 (C) – on USB, not usable – replug it or power-cycle the hub",
+                "Stream Deck MK.2 (D) – in use by another program",
+                "Stream Deck MK.2 (E) – reconnecting…",
+                "Stream Deck MK.2 (F) – disconnected",
+            ]
+        );
+        let mut pl = en.clone();
+        pl.locale = Some("pl".into());
+        let lines = labels(Some(&pl)).device_lines;
+        assert_eq!(
+            lines[1],
+            "Stream Deck MK.2 (B) – brak uprawnień do otwarcia"
+        );
+        assert_eq!(
+            lines[3],
+            "Stream Deck MK.2 (D) – używane przez inny program"
+        );
+        for availability in [
+            DeviceAvailability::Connected,
+            DeviceAvailability::NotConnected,
+            DeviceAvailability::UsbPresentHidUnavailable,
+            DeviceAvailability::PermissionDenied,
+            DeviceAvailability::Unsupported,
+            DeviceAvailability::Busy,
+            DeviceAvailability::CommunicationError,
+            DeviceAvailability::Reconnecting,
+            DeviceAvailability::Unknown,
+        ] {
+            let text = device_state_text(ConnectionState::Disconnected, Some(availability));
+            assert!(!text.text(Language::En).is_empty() && !text.text(Language::Pl).is_empty());
+        }
     }
 
     #[test]

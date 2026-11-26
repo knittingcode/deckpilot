@@ -9,8 +9,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::{
-    ControlId, ControlInput, DeviceBackend, DeviceError, DeviceHandle, DeviceId, DeviceModel,
-    DiscoveredDevice, Frame,
+    ControlId, ControlInput, DeviceAvailability, DeviceBackend, DeviceError, DeviceHandle,
+    DeviceId, DeviceModel, DiscoveredDevice, Frame, UnavailableDevice,
 };
 
 #[derive(Debug, Default)]
@@ -31,6 +31,8 @@ struct MockDevice {
     open_attempts: usize,
     /// Injected faults ([`MockBackend::fail_open`] and others).
     faults: Faults,
+    /// Seen but not discoverable ([`MockBackend::plug_unavailable`]).
+    unavailable: Option<DeviceAvailability>,
 }
 
 /// Faults injected into one simulated device, to test how the agent
@@ -87,7 +89,27 @@ impl MockBackend {
         device.frames.clear();
         device.pending.clear();
         device.brightness = None;
+        device.unavailable = None;
         drop(devices);
+        self.shared.changed.notify_all();
+        id
+    }
+
+    /// Attaches a device the backend sees but cannot open, the way a real
+    /// backend reports a model without a driver or (Linux) a Stream Deck
+    /// on the USB bus without its HID interface: it is not discovered and
+    /// is reported by [`DeviceBackend::unavailable`]. [`MockBackend::plug`]
+    /// makes it a normal device again.
+    pub fn plug_unavailable(
+        &self,
+        model: &DeviceModel,
+        serial: &str,
+        availability: DeviceAvailability,
+    ) -> DeviceId {
+        let id = self.plug(model, serial);
+        if let Some(device) = self.lock().get_mut(&id) {
+            device.unavailable = Some(availability);
+        }
         self.shared.changed.notify_all();
         id
     }
@@ -245,12 +267,25 @@ impl DeviceBackend for MockBackend {
         Ok(self
             .lock()
             .iter()
-            .filter(|(_, device)| device.connected)
+            .filter(|(_, device)| device.connected && device.unavailable.is_none())
             .map(|(id, _)| DiscoveredDevice {
                 id: id.clone(),
                 model: id.model.clone(),
             })
             .collect())
+    }
+
+    fn unavailable(&mut self) -> Vec<UnavailableDevice> {
+        self.lock()
+            .iter()
+            .filter(|(_, device)| device.connected)
+            .filter_map(|(id, device)| {
+                device.unavailable.map(|availability| UnavailableDevice {
+                    id: id.clone(),
+                    availability,
+                })
+            })
+            .collect()
     }
 
     fn open(&mut self, id: &DeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError> {
@@ -483,8 +518,10 @@ mod tests {
         let probe = backend.clone();
         let id = backend.plug(&models::stream_deck_mk2(), "A1");
         for error in [
-            DeviceError::Io("permission denied".into()),
-            DeviceError::Unsupported("busy".into()),
+            DeviceError::PermissionDenied("EACCES".into()),
+            DeviceError::Busy("exclusive access".into()),
+            DeviceError::Io("broken pipe".into()),
+            DeviceError::Unsupported("model".into()),
             DeviceError::Disconnected,
         ] {
             probe.fail_open(&id, error.clone());
@@ -494,7 +531,7 @@ mod tests {
         }
         probe.clear_faults(&id);
         assert!(backend.open(&id).is_ok());
-        assert_eq!(probe.open_attempts(&id), 7);
+        assert_eq!(probe.open_attempts(&id), 11);
 
         probe.fail_open_times(&id, DeviceError::Io("busy".into()), 2);
         assert!(backend.open(&id).is_err());
@@ -552,6 +589,30 @@ mod tests {
         assert_eq!(probe.brightness(&id), None, "starts at its default");
         assert_eq!(backend.discover().unwrap()[0].id, id);
         assert!(backend.open(&id).is_ok());
+    }
+
+    #[test]
+    fn unavailable_devices_are_reported_not_discovered() {
+        let mut backend = MockBackend::new();
+        let probe = backend.clone();
+        let id = probe.plug_unavailable(
+            &models::stream_deck_mk2(),
+            "A1",
+            DeviceAvailability::UsbPresentHidUnavailable,
+        );
+        assert_eq!(backend.discover().unwrap(), vec![]);
+        assert_eq!(
+            backend.unavailable(),
+            vec![UnavailableDevice {
+                id: id.clone(),
+                availability: DeviceAvailability::UsbPresentHidUnavailable,
+            }]
+        );
+        probe.unplug(&id);
+        assert_eq!(backend.unavailable(), vec![]);
+        probe.plug(&models::stream_deck_mk2(), "A1");
+        assert_eq!(backend.discover().unwrap().len(), 1);
+        assert_eq!(backend.unavailable(), vec![]);
     }
 
     #[test]

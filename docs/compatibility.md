@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 20 | 16 |
+| Current main | see `Cargo.toml` | 21 | 16 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -285,6 +285,19 @@ Scalar references, templates and stored `{{ … }}` texts resolve exactly as
 before; text of 7 to 9 segments under a module or plugin root, which was not
 a reference, now parses as a member reference and resolves as unknown. No
 database, document or export change.
+
+IPC protocol 21 (unreleased): device states (capability `deviceStates`,
+DP-USB-01). `DeviceInfo.availability` says why a device is or is not usable
+(connected, not connected, USB present but HID unavailable, permission
+denied, unsupported, busy, communication error, reconnecting, unknown), and
+the device list also holds devices that are present but were never opened.
+A client of protocol 20 or older receives neither: the agent leaves the
+field out and drops those devices from `getStatus`, `listDevices` and
+`state` events (`Response::for_protocol`, `AgentEvent::for_protocol`), so
+its list is exactly what it was. An app of 21 with an older agent gets no
+`availability` and shows connected or disconnected as before; an unknown
+future value reads as `unknown`. No request, schema, document or export
+change.
 
 IPC protocol 20 (unreleased; 19 is reserved for the Calls event):
 plugin connections (capability `pluginConnections`, plugin API 1.14):

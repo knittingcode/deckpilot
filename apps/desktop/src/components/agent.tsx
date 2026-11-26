@@ -8,6 +8,12 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { toastFailure } from "@/lib/failure"
 import { useAppContext } from "@/lib/app-context"
+import {
+  DEVICE_STATE_LABEL,
+  deviceAvailability,
+  deviceStateHint,
+  deviceStateTone,
+} from "@/lib/device-state"
 import { describeLayout } from "@/lib/format"
 import type { AgentCapability, AgentExit, AgentSupervision, DeviceInfo } from "@/lib/types"
 import { type TranslationKey, Trans, useTranslation } from "@/i18n"
@@ -285,6 +291,8 @@ export function RefreshDevicesButton() {
 export function DeviceRow({ device, action }: { device: DeviceInfo; action?: React.ReactNode }) {
   const { t } = useTranslation()
   const connected = device.state === "connected"
+  const availability = deviceAvailability(device)
+  const hint = deviceStateHint(availability)
   const layout = device.layout
   // A row of a list: separated from its neighbours by the list, not boxed.
   return (
@@ -294,8 +302,8 @@ export function DeviceRow({ device, action }: { device: DeviceInfo; action?: Rea
         <span className="font-mono text-xs text-muted-foreground select-text">
           {device.id.serial}
         </span>
-        <InlineStatus tone={connected ? "positive" : "neutral"}>
-          {connected ? t("devices:detail.connected") : t("devices:detail.disconnected")}
+        <InlineStatus tone={deviceStateTone(availability)}>
+          {t(DEVICE_STATE_LABEL[availability])}
         </InlineStatus>
         <span className="text-caption text-muted-foreground">
           {device.source === "mock" ? t("devices:detail.simulated") : t("devices:row.usb")}
@@ -303,6 +311,7 @@ export function DeviceRow({ device, action }: { device: DeviceInfo; action?: Rea
         <div className="flex-1" />
         {action}
       </div>
+      {hint && <p className="text-caption text-muted-foreground">{t(hint)}</p>}
       <p className="text-caption text-muted-foreground">
         {describeLayout(layout)}
         {connected && device.page && ` · ${t("devices:row.showingPage", { page: device.page })}`}

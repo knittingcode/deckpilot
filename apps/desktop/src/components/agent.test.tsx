@@ -9,8 +9,10 @@ import {
   AgentCompatibilityNotice,
   AgentIndicator,
   AgentStopped,
+  DeviceRow,
 } from "@/components/agent"
-import type { AgentCompatibility } from "@/lib/types"
+import { i18n } from "@/i18n"
+import type { AgentCompatibility, DeviceInfo } from "@/lib/types"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { agentConnection, agentStatus } from "@/test/fixtures"
@@ -265,5 +267,44 @@ describe("stopped agent", () => {
     expect(screen.getByText("Stopped")).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Agent stopped, open agent settings" }))
     expect(onOpen).toHaveBeenCalled()
+  })
+})
+
+describe("device rows", () => {
+  const device = (overrides: Partial<DeviceInfo>): DeviceInfo => ({
+    id: { model: "elgato.streamdeck.mk2", serial: "AL1" },
+    modelName: "Stream Deck MK.2",
+    state: "disconnected",
+    layout: { type: "missing" },
+    page: null,
+    source: "elgato-hid",
+    ...overrides,
+  })
+
+  it("say why a present device is not usable, in English and Polish", async () => {
+    renderWithApp(<DeviceRow device={device({ availability: "permissionDenied" })} />)
+    expect(screen.getByText("No permission")).toBeInTheDocument()
+    expect(screen.getByText(/udev rule/)).toBeInTheDocument()
+    expect(screen.queryByText("Disconnected")).not.toBeInTheDocument()
+    cleanup()
+    renderWithApp(<DeviceRow device={device({ availability: "usbPresentHidUnavailable" })} />)
+    expect(screen.getByText("On USB, not usable")).toBeInTheDocument()
+    expect(screen.getByText(/power-cycle the hub/)).toBeInTheDocument()
+    cleanup()
+    await i18n.changeLanguage("pl")
+    try {
+      renderWithApp(<DeviceRow device={device({ availability: "busy" })} />)
+      expect(screen.getByText("Używane przez inny program")).toBeInTheDocument()
+    } finally {
+      await i18n.changeLanguage("en")
+    }
+  })
+
+  it("show connected and disconnected from an agent before device states", () => {
+    renderWithApp(<DeviceRow device={device({ state: "connected" })} />)
+    expect(screen.getByText("Connected")).toBeInTheDocument()
+    cleanup()
+    renderWithApp(<DeviceRow device={device({})} />)
+    expect(screen.getByText("Disconnected")).toBeInTheDocument()
   })
 })

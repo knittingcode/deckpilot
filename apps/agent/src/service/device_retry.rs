@@ -304,7 +304,6 @@ impl DeviceRetry {
     }
 
     /// Whether `device` is flapping at `now`.
-    #[cfg(test)]
     pub fn is_flapping(&self, device: &DeviceId, now: Instant) -> bool {
         self.entries.get(device).is_some_and(|entry| {
             entry

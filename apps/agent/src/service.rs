@@ -13,8 +13,8 @@ use deckpilot_core::{
     MachineConfig, ModuleRegistry, Os, ProfileId, ProjectId, Runtime,
 };
 use deckpilot_device::{
-    Capability, CombinedBackend, ControlId, DeviceBackend, DeviceDescriptor, DeviceEvent, DeviceId,
-    DeviceModel, ModelCatalog, mock::MockBackend,
+    Capability, CombinedBackend, ConnectionState, ControlId, DeviceAvailability, DeviceBackend,
+    DeviceDescriptor, DeviceEvent, DeviceId, DeviceModel, ModelCatalog, mock::MockBackend,
 };
 use deckpilot_ipc::{
     AgentEvent, AgentPaths, AgentStatus, DeviceInfo, DistributionRecord, ErrorCode, IpcError,
@@ -836,6 +836,16 @@ pub struct Agent {
     device_retry: device_retry::DeviceRetry,
     /// The devices the last successful discovery listed.
     listed_devices: BTreeSet<DeviceId>,
+    /// Why listed devices without a session are not open: the last open
+    /// error, or a lost connection (DP-USB-01). Cleared when the device
+    /// connects or is no longer listed.
+    device_problems: BTreeMap<DeviceId, DeviceAvailability>,
+    /// Devices the backend sees but cannot open (no driver; USB without
+    /// HID), as of the last discovery.
+    unavailable_devices: BTreeMap<DeviceId, DeviceAvailability>,
+    /// The last discovery failed: devices not open are of unknown state,
+    /// not "not connected".
+    discovery_failed: bool,
     /// The monotonic clock of device retries; tests move it.
     device_clock: Arc<dyn Fn() -> std::time::Instant + Send + Sync>,
     persisted_project: Option<ProjectId>,
@@ -1014,6 +1024,9 @@ impl Agent {
             open_failures: BTreeMap::new(),
             device_retry,
             listed_devices: BTreeSet::new(),
+            device_problems: BTreeMap::new(),
+            unavailable_devices: BTreeMap::new(),
+            discovery_failed: false,
             device_clock: Arc::new(std::time::Instant::now),
             persisted_project,
             saved_pages: None,
@@ -2450,6 +2463,10 @@ impl Agent {
                 if self.sessions.get(&device).map(|s| s.id) == Some(session) {
                     if let Some(error) = &error {
                         warn!(%device, %error, "device connection lost");
+                        // Opened again soon if still listed; the next
+                        // rescan clears it otherwise.
+                        self.device_problems
+                            .insert(device.clone(), DeviceAvailability::Reconnecting);
                     }
                     self.disconnect(&device);
                 }
@@ -2478,9 +2495,30 @@ impl Agent {
             Ok(found) => found,
             Err(error) => {
                 debug!(%error, "device discovery failed");
+                // Devices not open are not known to be gone.
+                if !self.discovery_failed {
+                    self.discovery_failed = true;
+                    self.publish();
+                }
                 return;
             }
         };
+        let before = (
+            self.device_problems.clone(),
+            std::mem::take(&mut self.unavailable_devices),
+            std::mem::take(&mut self.discovery_failed),
+            self.listed_devices.clone(),
+        );
+        // One driver failed while another listed devices: the failing
+        // one's devices are not known to be gone.
+        self.discovery_failed = !self.options.backend.discovery_complete();
+        self.unavailable_devices = self
+            .options
+            .backend
+            .unavailable()
+            .into_iter()
+            .map(|device| (device.id, device.availability))
+            .collect();
         let present: BTreeSet<DeviceId> = found.into_iter().map(|d| d.id).collect();
         let gone: Vec<DeviceId> = self
             .sessions
@@ -2492,6 +2530,7 @@ impl Agent {
             self.disconnect(&device);
         }
         self.open_failures.retain(|id, _| present.contains(id));
+        self.device_problems.retain(|id, _| present.contains(id));
         let now = (self.device_clock)();
         // Not listed at the last rescan (replugged): one open at once,
         // unless the device is flapping.
@@ -2510,6 +2549,16 @@ impl Agent {
             }
         }
         self.restore_settled(now);
+        if before
+            != (
+                self.device_problems.clone(),
+                self.unavailable_devices.clone(),
+                self.discovery_failed,
+                self.listed_devices.clone(),
+            )
+        {
+            self.publish();
+        }
     }
 
     /// Restores the brightness and keys of flapping devices whose session
@@ -2539,6 +2588,8 @@ impl Agent {
                 let delay = self
                     .device_retry
                     .open_failed(&device, (self.device_clock)());
+                self.device_problems
+                    .insert(device.clone(), DeviceAvailability::of_open_error(&error));
                 let message = error.to_string();
                 if self.open_failures.get(&device) == Some(&message) {
                     debug!(%device, retry_in_ms = delay.as_millis(), "cannot open device");
@@ -2555,6 +2606,8 @@ impl Agent {
             Err(error) => {
                 self.device_retry
                     .open_failed(&device, (self.device_clock)());
+                self.device_problems
+                    .insert(device.clone(), DeviceAvailability::CommunicationError);
                 warn!(%device, %error, "cannot start device thread");
                 return;
             }
@@ -2562,6 +2615,7 @@ impl Agent {
         let now = (self.device_clock)();
         let flapping = self.device_retry.opened(&device, now);
         self.open_failures.remove(&device);
+        self.device_problems.remove(&device);
         let animator = match crate::marquee::Animator::spawn(
             &device.serial,
             io.animation_sink(),
@@ -2613,6 +2667,12 @@ impl Agent {
                     delay,
                     flapping_started,
                 } => {
+                    let now = (self.device_clock)();
+                    if self.device_retry.is_flapping(device, now) {
+                        // It connects but keeps dropping.
+                        self.device_problems
+                            .insert(device.clone(), DeviceAvailability::CommunicationError);
+                    }
                     if flapping_started {
                         warn!(
                             %device,
@@ -2759,10 +2819,52 @@ impl Agent {
             .describe(device, Some(self.options.backend.driver(device)))
     }
 
+    /// Why `device`, known to the registry with `state`, is (not) usable.
+    /// A device that is present is never `notConnected`.
+    fn availability(&self, device: &DeviceId, state: ConnectionState) -> DeviceAvailability {
+        if state == ConnectionState::Connected {
+            return DeviceAvailability::Connected;
+        }
+        if let Some(problem) = self
+            .device_problems
+            .get(device)
+            .or_else(|| self.unavailable_devices.get(device))
+        {
+            return *problem;
+        }
+        if self.discovery_failed {
+            DeviceAvailability::Unknown
+        } else if self.listed_devices.contains(device) {
+            // Listed, not open, no error yet: about to be opened.
+            DeviceAvailability::Reconnecting
+        } else {
+            DeviceAvailability::NotConnected
+        }
+    }
+
     fn device_infos(&self) -> Vec<DeviceInfo> {
-        self.runtime
-            .devices()
-            .statuses()
+        let registry = self.runtime.devices().statuses();
+        // Present but never opened: not in the registry (DP-USB-01).
+        let mut unopened: BTreeMap<DeviceId, DeviceAvailability> = self.unavailable_devices.clone();
+        unopened.extend(self.device_problems.iter().map(|(id, a)| (id.clone(), *a)));
+        unopened.retain(|id, _| !registry.iter().any(|status| status.device == *id));
+        let unopened = unopened.into_iter().map(|(id, availability)| {
+            let model = self.runtime.catalog().get(&id.model);
+            DeviceInfo {
+                descriptor: self.device_descriptor(&id),
+                model_name: model.map_or_else(|| id.model.to_string(), |m| m.name.clone()),
+                layout: self.runtime.device_layout_status(&id),
+                state: ConnectionState::Disconnected,
+                page: None,
+                source: self.options.backend.source(&id).into(),
+                previous_layout: None,
+                page_id: None,
+                availability: Some(availability),
+                never_opened: true,
+                id,
+            }
+        });
+        registry
             .into_iter()
             .map(|status| {
                 let model = self.runtime.catalog().get(&status.device.model);
@@ -2785,9 +2887,12 @@ impl Agent {
                     source: self.options.backend.source(&status.device).into(),
                     previous_layout: self.runtime.layout_history(&status.device).last().copied(),
                     page_id,
+                    availability: Some(self.availability(&status.device, status.state)),
+                    never_opened: false,
                     id: status.device,
                 }
             })
+            .chain(unopened)
             .collect()
     }
 

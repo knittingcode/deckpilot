@@ -873,7 +873,7 @@ async fn a_protocol_17_agent_has_no_structured_variables() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [20, 19, 18, 17]);
+    assert_eq!(*peer.hellos.lock().unwrap(), downgrades(17));
     assert_eq!(client.protocol(), 17);
     assert!(client.supports(Capability::DisplayTemplates));
     assert!(!client.supports(Capability::StructuredVariables));
@@ -894,7 +894,7 @@ async fn a_protocol_18_agent_is_never_sent_a_connection_or_its_token() {
     let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
         .await
         .unwrap();
-    assert_eq!(*peer.hellos.lock().unwrap(), [20, 19, 18]);
+    assert_eq!(*peer.hellos.lock().unwrap(), downgrades(18));
     assert_eq!(client.protocol(), 18);
     assert!(!client.supports(Capability::PluginConnections));
     let plugin = "deckpilot.git-providers".to_owned();
@@ -951,4 +951,23 @@ async fn a_protocol_18_agent_is_never_sent_a_connection_or_its_token() {
         client.request(Request::GetStatus).await,
         Ok(Response::Status { .. })
     ));
+}
+
+/// A protocol 20 agent (before device states): the client speaks 20 with
+/// it, knows that its devices carry no `availability`, and reads its
+/// status as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_protocol_20_agent_has_no_device_states() {
+    let peer = peer(20, "0.16.0");
+    let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
+        .await
+        .unwrap();
+    assert_eq!(*peer.hellos.lock().unwrap(), downgrades(20));
+    assert_eq!(client.protocol(), 20);
+    assert!(client.supports(Capability::PluginConnections));
+    assert!(!client.supports(Capability::DeviceStates));
+    let Ok(Response::Status { status }) = client.request(Request::GetStatus).await else {
+        panic!("status");
+    };
+    assert!(status.devices.iter().all(|d| d.availability.is_none()));
 }
