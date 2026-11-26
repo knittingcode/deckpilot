@@ -65,6 +65,9 @@ pub struct AgentConnection {
     /// What the agent can do over this connection. Features outside it are
     /// unavailable until the agent is restarted with this app's agent.
     pub capabilities: Vec<Capability>,
+    /// While no agent runs: an agent this app started exited unexpectedly,
+    /// and is being restarted or stays stopped (`supervisor.rs`).
+    pub supervision: Option<crate::supervisor::Supervision>,
 }
 
 impl AgentConnection {
@@ -77,6 +80,7 @@ impl AgentConnection {
             app_version: APP_VERSION,
             protocol: None,
             capabilities: Vec::new(),
+            supervision: crate::supervisor::global().supervision(),
         }
     }
 
@@ -89,6 +93,7 @@ impl AgentConnection {
             app_version: APP_VERSION,
             protocol: Some(protocol),
             capabilities,
+            supervision: None,
         }
     }
 
@@ -106,6 +111,7 @@ impl AgentConnection {
             app_version: APP_VERSION,
             protocol: None,
             capabilities: Vec::new(),
+            supervision: None,
         }
     }
 
@@ -153,6 +159,8 @@ pub fn running_workflows_message(running: u32) -> String {
 /// Stops a running agent of this or an older release. Older agents reject
 /// the current protocol, so the request is repeated with protocol 1.
 pub async fn stop_any_version(paths: &AgentPaths, request: Request) -> Result<(), ClientError> {
+    // Asked for: never a crash to restart (`supervisor.rs`).
+    crate::supervisor::global().expect_stop();
     let outcome = match self::request(paths, request.clone()).await {
         Err(ClientError::Agent(error)) if error.code == ErrorCode::UnsupportedProtocol => {
             let mut client =
@@ -352,8 +360,22 @@ pub fn run_agent_if_requested() {
 }
 
 /// Starts the agent detached from this process, so closing the window does
-/// not stop it. The agent itself refuses to run twice.
+/// not stop it. The agent itself refuses to run twice. The app supervises
+/// it: if it exits unexpectedly, it is restarted a bounded number of times
+/// (`supervisor.rs`).
 pub fn start_agent() -> Result<(), String> {
+    crate::supervisor::global().start()
+}
+
+/// [`start_agent`] for the user's Start or Restart: earlier unexpected
+/// exits are forgotten, and a "stopped" state ends.
+pub fn start_agent_by_user() -> Result<(), String> {
+    crate::supervisor::global().start_by_user()
+}
+
+/// Starts the agent process, detached from this process (its own process
+/// group, no console, no standard streams).
+pub(crate) fn spawn_agent_process() -> Result<std::process::Child, String> {
     let executable = agent_executable().ok_or("the DeckPilot agent executable was not found")?;
     let (path, args) = agent_command(deckpilot_ipc::paths::appimage(), executable);
     let mut command = Command::new(&path);
@@ -376,7 +398,6 @@ pub fn start_agent() -> Result<(), String> {
     }
     command
         .spawn()
-        .map(|_| ())
         .map_err(|e| format!("cannot start {}: {e}", path.display()))
 }
 
@@ -418,6 +439,61 @@ pub fn spawn_bridge<R: Runtime>(app: AppHandle<R>, paths: AgentPaths) {
     });
 }
 
+/// Restarts an agent this app started when it exits unexpectedly, a
+/// bounded number of times (`supervisor.rs`). Agents started otherwise are
+/// only reconnected to by [`spawn_bridge`].
+pub fn spawn_supervisor<R: Runtime>(app: AppHandle<R>, paths: AgentPaths) {
+    tauri::async_runtime::spawn(async move {
+        let env = SupervisorEnv { app, paths };
+        crate::supervisor::run(crate::supervisor::global(), &env).await;
+    });
+}
+
+/// What the supervisor needs from the app.
+struct SupervisorEnv<R: Runtime> {
+    app: AppHandle<R>,
+    paths: AgentPaths,
+}
+
+impl<R: Runtime> crate::supervisor::Environment for SupervisorEnv<R> {
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send {
+        tokio::time::sleep(duration)
+    }
+
+    fn update_in_progress(&self) -> bool {
+        // An intent that cannot be read counts too: recovery handles it.
+        !matches!(
+            deckpilot_update::intent::UpdateIntent::read(&self.paths.data_dir),
+            Ok(None)
+        )
+    }
+
+    fn agent_answers(&self) -> impl Future<Output = bool> + Send {
+        let paths = self.paths.clone();
+        // Anything but "no agent" (a busy endpoint, an error) counts as an
+        // agent: nothing is started next to it.
+        async move { !matches!(connection(&paths).await, Ok(c) if !c.running) }
+    }
+
+    fn lock_free(&self) -> impl Future<Output = bool> + Send {
+        let lock = self.paths.lock_file.clone();
+        async move {
+            matches!(
+                deckpilot_ipc::instance::wait_until_free(&lock, crate::supervisor::LOCK_WAIT).await,
+                Ok(true)
+            )
+        }
+    }
+
+    fn changed(&self) {
+        let _ = self.app.emit(STATUS_EVENT, AgentConnection::stopped());
+    }
+}
+
 async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result<(), ClientError> {
     let mut client = AgentClient::connect(paths, ClientKind::Desktop).await?;
     let (protocol, capabilities) = (client.protocol(), client.capabilities().to_vec());
@@ -432,7 +508,11 @@ async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result
     {
         eprintln!("the agent was not told the language: {error}");
     }
+    // The agent's process, to tell its announced stop from a crash.
+    let mut pid = None;
     if let Response::Status { status } = client.request(Request::GetStatus).await? {
+        pid = Some(status.pid);
+        crate::supervisor::global().connected();
         unlock_if_needed(app, paths, &status).await;
         let _ = app.emit(STATUS_EVENT, running(*status));
     }
@@ -440,6 +520,7 @@ async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result
     loop {
         match client.next_event().await? {
             AgentEvent::State { status } => {
+                pid = Some(status.pid);
                 unlock_if_needed(app, paths, &status).await;
                 let _ = app.emit(STATUS_EVENT, running(*status));
             }
@@ -454,6 +535,11 @@ async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result
                 }
             }
             AgentEvent::ShuttingDown { reason } => {
+                // Any announced stop (Quit, a restart, an update, a
+                // signal) is not restarted.
+                if let Some(pid) = pid {
+                    crate::supervisor::global().stopping(pid);
+                }
                 // On macOS the tray's "Quit DeckPilot" ends this app too; a
                 // restart or an update does not. Elsewhere the app stays.
                 if crate::lifecycle::on_agent_stop(reason, crate::lifecycle::MACOS)

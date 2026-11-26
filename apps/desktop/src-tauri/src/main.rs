@@ -17,6 +17,7 @@ mod marketplace_e2e;
 mod modules;
 mod plugin_actions;
 mod state;
+mod supervisor;
 #[cfg(test)]
 mod tests;
 mod update_provider;
@@ -163,6 +164,9 @@ fn main() {
                     && let Err(error) = agent::start_agent()
                 {
                     eprintln!("{error}");
+                }
+                if !managed {
+                    agent::spawn_supervisor(handle.clone(), paths.clone());
                 }
                 agent::spawn_bridge(handle.clone(), paths);
                 // Finishes or reports an update the previous run recorded.

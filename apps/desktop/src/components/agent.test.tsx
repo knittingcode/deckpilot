@@ -158,6 +158,71 @@ describe("stopped agent", () => {
     expect(toast.error).toHaveBeenCalledWith("The agent did not start. Check its log for details.")
   })
 
+  it("says that a crashed agent is being restarted", () => {
+    renderWithApp(<AgentStopped />, {
+      agent: agentConnection({
+        running: false,
+        supervision: {
+          state: "restarting",
+          restart: 2,
+          max: 3,
+          delayMs: 5000,
+          exit: { success: false, code: null, signal: 9 },
+        },
+      }),
+    })
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent("The agent stopped unexpectedly")
+    expect(alert).toHaveTextContent(
+      "It ended (signal 9). DeckPilot starts it again in 5 seconds (restart 2 of 3).",
+    )
+    expect(screen.getByRole("button", { name: "Start agent" })).toBeEnabled()
+  })
+
+  it("shows a stopped agent after too many restarts, with a Restart action", async () => {
+    const restarted = agentConnection()
+    api.startAgent.mockResolvedValue(restarted)
+    const { user, context } = renderWithApp(<AgentStopped />, {
+      agent: agentConnection({
+        running: false,
+        supervision: {
+          state: "stopped",
+          restarts: 3,
+          windowMinutes: 10,
+          exit: { success: false, code: 101, signal: null },
+        },
+      }),
+    })
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent("DeckPilot agent stopped")
+    expect(alert).toHaveTextContent(
+      "It ended unexpectedly (exit code 101) after being restarted 3 times in 10 minutes. It is not started again by itself.",
+    )
+    expect(alert).toHaveTextContent("Check its log in Settings › Diagnostics")
+    await user.click(screen.getByRole("button", { name: "Restart" }))
+    expect(api.startAgent).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(context.setAgent).toHaveBeenCalledWith(restarted)
+    })
+  })
+
+  it("says when a crashed agent could not be started again", () => {
+    renderWithApp(<AgentStopped />, {
+      agent: agentConnection({
+        running: false,
+        supervision: {
+          state: "stopped",
+          restarts: 0,
+          windowMinutes: 10,
+          exit: { success: false, code: 1, signal: null },
+        },
+      }),
+    })
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "It ended unexpectedly (exit code 1) and could not be started again.",
+    )
+  })
+
   it("explains when the agent cannot be started from the app", () => {
     renderWithApp(<AgentStopped />, { agent: agentConnection({ running: false, canStart: false }) })
     expect(screen.getByRole("button", { name: "Start agent" })).toBeDisabled()
