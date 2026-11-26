@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod agent_output;
 mod commands;
 mod dev_server;
 mod error;
@@ -16,6 +17,7 @@ mod lifecycle;
 mod marketplace_e2e;
 mod modules;
 mod plugin_actions;
+mod single_instance;
 mod state;
 mod supervisor;
 #[cfg(test)]
@@ -89,6 +91,12 @@ fn main() {
     agent::run_agent_if_requested();
     let window_only = requested_window();
     let mut builder = tauri::Builder::default();
+    // First of all plugins: a second launch hands over to the running app
+    // and ends here (`single_instance.rs`).
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    if single_instance::applies_here(window_only.as_deref()) {
+        builder = builder.plugin(single_instance::plugin());
+    }
     if tauri::is_dev() {
         builder = builder.register_uri_scheme_protocol(dev_server::SCHEME, |ctx, request| {
             let app = ctx.app_handle();
@@ -119,6 +127,7 @@ fn main() {
         .manage(updates::UpdateManager::default())
         .manage(windows::WindowRegistry::default())
         .manage(lifecycle::MainPresented::default())
+        .manage(single_instance::Started::default())
         .manage(commands::portability::PendingImport::default())
         .manage(commands::plugins::PluginEvents::default())
         .manage(commands::locale::AgentLocale::default())
@@ -152,6 +161,10 @@ fn main() {
                     });
                 }
             }
+            // From now on a second launch is acted on (`single_instance.rs`).
+            app.state::<single_instance::Started>()
+                .0
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Start the agent on first launch if it is not running yet,

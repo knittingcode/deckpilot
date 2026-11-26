@@ -127,6 +127,12 @@ serde = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
+[target.'cfg(windows)'.dependencies]
+# The standard handles the app gives the agent are not passed on to the
+# programs it starts (`output.rs`; this crate holds the workspace's Win32
+# calls).
+deckpilot-apps.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Whether a StatusNotifier host shows the tray icon (tray/presence.rs): the
 # same zbus as deckpilot-presence's and the credential store's, so no new

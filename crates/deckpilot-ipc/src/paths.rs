@@ -18,6 +18,24 @@ pub const DATA_DIR_ENV: &str = "DECKPILOT_DATA_DIR";
 /// AppImage runs: see [`appimage`].
 pub const RUN_AGENT_ARG: &str = "--agent";
 
+/// Argument with which the configuration app starts the agent: log records
+/// and panics go to the log files only, not to standard error as well.
+/// The app sends the agent's standard output and error to
+/// [`AgentPaths::output_log`], which so keeps only what the log files
+/// cannot hold (`docs/background-agent.md`, "Logs").
+pub const QUIET_STDERR_ARG: &str = "--quiet-stderr";
+
+/// The file in the log directory that the agent's standard output and
+/// error go to when the configuration app starts it. Its name must not
+/// begin with `agent`: the daily log files' rotation removes the oldest
+/// file whose name begins with `agent` and ends with `log`.
+pub const OUTPUT_LOG_FILE: &str = "output.log";
+/// The previous [`OUTPUT_LOG_FILE`], kept when it grew too long.
+pub const PREVIOUS_OUTPUT_LOG_FILE: &str = "output.1.log";
+/// The size from which [`OUTPUT_LOG_FILE`] is moved aside when the app
+/// starts an agent, and emptied while the agent runs.
+pub const MAX_OUTPUT_LOG_BYTES: u64 = 1024 * 1024;
+
 /// The AppImage file this process runs from, on Linux.
 ///
 /// An AppImage mounts its contents at a new temporary path on every run
@@ -100,6 +118,17 @@ impl AgentPaths {
         Endpoint::for_data_dir(&self.data_dir)
     }
 
+    /// Where the agent's standard output and error go when the
+    /// configuration app starts it ([`OUTPUT_LOG_FILE`]).
+    pub fn output_log(&self) -> PathBuf {
+        self.log_dir.join(OUTPUT_LOG_FILE)
+    }
+
+    /// The previous [`Self::output_log`] ([`PREVIOUS_OUTPUT_LOG_FILE`]).
+    pub fn previous_output_log(&self) -> PathBuf {
+        self.log_dir.join(PREVIOUS_OUTPUT_LOG_FILE)
+    }
+
     /// Creates the data and log directories if needed.
     pub fn create_dirs(&self) -> io::Result<()> {
         create_private_dir(&self.data_dir)?;
@@ -134,6 +163,17 @@ mod tests {
         assert_eq!(paths.lock_file, Path::new("/data/deckpilot/agent.lock"));
         assert_eq!(paths.token_file, Path::new("/data/deckpilot/agent.token"));
         assert_eq!(paths.log_dir, Path::new("/data/deckpilot/logs"));
+        assert_eq!(
+            paths.output_log(),
+            Path::new("/data/deckpilot/logs/output.log")
+        );
+        assert_eq!(
+            paths.previous_output_log(),
+            Path::new("/data/deckpilot/logs/output.1.log")
+        );
+        // The daily log files' rotation would count them as its own.
+        assert!(!OUTPUT_LOG_FILE.starts_with("agent"));
+        assert!(!PREVIOUS_OUTPUT_LOG_FILE.starts_with("agent"));
     }
 
     // AppImages exist on Linux; the Unix paths below are not absolute on
