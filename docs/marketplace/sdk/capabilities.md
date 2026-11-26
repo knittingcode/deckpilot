@@ -593,6 +593,20 @@ minute. The agent's `PLUGIN_API` still reports the level it fully
 provides, so a `^1.14` plugin installs only once the agent's level reaches
 1.14 (with plugin API 1.12 and 1.13, `docs/compatibility.md`).
 
+## Calls (plugin API 1.16, the bundled `deckpilot.calls` only)
+
+| Operation | `Context` | Needs | Run origin | Rate |
+| --- | --- | --- | --- | --- |
+| `call.state` → `{state, provider?, connected, micMuted?, cameraOn?, pending, unconfirmed, controls, title?, generation}` | `call_state` | `calls` | any, also a key's state call | |
+| `call.control {action}` → `confirmed` or `alreadyThere` | `call_control` | `calls:control` | user-started | 4 per second |
+
+For every other plugin both are denied, whatever it was granted. The
+answer to a control comes only once the call app confirmed it; a refusal
+starts with its code (`calls-not-in-call`, `calls-unsupported: <reason>`,
+`calls-unconfirmed`, `calls-provider-offline`, `calls-consent`,
+`calls-locked`, `calls-not-user-started` for a run the user did not
+start, `calls-throttled` for too many controls). See [Calls](../../calls.md#plugin-operations-who-may-ask-and-how-c9).
+
 ## What there is not (ABI 1)
 
 No file system, process, clipboard, keychain or shell access, ever (plugin

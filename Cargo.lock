@@ -1110,6 +1110,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "rusqlite",
+ "rustix",
  "rustls",
  "semver",
  "serde",

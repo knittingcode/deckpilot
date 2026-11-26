@@ -29,6 +29,23 @@
       "explanation": "Agent w tle obsługuje urządzenia i wykonuje akcje. Działa dalej po zamknięciu tego okna.",
       "start": "Uruchom agenta",
       "notFound": "Nie znaleziono pliku wykonywalnego agenta obok tej aplikacji. Uruchom<code>deckpilot-agent</code>ręcznie."
+    },
+    "supervision": {
+      "restartingTitle": "Agent nieoczekiwanie się zatrzymał",
+      "restarting_one": "Zakończył działanie ({{exit}}). DeckPilot uruchomi go ponownie za {{count}} sekundę (ponowne uruchomienie {{restart}} z {{max}}).",
+      "restarting_few": "Zakończył działanie ({{exit}}). DeckPilot uruchomi go ponownie za {{count}} sekundy (ponowne uruchomienie {{restart}} z {{max}}).",
+      "restarting_many": "Zakończył działanie ({{exit}}). DeckPilot uruchomi go ponownie za {{count}} sekund (ponowne uruchomienie {{restart}} z {{max}}).",
+      "restarting_other": "Zakończył działanie ({{exit}}). DeckPilot uruchomi go ponownie za {{count}} sekundy (ponowne uruchomienie {{restart}} z {{max}}).",
+      "stoppedTitle": "Agent DeckPilot zatrzymany",
+      "gaveUp_one": "Nieoczekiwanie zakończył działanie ({{exit}}) po {{count}} ponownym uruchomieniu w ciągu {{minutes}} minut. Nie zostanie uruchomiony ponownie automatycznie.",
+      "gaveUp_few": "Nieoczekiwanie zakończył działanie ({{exit}}) po {{count}} ponownych uruchomieniach w ciągu {{minutes}} minut. Nie zostanie uruchomiony ponownie automatycznie.",
+      "gaveUp_many": "Nieoczekiwanie zakończył działanie ({{exit}}) po {{count}} ponownych uruchomieniach w ciągu {{minutes}} minut. Nie zostanie uruchomiony ponownie automatycznie.",
+      "gaveUp_other": "Nieoczekiwanie zakończył działanie ({{exit}}) po {{count}} ponownych uruchomieniach w ciągu {{minutes}} minut. Nie zostanie uruchomiony ponownie automatycznie.",
+      "notRestarted": "Nieoczekiwanie zakończył działanie ({{exit}}) i nie udało się go uruchomić ponownie.",
+      "restart": "Uruchom ponownie",
+      "exitCode": "kod wyjścia {{code}}",
+      "exitSignal": "sygnał {{signal}}",
+      "exitUnknown": "brak kodu wyjścia"
     }
   },
   "detail": {

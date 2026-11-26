@@ -189,6 +189,83 @@ app's "restart agent", an update) starts the next agent as soon as the
 endpoint is gone. After a crash the new agent replaces the stale socket
 file and token; the old token is no longer accepted.
 
+A panic in the agent's main loop ends the agent's process, with or without
+the tray (`apps/agent/src/crash.rs`). The agent used to keep its tray, with
+a menu that did nothing, after such a panic. Now:
+
+1. The panic is written to the agent's log. Every panic is, because the
+   configuration app starts the agent with its standard error going
+   nowhere.
+2. The runtime is shut down. Its blocking threads get 2 seconds, as after
+   any stop, so a stuck one (a credential store prompt, a plugin host call)
+   cannot keep the process alive.
+3. The IPC endpoint closes, and on Unix its socket file is removed.
+4. Only then is the instance lock released. The IPC server holds the lock
+   too, and lets go of it after its listener. So a next agent that takes
+   the lock never has its socket removed by the old one.
+5. The tray icon is removed, and the process exits with code 101 (Rust's
+   exit code for a panic). An agent that stops with an error, or cannot
+   start, exits with code 1. One that stops as asked exits with code 0.
+
+The keys are not blanked after a panic, because the device threads end
+with the process. The token file stays, and the next agent replaces it.
+Nothing restarts the agent here. Panics that are caught on purpose are
+logged but do not stop the agent. Examples are a tray icon that cannot be
+created, and a single IPC connection or plugin task.
+
+### Restart after a crash
+
+The configuration app restarts an agent **it started** when that agent
+exits unexpectedly (`apps/desktop/src-tauri/src/supervisor.rs`). The limits
+are a conservative default that the owner chose:
+
+- At most 3 restarts in 10 minutes. The app waits 1 second before the first
+  restart, 5 seconds before the second and 30 seconds before the third.
+  Meanwhile Settings (Agent, Devices, Diagnostics) shows "The agent stopped unexpectedly" with
+  the exit code or signal.
+- After that the agent stays stopped. The app shows "DeckPilot agent
+  stopped" with a **Restart** button. The user's Start or Restart starts
+  the count again.
+- An exit is unexpected only if nobody asked for it and it is not a
+  success. These never cause a restart:
+  - an exit after the agent announced `shuttingDown` (the tray's Quit, a
+    restart, an update, a signal);
+  - an exit after the app asked it to stop (Stop agent, Restart agent, an
+    update). If the agent is still running 30 seconds after such a
+    request, the request failed, and a later exit counts as a crash again;
+  - an exit with code 0 (for example an agent that found another one
+    running).
+- An agent that the app did not start is never restarted. That includes an
+  agent started at login, by the user, or by another copy of the app. The
+  app only reconnects to it, as before.
+- Closing the configuration window never stops the agent. It runs in its
+  own process group, and the app never kills it. On Windows and Linux the
+  app's process ends with its last window, and so does the supervision.
+- Before each restart, the app checks three things:
+  - No update is in progress (`update-intent.json`).
+  - No agent answers on the endpoint, of any version. An agent of another
+    version keeps the compatibility notice. Nothing is replaced, and
+    nothing is downgraded.
+  - The instance lock is free. The app waits up to 5 seconds for it.
+
+  If any check fails, the app starts nothing and only reconnects, and the
+  skipped restart does not count toward the limit. The update check runs
+  again right before the start.
+- The app does not watch for the end of the session (logout, shutdown). If
+  the system ends the agent with a non-zero code a moment before the app,
+  the app may start it once more as the session ends.
+- The restarted agent starts locked, like every agent. The bridge unlocks
+  it the way it unlocks any agent that (re)started: with this app's key,
+  only while this app is unlocked, and never after a lock that needs the
+  password. The supervisor itself never reads or holds a key.
+
+The app sees the exit through the process it started. The app starts the
+agent with its tray, so this relies on the tray agent's exit codes from
+#508: 1 for an error, 101 for a panic. Before #508, a tray agent exited
+with 0 after an error and stayed alive without its endpoint after a panic.
+Neither is detected as a crash; such an agent is only reconnected to. Only
+a signal (a kill, an abort) is detected without #508.
+
 ### Start at login
 
 The agent can register itself to start at login using per-user mechanisms
@@ -226,6 +303,39 @@ instead of writing the Run key, and a Flatpak asks the Background portal.
 Those are not implemented yet, so a Mac App Store, Microsoft Store or
 Flathub build reports start at login as off, refuses to turn it on with a
 message saying so, and writes nothing (`autostart::Strategy`).
+
+### What uninstalling leaves behind
+
+This is what the packages do today; none of them has uninstall hooks of
+its own.
+
+- **User data stays.** No package type removes the data directory:
+  - on Linux, `~/.local/share/io.github.knittingcode.deckpilot`;
+  - on macOS, `~/Library/Application Support/io.github.knittingcode.deckpilot`;
+  - on Windows, `%APPDATA%\io.github.knittingcode.deckpilot`.
+
+  It holds the encrypted configuration (`deckpilot.db`), its backups, the
+  plugins and their data, and the logs. A database key kept in the
+  system's credential store (Keychain, Credential Manager or the Secret
+  Service) stays there too. A later installation opens the same
+  configuration again.
+- **The autostart entry stays**, if start at login was turned on. It
+  points at an agent that is no longer there:
+  - macOS: `~/Library/LaunchAgents/DeckPilot Agent.plist`;
+  - Linux: `~/.config/autostart/DeckPilot Agent.desktop`;
+  - Windows: the `DeckPilot Agent` value under
+    `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`.
+
+  To avoid it, turn start at login off (Settings, or
+  `deckpilot-agent autostart disable`) before uninstalling. An entry that
+  was left behind can be deleted by hand: the file, or the registry value.
+- **The udev rule goes with the `.deb` and `.rpm`**: it belongs to the
+  package. A copy installed by hand in `/etc/udev/rules.d` (AppImage,
+  Flatpak) stays until you delete it.
+- To remove the configuration as well, quit the agent and delete the data
+  directory after uninstalling. This deletes it for good. The key in the
+  credential store, a left-behind autostart entry and a hand-installed
+  udev rule are separate and stay until you delete them.
 
 ## Storage ownership
 
@@ -374,9 +484,18 @@ such hardware exists yet.
 
 ### Platform requirements
 
-- **Linux**: access to `hidraw` devices. Install
-  `packaging/linux/70-deckpilot-streamdeck.rules` (see the file for the
-  commands) and replug the device. Building requires `libudev-dev`.
+- **Linux**: access to `hidraw` devices, granted by the udev rule
+  `70-deckpilot-streamdeck.rules` (`TAG+="uaccess"`: the user of the
+  active seat gets an ACL on the device node; no group and no `MODE`). The
+  `.deb` and `.rpm` install it as
+  `/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules`; nothing has to be
+  copied by hand. The packages of 0.15.0 and earlier do not reload udev, so
+  a Stream Deck that was plugged in during the installation needs to be
+  unplugged and plugged in again once. The
+  AppImage and the Flatpak cannot install the rule: install it once on the
+  host, as the [installation guide](../website/src/content/docs/en/installation.md#appimage)
+  and [packaging/flatpak/udev.md](../packaging/flatpak/udev.md) describe.
+  Building requires `libudev-dev`.
 - **macOS**: no extra setup expected. If macOS asks for Input Monitoring
   permission, grant it to the agent.
 - **Windows**: no driver installation expected; the device uses the built-in
@@ -412,6 +531,68 @@ agent. In development, build both first:
 cargo build -p deckpilot-agent
 pnpm dev
 ```
+
+## Diagnostics
+
+`deckpilot-agent diagnose` prints a short summary, and
+`deckpilot-agent diagnose --json` prints a versioned JSON report
+(`"schema": "deckpilot.diagnose"`, `"schemaVersion": 1`) for a support
+request. Its schema is `apps/agent/src/diagnose/schema-v1.json`. New fields
+can be added within a version. A field that changes type or goes away
+needs a new version.
+
+The report contains:
+
+- the versions of the agent, and of the app and plugin host found next to
+  it (they ship in one package);
+- the operating system, the distribution channel, the install type (deb,
+  rpm, AppImage, Flatpak, app, MSI, NSIS, development or unknown) and the IPC protocol range;
+- whether an agent runs, from its instance lock and socket file;
+- on Linux, whether the udev rule is installed, and the Elgato USB devices
+  in `/sys/bus/usb/devices` with their `hidraw` nodes and this user's
+  access to them;
+- on macOS and Windows, the Elgato HID interfaces `hidapi` lists. On
+  Windows, listing them opens each HID device without any access rights, to
+  read its attributes. No report is read or written.
+
+A device's `state` is one of:
+
+- `ok`;
+- `other-elgato-product`: an Elgato product that is not in DeckPilot's
+  model catalog (a Cam Link, a microphone, or a Stream Deck model DeckPilot
+  does not know yet). It is listed but not reported;
+- `usb-present-hid-missing`: the USB device exists but the kernel bound no
+  HID interface, so nothing can see it (see
+  [troubleshooting/usb-hub-resets.md](troubleshooting/usb-hub-resets.md));
+- `hid-without-serial`: the agent identifies devices by serial and skips
+  this one;
+- `node-missing`: sysfs has the `hidraw` node but `/dev` does not (a
+  container, or a sandbox without the device);
+- `no-permission`: the udev rule did not apply.
+
+Each state other than `ok` is also listed under `findings` with a hint.
+
+The command is read-only, and works while the configuration is locked:
+
+- it never starts or connects to an agent;
+- it never opens the database or reads the IPC token. On Linux it opens
+  no device: permissions come from `access(2)`;
+- it writes, creates and resets nothing, and runs no other program;
+- the lock is probed with a shared lock on the existing file, released at
+  once. It is never created. A starting agent retries its lock for 5 s and
+  the app's lock wait polls, so the probe makes neither give up.
+
+The report hides personal data:
+
+- serial numbers become pseudonyms (`sha256:` and 16 hex digits of a
+  SHA-256 over a fixed prefix, on Linux the machine ID, and the serial), so
+  the same device can be recognised across reports from one machine. They
+  are pseudonyms, not secrets: someone who knows the machine ID can test
+  guessed serials against them;
+- the home directory becomes `~`, and the user name (of two or more
+  characters) becomes `<user>` wherever it stands as a word, in paths and
+  messages;
+- environment values and tokens are never included.
 
 ## Testing
 
