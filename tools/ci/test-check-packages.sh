@@ -282,7 +282,7 @@ if command -v dpkg-deb > /dev/null; then
   check linux fail "lacks an executable postinst" "a .deb without its postinst fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
   DEB_OMIT=DEBIAN/postrm linux 0.6.0-alpha.1
   check linux fail "lacks an executable postrm" "a .deb without its postrm fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
-  for extra in preinst prerm config triggers conffiles; do
+  for extra in preinst prerm config triggers conffiles ..x .hidden; do
     DEB_EXTRA=$extra linux 0.6.0-alpha.1
     check linux fail "has the control file $extra" "a .deb with a $extra fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
   done

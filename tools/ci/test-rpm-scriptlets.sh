@@ -3,7 +3,8 @@
 # rpmbuild: the repository's %post and %postun pass, and each way a package
 # could run something else as root is refused (a missing or altered
 # scriptlet, another interpreter, interpreter arguments, macro expansion
-# flags, any other scriptlet, triggers and file triggers).
+# flags, any other scriptlet, triggers and file triggers), and that an
+# older rpm may not know only PREUNTRANS and POSTUNTRANS.
 #
 #   tools/ci/test-rpm-scriptlets.sh            (any host with docker: Fedora container)
 #   tools/ci/test-rpm-scriptlets.sh --here     (a host with rpmbuild, as root or not)
@@ -109,6 +110,29 @@ expect transfile-trigger fail "a %{TRANSFILETRIGGERSCRIPTS} scriptlet" "$post
 $postun
 %transfiletriggerin -- /usr/share
 true"
+
+# An rpm that does not know some scriptlet tags (a stand-in on PATH that
+# leaves them out of --querytags): only PREUNTRANS and POSTUNTRANS may be
+# unknown, any other unknown tag fails.
+real_rpm=$(command -v rpm)
+mkdir -p "$work/older-rpm"
+cat > "$work/older-rpm/rpm" << STANDIN
+#!/bin/sh
+if [ "\$1" = --querytags ]; then
+  "$real_rpm" --querytags | grep -v -x -E "\$HIDE_TAGS"
+else
+  exec "$real_rpm" "\$@"
+fi
+STANDIN
+chmod +x "$work/older-rpm/rpm"
+exact=$(find "$work/top/RPMS" -name 't-exact-*.rpm')
+older() { HIDE_TAGS="$1" PATH="$work/older-rpm:$PATH" "$here/check-rpm-scriptlets.sh" "$exact" "$postinst" "$postrm" 2>&1; }
+out=$(older 'PREUNTRANS|POSTUNTRANS') && grep -q -F "not checked here: PREUNTRANS POSTUNTRANS" <<< "$out" \
+  && ok "an rpm without PREUNTRANS and POSTUNTRANS passes and names them" || bad "older rpm (4.17-like): $out"
+for tag in PRETRANS VERIFYSCRIPT FILETRIGGERSCRIPTS; do
+  out=$(older "$tag") && bad "an rpm without $tag passes: $out" \
+    || { grep -q -F "does not know the scriptlet tag $tag" <<< "$out" && ok "an rpm without $tag fails" || bad "older rpm without $tag: $out"; }
+done
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"

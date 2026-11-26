@@ -13,10 +13,10 @@
 # - every other scriptlet is absent: %pre, %preun, %pretrans, %posttrans,
 #   %preuntrans, %postuntrans, %verifyscript, triggers and file triggers.
 #
-# A scriptlet tag this rpm does not know (older rpm, e.g. %preuntrans
-# before rpm 4.20) cannot be read here; it is named in the output, and the
-# Fedora install check (check-linux-install.sh rpm), whose rpm knows every
-# tag, runs this script on the same package.
+# Only PREUNTRANS and POSTUNTRANS (new in rpm 4.20) may be unknown to the
+# rpm running this: they are named in the output, and the Fedora install
+# check (check-linux-install.sh rpm), whose rpm knows every tag, runs this
+# script on the same package. Any other unknown tag fails.
 #
 # Uses only rpm queries on the package file; installs and runs nothing.
 set -euo pipefail
@@ -35,13 +35,14 @@ known() { grep -q -x -F "$1" <<< "$known_tags"; }
 for pair in "POSTIN:$postinst" "POSTUN:$postrm"; do
   tag="${pair%%:*}" script="${pair#*:}"
   [ "$(query "%|${tag}?{present}:{absent}|")" = present ] || fail "it has no %{$tag} scriptlet"
-  # Every element of the interpreter list, one per line; "<absent>" when
-  # no interpreter is stored (a stored "(none)" is a program, and refused).
-  prog=$(query "%|${tag}PROG?{[%{${tag}PROG}\n]}:{<absent>\n}|")
-  case "$prog" in
-    "<absent>" | /bin/sh) ;;
-    *) fail "its %{$tag} scriptlet runs with '$(tr '\n' ' ' <<< "$prog")', expected /bin/sh (or rpm's default)" ;;
-  esac
+  # No interpreter stored (rpm's default, /bin/sh), or every element of
+  # the stored list, one per line, exactly "/bin/sh" (a stored "(none)"
+  # is a program, and refused).
+  if [ "$(query "%|${tag}PROG?{present}:{absent}|")" = present ]; then
+    prog=$(query "[%{${tag}PROG}\n]")
+    [ "$prog" = /bin/sh ] \
+      || fail "its %{$tag} scriptlet runs with '$(tr '\n' ' ' <<< "$prog")', expected /bin/sh (or rpm's default)"
+  fi
   flags=$(query "%|${tag}FLAGS?{%{${tag}FLAGS}}:{0}|")
   [ "$flags" = 0 ] || fail "its %{$tag} scriptlet has flags $flags (e.g. macro expansion), expected none"
   [ "$(printf '%s\n' "$(query "%{$tag}")")" = "$(printf '%s\n' "$(cat "$script")")" ] \
@@ -52,7 +53,10 @@ unknown=""
 for tag in PREIN PREUN PRETRANS POSTTRANS PREUNTRANS POSTUNTRANS VERIFYSCRIPT \
   TRIGGERSCRIPTS FILETRIGGERSCRIPTS TRANSFILETRIGGERSCRIPTS; do
   if ! known "$tag"; then
-    unknown="$unknown $tag"
+    case "$tag" in
+      PREUNTRANS | POSTUNTRANS) unknown="$unknown $tag" ;;
+      *) fail "$(rpm --version) does not know the scriptlet tag $tag, so the package cannot be checked" ;;
+    esac
     continue
   fi
   [ "$(query "%|${tag}?{present}:{absent}|")" = absent ] || fail "it has a %{$tag} scriptlet; only %post and %postun are allowed"

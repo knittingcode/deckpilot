@@ -364,13 +364,13 @@ case "$platform" in
     done
     # Exactly these control files: no preinst, prerm, config, triggers or
     # anything else dpkg would run or act on as root.
-    for file in "$control"/* "$control"/.[!.]*; do
-      [ -e "$file" ] || continue
-      case "${file##*/}" in
+    # Every entry, at any depth and whatever its name (dot files too).
+    while IFS= read -r -d '' file; do
+      case "${file#"$control"/}" in
         control | md5sums | postinst | postrm) ;;
-        *) fail "$deb has the control file ${file##*/}; only control, md5sums, postinst and postrm are allowed" ;;
+        *) fail "$deb has the control file ${file#"$control"/}; only control, md5sums, postinst and postrm are allowed" ;;
       esac
-    done
+    done < <(find "$control" -mindepth 1 -print0)
     udev_files "$deb" "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" "$control/postinst" "$control/postrm"
     distribution_record "$extracted/usr/bin/deckpilot-desktop" deb
     distribution_record "$extracted/usr/bin/deckpilot-agent" none optional
