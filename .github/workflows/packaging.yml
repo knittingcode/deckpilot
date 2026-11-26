@@ -226,7 +226,10 @@ jobs:
   # dependencies they declare, and their agent started (under Xvfb, with an
   # isolated profile): the .deb with apt on a fresh Ubuntu 24.04 runner
   # (then reinstalled, removed and purged there and in a container), the
-  # .rpm with dnf in a Fedora container (then reinstalled and removed), the AppImage's agent with and
+  # .rpm with dnf in a Fedora container (then reinstalled and removed). Each
+  # removal must take the udev rule and every file of the package, run its
+  # postrm without error (and reload udev where udev runs), and leave a
+  # user's DeckPilot files in the home directory as they were. Then the AppImage's agent with and
   # without the system's own tray library, and the agent on a system
   # without any (it must keep running without a tray icon). The agent's
   # tray loads libayatana-appindicator3 at run time; 0.7.0's packages did
@@ -288,7 +291,8 @@ jobs:
       # postrm.sh): reinstalling, removing and purging the .deb installed
       # above, on this runner, where udev runs (the scripts reload and
       # trigger for real), then the whole cycle in a container without udev.
-      - name: Reinstall, remove and purge the .deb (udev reload scripts)
+      # A user profile made first in $HOME must be untouched afterwards.
+      - name: Reinstall, remove and purge the .deb (udev reload, package files, user data)
         run: |
           deb=$(find "$RUNNER_TEMP/packages" -name '*.deb' | head -n 1)
           timeout 600 tools/ci/check-linux-install.sh deb-lifecycle "$deb"
@@ -296,7 +300,7 @@ jobs:
         run: |
           deb=$(find "$RUNNER_TEMP/packages" -name '*.deb' | head -n 1)
           timeout 1200 tools/ci/check-linux-install.sh deb-container "$deb"
-      - name: Install, start, reinstall and remove the .rpm in Fedora
+      - name: Install, start, reinstall and remove the .rpm in Fedora (package files, user data)
         run: |
           rpm=$(find "$RUNNER_TEMP/packages" -name '*.rpm' | head -n 1)
           if [ -z "$rpm" ]; then

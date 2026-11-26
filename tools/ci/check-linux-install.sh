@@ -40,6 +40,20 @@
 # container without udev. Each step must succeed, the rule must be there
 # after the (re)install and gone after the removal.
 #
+# Uninstalling (`deb-lifecycle`, `deb-container`, `rpm`) also checks:
+# - every file the package installed is gone after the removal (.rpm) or
+#   the purge (.deb);
+# - the removal's postrm (%postun) ran without error. A `udevadm` that
+#   records its calls is put in front of the real one. With udev running
+#   (the runner), the postrm must have reloaded udev's rules, and every
+#   udevadm call must have succeeded. Without a running udev (containers),
+#   it must not have called udevadm at all;
+# - a user's DeckPilot files are untouched: a profile made beforehand in
+#   the home directory (the data directory with a database, logs and a
+#   plugin, and an autostart entry) is the same afterwards, file by file,
+#   with the same modes and contents (docs/background-agent.md, "What
+#   uninstalling leaves behind").
+#
 # Environment: FEDORA_IMAGE (rpm; default fedora:42), UBUNTU_IMAGE
 # (deb-container; default ubuntu:24.04).
 set -euo pipefail
@@ -123,19 +137,126 @@ deb_scripts() {
   echo "dpkg keeps the postinst and postrm of $1"
 }
 
-# deb_lifecycle <package.deb> [sudo]: reinstall, remove, purge.
+# fake_profile <home>: a user's DeckPilot files, as an installed app
+# leaves them: the data directory (a database, backups, logs, a plugin)
+# and a start-at-login entry. Refuses a home that has a data directory
+# already: it never writes over real data.
+data_id=io.github.knittingcode.deckpilot
+fake_profile() {
+  local home="$1" data="$1/.local/share/$data_id"
+  [ ! -e "$data" ] || fail "$data exists already: not a test profile"
+  mkdir -p "$data/logs" "$data/backups" "$data/plugins/installed/example.plugin" "$home/.config/autostart"
+  printf 'SQLite format 3\0 (a stand-in for the encrypted database)\n' > "$data/deckpilot.db"
+  printf 'a backup\n' > "$data/backups/deckpilot.backup-1.db"
+  printf 'INFO agent started\n' > "$data/logs/agent.2026-01-01.log"
+  printf 'panic: thread="main"\n' > "$data/logs/output.log"
+  printf '{"id":"example.plugin"}\n' > "$data/plugins/installed/example.plugin/manifest.json"
+  printf '[Desktop Entry]\nType=Application\nName=DeckPilot Agent\nExec=/usr/bin/deckpilot-agent\n' \
+    > "$home/.config/autostart/DeckPilot Agent.desktop"
+  chmod 700 "$data"
+  chmod 600 "$data/deckpilot.db" "$data/logs/output.log"
+}
+
+# profile_state <home>: every entry of the profile with its type, mode,
+# size, modification time and, for files, contents' checksum.
+profile_state() {
+  (
+    cd "$1"
+    find ".local/share/$data_id" .config/autostart -printf '%y %m %s %T@ %p\n' | LC_ALL=C sort
+    find ".local/share/$data_id" .config/autostart -type f -exec sha256sum {} + | LC_ALL=C sort -k 2
+  )
+}
+
+# profile_untouched <home> <state before> <after what>
+profile_untouched() {
+  local now
+  now=$(profile_state "$1")
+  [ "$now" = "$2" ] || fail "the user's files in $1 changed $3: $(diff <(echo "$2") <(echo "$now") || true)"
+  echo "the user's DeckPilot files in $1 are untouched $3"
+}
+
+# udevadm_recorder <real udevadm> <recorder> <log>: writes <recorder>, a
+# udevadm that runs the real one and appends each call with its exit
+# status to <log>.
+udevadm_recorder() {
+  local real="$1" recorder="$2" log="$3"
+  mkdir -p "$(dirname "$recorder")"
+  : > "$log"
+  cat > "$recorder" << EOF
+#!/bin/sh
+"$real" "\$@"
+status=\$?
+echo "udevadm \$* -> \$status" >> "$log"
+exit \$status
+EOF
+  chmod 755 "$recorder"
+}
+
+# postrm_checked <log> <what>: what the recorder saw during <what>.
+postrm_checked() {
+  local log="$1" what="$2"
+  if grep -v -E -- '-> 0$' "$log" | grep -q .; then
+    fail "a udevadm call failed during $what: $(cat "$log")"
+  fi
+  if [ -S /run/udev/control ]; then
+    grep -q -x -F -- 'udevadm control --timeout=10 --reload-rules -> 0' "$log" \
+      || fail "the postrm did not reload udev during $what: $(cat "$log")"
+    echo "$what: the postrm reloaded udev's rules without error"
+  else
+    [ ! -s "$log" ] || fail "without a running udev, the postrm called udevadm during $what: $(cat "$log")"
+    echo "$what: without a running udev, the postrm called nothing and succeeded"
+  fi
+}
+
+# gone <list of files> <after what>: none of the package's files is left.
+gone() {
+  local path left=""
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ -f "$path" ] || [ -L "$path" ]; then left="$left $path"; fi
+  done <<< "$1"
+  [ -z "$left" ] || fail "files of the package are left $2:$left"
+  echo "every file of the package is gone $2"
+}
+
+# deb_lifecycle <package.deb> [sudo]: reinstall, remove, purge, with a
+# user's profile in this user's home ($HOME) that must stay as it is.
 deb_lifecycle() {
-  local package="$1" as="${2-}" name apt_get
+  local package="$1" as="${2-}" name apt_get files before work log path
   name=$(dpkg-deb -f "$package" Package)
-  apt_get="$as env DEBIAN_FRONTEND=noninteractive apt-get -y -q --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+  work=$(mktemp -d "${TMPDIR:-/tmp}/deckpilot-uninstall.XXXXXX")
+  log="$work/udevadm.log"
+  path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  if command -v udevadm > /dev/null; then
+    udevadm_recorder "$(command -v udevadm)" "$work/bin/udevadm" "$log"
+    path="$work/bin:$path"
+  else
+    log=""
+    echo "no udevadm: the postrm has nothing to call"
+  fi
+  # dpkg runs the maintainer scripts with apt-get's PATH.
+  apt_get="$as env PATH=$path DEBIAN_FRONTEND=noninteractive apt-get -y -q --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
   $apt_get install --reinstall "$package" || fail "reinstalling $package failed"
   installed_rule
   deb_scripts "$name"
+  files=$(dpkg-query -L "$name")
+  fake_profile "$HOME"
+  before=$(profile_state "$HOME")
+  [ -z "$log" ] || : > "$log"
   $apt_get remove "$name" || fail "removing $name failed"
   [ ! -e "$rule" ] || fail "$rule is still there after removing $name"
+  [ -z "$log" ] || postrm_checked "$log" "the removal of $name"
+  profile_untouched "$HOME" "$before" "after the removal"
+  [ -z "$log" ] || : > "$log"
   $apt_get purge "$name" || fail "purging $name failed"
   [ "$(dpkg-query -W -f '${db:Status-Status}' "$name" 2> /dev/null || true)" != installed ] || fail "$name is still installed"
-  echo "$name: reinstalled, removed and purged; the udev rule went with it"
+  # dpkg purges a package without conffiles already at its removal; the
+  # purge may then run no script at all.
+  if [ -n "$log" ] && [ -s "$log" ]; then postrm_checked "$log" "the purge of $name"; fi
+  gone "$files" "after the purge"
+  profile_untouched "$HOME" "$before" "after the purge"
+  rm -rf "$HOME/.local/share/$data_id" "$HOME/.config/autostart/DeckPilot Agent.desktop" "$work"
+  echo "$name: reinstalled, removed and purged; the udev rule and the package's files went with it, the user's files stayed"
 }
 
 case "${1-}" in
@@ -246,10 +367,29 @@ case "${1-}" in
     "$here/check-linux-install.sh" agent /usr/bin/deckpilot-agent
     dnf -y -q reinstall "$package" || fail "reinstalling $package failed"
     installed_rule
-    dnf -y -q remove "$pkgname" || fail "removing $pkgname failed"
+    files=$(rpm -ql "$pkgname")
+    # rpm runs scriptlets with a PATH of its own, so the recorder takes
+    # the real udevadm's place (this container is thrown away).
+    real=$(command -v udevadm) || fail "no udevadm in the container"
+    mv "$real" "$real.real"
+    log=$(mktemp)
+    udevadm_recorder "$real.real" "$real" "$log"
+    # Root's home and a user's.
+    mkdir -p /home/checker
+    fake_profile /root
+    fake_profile /home/checker
+    before_root=$(profile_state /root)
+    before_user=$(profile_state /home/checker)
+    output=$(dnf -y remove "$pkgname" 2>&1) || fail "removing $pkgname failed: $output"
+    echo "$output" | tail -n 5
+    ! grep -q -i 'scriptlet failed' <<< "$output" || fail "a scriptlet failed while removing $pkgname: $output"
     [ ! -e "$rule" ] || fail "$rule is still there after removing $pkgname"
     ! rpm -q "$pkgname" > /dev/null 2>&1 || fail "$pkgname is still installed"
-    echo "$pkgname: installed, reinstalled and removed; the udev rule went with it"
+    postrm_checked "$log" "the removal of $pkgname"
+    gone "$files" "after the removal"
+    profile_untouched /root "$before_root" "after the removal"
+    profile_untouched /home/checker "$before_user" "after the removal"
+    echo "$pkgname: installed, reinstalled and removed; the udev rule and the package's files went with it, the user's files stayed"
     ;;
   *) fail "usage: check-linux-install.sh deb|rpm|deb-lifecycle|deb-container <package> | agent <agent> [<args>...]" ;;
 esac
