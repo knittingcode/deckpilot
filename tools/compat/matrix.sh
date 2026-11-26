@@ -18,10 +18,13 @@
 # OLD_PROTOCOL is the protocol of <old tag>'s agent; by default it is read
 # from that tag's crates/deckpilot-ipc/src/protocol.rs (PROTOCOL_VERSION).
 # Older baselines still run by hand, e.g. tools/compat/matrix.sh v0.5.0-2
-# (protocol 4, the never-published first baseline). With OLD_BIN and NEW_BIN set (directories holding deckpilot-agent and
+# (protocol 4, the never-published first baseline).
+#
+# With OLD_BIN and NEW_BIN set (directories holding deckpilot-agent and
 # deckpilot-dev of <old tag> and of this commit, built beforehand, e.g. in
 # slots of tools/dev/target-slot.sh), nothing is built and no worktree is
-# created; <old tag> then only names the old version in the output.
+# created; <old tag> then names the old version in the output and, unless
+# OLD_PROTOCOL is set, must be a local tag to read the protocol from.
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)

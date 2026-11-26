@@ -538,7 +538,7 @@ ignore.
 DeckPilot 0.5.0 was never published. Its two draft prereleases (0.5.0-1
 and 0.5.0-2) have since been deleted; only the tag `v0.5.0-2` remains. It
 was the compatibility baseline that `tools/compat/matrix.sh` built until
-0.15.0 and can still be built by hand (`tools/compat/matrix.sh v0.5.0-2`).
+0.15.0 was published and can still be built by hand (`tools/compat/matrix.sh v0.5.0-2`).
 "0.5.0" in this page means that build.
 
 The baseline is now the latest published release, named in
