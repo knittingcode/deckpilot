@@ -587,6 +587,11 @@ fn is_repository_key(key: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// `unix` or `windows`, whichever is an absolute path on this platform.
+    fn absolute<'a>(unix: &'a str, windows: &'a str) -> &'a str {
+        if cfg!(windows) { windows } else { unix }
+    }
+
     #[test]
     fn a_new_script_has_no_grants() {
         let g = ScriptGrants::default();
@@ -789,14 +794,17 @@ mod tests {
         assert_eq!(command_class("git"), CommandClass::Plain);
         // A look-alike folds to the refused name; any other bare name is
         // ASCII; no command or label hides characters.
-        assert_eq!(
-            refused("/usr/local/bin/ma\u{202E}ke"),
-            Err(GrantsError::Command)
-        );
+        // Absolute on this platform, so the hidden character is refused.
+        let hidden = absolute("/usr/local/bin/ma\u{202E}ke", "C:\\Tools\\ma\u{202E}ke.exe");
+        assert_eq!(refused(hidden), Err(GrantsError::Command));
         assert_eq!(refused("doc\u{212A}er"), Err(GrantsError::ContainerRuntime));
         assert_eq!(refused("g\u{00EF}t"), Err(GrantsError::Command));
         // A folder scope is canonical in form: no `.` or `..`.
-        for path in ["/srv/work/../etc", "/srv/./work"] {
+        // Absolute on this platform, so the `.` or `..` is refused.
+        for path in [
+            absolute("/srv/work/../etc", r"C:\srv\work\..\etc"),
+            absolute("/srv/./work", r"C:\srv\.\work"),
+        ] {
             let scope = ScriptGrants {
                 fs: vec![FsScope {
                     root: FsRoot::Directory {
@@ -824,7 +832,8 @@ mod tests {
             }
             .validate()
         };
-        assert_eq!(set(vec![with("/usr/bin/git", true)]), Ok(()));
+        let git = absolute("/usr/bin/git", r"C:\Program Files\Git\cmd\git.exe");
+        assert_eq!(set(vec![with(git, true)]), Ok(()));
         assert_eq!(set(vec![with("make", true)]), Err(GrantsError::Command));
         assert_eq!(
             set(vec![with("make", false), with("make", false)]),
