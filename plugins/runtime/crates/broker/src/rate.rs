@@ -124,6 +124,9 @@ pub struct RateLimits {
     /// plugin, so a plugin cannot flood the store or keep overwriting the
     /// status the user sees.
     pub connection_report: Rate,
+    /// `call.control` (plugin API 1.16): 4 per second with a burst of 4;
+    /// the engine allows one waiting command per call anyway.
+    pub call_control: Rate,
 }
 
 impl Default for RateLimits {
@@ -150,6 +153,7 @@ impl Default for RateLimits {
             connections_http: Rate::new(180, Duration::from_secs(60)),
             sleep: Rate::new(30, Duration::from_secs(60)),
             connection_report: Rate::new(12, Duration::from_secs(60)),
+            call_control: Rate::new(4, Duration::from_secs(1)),
         }
     }
 }

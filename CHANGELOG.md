@@ -283,6 +283,27 @@ released either. 0.6.0 is the first version intended for publication.
   nudge starts from the last one. Escape or a click on the key lets go of
   the label, and the arrows move between keys again.
 
+- Calls (groundwork, inert until the plugin and its policy entry exist):
+  the plugin operations `call.state` and `call.control` of plugin API
+  1.16, in the ABI, the broker, the agent and the guest SDK. Only the
+  bundled plugin `deckpilot.calls` may use them, each with its own grant
+  (`calls`, `calls:control`), a control only in a run you started, and
+  never together with network, credentials, opening pages or tools. A
+  control is answered only once the call app confirmed it. Your consents
+  to observe and to control calls apply as for the call pages, and
+  detection-only Teams refuses every control with the reason. A control
+  from a run you did not start, or one too many, is refused with its own
+  code. The agent's plugin API is not raised yet.
+- Calls: the operating-system signals provider reports its connection, so
+  a Teams control is refused with its reason (no supported API) instead of
+  "not connected".
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
+
 ### Fixed
 
 - Linux: the `.deb` and `.rpm` reload udev's rules when they are installed

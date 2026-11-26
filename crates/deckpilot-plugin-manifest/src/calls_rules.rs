@@ -9,8 +9,8 @@
 //! - The overlay and the templates need the `calls` permission, the
 //!   templates the overlay, and a template's pages are pages of the overlay.
 //! - A plugin with `calls` declares no `network`, `credentials`, `openUrl`,
-//!   `tools` or `connections`: what it learns about calls leaves it only through the
-//!   host's own faces.
+//!   `tools`, `connections`, `resources` or `scripts`, and no variables:
+//!   what it learns about calls leaves it only through the host's own faces.
 //! - A template places only the plugin's own actions, with parameters
 //!   those actions declare, on controls a model of its shape has.
 
@@ -91,6 +91,8 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
                     | PermissionKind::OpenUrl
                     | PermissionKind::Tools
                     | PermissionKind::Connections
+                    | PermissionKind::Resources
+                    | PermissionKind::Scripts
             ) {
                 c.error(
                     format!("permissions[{index}]"),
@@ -103,6 +105,17 @@ pub(super) fn check(c: &mut Checker, m: &Manifest) {
                 );
             }
         }
+    }
+    // Its own variables could carry what it learns of a call into other
+    // plugins' and the built-ins' parameters (with network access): a
+    // Calls plugin publishes none (the host's own faces show the call).
+    if declared && !m.contributes.variables().is_empty() {
+        c.error(
+            "contributes.variables",
+            IssueCode::Conflict,
+            "a plugin with `calls` declares no variables: what it learns about calls leaves \
+             it only through the host's own faces",
+        );
     }
     overlay(c, m);
     templates(c, m);

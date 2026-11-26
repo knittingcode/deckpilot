@@ -274,7 +274,9 @@ impl StateOutcome {
 /// Whether `request` is answered inside a state call: reading the
 /// plugin's own storage and settings, the time, the run context (plugin
 /// API 1.9: a state call's says which key it is, [`key_scope`], and that
-/// nobody started a run), and logging. Everything else (the network,
+/// nobody started a run), logging, and (plugin API 1.16) the focused
+/// call's sanitised state (`call.state`, still under its own grant), so the
+/// Calls plugin's keys can show the call. Everything else (the network,
 /// notifications, opening pages, writing storage, publishing variables,
 /// random bytes, running a tool) is refused, so a state call cannot
 /// change or send anything.
@@ -289,6 +291,7 @@ pub fn allowed_in_state(request: &CapabilityRequest) -> bool {
             | CapabilityRequest::TimeNow(_)
             | CapabilityRequest::RunContext(_)
             | CapabilityRequest::Log(_)
+            | CapabilityRequest::CallState(_)
     )
 }
 

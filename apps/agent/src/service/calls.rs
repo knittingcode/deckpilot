@@ -205,6 +205,12 @@ pub(crate) trait Provider: CallProvider {
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
+impl std::fmt::Debug for dyn Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Provider({})", self.id())
+    }
+}
+
 impl<T: CallProvider + 'static> Provider for T {
     fn as_any(&mut self) -> &mut dyn Any {
         self
@@ -233,9 +239,9 @@ pub(crate) struct CallsRun {
     run: RunToken,
 }
 
-struct Service {
-    driver: CallsDriver,
-    provider: Box<dyn Provider>,
+pub(super) struct Service {
+    pub(super) driver: CallsDriver,
+    pub(super) provider: Box<dyn Provider>,
     origin: std::time::Instant,
     /// The templates of the managed layouts (the plugin's).
     templates: Vec<Template>,
@@ -245,7 +251,7 @@ struct Service {
     /// Models to be tried again once the database is free.
     retries: BTreeMap<DeviceModelId, SeedRetry>,
     /// The consent the user gave (from the plugin's grants).
-    consent: ConsentState,
+    pub(super) consent: ConsentState,
 }
 
 impl std::fmt::Debug for Service {
@@ -260,7 +266,13 @@ impl std::fmt::Debug for Service {
 #[derive(Debug, Default)]
 pub(crate) struct AgentCalls {
     /// Boxed: the agent's state stays small (its loop is one future).
-    service: Option<Box<Service>>,
+    pub(super) service: Option<Box<Service>>,
+    /// The Calls plugin's controls waiting for their confirmation
+    /// (`plugin_calls.rs`).
+    #[cfg(feature = "plugins")]
+    pub(super) waiting: super::plugin_calls::WaitingControls,
+    /// The provider sessions started so far (one per install).
+    sessions: u64,
     /// The device whose key is being handled.
     scope: Option<DeviceId>,
     /// Workflow runs that count for a return session, by execution.
@@ -311,7 +323,7 @@ fn no_layout() -> deckpilot_ipc::IpcError {
 }
 
 impl Agent {
-    fn calls_now(&self) -> Option<Instant> {
+    pub(super) fn calls_now(&self) -> Option<Instant> {
         let origin = self.calls.service.as_ref()?.origin;
         let elapsed = self
             .runtime
@@ -332,11 +344,27 @@ impl Agent {
         consent: ConsentState,
         templates: Vec<Template>,
     ) {
+        // A new engine: what waited for the old one's confirmation never
+        // gets it (its command tokens could repeat in the new one).
+        #[cfg(feature = "plugins")]
+        self.calls.waiting.abandon("Calls was started again");
         if !consent.observe {
+            // Without the consent to observe calls nothing of Calls runs:
+            // an earlier install goes, its provider disconnected and its
+            // frames popped, so nothing answers from its old consents.
+            if let Some(mut old) = self.calls.service.take() {
+                old.provider.disconnect();
+                old.driver.clear(&mut self.runtime);
+                self.render_all();
+            }
             info!("calls not installed: no consent to observe calls");
             return;
         }
         let now = Instant::ZERO;
+        // A new provider session per install, so no command token of an
+        // earlier install is ever reused.
+        self.calls.sessions += 1;
+        let session = ProviderSession(self.calls.sessions);
         let discovery = provider.discover(now);
         let id = provider.id();
         let mut engine = Engine::default();
@@ -346,10 +374,7 @@ impl Agent {
         if self.store.is_none() {
             driver.set_hidden(&mut self.runtime, true, Instant::ZERO);
         }
-        if let Err(error) = provider.connect(&ProviderCx {
-            consent,
-            session: ProviderSession(1),
-        }) {
+        if let Err(error) = provider.connect(&ProviderCx { consent, session }) {
             warn!(%error, "the Calls provider did not connect");
         }
         info!(provider = %id, "calls installed");
@@ -510,6 +535,10 @@ impl Agent {
         if due || changed {
             service.driver.tick(&mut self.runtime, now);
         }
+        // The Calls plugin's controls whose command is done (or that
+        // waited too long).
+        #[cfg(feature = "plugins")]
+        self.calls_answer_waiting(now);
         if due || changed {
             self.calls_prune_previews();
             self.render_all();
