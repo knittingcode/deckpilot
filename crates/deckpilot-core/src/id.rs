@@ -83,6 +83,10 @@ entity_id!(
     WorkSessionId
 );
 entity_id!(
+    /// Identifies a [`Script`](crate::script::Script) within a profile.
+    ScriptId
+);
+entity_id!(
     /// Identifies one run of a work session's end verification; an
     /// approval to finish names the verification that gave it.
     VerificationId

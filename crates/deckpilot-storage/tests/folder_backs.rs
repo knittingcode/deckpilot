@@ -139,7 +139,7 @@ fn schema_10(path: &Path, encryption: &Encryption, f: &Fixture) {
     store.assign_layout(f.home.id, f.shared.id).unwrap();
     store
         .connection_for_tests()
-        .execute_batch("DELETE FROM migration_history; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 10;")
+        .execute_batch("DELETE FROM migration_history; DROP TABLE script_trust; DROP TABLE scripts; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 10;")
         .unwrap();
 }
 

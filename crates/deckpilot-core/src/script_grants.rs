@@ -94,8 +94,8 @@ pub enum FsAccess {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessGrant {
-    /// `git`, `docker`, another bare name, or an absolute path picked with
-    /// the native file picker.
+    /// `git`, another bare name, or an absolute path picked with the native
+    /// file picker. Never a container runtime ([`CONTAINER_RUNTIMES`]).
     pub command: String,
     /// Where it may run.
     #[serde(default)]
@@ -213,6 +213,181 @@ pub enum GrantsError {
     Command,
     #[error("an unknown shell")]
     Shell,
+    /// Container runtimes are not grantable until the owner decides how
+    /// (they are effectively root on most machines).
+    #[error("container runtimes are not available to scripts yet")]
+    ContainerRuntime,
+    #[error("a script cannot run a program as another user")]
+    Elevation,
+    #[error("a shell runs only through the shell grant")]
+    ShellCommand,
+}
+
+/// Container runtimes, virtual machines and namespace tools: never
+/// grantable to a script in this version (the owner's open decision; the
+/// safest default). They are effectively root on most machines.
+pub const CONTAINER_RUNTIMES: &[&str] = &[
+    "docker",
+    "dockerd",
+    "docker-compose",
+    "podman",
+    "podman-remote",
+    "nerdctl",
+    "colima",
+    "lima",
+    "limactl",
+    "containerd",
+    "ctr",
+    "crictl",
+    "runc",
+    "crun",
+    "buildah",
+    "finch",
+    "rancher-desktop",
+    "rdctl",
+    "orb",
+    "orbctl",
+    "container",
+    "wsl",
+    "lxc",
+    "lxd",
+    "incus",
+    "multipass",
+    "nsenter",
+    "unshare",
+    "chroot",
+    "systemd-nspawn",
+    "lxc-attach",
+    "lxc-execute",
+    "machinectl",
+    // Virtual machines.
+    "virsh",
+    "virt-install",
+    "vboxmanage",
+    "prlctl",
+    "vmrun",
+    "utmctl",
+    "vagrant",
+    "tart",
+    "hyperkit",
+    "krunvm",
+];
+
+/// Programs that act as another user: never grantable.
+pub const ELEVATION: &[&str] = &[
+    "sudo",
+    "sudoedit",
+    "doas",
+    "pkexec",
+    "su",
+    "runuser",
+    "run0",
+    "systemd-run",
+    "runas",
+    "gsudo",
+    "osascript",
+    "launchctl",
+];
+
+/// Shells: only through `shell.run` and its own grant, never as a
+/// process command.
+pub const PROCESS_SHELLS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "dash",
+    "ksh",
+    "mksh",
+    "csh",
+    "tcsh",
+    "nu",
+    "elvish",
+    "xonsh",
+    "pwsh",
+    "powershell",
+    "cmd",
+    // A shell among their applets.
+    "busybox",
+    "toybox",
+];
+
+/// Programs that run any other program (interpreters, launchers, build
+/// tools, package runners): grantable, but each such grant is as broad as
+/// a shell, a container runtime included, and is shown as such.
+pub const RUNS_ANY_PROGRAM: &[&str] = &[
+    "env", "xargs", "nohup", "timeout", "nice", "time", "watch", "find", "parallel", "python",
+    "python3", "node", "deno", "bun", "ruby", "perl", "php", "lua", "tclsh", "java", "dotnet",
+    "make", "cmake", "ninja", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "pipx", "cargo",
+    "go", "gradle", "mvn", "open", "start", "explorer", "rundll32", "mshta", "wscript", "cscript",
+    "ssh", "curl", "wget",
+];
+
+/// What a granted command is, by its file name (without case and a
+/// program extension).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandClass {
+    /// [`CONTAINER_RUNTIMES`]: not grantable.
+    ContainerRuntime,
+    /// [`ELEVATION`]: not grantable.
+    Elevation,
+    /// [`PROCESS_SHELLS`]: only through the shell grant.
+    Shell,
+    /// [`RUNS_ANY_PROGRAM`]: grantable, as broad as a shell.
+    RunsAnyProgram,
+    /// Anything else.
+    Plain,
+}
+
+impl CommandClass {
+    /// Whether a process grant may name it.
+    pub fn grantable(self) -> bool {
+        matches!(self, Self::RunsAnyProgram | Self::Plain)
+    }
+}
+
+/// The file name `command` (a bare name or a path) stands for, lowercase,
+/// without a program extension.
+fn program_name(command: &str) -> String {
+    let name = command
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(command)
+        .to_lowercase();
+    for ext in [".exe", ".com", ".cmd", ".bat", ".ps1", ".sh", ".app"] {
+        if let Some(stem) = name.strip_suffix(ext) {
+            return stem.to_owned();
+        }
+    }
+    name
+}
+
+/// The [`CommandClass`] of `command`. `python3.12`, `node18` and the like
+/// count as their interpreter; `docker-*` and `podman-*` as theirs.
+pub fn command_class(command: &str) -> CommandClass {
+    let name = program_name(command);
+    let base = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-');
+    let is = |list: &[&str]| list.contains(&name.as_str()) || list.contains(&base);
+    let helper = ["docker-", "podman-", "lxc-", "qemu-"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix));
+    if is(CONTAINER_RUNTIMES) || helper || name == "qemu" {
+        CommandClass::ContainerRuntime
+    } else if is(ELEVATION) {
+        CommandClass::Elevation
+    } else if is(PROCESS_SHELLS) {
+        CommandClass::Shell
+    } else if is(RUNS_ANY_PROGRAM) {
+        CommandClass::RunsAnyProgram
+    } else {
+        CommandClass::Plain
+    }
+}
+
+/// Whether `command` names a container runtime ([`CONTAINER_RUNTIMES`]).
+pub fn is_container_runtime(command: &str) -> bool {
+    command_class(command) == CommandClass::ContainerRuntime
 }
 
 /// The shells a grant may name.
@@ -255,6 +430,16 @@ impl ScriptGrants {
                 && !c.starts_with('-')
                 && !c.contains(['/', '\\', '\0'])
                 && !c.chars().any(|ch| ch.is_whitespace() || ch.is_control());
+            match command_class(c) {
+                CommandClass::ContainerRuntime => return Err(GrantsError::ContainerRuntime),
+                CommandClass::Elevation => return Err(GrantsError::Elevation),
+                CommandClass::Shell => return Err(GrantsError::ShellCommand),
+                CommandClass::RunsAnyProgram | CommandClass::Plain => {}
+            }
+            // A bare name is ASCII: no look-alike of a refused one.
+            if bare && !c.is_ascii() {
+                return Err(GrantsError::Command);
+            }
             if !bare && !std::path::Path::new(c).is_absolute() {
                 return Err(GrantsError::Command);
             }
@@ -349,6 +534,128 @@ mod tests {
             }),
             ..ScriptGrants::default()
         }));
+    }
+
+    #[test]
+    fn container_runtimes_are_never_grantable() {
+        for command in [
+            "docker",
+            "Docker.exe",
+            "podman",
+            "nerdctl",
+            "colima",
+            "lima",
+            "limactl",
+            "docker-compose",
+            "docker-buildx",
+            "/usr/local/bin/docker",
+            "C:\\Program Files\\Docker\\docker.exe",
+            "/opt/homebrew/bin/podman-remote",
+        ] {
+            assert!(is_container_runtime(command), "{command}");
+            let grants = ScriptGrants {
+                process: vec![ProcessGrant {
+                    command: command.into(),
+                    cwd: ProcessCwd::Repositories,
+                    env: ProcessEnv::None,
+                    unrestricted_args: false,
+                }],
+                ..ScriptGrants::default()
+            };
+            assert_eq!(
+                grants.validate(),
+                Err(GrantsError::ContainerRuntime),
+                "{command}"
+            );
+        }
+        for command in ["git", "npm", "dock", "/usr/bin/make", "mydocker"] {
+            assert!(!is_container_runtime(command), "{command}");
+        }
+        for command in [
+            "docker.com",
+            "orbctl",
+            "wsl.exe",
+            "nsenter",
+            "limactl",
+            "incus",
+            "lxc-attach",
+            "lxc-execute",
+            "lxc-create",
+            "machinectl",
+            "qemu-system-x86_64",
+            "qemu-img",
+            "VBoxManage",
+            "virsh",
+            "vagrant",
+            "utmctl",
+            "prlctl",
+        ] {
+            assert_eq!(
+                command_class(command),
+                CommandClass::ContainerRuntime,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn elevation_and_shells_are_never_process_grants_and_launchers_are_flagged() {
+        let refused = |command: &str| {
+            ScriptGrants {
+                process: vec![ProcessGrant {
+                    command: command.into(),
+                    cwd: ProcessCwd::Repositories,
+                    env: ProcessEnv::None,
+                    unrestricted_args: false,
+                }],
+                ..ScriptGrants::default()
+            }
+            .validate()
+        };
+        for command in [
+            "sudo",
+            "sudoedit",
+            "/usr/bin/doas",
+            "pkexec",
+            "su",
+            "runuser",
+            "run0",
+            "systemd-run",
+            "runas.exe",
+            "osascript",
+        ] {
+            assert_eq!(command_class(command), CommandClass::Elevation, "{command}");
+            assert_eq!(refused(command), Err(GrantsError::Elevation), "{command}");
+        }
+        for command in [
+            "sh",
+            "/bin/bash",
+            "zsh",
+            "pwsh.exe",
+            "cmd.exe",
+            "fish",
+            "busybox",
+        ] {
+            assert_eq!(command_class(command), CommandClass::Shell, "{command}");
+            assert_eq!(
+                refused(command),
+                Err(GrantsError::ShellCommand),
+                "{command}"
+            );
+        }
+        for command in ["python3.12", "node", "npx", "env", "xargs", "make", "curl"] {
+            assert_eq!(
+                command_class(command),
+                CommandClass::RunsAnyProgram,
+                "{command}"
+            );
+            assert_eq!(refused(command), Ok(()), "{command}");
+        }
+        assert_eq!(command_class("git"), CommandClass::Plain);
+        // A look-alike folds to the refused name; any other bare name is
+        // ASCII.
+        assert_eq!(refused("doc\u{212A}er"), Err(GrantsError::ContainerRuntime));
+        assert_eq!(refused("g\u{00EF}t"), Err(GrantsError::Command));
     }
 
     #[test]
