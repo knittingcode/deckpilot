@@ -40,13 +40,21 @@ fn core_value(spec: &ParameterSpec, value: &Value) -> Result<ParameterValue, Str
         (ParameterKind::Project, Value::String(s)) => {
             ParameterValue::Project(s.parse::<ProjectId>().map_err(|_| wrong("a project id"))?)
         }
+        // The Scripts plugin's `script` parameter (plugin API 1.13): a
+        // script id of the profile, never a source.
+        (ParameterKind::Script, Value::String(s)) => {
+            s.parse::<deckpilot_core::ScriptId>()
+                .map_err(|_| wrong("a script id"))?;
+            ParameterValue::Text(s.clone())
+        }
         (
             ParameterKind::Text { .. }
             | ParameterKind::Lines { .. }
             | ParameterKind::Pairs { .. }
             | ParameterKind::Code { .. }
             | ParameterKind::Choice { .. }
-            | ParameterKind::Project,
+            | ParameterKind::Project
+            | ParameterKind::Script,
             _,
         ) => return Err(wrong("text")),
         (ParameterKind::Integer { .. }, _) => return Err(wrong("a whole number")),

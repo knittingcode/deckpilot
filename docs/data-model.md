@@ -356,6 +356,19 @@ Trust:
   and are checked whole;
 - a script that is not trusted never runs (`scriptNeedsReview`).
 
+Export and import (payload version 6, written only when there are
+scripts; `crates/deckpilot-portability`): an export carries each
+script's name, source and settings, with the profile it belongs to, and
+never reads `script_trust`; a script record has no field for trust or
+grants, and one that holds either is refused. An import checks every
+script as the store would (and at most 500 per profile, unique ids and
+names), writes it untrusted and with no grants (`put_untrusted`, which
+removes any trust record) into the profile it was imported as, and runs
+nothing. That profile holds no scripts here before: a profile that
+exists here is imported as a copy (new ids) or replaced, which removes
+its scripts, their trust and their grants first. The import preview lists the
+scripts and says they arrive untrusted.
+
 Usages (the guarded delete): every action of type `deckpilot.scripts.run`
 whose `script` parameter names it, with that action's bindings, steps
 and nodes. Deleting a script keeps those bindings, which show "Script

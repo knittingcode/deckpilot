@@ -40,7 +40,7 @@ pub(crate) mod windows;
 mod work_session;
 mod workflows;
 
-use crate::modules::projects;
+use crate::modules::{projects, scripts};
 
 use deckpilot_core::{Profile, ProfileId};
 
@@ -116,6 +116,17 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         workflows::delete_workflow,
         workflows::validate_workflow_graph,
         workflows::convert_workflow,
+        scripts::list_scripts,
+        scripts::create_script,
+        scripts::save_script,
+        scripts::duplicate_script,
+        scripts::script_usages_of,
+        scripts::delete_script,
+        scripts::review_script,
+        scripts::trust_script,
+        scripts::set_script_grants,
+        scripts::revoke_script_grants,
+        scripts::script_command_class,
         projects::create_project,
         projects::update_project,
         projects::set_default_repository,

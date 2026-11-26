@@ -533,5 +533,159 @@
       "secretHint": "Token lub użytkownik:hasło dla uwierzytelniania podstawowego.",
       "submit": "Zapisz dane uwierzytelniające"
     }
+  },
+  "scripts": {
+    "page": {
+      "title": "Skrypty",
+      "description": "Skrypty tego profilu. Skrypt uruchamia się z klawisza, wyzwalacza lub przepływu tylko wtedy, gdy mu ufasz, i tylko z uprawnieniami nadanymi na tym komputerze."
+    },
+    "list": {
+      "label": "Skrypty",
+      "search": "Szukaj skryptów",
+      "new": "Nowy skrypt",
+      "empty": "Brak skryptów",
+      "emptyHint": "Utwórz skrypt, a potem umieść go na klawiszu z Biblioteki akcji.",
+      "choose": "Wybierz skrypt, aby go edytować."
+    },
+    "trust": {
+      "trusted": "Zaufany",
+      "needsReview": "Do sprawdzenia"
+    },
+    "create": {
+      "title": "Nowy skrypt",
+      "description": "Skrypt napisany tutaj jest zaufany, bez uprawnień. Zapisanie niczego nie nadaje.",
+      "submit": "Utwórz",
+      "name": "Nazwa",
+      "failed": "Nie udało się zapisać skryptu"
+    },
+    "rename": {
+      "title": "Zmień nazwę skryptu",
+      "description": "Klawisze i przepływy nadal go uruchamiają: wskazują skrypt, nie jego nazwę.",
+      "submit": "Zmień nazwę"
+    },
+    "unsaved": {
+      "title": "Odrzucić niezapisane zmiany?",
+      "description": "Skrypt ma niezapisane zmiany. Przepadną, jeśli otworzysz inny skrypt.",
+      "discard": "Odrzuć zmiany"
+    },
+    "item": {
+      "rename": "Zmień nazwę: {{name}}",
+      "duplicate": "Duplikuj: {{name}}",
+      "duplicateTooltip": "Kopia bez zaufania i bez uprawnień: sprawdź ją, zanim się uruchomi.",
+      "duplicateFailed": "Nie udało się zduplikować „{{name}}”",
+      "delete": "Usuń: {{name}}"
+    },
+    "tabs": {
+      "code": "Kod",
+      "settings": "Ustawienia",
+      "permissions": "Uprawnienia"
+    },
+    "editor": {
+      "label": "Kod: {{name}}",
+      "syntaxError": "Błąd składni",
+      "hiddenChars": "Ten kod zawiera niewidoczne znaki lub znaki zmieniające kierunek tekstu (oznaczone na czerwono). Przez nie kod może wyglądać inaczej, niż działa.",
+      "unsaved": "Niezapisane zmiany",
+      "save": "Zapisz",
+      "saved": "Zapisano „{{name}}”",
+      "saveFailed": "Nie udało się zapisać „{{name}}”"
+    },
+    "settings": {
+      "timeout": "Limit czasu (sekundy)",
+      "timeoutHint": "Najwyżej 600 sekund; uprawnienia mogą ustawić niższy limit.",
+      "memory": "Pamięć (MiB)",
+      "stopOnError": "Zatrzymaj przy pierwszym błędzie",
+      "description": "Opis",
+      "invalid": "Limit czasu to od 1 do 600 sekund, pamięć od 16 do 128 MiB, a opis najwyżej 500 znaków.",
+      "save": "Zapisz ustawienia"
+    },
+    "review": {
+      "title": "Sprawdź ten skrypt, zanim się uruchomi",
+      "description": "Ten skrypt pochodzi z innego miejsca (z importu lub kopii) albo zmienił się poza tym edytorem. Nie uruchomi się z klawisza, wyzwalacza ani stąd, dopóki nie przeczytasz kodu i nie oznaczysz go jako zaufany.",
+      "hiddenTitle": "Niewidoczne znaki",
+      "hiddenDescription": "Kod zawiera niewidoczne znaki lub znaki zmieniające kierunek tekstu, oznaczone na czerwono. Kod może wyglądać inaczej, niż działa: upewnij się, że rozumiesz każdy oznaczony wiersz.",
+      "codeLabel": "Kod do sprawdzenia: {{name}}",
+      "grantsTitle": "Uprawnienia, które wrócą po zaufaniu",
+      "noGrants": "Brak: skrypt działa bez uprawnień, dopóki ich nie nadasz.",
+      "trust": "Ufaj temu skryptowi",
+      "trusted": "„{{name}}” jest zaufany",
+      "failed": "Nie udało się zaufać „{{name}}”"
+    },
+    "grants": {
+      "projectsRead": "Odczyt projektów i ich repozytoriów",
+      "repositoriesPaths": "Widok folderów repozytoriów",
+      "everyRepository": "każdym repozytorium projektu",
+      "repository": "repozytorium {{key}}",
+      "folder": "folderze „{{label}}” ({{path}})",
+      "fs": {
+        "read": "Odczyt plików w {{where}}",
+        "write": "Odczyt i zmiana plików w {{where}}",
+        "delete": "Odczyt, zmiana i usuwanie plików w {{where}}"
+      },
+      "process": "Uruchamianie {{command}} ({{qualifiers}})",
+      "shell": "Uruchamianie kodu powłoki: {{shells}}",
+      "destructiveAllow": "Usuwanie plików bez pytania",
+      "rootDestructive": "Usuwanie, opróżnianie lub zastępowanie samego: {{where}}",
+      "runsAnyProgram": "uruchamia dowolny inny program, tak szeroko jak powłoka",
+      "unrestrictedArgs": "z dowolnymi argumentami, także opcjami uruchamiającymi programy",
+      "envAllowed": "może ustawiać zmienne środowiskowe",
+      "cwdAny": "w dowolnym folderze",
+      "cwdScopes": "w folderach skryptu",
+      "cwdRepositories": "w repozytoriach projektu",
+      "limits": "Limity: {{seconds}} s, {{memory}} MiB, {{output}} KiB wyjścia",
+      "unknown": "Uprawnienie nieznane tej wersji: {{key}}"
+    },
+    "delete": {
+      "title": "Usunąć „{{name}}”?",
+      "unused": "Nic nie używa tego skryptu.",
+      "used_one": "Jest używany w {{count}} miejscu. Te klawisze i kroki zostają i pokazują, że skryptu brak, chyba że wyczyścisz klawisze.",
+      "used_few": "Jest używany w {{count}} miejscach. Te klawisze i kroki zostają i pokazują, że skryptu brak, chyba że wyczyścisz klawisze.",
+      "used_many": "Jest używany w {{count}} miejscach. Te klawisze i kroki zostają i pokazują, że skryptu brak, chyba że wyczyścisz klawisze.",
+      "used_other": "Jest używany w {{count}} miejsca. Te klawisze i kroki zostają i pokazują, że skryptu brak, chyba że wyczyścisz klawisze.",
+      "uses": "Użycia skryptu",
+      "clearKeys": "Wyczyść też klawisze, które go uruchamiają",
+      "confirm": "Usuń skrypt",
+      "failed": "Nie udało się usunąć „{{name}}”",
+      "loading": "Szukam użyć skryptu…",
+      "usagesFailed": "Nie udało się wyświetlić użyć, więc teraz nie można go usunąć. Spróbuj ponownie.",
+      "notYet": "Użycia skryptu nie są jeszcze znane."
+    },
+    "permissions": {
+      "intro": "Co ten skrypt może robić na tym komputerze. Nic z tego nie opuszcza komputera: eksport tego nie zawiera, a skrypt zaimportowany lub zmieniony nie dostaje niczego, dopóki go nie sprawdzisz.",
+      "projects": "Projekty",
+      "files": "Pliki",
+      "read": "Odczyt",
+      "write": "Odczyt i zmiana",
+      "delete": "Odczyt, zmiana i usuwanie",
+      "rootDestructive": "Może usunąć, opróżnić lub zastąpić sam folder",
+      "repositoryKey": "Klucz repozytorium",
+      "addRepository": "Dodaj repozytorium",
+      "addEveryRepository": "Dodaj każde repozytorium",
+      "addFolder": "Wybierz folder…",
+      "programs": "Programy",
+      "runsAnyProgram": "Uruchamia dowolny program",
+      "removeProgram": "Usuń {{command}}",
+      "where": "Gdzie działa {{command}}",
+      "programName": "Nazwa programu",
+      "addProgram": "Dodaj program",
+      "chooseProgram": "Wybierz program…",
+      "containerRuntime": "Środowiska kontenerów nie są jeszcze dostępne dla skryptów",
+      "elevation": "Skrypt nie może uruchamiać programów jako inny użytkownik (sudo i podobne).",
+      "shellCommand": "Powłokę nadaje się w sekcji Powłoki, nie jako program.",
+      "shells": "Powłoki",
+      "shellsHint": "Kod powłoki może uruchomić każdy program, który mógłbyś uruchomić ty, także środowisko kontenerów. Nadawaj powłokę tylko skryptowi, który rozumiesz.",
+      "deleting": "Usuwanie plików",
+      "ask": "Pytaj przed usunięciem (przebiegi, których nikt nie uruchomił, nie mogą usuwać)",
+      "revokeAll": "Odbierz wszystko",
+      "revokeTitle": "Odebrać wszystkie uprawnienia „{{name}}”?",
+      "revokeDescription": "Skrypt pozostaje zaufany i działa bez uprawnień, dopóki znów ich nie nadasz.",
+      "save": "Zapisz uprawnienia",
+      "saved": "Zapisano uprawnienia „{{name}}”",
+      "saveFailed": "Nie udało się zapisać uprawnień „{{name}}”",
+      "accessOf": "Dostęp do folderu {{index}}",
+      "removeScopeOf": "Usuń folder {{index}}",
+      "rootDestructiveOf": "Sam folder {{index}} może być usunięty, opróżniony lub zastąpiony",
+      "envOf": "{{command}} może ustawiać zmienne środowiskowe",
+      "unrestrictedOf": "{{command}} z dowolnymi argumentami"
+    }
   }
 }

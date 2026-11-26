@@ -4,7 +4,7 @@
 // this app's, shown only while `lib/plugin-features.ts` says their plugin
 // activates them.
 
-import { FolderKanban, ListOrdered, type LucideIcon } from "lucide-react"
+import { FileCode2, FolderKanban, ListOrdered, type LucideIcon } from "lucide-react"
 import { lazy } from "react"
 
 import type { TranslationKey } from "@/i18n"
@@ -13,6 +13,7 @@ import type { HostViewKind, PluginFeatures } from "@/lib/plugin-features"
 import type { ToolbarContext } from "@/lib/toolbar-context"
 
 import { ActiveProjectStatus, PROJECTS_PAGE, ProjectsPageView } from "./projects"
+import { SCRIPTS_PAGE, ScriptsPageView } from "./scripts"
 
 type View = React.LazyExoticComponent<() => React.JSX.Element>
 
@@ -48,6 +49,16 @@ export const HOST_PAGES: readonly HostPage[] = [
     icon: FolderKanban,
     view: ProjectsPageView,
     // A profile's projects.
+    context: "profile",
+  },
+  {
+    id: SCRIPTS_PAGE,
+    kind: "scripts",
+    label: "navigation:pages.scripts",
+    fallbackTitle: "Scripts",
+    icon: FileCode2,
+    view: ScriptsPageView,
+    // A profile's scripts.
     context: "profile",
   },
 ]

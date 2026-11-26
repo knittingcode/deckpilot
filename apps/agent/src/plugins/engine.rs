@@ -277,6 +277,16 @@ impl FeatureModule for PluginModule {
 /// they convert through JSON; anything that does not convert is refused.
 pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, String> {
     let id = ActionTypeId::new(format!("{plugin}.{}", action.id)).map_err(|e| e.to_string())?;
+    // The `script` kind is the Scripts plugin's only (the manifest
+    // validator refuses it elsewhere; refused here again).
+    if plugin != deckpilot_plugin_broker::SCRIPTS_PLUGIN
+        && action
+            .parameters
+            .iter()
+            .any(|p| matches!(p.kind, deckpilot_plugin_manifest::ParameterKind::Script {}))
+    {
+        return Err("only DeckPilot's Scripts plugin has script parameters".into());
+    }
     let parameters = action
         .parameters
         .iter()
@@ -1114,19 +1124,27 @@ mod tests {
 
     /// Plugin API 1.11: `contexts` become the action type's (advisory, as
     /// for the built-ins); without them the legacy default, all five.
-    /// Plugin API 1.13: the core has no `script` kind yet (P7), so the
-    /// `run` action is refused as an action type, never offered with a
-    /// wrong kind; `check`'s `javascript` code is the core's text `code`.
+    /// Plugin API 1.13: `run`'s `script` parameter is the core's script
+    /// kind (an id, never a source), for the Scripts plugin only;
+    /// `check`'s `javascript` code is the core's text `code`.
     #[test]
-    fn script_kinds_wait_for_the_core() {
+    fn the_scripts_kinds_become_core_kinds() {
         let manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
             "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/scripts-manifest.json"
         ))
         .unwrap();
         let actions = manifest.contributes.actions();
+        // `run`: its `script` parameter is the core's script kind.
+        let run = action_type("deckpilot.scripts", &actions[0]).unwrap();
+        assert_eq!(
+            run.parameters[0].kind,
+            deckpilot_core::ParameterKind::Script
+        );
+        // Any other plugin's `script` parameter is refused here too.
         assert!(
-            action_type("deckpilot.scripts", &actions[0]).is_err(),
-            "run"
+            action_type("acme.other", &actions[0])
+                .unwrap_err()
+                .contains("Scripts plugin")
         );
         let check = action_type("deckpilot.scripts", &actions[1]).unwrap();
         assert!(matches!(

@@ -500,7 +500,8 @@
         "lines": "list",
         "pairs": "rows",
         "code": "code",
-        "credential": "credential"
+        "credential": "credential",
+        "script": "script"
       }
     }
   },
@@ -760,7 +761,8 @@
       "boolean": "The value must be “true” or “false” when the node runs.",
       "choice": "The value must be one of: {{options}}.",
       "project": "The value must be a project key of this profile.",
-      "resource": "Resources cannot come from earlier nodes."
+      "resource": "Resources cannot come from earlier nodes.",
+      "script": "The value must be the id of a script of this profile."
     },
     "problem": {
       "noSharedVariable": "there is no shared variable “{{name}}”",
