@@ -1194,7 +1194,6 @@ impl Agent {
             state,
             devices,
             layouts,
-            frames,
             scheduled_returns: self.calls_driver().map_or(0, |d| d.returns().scheduled()),
             layouts_reads: self.calls.layouts_reads,
             seed_attempts: self.calls.seed_attempts,

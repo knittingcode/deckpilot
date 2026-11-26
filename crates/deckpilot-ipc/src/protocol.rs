@@ -2003,6 +2003,7 @@ pub enum AgentEvent {
 impl Request {
     /// The first protocol that has this request. Clients do not send it on
     /// a connection with an older protocol, and the agent refuses it there.
+    #[allow(clippy::too_many_lines)] // One arm per request, exhaustive on purpose.
     pub fn since_protocol(&self) -> u32 {
         match self {
             Self::StartWorkflow { .. }
@@ -2957,8 +2958,6 @@ mod tests {
         assert!(set(BackToWorkMode::Completion).validate().is_ok());
     }
 
-    /// A layout of an agent before the call pages (no `pages`, no `back`)
-    /// reads as none of either.
     /// Protocol 18: structured variables reach only clients that know
     /// them; an older client gets `json` without members, no member
     /// entries, a redacted preview and the nearest older reasons.
@@ -3113,6 +3112,8 @@ mod tests {
         assert_eq!(shown.clone().for_protocol(18), shown);
     }
 
+    /// A layout of an agent before the call pages (no `pages`, no `back`)
+    /// reads as none of either.
     #[test]
     fn a_calls_layout_without_pages_or_back_reads_as_none() {
         let layout: crate::calls::CallsLayout = serde_json::from_value(serde_json::json!({
