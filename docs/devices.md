@@ -218,6 +218,36 @@ devices, so their list is what it was. The desktop's device rows and the
 tray's Connected Devices show the state, with a hint where the user can act
 (en and pl). Nothing here resets, re-binds or writes to a device.
 
+**Device access guide (DP-INST-02).** Two of these states have a one-time,
+dismissible guide in the desktop app (`components/device-access-guide.tsx`).
+It is built from the states above and the package format the app already
+reports (`UpdateState.packageFormat`), so it needs no IPC change:
+
+- `permissionDenied` on Linux: the udev fix for the package type.
+  - `.deb`/`.rpm`: replug the device first (the package installs the rule
+    and reloads udev). If that does not help, reinstall the package file.
+  - AppImage, Flatpak or unknown: install the rule by hand, with the
+    commands the rule file documents (download, `install -m 0644` into
+    `/etc/udev/rules.d/`, `udevadm control --reload-rules`), then replug.
+- `usbPresentHidUnavailable`: replug the device, connect it without a hub
+  or dock, or power-cycle the hub. Links to
+  [the USB hub troubleshooting page](troubleshooting/usb-hub-resets.md).
+
+The guide shows text and links to copy: the app cannot open a browser.
+It never runs a command and never asks for administrator rights. Each guide
+is shown once; closing it is remembered in the webview's storage
+(`deckpilot.deviceAccessGuide.dismissed`). The device rows keep showing the
+state and its hint.
+
+There is no macOS guide. The agent opens a Stream Deck through hidapi's
+IOKit backend, outside the App Sandbox. macOS's Input Monitoring rule
+refuses keyboard and pointer interfaces only; vendor and consumer
+interfaces open without it
+(`experiments/distribution/macos-sandbox-hid`), and the GitHub build has
+opened a Stream Deck MK.2 on macOS without asking for it. That experiment
+had no Stream Deck attached, so this is an inference, not a measurement.
+Windows needs no permission: the device uses the built-in HID driver.
+
 ### Where vendor code lives
 
 - Elgato protocol types (`elgato_streamdeck`, `hidapi`) are only in

@@ -64,6 +64,31 @@
     "reconnecting": "Reconnecting…",
     "unknown": "State unknown"
   },
+  "accessGuide": {
+    "permissionTitle": "DeckPilot may not open your Stream Deck",
+    "permissionIntro": "The Stream Deck is plugged in, but Linux does not let DeckPilot open it. A udev rule gives you access to it without root.",
+    "rule": {
+      "deb": "The .deb package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still may not open it, reinstall the package you downloaded, in the folder where the file is:",
+      "rpm": "The .rpm package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still may not open it, reinstall the package you downloaded, in the folder where the file is:",
+      "manual": "The AppImage and the Flatpak cannot install the rule. Install it once yourself, in a terminal on this computer (not inside the Flatpak):"
+    },
+    "commands": "Commands",
+    "replug": "Then unplug the Stream Deck and plug it in again.",
+    "neverRuns": "DeckPilot does not run these commands and does not ask for administrator rights. You run them yourself if you want to.",
+    "installationLink": "Installation guide",
+    "usbTitle": "Your Stream Deck is not fully detected",
+    "usbIntro": "The USB bus lists the Stream Deck, but its HID interface, which DeckPilot uses, is missing. This happens most often behind a USB hub or a monitor dock.",
+    "usbReplug": "Unplug the Stream Deck and plug it in again.",
+    "usbDirect": "Connect it directly to the computer instead of through a hub or dock.",
+    "usbPowerCycle": "If it is behind a monitor's or dock's hub, turn that device off and on again.",
+    "usbNoReset": "DeckPilot never resets a USB device itself.",
+    "troubleshootingLink": "Troubleshooting page",
+    "copy": "Copy {{what}}",
+    "copied": "Copied",
+    "notCopied": "Not copied: select the text and copy it by hand",
+    "once": "This guide is shown once. Settings › Devices keeps showing the device's state.",
+    "done": "Done"
+  },
   "stateHint": {
     "usbPresentHidUnavailable": "The USB bus lists the Stream Deck, but its HID interface is missing, often behind a hub or monitor dock. Replug it, or power-cycle the hub.",
     "permissionDenied": "The system does not allow DeckPilot to open the device. On Linux, check that the udev rule is installed, then replug the device.",
