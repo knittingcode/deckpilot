@@ -125,6 +125,7 @@ exist yet.
 | -------------------------------- | ---------------------------------------------------------------- |
 | Agent starts                     | Takes an exclusive lock on `agent.lock`; a second instance exits (after waiting up to 5 s, see below) |
 | Configuration app starts         | Connects to the running agent, or starts it if it is not running |
+| Configuration app starts again   | The running app comes to the front; the second one ends (see "One configuration app" below) |
 | Configuration app closes         | Agent keeps running                                              |
 | Quit from the tray               | Agent stops (`shuttingDown` with reason `quit`); on macOS open configuration apps close too |
 | Device unplugged                 | Device marked disconnected; agent keeps running                  |
@@ -170,6 +171,37 @@ instance lock keeps a single agent and tray icon.
   before.
 - On macOS the application menu's Quit reads "Quit DeckPilot UI", so it is
   not mistaken for the tray's "Quit DeckPilot".
+
+### One configuration app
+
+Launching the configuration app while it runs brings the running app to the
+front instead of starting a second one (`apps/desktop/src-tauri/src/single_instance.rs`):
+its main window, the password prompt while the configuration is locked, or
+a new main window if the old one was closed while another window kept the
+app open. The second process ends with exit code 0.
+
+- **Windows and Linux** use `tauri-plugin-single-instance`: a named mutex
+  and a message window in the user's session (Windows), and the name
+  `io.github.knittingcode.deckpilot.SingleInstance` on the user's session
+  bus (Linux). Without a session bus the app starts as before. A first
+  app that hangs is waited for: up to 10 s on Windows, after which the
+  second launch ends; up to about 25 s on Linux (the D-Bus call timeout),
+  after which the second launch fails with an error.
+- A second launch while the first app is still starting is ignored; the
+  starting app shows its window or the prompt anyway.
+- **macOS** relies on LaunchServices, which keeps one process per
+  application (see above). The plugin is not used there, because it would
+  listen on a socket at a fixed path in the shared `/tmp`. A start of the
+  executable itself, not through LaunchServices, is not guarded. The
+  agent's launcher starts it that way, but only when no app is connected.
+- Not guarded: debug builds (so a development build does not hand over to
+  an installed DeckPilot), a process started for one window (`--window <id>`, the
+  agent's password prompt while no app runs), which ends with its window,
+  and any data directory other than the default one (`DECKPILOT_DATA_DIR`:
+  development sessions and the tests), because the plugin knows one app
+  identity only.
+- The app registers no URL scheme, so there are no deep links to forward,
+  and the second launch's arguments are not used.
 
 **macOS only.** Closing the main window to the menu bar, the activation
 policy, closing the apps on the tray's Quit, creating the main window for
