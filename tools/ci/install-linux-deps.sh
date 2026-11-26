@@ -25,6 +25,30 @@ printf '%s\n' \
   'Acquire::Retries "2";' |
   sudo tee /etc/apt/apt.conf.d/99deckpilot-network >/dev/null
 
+# Ubuntu 26.04 runners install the amd64v3 architecture variant: apt reads
+# a "<suite>/<component> amd64v3 Packages" index and fetches *_amd64v3.deb
+# builds. Right after a security update the index can list amd64v3 builds
+# that no mirror serves yet (404 on every mirror for libkrb5-dev
+# 1.22.1-2ubuntu4.3, 26 Nov 2026), and the mirror fallbacks below cannot
+# help. The packages here are build dependencies, so the baseline amd64
+# builds are used: apt enables a variant only when APT::Architecture-Variants
+# names it or is "auto" (getArchitectureVariants, apt-pkg/aptconfiguration.cc),
+# and #clear empties that list (apt.conf(5)). The part sorts after the
+# image's numbered parts; /etc/apt/apt.conf is read after all parts, so the
+# result is printed and checked. A package the image already has as an
+# amd64v3 build is swapped for the baseline build of the same version when
+# it is installed here (the variant counts as another version), nothing else.
+printf '%s\n' '#clear APT::Architecture-Variants;' |
+  sudo tee /etc/apt/apt.conf.d/zz-deckpilot-baseline-variant >/dev/null
+# #clear leaves the option empty, and apt-config dumps empty values unless
+# told not to.
+variants=$(apt-config --no-empty dump APT::Architecture-Variants | tr '\n' ' ')
+if [ -n "$variants" ]; then
+  echo "::warning::apt still enables architecture variants ($variants); amd64v3 builds may be used"
+else
+  echo "apt architecture variants: none (baseline amd64 packages)"
+fi
+
 # Sets aside every source file that names a server outside ubuntu.com (the
 # runner's mirror list, mirror+file:, is Ubuntu's).
 ubuntu_sources_only() {

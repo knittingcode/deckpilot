@@ -53,6 +53,9 @@ pub(crate) struct Events {
     /// Calls (plugin API 1.16); without it the `call.*` operations are
     /// `calls-provider-offline`.
     pub calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
+    /// The agent's script store (plugin API 1.13); without it every run of
+    /// `deckpilot.scripts` ends with `scriptMissing`.
+    pub scripts: Option<Arc<dyn crate::plugins::script_host::ScriptHost>>,
 }
 
 /// Why an engine invocation produced no outcome: a stable code for the

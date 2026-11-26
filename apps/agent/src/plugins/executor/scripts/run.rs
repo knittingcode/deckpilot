@@ -120,6 +120,14 @@ pub(super) fn load(
     }
     call.alive()?;
     let stored = call.run.host.load(call.script)?;
+    let hash = deckpilot_core::script::source_sha256(&stored.source);
+    // The grants of this very source (the run's own).
+    let granted = call
+        .run
+        .host
+        .grants(call.script, &hash)
+        .filter(|g| g.validate().is_ok())
+        .unwrap_or_default();
     let project = call.run.host.project(None)?.map(|p| p.id);
     let mut settings = stored.settings;
     settings.timeout_ms = settings
@@ -129,13 +137,14 @@ pub(super) fn load(
         let mut state = call.run.state();
         state.deadline = Some(call.run.started + Duration::from_millis(settings.timeout_ms));
         state.loaded = Some(stored.clone());
+        state.loaded_hash = Some(hash);
         state.project = project;
     }
     to_value(&ScriptLoaded {
         source: stored.source,
         platform: platform(),
         settings,
-        grants: summary(&call.grants),
+        grants: summary(&granted),
         run: ScriptRunInfo {
             id: call.run.id.clone(),
             origin: call.origin.to_owned(),

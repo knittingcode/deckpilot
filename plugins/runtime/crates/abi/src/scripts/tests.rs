@@ -399,3 +399,42 @@ fn commands_are_names_or_plain_absolute_paths() {
         assert!(validate_command(bad).is_err(), "{bad:?}");
     }
 }
+
+#[test]
+fn a_repository_carries_its_remotes_with_their_ids_k4() {
+    let repository = Repository {
+        id: "r1".into(),
+        key: "web".into(),
+        name: "Web".into(),
+        description: None,
+        is_default: true,
+        path: None,
+        exists: true,
+        remote: Some(RepositoryRemote {
+            url: Some("https://example.com/web.git".into()),
+            default_branch: Some("main".into()),
+        }),
+        remotes: vec![RemoteInfo {
+            name: "origin".into(),
+            primary: true,
+            url: Some("https://example.com/web.git".into()),
+            default_branch: Some("main".into()),
+            connection_id: Some("conn-1".into()),
+            remote_repository_id: Some("gh:123".into()),
+        }],
+    };
+    let v = serde_json::to_value(&repository).unwrap();
+    assert_eq!(v["remotes"][0]["connectionId"], "conn-1");
+    assert_eq!(v["remotes"][0]["remoteRepositoryId"], "gh:123");
+    assert_eq!(v["remotes"][0]["defaultBranch"], "main");
+    assert_eq!(serde_json::from_value::<Repository>(v).unwrap(), repository);
+    // An older agent's reply has none.
+    let old = json!({"id": "r1", "key": "web", "name": "Web", "description": null,
+        "isDefault": true, "path": null, "exists": true, "remote": null});
+    assert!(
+        serde_json::from_value::<Repository>(old)
+            .unwrap()
+            .remotes
+            .is_empty()
+    );
+}

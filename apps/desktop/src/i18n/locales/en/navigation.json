@@ -21,7 +21,8 @@
     "designer": "Device Editor",
     "layouts": "Layouts",
     "workflows": "Workflows",
-    "projects": "Projects"
+    "projects": "Projects",
+    "scripts": "Scripts"
   },
   "statusBar": {
     "label": "Status bar",

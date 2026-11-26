@@ -510,7 +510,10 @@
       "closeAllow": "Allow “{{action}}” ({{profile}}) to close {{application}} on this computer",
       "closeForce": "It force-quits: unsaved work in that application is lost.",
       "closeBound": "This key is bound on this computer, so allowing it closes a real application here.",
-      "closeLibrary": "in the layout library"
+      "closeLibrary": "in the layout library",
+      "scriptsTitle": "Scripts arrive untrusted",
+      "scriptsDescription": "These scripts come with their profiles, with no permissions. None of them runs, from a key, a trigger or the editor, until you open it on the Scripts page, review its code and trust it. Nothing runs during the import.",
+      "scriptsList": "Scripts in the import"
     },
     "variables": {
       "title": "Shared variables",
@@ -540,7 +543,8 @@
       "skippedValuesList": "Values not imported",
       "setUp": "Set up these resources on this computer",
       "usedBy": "— used by {{profiles}}",
-      "unboundCloses": "Imported without an application, so they close nothing yet: {{actions}}. Choose their application in the editor to use them."
+      "unboundCloses": "Imported without an application, so they close nothing yet: {{actions}}. Choose their application in the editor to use them.",
+      "scripts": "Imported untrusted, so they do not run yet: {{scripts}}. Review and trust them on the Scripts page to use them."
     }
   }
 }

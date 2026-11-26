@@ -248,6 +248,28 @@ released either. 0.6.0 is the first version intended for publication.
   or duplicated one is never trusted and never runs until reviewed. A
   script can never be granted a container runtime (Docker, Podman and
   the like) in this version.
+- Export and import of scripts (export format 6, only when there are
+  scripts): an export holds a script's code and settings, never whether
+  it is trusted or what it may do. An imported script arrives untrusted
+  with no permissions, and nothing runs on import; the import window
+  says so.
+- The agent runs a script only from the active profile and only while it
+  is trusted; its permissions are read again at every step. Scripts see
+  each repository's remotes, with the connection and the provider's
+  repository they are linked to.
+- A Scripts page (while the Scripts plugin is on, not usable yet): write
+  and edit the profile's scripts in a code editor with JavaScript
+  highlighting, checks and completion, rename, duplicate and delete them
+  (a script's uses are listed first), and review a script that came from
+  elsewhere before trusting it: its code is shown read only, with
+  invisible characters marked, and with the permissions it would get
+  back.
+- On the Scripts page, a script's permissions: which projects, files and
+  folders (picked with the system's dialog), programs and shells it may
+  use, and whether it may delete without asking; container runtimes
+  (Docker, Podman and the like) and programs that act as another user
+  are not available. The Action Library lists a "Run …" entry for every
+  script, which puts the script on a key by reference.
 
 ### Changed
 

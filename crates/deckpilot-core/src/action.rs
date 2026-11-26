@@ -115,6 +115,10 @@ pub enum ParameterKind {
     /// The name of a credential stored on this computer, stored as text.
     /// The secret itself is never part of the action.
     Credential,
+    /// A script of the profile the action belongs to (the Scripts plugin's
+    /// `script` parameter, plugin API 1.13), by id, stored as text: the
+    /// action names the script, never holds its source.
+    Script,
 }
 
 /// Whether a name looks like it holds a secret (`Authorization`, cookies,
@@ -495,6 +499,32 @@ impl ActionType {
     }
 }
 
+/// A value that names something (a credential, a script): empty when it is
+/// optional, otherwise one `valid` accepts.
+fn check_name(
+    spec: &ParameterSpec,
+    text: &str,
+    valid: impl Fn(&str) -> bool,
+    what: &str,
+) -> Result<(), ParameterError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return if spec.required {
+            Err(ParameterError::Missing(spec.key.clone()))
+        } else {
+            Ok(())
+        };
+    }
+    if valid(text) {
+        Ok(())
+    } else {
+        Err(ParameterError::Invalid {
+            key: spec.key.clone(),
+            reason: format!("“{text}” is not {what}"),
+        })
+    }
+}
+
 fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), ParameterError> {
     let key = || spec.key.clone();
     let invalid = |reason: String| ParameterError::Invalid { key: key(), reason };
@@ -545,19 +575,19 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
         (kind @ ParameterKind::Pairs { .. }, ParameterValue::Text(text)) => {
             check_pairs(spec, kind, text)
         }
-        (ParameterKind::Credential, ParameterValue::Text(text)) => {
-            let text = text.trim();
-            if text.is_empty() {
-                return if spec.required {
-                    Err(ParameterError::Missing(key()))
-                } else {
-                    Ok(())
-                };
-            }
-            crate::CredentialId::new(text)
-                .map(|_| ())
-                .map_err(|_| invalid(format!("“{text}” is not a credential name")))
-        }
+        (ParameterKind::Credential, ParameterValue::Text(text)) => check_name(
+            spec,
+            text,
+            |t| crate::CredentialId::new(t).is_ok(),
+            "a credential name",
+        ),
+        (ParameterKind::Script, ParameterValue::Text(text)) => check_name(
+            spec,
+            text,
+            // Exactly an id (what the plugin receives), no spaces around.
+            |t| t == text && t.parse::<crate::ScriptId>().is_ok(),
+            "a script",
+        ),
         (ParameterKind::Resource { .. }, ParameterValue::Resource(reference)) => match reference {
             ResourceRef::ProjectRole { role } if role.trim().is_empty() => {
                 if spec.required {
@@ -575,7 +605,8 @@ fn check_value(spec: &ParameterSpec, value: &ParameterValue) -> Result<(), Param
                 | ParameterKind::Lines { .. }
                 | ParameterKind::Pairs { .. }
                 | ParameterKind::Code { .. }
-                | ParameterKind::Credential => "text",
+                | ParameterKind::Credential
+                | ParameterKind::Script => "text",
                 ParameterKind::Integer { .. } => "integer",
                 ParameterKind::Boolean => "boolean",
                 ParameterKind::Choice { .. } => "choice",
@@ -1046,6 +1077,19 @@ mod structured_text_tests {
         assert!(check(ParameterKind::Credential, "github.token").is_ok());
         assert!(check(ParameterKind::Credential, "").is_ok());
         assert!(check(ParameterKind::Credential, "Not A Name").is_err());
+        // A script by id, never a source.
+        assert!(check(ParameterKind::Script, &crate::ScriptId::new().to_string()).is_ok());
+        assert!(check(ParameterKind::Script, "").is_ok());
+        assert!(check(ParameterKind::Script, "deckpilot.log(1)").is_err());
+        let spaced = format!(" {}\n", crate::ScriptId::new());
+        assert!(
+            check(ParameterKind::Script, &spaced).is_err(),
+            "exactly an id"
+        );
+        assert_eq!(
+            serde_json::to_value(ParameterKind::Script).unwrap(),
+            serde_json::json!({"type": "script"})
+        );
         let code = ParameterKind::Code {
             language: "json".into(),
             max_length: Some(5),
