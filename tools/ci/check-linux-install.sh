@@ -145,6 +145,8 @@ data_id=io.github.knittingcode.deckpilot
 fake_profile() {
   local home="$1" data="$1/.local/share/$data_id"
   [ ! -e "$data" ] || fail "$data exists already: not a test profile"
+  [ ! -e "$home/.config/autostart/DeckPilot Agent.desktop" ] \
+    || fail "$home/.config/autostart/DeckPilot Agent.desktop exists already: not a test profile"
   mkdir -p "$data/logs" "$data/backups" "$data/plugins/installed/example.plugin" "$home/.config/autostart"
   printf 'SQLite format 3\0 (a stand-in for the encrypted database)\n' > "$data/deckpilot.db"
   printf 'a backup\n' > "$data/backups/deckpilot.backup-1.db"
@@ -195,7 +197,7 @@ EOF
 # postrm_checked <log> <what>: what the recorder saw during <what>.
 postrm_checked() {
   local log="$1" what="$2"
-  if grep -v -E -- '-> 0$' "$log" | grep -q .; then
+  if grep -q -v -E -- '-> 0$' "$log"; then
     fail "a udevadm call failed during $what: $(cat "$log")"
   fi
   if [ -S /run/udev/control ]; then
@@ -234,9 +236,16 @@ deb_lifecycle() {
     log=""
     echo "no udevadm: the postrm has nothing to call"
   fi
-  # dpkg runs the maintainer scripts with apt-get's PATH.
-  apt_get="$as env PATH=$path DEBIAN_FRONTEND=noninteractive apt-get -y -q --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+  # apt-get runs dpkg, and so the maintainer scripts, with DPkg::Path
+  # (default /usr/sbin:/usr/bin:/sbin:/bin), not with its own PATH.
+  apt_get="$as env PATH=$path DEBIAN_FRONTEND=noninteractive apt-get -y -q --no-install-recommends -o DPkg::Path=$path -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
   $apt_get install --reinstall "$package" || fail "reinstalling $package failed"
+  # With udev running the postinst reloads it: the recorder must have
+  # seen that, or it is not in the scripts' way and proves nothing.
+  if [ -n "$log" ] && [ -S /run/udev/control ]; then
+    grep -q -F -- '--reload-rules' "$log" || fail "the udevadm recorder saw no call from the postinst: $(cat "$log")"
+    echo "the maintainer scripts call the udevadm recorder"
+  fi
   installed_rule
   deb_scripts "$name"
   files=$(dpkg-query -L "$name")
@@ -245,14 +254,19 @@ deb_lifecycle() {
   [ -z "$log" ] || : > "$log"
   $apt_get remove "$name" || fail "removing $name failed"
   [ ! -e "$rule" ] || fail "$rule is still there after removing $name"
+  # The package has a postrm, so dpkg keeps it as config-files until the
+  # purge, which runs `postrm purge`.
+  [ "$(dpkg-query -W -f '${db:Status-Status}' "$name" 2> /dev/null || true)" = config-files ] \
+    || fail "$name is not in the config-files state after its removal"
   [ -z "$log" ] || postrm_checked "$log" "the removal of $name"
   profile_untouched "$HOME" "$before" "after the removal"
   [ -z "$log" ] || : > "$log"
   $apt_get purge "$name" || fail "purging $name failed"
-  [ "$(dpkg-query -W -f '${db:Status-Status}' "$name" 2> /dev/null || true)" != installed ] || fail "$name is still installed"
-  # dpkg purges a package without conffiles already at its removal; the
-  # purge may then run no script at all.
-  if [ -n "$log" ] && [ -s "$log" ]; then postrm_checked "$log" "the purge of $name"; fi
+  case "$(dpkg-query -W -f '${db:Status-Status}' "$name" 2> /dev/null || true)" in
+    "" | not-installed) ;;
+    *) fail "$name is not purged" ;;
+  esac
+  [ -z "$log" ] || postrm_checked "$log" "the purge of $name"
   gone "$files" "after the purge"
   profile_untouched "$HOME" "$before" "after the purge"
   rm -rf "$HOME/.local/share/$data_id" "$HOME/.config/autostart/DeckPilot Agent.desktop" "$work"
@@ -285,6 +299,9 @@ case "${1-}" in
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -q -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 > /dev/null
       apt-get install -y -q --no-install-recommends -o Acquire::Retries=3 \"/packages/\$1\" > /dev/null
+      # udevadm without a running udev, as on a system in a container:
+      # the scripts must find that and call nothing.
+      apt-get install -y -q --no-install-recommends -o Acquire::Retries=3 udev > /dev/null
       if command -v udevadm > /dev/null; then echo 'udevadm is installed, udev does not run'; else echo 'no udevadm'; fi
       /repo/tools/ci/check-linux-install.sh deb-installed \"/packages/\$1\"
     " _ "$name"
@@ -369,7 +386,10 @@ case "${1-}" in
     installed_rule
     files=$(rpm -ql "$pkgname")
     # rpm runs scriptlets with a PATH of its own, so the recorder takes
-    # the real udevadm's place (this container is thrown away).
+    # the real udevadm's place (this container is thrown away). Without a
+    # running udev the %postun stops before udevadm, so this shows that
+    # it called nothing and succeeded; the reload itself is checked on
+    # the .deb runner, where udev runs.
     real=$(command -v udevadm) || fail "no udevadm in the container"
     mv "$real" "$real.real"
     log=$(mktemp)

@@ -229,9 +229,10 @@ jobs:
   # .rpm with dnf in a Fedora container (then reinstalled and removed). Each
   # removal must take the udev rule and every file of the package, run its
   # postrm without error (and reload udev where udev runs), and leave a
-  # user's DeckPilot files in the home directory as they were. Then the AppImage's agent with and
-  # without the system's own tray library, and the agent on a system
-  # without any (it must keep running without a tray icon). The agent's
+  # user's DeckPilot files in the home directory as they were. Then the
+  # AppImage's agent with and without the system's own tray library, and
+  # the agent on a system without any (it must keep running without a tray
+  # icon). The agent's
   # tray loads libayatana-appindicator3 at run time; 0.7.0's packages did
   # not declare it, its AppImage did not bundle it, and the agent could not
   # start without it (tools/ci/check-linux-install.sh).
