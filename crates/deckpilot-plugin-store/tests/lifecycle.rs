@@ -1071,10 +1071,10 @@ fn calls_is_installed_only_from_the_bundle_and_never_seeded() {
         "justification": "Shows whether you are in a call."}));
     let package = common::bundled_package_with("deckpilot.calls", "0.1.0", &permissions, |v| {
         v["engines"]["pluginApi"] = json!("^1.16");
-        v["contributes"]
-            .as_object_mut()
-            .unwrap()
-            .remove("credentials");
+        let contributes = v["contributes"].as_object_mut().unwrap();
+        contributes.remove("credentials");
+        // A Calls plugin declares no variables (its manifest rule).
+        contributes.remove("variables");
     });
     let declared = grants_of(&package);
     let gated: Vec<(String, Tier)> = declared

@@ -229,6 +229,19 @@ pub enum CapabilityRequest {
     /// ([`Sleep`](crate::connections::Sleep); plugin API 1.14).
     #[serde(rename = "time.sleep")]
     TimeSleep(crate::connections::Sleep),
+    /// The focused call, sanitised
+    /// ([`CallStateReply`](crate::calls::CallStateReply); plugin API 1.16).
+    /// Needs `calls`; the plugin `deckpilot.calls` only. Allowed in a
+    /// state call (a key's face).
+    #[serde(rename = "call.state")]
+    CallState(NoArgs),
+    /// One action on the focused call, answered with the confirmed outcome
+    /// ([`CallControl`](crate::calls::CallControl),
+    /// [`CallControlReply`](crate::calls::CallControlReply); plugin API
+    /// 1.16). Needs `calls:control` and a run the user started; the plugin
+    /// `deckpilot.calls` only.
+    #[serde(rename = "call.control")]
+    CallControl(crate::calls::CallControl),
 }
 
 /// The `ok` value of `time.now`. Unknown fields are **ignored** (host to
@@ -858,6 +871,8 @@ impl CapabilityRequest {
             Self::ConnectionGet(_) => "connections.get",
             Self::ConnectionReportStatus(_) => "connections.reportStatus",
             Self::TimeSleep(_) => "time.sleep",
+            Self::CallState(_) => "call.state",
+            Self::CallControl(_) => "call.control",
         }
     }
 
@@ -938,7 +953,9 @@ impl CapabilityRequest {
             | Self::ProjectCurrent(_)
             | Self::ProjectList(_)
             | Self::ProjectCycle(_)
-            | Self::ProfileRead(_) => {}
+            | Self::ProfileRead(_)
+            | Self::CallState(_)
+            | Self::CallControl(_) => {}
             Self::ResourceResolve(r) => r.validate()?,
             Self::ResourceOpen(o) => o.validate()?,
             Self::ToolRun(t) => t.validate()?,
