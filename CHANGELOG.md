@@ -17,6 +17,15 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Git Providers (builds with plugins, not bundled yet): the agent can make
+  the server of the GitHub or GitLab plugin a Git Providers connection when
+  you ask, and, only if you also choose so, use the token saved there. It
+  happens once (asking again changes nothing), all or nothing, read-only
+  like the old plugin, and the old plugin keeps its settings and token and
+  keeps running your keys. A GitHub Enterprise Cloud data-residency server
+  or a private-network server without its earlier consent is not imported
+  but reported. The old plugin's time limit is not carried over yet (open
+  decision); its 20 s stays.
 - Projects (builds with plugins): a project repository can be linked to a
   repository on one of your connections. Choose the connection, find the
   repository there, check what will be linked and confirm; the link keeps

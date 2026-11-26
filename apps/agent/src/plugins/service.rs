@@ -68,6 +68,8 @@ use super::{PluginSettings, platform, platform_problem};
 mod connections;
 #[path = "dependencies.rs"]
 mod dependencies;
+#[path = "legacy_import.rs"]
+mod legacy_import;
 
 /// Who decides in the audit log.
 const DECIDED_BY: &str = "user";
@@ -1832,6 +1834,10 @@ impl PluginService {
             | Request::SetPluginConnectionSecret { .. }
             | Request::UpdatePluginConnection { .. }
             | Request::RemovePluginConnection { .. }) => self.handle_connections(request),
+            // Git Providers design §11.2 (`legacy_import.rs`).
+            Request::ImportPluginConnection { from, token } => {
+                self.import_legacy_connection(&plugin_id(&from)?, token)
+            }
             Request::SetPluginCredential {
                 plugin,
                 key,

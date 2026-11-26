@@ -1687,7 +1687,8 @@ impl Agent {
             | Request::SetPluginConnectionSecret { .. }
             | Request::UpdatePluginConnection { .. }
             | Request::TestPluginConnection { .. }
-            | Request::RemovePluginConnection { .. } => {
+            | Request::RemovePluginConnection { .. }
+            | Request::ImportPluginConnection { .. } => {
                 unreachable!("plugin requests are handled by handle_command")
             }
             Request::ListRepositoryRemotes { .. } => {

@@ -106,8 +106,8 @@ mod store;
 pub use connections::declared as declared_connections;
 pub use connections::{
     CONNECTION_ID_BODY, CONNECTION_ID_PREFIX, ConnectionProbe, ConnectionStatus, Deployment,
-    MAX_ACCOUNT_LABEL, MAX_CAPABILITIES_BYTES, MAX_CONNECTION_NAME, MAX_CONNECTIONS, NewConnection,
-    StoredConnection, is_connection_id, looks_like_secret,
+    LegacyImport, MAX_ACCOUNT_LABEL, MAX_CAPABILITIES_BYTES, MAX_CONNECTION_NAME, MAX_CONNECTIONS,
+    NewConnection, StoredConnection, is_connection_id, looks_like_secret,
 };
 pub use data::{
     CredentialStatus, KnownPlugin, MAX_SECRET_BYTES, MAX_STORAGE_KEY_CHARS,
