@@ -928,7 +928,7 @@ pub fn approved_with(
                 | PermissionKind::Scripts
                 // Plugin API 1.14: passed as the user's connections
                 // themselves (`connections.rs`), each within these grants.
-                | PermissionKind::Connections,
+                | PermissionKind::Connections
                 | PermissionKind::Calls,
                 _,
             )
