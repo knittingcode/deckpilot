@@ -221,12 +221,22 @@ mod tests {
         );
     }
 
+    /// A blocking task that has begun and does not end for 30 s.
+    async fn stuck_blocking_task() {
+        let (began, wait) = tokio::sync::oneshot::channel();
+        tokio::task::spawn_blocking(move || {
+            let _ = began.send(());
+            std::thread::sleep(Duration::from_secs(30));
+        });
+        // Running, so the shutdown cannot simply cancel it.
+        wait.await.unwrap();
+    }
+
     #[test]
     fn a_stuck_blocking_thread_does_not_keep_the_agent_alive() {
         let started = std::time::Instant::now();
         let outcome = run_agent(runtime(), async {
-            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_secs(30)));
-            tokio::task::yield_now().await;
+            stuck_blocking_task().await;
             panic!("the main loop panics");
             #[allow(unreachable_code)]
             Ok::<(), String>(())
@@ -239,8 +249,7 @@ mod tests {
     fn a_stuck_blocking_thread_does_not_hold_up_a_normal_stop() {
         let started = std::time::Instant::now();
         let outcome = run_agent(runtime(), async {
-            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_secs(30)));
-            tokio::task::yield_now().await;
+            stuck_blocking_task().await;
             Ok::<(), String>(())
         });
         assert_eq!(outcome, Outcome::Stopped);

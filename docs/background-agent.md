@@ -177,7 +177,9 @@ a menu that did nothing, after such a panic. Now:
 1. The panic is written to the agent's log. Every panic is, because the
    configuration app starts the agent with its standard error going
    nowhere.
-2. The runtime is shut down. Its blocking threads get 2 seconds.
+2. The runtime is shut down. Its blocking threads get 2 seconds, as after
+   any stop, so a stuck one (a credential store prompt, a plugin host call)
+   cannot keep the process alive.
 3. The IPC endpoint closes, and on Unix its socket file is removed.
 4. Only then is the instance lock released. The IPC server holds the lock
    too, and lets go of it after its listener. So a next agent that takes
