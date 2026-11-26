@@ -11,9 +11,9 @@
 //! - [`SqliteStore::create_script`]: trusted, bound to its hash, no grants.
 //! - [`SqliteStore::save_script`] (the editor): a trusted script is bound to
 //!   its new hash and keeps its grants; one that is not trusted stays so.
-//! - [`SqliteStore::put_untrusted_script`] (an import, an overwrite) and
-//!   [`SqliteStore::duplicate_script`]: not trusted; an existing record's
-//!   grants stay dormant.
+//! - [`SqliteStore::put_untrusted_script`] (an import, an overwrite): not
+//!   trusted and with no grants (an existing record is removed);
+//!   [`SqliteStore::duplicate_script`]: not trusted, no grants.
 //! - [`SqliteStore::trust_script`]: the user reviewed the source with this
 //!   hash; refused when the stored source has another.
 
@@ -229,6 +229,40 @@ impl SqliteStore {
             .collect()
     }
 
+    /// The script's trust record as stored (`None`: it has none), for the
+    /// review: its dormant grants are shown before "Trust this script".
+    pub fn script_trust(&self, profile: ProfileId, id: ScriptId) -> Result<Option<ScriptTrust>> {
+        trust_of(self.connection(), profile, id)
+    }
+
+    /// The grants of a run that loaded the source with hash `loaded`:
+    /// `None` unless that is the source the user trusted (now), without
+    /// reading or hashing the source again. A trusted record that does not
+    /// parse grants nothing (`Some` of none).
+    pub fn grants_for_loaded(
+        &self,
+        profile: ProfileId,
+        id: ScriptId,
+        loaded: &str,
+    ) -> Result<Option<ScriptGrants>> {
+        let row: Option<String> = self
+            .connection()
+            .query_row(
+                "SELECT t.grants FROM script_trust t
+                 JOIN scripts s ON s.profile_id = t.profile_id AND s.id = t.script_id
+                 WHERE t.profile_id = ?1 AND t.script_id = ?2 AND t.source_sha256 = ?3",
+                params![profile.to_string(), id.to_string(), loaded],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(row.map(|grants| {
+            serde_json::from_str::<ScriptGrants>(&grants)
+                .ok()
+                .filter(|g| g.validate().is_ok())
+                .unwrap_or_default()
+        }))
+    }
+
     /// One script of `profile`.
     pub fn script(&self, profile: ProfileId, id: ScriptId) -> Result<Option<Script>> {
         Ok(self
@@ -336,9 +370,8 @@ impl SqliteStore {
     }
 
     /// A script that did not come from this computer's editor (an import,
-    /// an overwrite by one): created or replaced, never trusted. An
-    /// existing record's grants stay dormant until the user trusts it
-    /// again.
+    /// an overwrite by one): created or replaced, never trusted, with no
+    /// grants (an existing record is removed).
     pub fn put_untrusted_script(&self, profile: ProfileId, script: &Script) -> Result<()> {
         script.validate().map_err(invalid)?;
         self.require_profile(profile)?;
@@ -552,10 +585,10 @@ pub(crate) fn put_untrusted(
             .map_err(|e| name_taken(&e, &script.name).unwrap_or(e.into()))?;
         }
     }
-    // Never trusted, whatever the source: grants stay, dormant.
+    // Never trusted, whatever the source, and with no grants: a script
+    // from elsewhere never inherits what a local one was allowed.
     tx.execute(
-        "UPDATE script_trust SET source_sha256 = NULL
-         WHERE profile_id = ?1 AND script_id = ?2",
+        "DELETE FROM script_trust WHERE profile_id = ?1 AND script_id = ?2",
         params![profile.to_string(), script.id.to_string()],
     )?;
     Ok(())

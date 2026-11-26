@@ -239,6 +239,10 @@ pub struct OsSignalsProvider {
     in_call: bool,
     /// The last source failure, reported once.
     failing: bool,
+    /// `Connected` is still to be reported for the session `connect`
+    /// started: the first poll after it reports it (the contract:
+    /// `Connected` follows from `poll`).
+    announce: bool,
 }
 
 impl std::fmt::Debug for OsSignalsProvider {
@@ -258,6 +262,7 @@ impl OsSignalsProvider {
             session: None,
             in_call: false,
             failing: false,
+            announce: false,
         }
     }
 
@@ -292,6 +297,7 @@ impl CallProvider for OsSignalsProvider {
             return Err(ProviderError::ConsentNotGiven);
         }
         self.session = Some(cx.session);
+        self.announce = true;
         Ok(())
     }
 
@@ -299,6 +305,7 @@ impl CallProvider for OsSignalsProvider {
         self.session = None;
         self.in_call = false;
         self.failing = false;
+        self.announce = false;
     }
 
     fn poll(&mut self, now: Instant) -> Vec<ProviderEvent> {
@@ -306,6 +313,9 @@ impl CallProvider for OsSignalsProvider {
             return Vec::new();
         };
         let mut events = Vec::new();
+        if std::mem::take(&mut self.announce) {
+            events.push(ProviderEvent::Connected { session });
+        }
         let platform = self.source.platform();
         match self.source.sample(now) {
             Err(_) => {

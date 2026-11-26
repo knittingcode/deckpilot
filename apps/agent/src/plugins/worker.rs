@@ -50,6 +50,12 @@ pub(crate) struct Events {
     /// The agent's project context (plugin API 1.9); without it the
     /// project operations and `profile.read` are `unavailable`.
     pub projects: Option<Arc<dyn crate::service::plugin_projects::ProjectHost>>,
+    /// Calls (plugin API 1.16); without it the `call.*` operations are
+    /// `calls-provider-offline`.
+    pub calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
+    /// The agent's script store (plugin API 1.13); without it every run of
+    /// `deckpilot.scripts` ends with `scriptMissing`.
+    pub scripts: Option<Arc<dyn crate::plugins::script_host::ScriptHost>>,
 }
 
 /// Why an engine invocation produced no outcome: a stable code for the

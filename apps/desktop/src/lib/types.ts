@@ -35,6 +35,8 @@ export type ParameterKind =
   | { type: "code"; language: string; maxLength?: number }
   /** The name of a credential stored on this computer. */
   | { type: "credential" }
+  /** A script of the profile, by id (the Scripts plugin's `script` parameter). */
+  | { type: "script" }
 
 export type ParameterValue =
   | { type: "text"; value: string }
@@ -1852,6 +1854,21 @@ export interface ImportPreview {
    * closes nothing) unless confirmed in `ImportOptions.confirmedCloseActions`.
    */
   closeActions?: ImportCloseAction[]
+  /**
+   * Scripts of the export (deckpilot_portability::ScriptPreview). Each arrives
+   * untrusted, with no grants, and never runs until reviewed; nothing runs on
+   * import.
+   */
+  scripts?: ImportScriptPreview[]
+}
+
+/** A script an import brings. */
+export interface ImportScriptPreview {
+  profile: string
+  id: string
+  name: string
+  /** Size of its source, in bytes. */
+  bytes: number
 }
 
 /**
@@ -1930,6 +1947,8 @@ export interface ImportSummary {
   skippedValues: string[]
   /** Close Application actions imported unbound because they were not confirmed. */
   unboundCloseActions?: string[]
+  /** Scripts written, each untrusted until reviewed on the Scripts page. */
+  scripts?: string[]
   /**
    * The import was committed, but the app could not reload the imported
    * module settings; they take effect when it starts next.
@@ -2504,3 +2523,82 @@ export type SimulatePressResult =
   | { status: "ran"; dispatched: SimulatedTrigger[] }
   | { status: "confirmationRequired"; actionNames: string[]; reason: string }
   | { status: "refused"; code: SimulationRefusal; message: string }
+
+// --- Scripts (docs/data-model.md, "Scripts") --------------------------------
+
+/** A script's own settings (deckpilot_core::script::ScriptSettings). */
+export interface ScriptSettings {
+  timeoutMs: number
+  stopOnError: boolean
+  memoryMiB: number
+  description: string
+}
+
+/** One script of a profile (deckpilot_core::script::Script). */
+export interface Script {
+  id: string
+  name: string
+  source: string
+  settings: ScriptSettings
+  revision: number
+}
+
+export type ScriptTrustState = "trusted" | "needsReview"
+
+/** A script on the Scripts page (deckpilot_storage::scripts::StoredScript). */
+export interface StoredScript {
+  script: Script
+  trust: ScriptTrustState
+  /** Its grants (dormant while it is not trusted); `null`: none. */
+  grants: ScriptGrants | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type ScriptFsAccess = "read" | "write" | "delete"
+export type ScriptFsRoot = { repository: string } | { directory: { path: string; label: string } }
+
+export interface ScriptFsScope {
+  root: ScriptFsRoot
+  access: ScriptFsAccess
+  rootDestructive?: boolean
+}
+
+export interface ScriptProcessGrant {
+  command: string
+  cwd?: "repositories" | "fsScopes" | "any"
+  env?: "none" | "allowed"
+  unrestrictedArgs?: boolean
+}
+
+/** A script's machine-local grants (deckpilot_core::script_grants::ScriptGrants). */
+export interface ScriptGrants {
+  projectsRead?: boolean
+  repositoriesPaths?: boolean
+  fs?: ScriptFsScope[]
+  process?: ScriptProcessGrant[]
+  shell?: { shells: string[] } | null
+  destructive?: "ask" | "allow"
+  limits?: { timeoutMs?: number; memoryMiB?: number; maxOutputKiB?: number }
+}
+
+/** What a command a grant names is (deckpilot_core::script_grants::CommandClass). */
+export type ScriptCommandClass =
+  "containerRuntime" | "elevation" | "shell" | "runsAnyProgram" | "plain"
+
+/** What the review shows before "Trust this script". */
+export interface ScriptReview {
+  script: Script
+  trust: ScriptTrustState
+  sourceSha256: string
+  grants: ScriptGrants
+  /** What each granted command is (a launcher runs any program). */
+  commandClasses: Record<string, ScriptCommandClass>
+}
+
+/** An action that runs a script, with its uses (deckpilot_storage::scripts::ScriptUsage). */
+export interface ScriptUsage {
+  action: string
+  actionName: string
+  references: ActionReference[]
+}

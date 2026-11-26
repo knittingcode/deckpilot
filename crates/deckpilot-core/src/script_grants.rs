@@ -271,6 +271,21 @@ pub const CONTAINER_RUNTIMES: &[&str] = &[
     "tart",
     "hyperkit",
     "krunvm",
+    "vboxheadless",
+    "virtualboxvm",
+    "prlsrvctl",
+    "kvm",
+    "apptainer",
+    "singularity",
+    "distrobox",
+    "toolbox",
+    "kind",
+    "minikube",
+    "k3d",
+    "microk8s",
+    "bwrap",
+    "firejail",
+    "flatpak-spawn",
 ];
 
 /// Programs that act as another user: never grantable.
@@ -287,6 +302,8 @@ pub const ELEVATION: &[&str] = &[
     "gsudo",
     "osascript",
     "launchctl",
+    "sudo-rs",
+    "pfexec",
 ];
 
 /// Shells: only through `shell.run` and its own grant, never as a
@@ -310,17 +327,71 @@ pub const PROCESS_SHELLS: &[&str] = &[
     // A shell among their applets.
     "busybox",
     "toybox",
+    "ash",
+    "rbash",
+    "yash",
 ];
 
 /// Programs that run any other program (interpreters, launchers, build
 /// tools, package runners): grantable, but each such grant is as broad as
 /// a shell, a container runtime included, and is shown as such.
 pub const RUNS_ANY_PROGRAM: &[&str] = &[
-    "env", "xargs", "nohup", "timeout", "nice", "time", "watch", "find", "parallel", "python",
-    "python3", "node", "deno", "bun", "ruby", "perl", "php", "lua", "tclsh", "java", "dotnet",
-    "make", "cmake", "ninja", "npm", "npx", "pnpm", "yarn", "pip", "pip3", "uv", "pipx", "cargo",
-    "go", "gradle", "mvn", "open", "start", "explorer", "rundll32", "mshta", "wscript", "cscript",
-    "ssh", "curl", "wget",
+    "env",
+    "xargs",
+    "nohup",
+    "timeout",
+    "nice",
+    "time",
+    "watch",
+    "find",
+    "parallel",
+    "python",
+    "python3",
+    "node",
+    "deno",
+    "bun",
+    "ruby",
+    "perl",
+    "php",
+    "lua",
+    "tclsh",
+    "java",
+    "dotnet",
+    "make",
+    "cmake",
+    "ninja",
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "pip",
+    "pip3",
+    "uv",
+    "pipx",
+    "cargo",
+    "go",
+    "gradle",
+    "mvn",
+    "open",
+    "start",
+    "explorer",
+    "rundll32",
+    "mshta",
+    "wscript",
+    "cscript",
+    "ssh",
+    "curl",
+    "wget",
+    "arch",
+    "xcrun",
+    "setsid",
+    "stdbuf",
+    "taskset",
+    "chrt",
+    "ionice",
+    "caffeinate",
+    "nix-shell",
+    "just",
 ];
 
 /// What a granted command is, by its file name (without case and a
@@ -369,9 +440,22 @@ pub fn command_class(command: &str) -> CommandClass {
     let name = program_name(command);
     let base = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-');
     let is = |list: &[&str]| list.contains(&name.as_str()) || list.contains(&base);
-    let helper = ["docker-", "podman-", "lxc-", "qemu-"]
-        .iter()
-        .any(|prefix| name.starts_with(prefix));
+    // Their helpers (`docker-compose`, `dockerd-rootless.sh`,
+    // `containerd-shim-runc-v2`, `qemu-img`, `lxc-attach`) and Lima's
+    // wrappers (`nerdctl.lima`).
+    let helper = [
+        "docker-",
+        "dockerd-",
+        "containerd-",
+        "podman-",
+        "lxc-",
+        "qemu-",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+        || std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("lima"));
     if is(CONTAINER_RUNTIMES) || helper || name == "qemu" {
         CommandClass::ContainerRuntime
     } else if is(ELEVATION) {
@@ -411,12 +495,23 @@ impl ScriptGrants {
                     }
                 }
                 FsRoot::Directory { path, label } => {
-                    if !path.is_absolute() || path.as_os_str().is_empty() {
+                    // Absolute and canonical in form: no `.` or `..`.
+                    if !path.is_absolute()
+                        || path.as_os_str().is_empty()
+                        // By its text: `components` hides a `.` inside.
+                        || path
+                            .to_string_lossy()
+                            .split(['/', '\\'])
+                            .any(|part| part == "." || part == "..")
+                    {
                         return Err(GrantsError::DirectoryPath);
                     }
                     if label.trim().is_empty()
                         || label.chars().count() > MAX_LABEL
-                        || label.chars().any(char::is_control)
+                        || label
+                            .chars()
+                            .any(|c| c.is_control() || crate::script::is_hidden(c))
+                        || path.to_string_lossy().chars().any(crate::script::is_hidden)
                     {
                         return Err(GrantsError::Label);
                     }
@@ -436,13 +531,38 @@ impl ScriptGrants {
                 CommandClass::Shell => return Err(GrantsError::ShellCommand),
                 CommandClass::RunsAnyProgram | CommandClass::Plain => {}
             }
-            // A bare name is ASCII: no look-alike of a refused one.
-            if bare && !c.is_ascii() {
+            // A bare name is ASCII: no look-alike of a refused one; no
+            // command hides characters from the review.
+            if (bare && !c.is_ascii())
+                || c.chars()
+                    .any(|ch| ch.is_control() || crate::script::is_hidden(ch))
+            {
                 return Err(GrantsError::Command);
             }
             if !bare && !std::path::Path::new(c).is_absolute() {
                 return Err(GrantsError::Command);
             }
+            // `unrestrictedArgs` lifts git's limits, so it is for git only.
+            if grant.unrestricted_args && program_name(c) != "git" {
+                return Err(GrantsError::Command);
+            }
+        }
+        // Without case: `make` and `Make` are one program where names
+        // compare so, and never meant as two grants elsewhere.
+        let mut commands: Vec<String> = self
+            .process
+            .iter()
+            .map(|g| {
+                if cfg!(any(target_os = "macos", windows)) {
+                    g.command.to_lowercase()
+                } else {
+                    g.command.clone()
+                }
+            })
+            .collect();
+        commands.sort_unstable();
+        if commands.windows(2).any(|w| w[0] == w[1]) {
+            return Err(GrantsError::Command);
         }
         if let Some(shell) = &self.shell
             && shell.shells.iter().any(|s| !SHELLS.contains(&s.as_str()))
@@ -466,6 +586,11 @@ fn is_repository_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `unix` or `windows`, whichever is an absolute path on this platform.
+    fn absolute<'a>(unix: &'a str, windows: &'a str) -> &'a str {
+        if cfg!(windows) { windows } else { unix }
+    }
 
     #[test]
     fn a_new_script_has_no_grants() {
@@ -589,6 +714,17 @@ mod tests {
             "vagrant",
             "utmctl",
             "prlctl",
+            "nerdctl.lima",
+            "docker.lima",
+            "dockerd-rootless.sh",
+            "containerd-shim-runc-v2",
+            "kvm",
+            "apptainer",
+            "distrobox",
+            "minikube",
+            "kind",
+            "bwrap",
+            "flatpak-spawn",
         ] {
             assert_eq!(
                 command_class(command),
@@ -623,6 +759,8 @@ mod tests {
             "systemd-run",
             "runas.exe",
             "osascript",
+            "sudo-rs",
+            "pfexec",
         ] {
             assert_eq!(command_class(command), CommandClass::Elevation, "{command}");
             assert_eq!(refused(command), Err(GrantsError::Elevation), "{command}");
@@ -635,6 +773,8 @@ mod tests {
             "cmd.exe",
             "fish",
             "busybox",
+            "ash",
+            "yash",
         ] {
             assert_eq!(command_class(command), CommandClass::Shell, "{command}");
             assert_eq!(
@@ -653,9 +793,52 @@ mod tests {
         }
         assert_eq!(command_class("git"), CommandClass::Plain);
         // A look-alike folds to the refused name; any other bare name is
-        // ASCII.
+        // ASCII; no command or label hides characters.
+        // Absolute on this platform, so the hidden character is refused.
+        let hidden = absolute("/usr/local/bin/ma\u{202E}ke", "C:\\Tools\\ma\u{202E}ke.exe");
+        assert_eq!(refused(hidden), Err(GrantsError::Command));
         assert_eq!(refused("doc\u{212A}er"), Err(GrantsError::ContainerRuntime));
         assert_eq!(refused("g\u{00EF}t"), Err(GrantsError::Command));
+        // A folder scope is canonical in form: no `.` or `..`.
+        // Absolute on this platform, so the `.` or `..` is refused.
+        for path in [
+            absolute("/srv/work/../etc", r"C:\srv\work\..\etc"),
+            absolute("/srv/./work", r"C:\srv\.\work"),
+        ] {
+            let scope = ScriptGrants {
+                fs: vec![FsScope {
+                    root: FsRoot::Directory {
+                        path: path.into(),
+                        label: "Work".into(),
+                    },
+                    access: FsAccess::Read,
+                    root_destructive: false,
+                }],
+                ..ScriptGrants::default()
+            };
+            assert_eq!(scope.validate(), Err(GrantsError::DirectoryPath), "{path}");
+        }
+        // git's unrestricted arguments are git's only; a command once.
+        let with = |command: &str, unrestricted: bool| ProcessGrant {
+            command: command.into(),
+            cwd: ProcessCwd::Repositories,
+            env: ProcessEnv::None,
+            unrestricted_args: unrestricted,
+        };
+        let set = |process: Vec<ProcessGrant>| {
+            ScriptGrants {
+                process,
+                ..ScriptGrants::default()
+            }
+            .validate()
+        };
+        let git = absolute("/usr/bin/git", r"C:\Program Files\Git\cmd\git.exe");
+        assert_eq!(set(vec![with(git, true)]), Ok(()));
+        assert_eq!(set(vec![with("make", true)]), Err(GrantsError::Command));
+        assert_eq!(
+            set(vec![with("make", false), with("make", false)]),
+            Err(GrantsError::Command)
+        );
     }
 
     #[test]

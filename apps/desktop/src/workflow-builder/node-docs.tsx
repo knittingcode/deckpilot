@@ -15,6 +15,7 @@ const KIND_LABEL: Record<ParameterKind["type"], TranslationKey> = {
   pairs: "workflows:inspector.docs.kind.pairs",
   code: "workflows:inspector.docs.kind.code",
   credential: "workflows:inspector.docs.kind.credential",
+  script: "workflows:inspector.docs.kind.script",
 }
 
 /** How the catalog and the inspector describe what an action does. */

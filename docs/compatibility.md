@@ -105,7 +105,10 @@ script's grants, never exported). Nothing existing is rewritten. It runs
 after an encrypted backup (`backups/deckpilot-schema15-*.db`, or the
 older schema's when 15 and 16 run in one upgrade). **Older builds refuse a
 schema 16 database** with `UnsupportedSchema` and change nothing; the way
-back is that backup, as above.
+back is that backup, as above. Exports with scripts are payload version 6,
+which older builds refuse ("format version 6"); exports without scripts
+keep their version. An export never holds whether a script is trusted
+nor its grants, and an imported script arrives untrusted.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins

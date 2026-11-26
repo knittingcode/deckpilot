@@ -21,7 +21,8 @@
     "designer": "Edytor urządzenia",
     "layouts": "Układy",
     "workflows": "Przepływy pracy",
-    "projects": "Projekty"
+    "projects": "Projekty",
+    "scripts": "Skrypty"
   },
   "statusBar": {
     "label": "Pasek stanu",

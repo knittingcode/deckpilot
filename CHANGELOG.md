@@ -248,6 +248,28 @@ released either. 0.6.0 is the first version intended for publication.
   or duplicated one is never trusted and never runs until reviewed. A
   script can never be granted a container runtime (Docker, Podman and
   the like) in this version.
+- Export and import of scripts (export format 6, only when there are
+  scripts): an export holds a script's code and settings, never whether
+  it is trusted or what it may do. An imported script arrives untrusted
+  with no permissions, and nothing runs on import; the import window
+  says so.
+- The agent runs a script only from the active profile and only while it
+  is trusted; its permissions are read again at every step. Scripts see
+  each repository's remotes, with the connection and the provider's
+  repository they are linked to.
+- A Scripts page (while the Scripts plugin is on, not usable yet): write
+  and edit the profile's scripts in a code editor with JavaScript
+  highlighting, checks and completion, rename, duplicate and delete them
+  (a script's uses are listed first), and review a script that came from
+  elsewhere before trusting it: its code is shown read only, with
+  invisible characters marked, and with the permissions it would get
+  back.
+- On the Scripts page, a script's permissions: which projects, files and
+  folders (picked with the system's dialog), programs and shells it may
+  use, and whether it may delete without asking; container runtimes
+  (Docker, Podman and the like) and programs that act as another user
+  are not available. The Action Library lists a "Run …" entry for every
+  script, which puts the script on a key by reference.
 
 ### Changed
 
@@ -260,6 +282,27 @@ released either. 0.6.0 is the first version intended for publication.
   keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
   nudge starts from the last one. Escape or a click on the key lets go of
   the label, and the arrows move between keys again.
+
+- Calls (groundwork, inert until the plugin and its policy entry exist):
+  the plugin operations `call.state` and `call.control` of plugin API
+  1.16, in the ABI, the broker, the agent and the guest SDK. Only the
+  bundled plugin `deckpilot.calls` may use them, each with its own grant
+  (`calls`, `calls:control`), a control only in a run you started, and
+  never together with network, credentials, opening pages or tools. A
+  control is answered only once the call app confirmed it. Your consents
+  to observe and to control calls apply as for the call pages, and
+  detection-only Teams refuses every control with the reason. A control
+  from a run you did not start, or one too many, is refused with its own
+  code. The agent's plugin API is not raised yet.
+- Calls: the operating-system signals provider reports its connection, so
+  a Teams control is refused with its reason (no supported API) instead of
+  "not connected".
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
 
 ## [0.15.0] - 2026-11-24
 

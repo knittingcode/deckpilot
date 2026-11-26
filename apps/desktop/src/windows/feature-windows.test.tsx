@@ -278,6 +278,47 @@ describe("import window", () => {
     expect(await screen.findByText(/close nothing yet: Quit Chat/)).toBeInTheDocument()
   })
 
+  it("says imported scripts arrive untrusted and run nothing", async () => {
+    const user = userEvent.setup()
+    dialog.open.mockResolvedValue("/tmp/in.deckpilot")
+    api.previewImport.mockResolvedValue({
+      token: 10,
+      preview: {
+        ...preview,
+        missingResources: [],
+        settings: {},
+        scripts: [
+          { profile: "p1", id: "s1", name: "Deploy", bytes: 120 },
+          { profile: "other", id: "s2", name: "Not selected", bytes: 1 },
+        ],
+      },
+    })
+    api.applyImport.mockResolvedValue({
+      imported: [["p1", "Work"]],
+      removed: [],
+      skipped: [],
+      renamed: [],
+      modules: [],
+      settings: [],
+      variables: [],
+      variableValues: 0,
+      skippedValues: [],
+      scripts: ["Deploy"],
+    })
+    inWindow(<ImportWindow />)
+    await user.click(screen.getByRole("button", { name: "Choose file…" }))
+    await user.type(await screen.findByLabelText("Export password"), "right{Enter}")
+    expect(await screen.findByText("Scripts arrive untrusted")).toBeInTheDocument()
+    const list = screen.getByRole("list", { name: "Scripts in the import" })
+    expect(list).toHaveTextContent("Deploy")
+    expect(list).not.toHaveTextContent("Not selected")
+    expect(screen.getByText(/Nothing runs during the import/)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Import" }))
+    expect(
+      await screen.findByText(/Imported untrusted, so they do not run yet: Deploy/),
+    ).toBeInTheDocument()
+  })
+
   it("shows the shared variables an import brings and the values it skipped", async () => {
     const user = userEvent.setup()
     dialog.open.mockResolvedValue("/tmp/in.deckpilot")

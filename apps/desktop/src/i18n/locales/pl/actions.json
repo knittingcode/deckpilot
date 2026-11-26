@@ -262,6 +262,15 @@
       "notHere": "{{name}} (brak na tym komputerze)",
       "noneStored": "Na tym komputerze nie zapisano poświadczeń. Dodaj je w Ustawienia › HTTP.",
       "missing": "Poświadczenie „{{name}}” nie jest zapisane na tym komputerze; żądania kończą się niepowodzeniem, dopóki nie zostanie dodane w Ustawienia › HTTP."
+    },
+    "script": {
+      "choose": "Wybierz skrypt",
+      "none": "Brak skryptu",
+      "missingItem": "Brak skryptu",
+      "needsReviewItem": "{{name}} (do sprawdzenia)",
+      "noneStored": "Ten profil nie ma jeszcze skryptów. Napisz skrypt na stronie Skrypty.",
+      "missing": "Tego skryptu nie ma w profilu (usunięty albo z innego profilu); klawisz nic nie robi, dopóki nie wybierzesz innego.",
+      "needsReview": "Ten skrypt nie jest zaufany: nie uruchomi się, dopóki nie sprawdzisz go na stronie Skrypty."
     }
   },
   "execution": {

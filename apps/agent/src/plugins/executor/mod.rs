@@ -108,6 +108,7 @@ use tracing::{debug, info, warn};
 
 use super::variables::{PublishedVariables, typed};
 
+pub(super) mod calls;
 mod connections;
 mod open;
 pub(super) mod project;
@@ -603,6 +604,12 @@ pub(super) struct Executor {
     /// `connections.rs`): those its parameters named, or the one the app
     /// named. The broker refuses every other one.
     connections: std::collections::BTreeSet<String>,
+    /// Calls (plugin API 1.16, `calls.rs`); without it the `call.*`
+    /// operations are `calls-provider-offline`.
+    calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
+    /// The `call.control`s of this invocation (at most
+    /// [`calls::MAX_CONTROLS`]).
+    call_controls: std::sync::atomic::AtomicU32,
 }
 
 /// One audit record of a plugin API 1.9 operation the executor carried
@@ -725,6 +732,8 @@ impl Executor {
             projects: None,
             scripts: None,
             connections: std::collections::BTreeSet::new(),
+            calls: None,
+            call_controls: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -1544,6 +1553,10 @@ impl Executor {
             | Allowed::ProjectCycle { .. }
             | Allowed::ProfileRead { .. } => self.project(plugin, allowed),
             Allowed::Script(call) => self.script(plugin, call, interrupt),
+            // Plugin API 1.16 (`calls.rs`).
+            Allowed::CallState | Allowed::CallControl { .. } => {
+                self.calls(plugin, allowed, interrupt)
+            }
             Allowed::TimeNow => super::ambient::now(),
             Allowed::RandomBytes { length } => super::ambient::random(*length),
             Allowed::RunContext(context) => serde_json::to_value(context).map_or_else(

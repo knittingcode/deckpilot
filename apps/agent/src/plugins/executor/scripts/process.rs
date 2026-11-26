@@ -450,12 +450,13 @@ impl Executor {
         };
         let stdin = request.stdin.as_ref().map(|s| s.as_bytes().to_vec());
         let script = call.script.to_owned();
+        let loaded = call.run.state().loaded_hash.clone().unwrap_or_default();
         let granted = grant.clone();
         let host = call.run.host.clone();
         // The very grant the run started under: narrowing it (its cwd
         // rule, env, unrestrictedArgs) stops the program too.
         let still_granted = move || {
-            host.grants(&script)
+            host.grants(&script, &loaded)
                 .filter(|g| g.validate().is_ok())
                 .is_some_and(|g| g.process.contains(&granted))
         };
@@ -525,10 +526,11 @@ impl Executor {
             cwd_check,
         };
         let script = call.script.to_owned();
+        let loaded = call.run.state().loaded_hash.clone().unwrap_or_default();
         let shell = request.shell.clone();
         let host = call.run.host.clone();
         let still_granted = move || {
-            host.grants(&script)
+            host.grants(&script, &loaded)
                 .filter(|g| g.validate().is_ok())
                 .is_some_and(|g| granted_shell(&g, &shell))
         };

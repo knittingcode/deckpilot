@@ -4,7 +4,7 @@
 
 use deckpilot_plugin_abi::privileged::{ProjectInfo, ProjectList};
 use deckpilot_plugin_abi::scripts::{
-    ProjectRepositories, ProjectRepositoriesReply, Repository, ScriptFault, codes,
+    ProjectRepositories, ProjectRepositoriesReply, RemoteInfo, Repository, ScriptFault, codes,
 };
 use serde_json::Value;
 
@@ -69,6 +69,18 @@ pub(super) fn repositories(
                 .map(|p| p.to_string_lossy().into_owned()),
             exists: r.folder.is_some(),
             remote: r.remote.clone(),
+            remotes: r
+                .remotes
+                .iter()
+                .map(|m| RemoteInfo {
+                    name: m.name.clone(),
+                    primary: m.primary,
+                    url: m.url.clone(),
+                    default_branch: m.default_branch.clone(),
+                    connection_id: m.connection_id.clone(),
+                    remote_repository_id: m.remote_repository_id.clone(),
+                })
+                .collect(),
         })
         .collect();
     to_value(&ProjectRepositoriesReply {

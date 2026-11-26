@@ -30,6 +30,15 @@ mod data;
 mod engine;
 #[cfg(feature = "plugins")]
 mod executor;
+/// What the agent's script store answers a Scripts run with
+/// (`service::plugin_scripts`).
+#[cfg(feature = "plugins")]
+pub(crate) mod script_host {
+    pub(crate) use super::executor::scripts::fs::protected::canonical;
+    pub(crate) use super::executor::scripts::{
+        Refusal, RunProject, RunRemote, RunRepository, ScriptHost, StoredScript,
+    };
+}
 #[cfg(feature = "plugins")]
 mod fetch;
 #[cfg(feature = "plugins")]
@@ -409,7 +418,13 @@ impl PluginRuntime {
                         notifier,
                         dialogs: dialogs.clone(),
                         projects: Some(std::sync::Arc::new(
-                            crate::service::plugin_projects::AgentProjects::new(commands),
+                            crate::service::plugin_projects::AgentProjects::new(commands.clone()),
+                        )),
+                        calls: Some(std::sync::Arc::new(
+                            crate::service::plugin_calls::AgentCallsHost::new(commands.clone()),
+                        )),
+                        scripts: Some(std::sync::Arc::new(
+                            crate::service::plugin_scripts::AgentScripts::new(commands),
                         )),
                     },
                     changed,
