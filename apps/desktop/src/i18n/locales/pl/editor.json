@@ -356,6 +356,11 @@
     "multiAction": {
       "title": "Multiakcja",
       "description": "Kroki są wykonywane po kolei w agencie po naciśnięciu klawisza. Opóźnienie czeka między dwoma krokami; działającą multiakcję można anulować na pasku stanu."
+    },
+    "scriptPreset": {
+      "label": "Uruchom {{script}}",
+      "description": "Uruchamia skrypt {{script}}; klawisz wskazuje skrypt, więc jego zmiany działają tutaj.",
+      "needsReview": "Uruchomi skrypt {{script}}, gdy zaufasz mu na stronie Skrypty; do tego czasu klawisz nic nie robi."
     }
   },
   "bar": {

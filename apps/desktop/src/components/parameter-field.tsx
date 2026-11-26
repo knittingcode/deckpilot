@@ -1,4 +1,10 @@
-import { CodeField, CredentialField, ListField, PairsField } from "@/components/structured-fields"
+import {
+  CodeField,
+  CredentialField,
+  ListField,
+  PairsField,
+  ScriptField,
+} from "@/components/structured-fields"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -377,6 +383,18 @@ function Control({
         value={value.value}
         language={kind.language}
         maxLength={kind.maxLength}
+        onChange={(text) => {
+          onChange({ type: "text", value: text })
+        }}
+      />
+    )
+  }
+  if (kind.type === "script" && value.type === "text") {
+    return (
+      <ScriptField
+        id={id}
+        value={value.value}
+        optional={!spec.required}
         onChange={(text) => {
           onChange({ type: "text", value: text })
         }}

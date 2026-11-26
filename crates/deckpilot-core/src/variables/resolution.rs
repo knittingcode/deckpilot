@@ -594,5 +594,6 @@ fn kind_name(kind: &ParameterKind) -> &'static str {
         ParameterKind::Resource { .. } => "a resource",
         ParameterKind::Project => "a project",
         ParameterKind::Credential => "a credential",
+        ParameterKind::Script => "a script",
     }
 }

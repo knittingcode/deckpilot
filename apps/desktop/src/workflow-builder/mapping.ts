@@ -320,6 +320,11 @@ export function compatibility(
         level: "warning",
         message: i18n.t("workflows:mapping.fit.credential"),
       }
+    case "script":
+      return {
+        level: "warning",
+        message: i18n.t("workflows:mapping.fit.script"),
+      }
     case "integer":
       return kind === "integer"
         ? { level: "ok" }

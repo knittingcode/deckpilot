@@ -246,6 +246,15 @@
       "notHere": "{{name}} (not on this computer)",
       "noneStored": "No credentials are stored on this computer. Add them in Settings › HTTP.",
       "missing": "“{{name}}” is not stored on this computer; requests fail until it is added in Settings › HTTP."
+    },
+    "script": {
+      "choose": "Choose a script",
+      "none": "No script",
+      "missingItem": "Script missing",
+      "needsReviewItem": "{{name}} (needs review)",
+      "noneStored": "This profile has no scripts yet. Write one on the Scripts page.",
+      "missing": "The script is not in this profile (deleted, or from another profile); the key does nothing until another is chosen.",
+      "needsReview": "This script is not trusted: it does not run until you review it on the Scripts page."
     }
   },
   "execution": {

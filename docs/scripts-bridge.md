@@ -18,10 +18,35 @@ Status:
 - in place (P7, part 1): the script store (schema 16) with its
   machine-local trust and grants, and the trust lifecycle
   (`docs/data-model.md`, "Scripts");
-- next: portability of scripts, the agent's script host, the Scripts
-  page (P7), the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8);
-  until the agent's script host lands every run ends with
-  `scriptMissing`.
+- in place (P7, parts 2 and 3): scripts in exports and imports (never
+  their trust or grants), and the agent's script store as the bridge's
+  host, with the repositories' remotes (K4);
+- in place (P7, part 4a): the Scripts page (`apps/desktop/src/modules/
+  scripts/`, shown while the Scripts plugin is enabled and lists the
+  `scripts` view): the profile's scripts, a CodeMirror 6 editor (parser
+  diagnostics only, nothing runs while typing; completion of the
+  `deckpilot` API; invisible and direction-changing characters drawn as
+  marks), the script's settings, rename, duplicate (no trust), the
+  guarded delete (its uses listed; clearing the keys is opt-in), and the
+  review of a script that is not trusted: its code read only, a warning
+  for hidden characters, the permissions that come back, and "Trust this
+  script", which names exactly the hash and permissions shown;
+- in place (P7, part 4b): the Permissions tab (projects, files by
+  repository or a folder picked with the system's dialog, programs by
+  name or picked with the system's dialog with where they run, their
+  environment and, for git, unrestricted arguments; shells; deleting;
+  revoke all), refusing a container runtime ("Container runtimes are not
+  available to scripts yet"), a program acting as another user and a
+  shell as a program, and flagging a launcher as running any program;
+  the core's `script` parameter kind (`ParameterKind::Script`, a script
+  id stored as text, only ever a script chosen for the action: a
+  reference, template or node output is refused when it resolves, when
+  the workflow is checked and when it runs, so the Scripts plugin's `run` action now converts
+  to an action type) with its picker; and the Action Library's "Run …"
+  entries, one per script, each placing an action that names the script
+  by id;
+- next: running from the page (it needs the bundled plugin), the agent's
+  `PLUGIN_API` 1.13 and the bundled plugin (P8).
 
 ## Operations
 
@@ -217,7 +242,25 @@ path, a file's content or an environment value.
 - `script.sleep` waits in 25 ms slices, at most the run's time left.
 - `project.list` and `project.repositories` need `projects.read`, answer
   the active profile only, and give a repository's folder only with
-  `repositories.paths`.
+  `repositories.paths`. A repository's `remotes` (decision K4) list every
+  remote, in the stored order: `name`, `primary`, `url`,
+  `defaultBranch`, the `connectionId` of the Git Providers connection it
+  is linked to on this computer and the provider's `remoteRepositoryId`.
+  Both ids are in script objects only, never in text variables. `remote`
+  (the primary's `url` and `defaultBranch`) stays for older guests.
+- The agent's script store answers a run (`service/plugin_scripts.rs`):
+  the run's script, always of the **active profile** (never the profile
+  or layout a binding belongs to), only while it is trusted (otherwise
+  `scriptNeedsReview`, and no grants; a script the profile does not have
+  is `scriptMissing`), and nothing while DeckPilot is locked. Its grants
+  are read again at every call **for the source the run loaded** (its
+  SHA-256, against the trusted hash, without reading the source again):
+  when that is no longer the trusted source (trust revoked, imported
+  over, edited and trusted again for a new source) or DeckPilot is
+  locked, the run's next operation is refused (`scriptNeedsReview`) and
+  the run ends. A program it already started is stopped by its own
+  grant check (every 20 ms) as before. A repository's folder is its machine
+  binding's, canonical, and only when it is an existing folder.
 
 ## The file system
 
@@ -400,8 +443,9 @@ runs of the plugin at once.
     `finch`, Rancher Desktop's and OrbStack's tools, Apple's `container`,
     `wsl`, `lxc`/`lxd`/`incus`, `multipass`, `nsenter`, `unshare`,
     `chroot`, `systemd-nspawn`, `lxc-*`, `machinectl`, QEMU (`qemu-*`),
-    `virsh`, VirtualBox, Parallels, VMware's `vmrun`, UTM, Vagrant, Tart,
-    and every `docker-*` or `podman-*` helper (`CONTAINER_RUNTIMES`). They are effectively full access to
+    `virsh`, `kvm`, VirtualBox, Parallels, VMware's `vmrun`, UTM, Vagrant,
+    Tart, Apptainer/Singularity, Distrobox, Toolbox, Lima's `*.lima`
+    wrappers, and every `docker-*`, `dockerd-*`, `containerd-*` or `podman-*` helper (`CONTAINER_RUNTIMES`). They are effectively full access to
     the computer; when the owner decides, they become a high-risk
     consent or stay off;
   - programs that act as another user (`sudo`, `sudoedit`, `doas`,
