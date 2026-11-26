@@ -169,15 +169,34 @@ guest SDK has `Context::call_state` and `Context::call_control`.
 - **Audit:** every call is recorded with the operation, the grant, the
   outcome and a control's action kind; never the state, a title or anything
   of the call.
-- **Refusals** start with their code (`calls-unsupported: …`), which the
-  plugin's `errorCodes` translate. A run the user did not start is
-  `calls-not-user-started` (the executor's re-check; it uses none of the
-  run's controls), and more than 2 controls in a run, or too many waiting
-  at once, is `calls-throttled`. Neither is `calls-consent`, which is the
-  user's consent only. ABI codes: `calls-consent` and
-  `calls-not-user-started` are `not-permitted`, `calls-throttled` is
-  `throttled`, `calls-provider-offline` and `calls-locked` are
-  `unavailable`, the others `failed`.
+- **Refusals.** The broker refuses first, with an ABI code and its own
+  words and no Calls code: a missing grant is `not-permitted` ("not
+  granted"), a run the user did not start `not-permitted` with the broker's
+  sentence, a rate limit `throttled`. The plugin reads those
+  (`calls-consent`, `calls-not-user-started`, `calls-throttled` in its
+  `errorCodes`). Past the broker, the executor's and the agent's refusals
+  start with their code (`calls-unsupported: …`): a run the user did not
+  start is `calls-not-user-started` (the executor's re-check; it uses none
+  of the run's controls), and more than 2 controls in a run, another
+  command of the call still waiting, or too many waiting at once is
+  `calls-throttled`. Neither is `calls-consent`, which is the user's
+  consent only. ABI codes: `calls-consent` and `calls-not-user-started` are
+  `not-permitted`, `calls-throttled` is `throttled`,
+  `calls-provider-offline` and `calls-locked` are `unavailable`, the others
+  `failed`.
+- **A request the plugin gave up on is never carried out.** The lane waits
+  in slices and stops when the invocation is cancelled or nears its
+  deadline (`call.control` at most 8 s, never past the invocation's
+  deadline less 500 ms). A request the agent reaches only after the lane
+  stopped waiting, or after its deadline, is refused without anything
+  being sent (`calls-unconfirmed: the request came too late`). So a control
+  the plugin was told failed never runs later against another call.
+- **Without the consent to observe calls**, installing Calls again removes
+  any earlier install: its provider is disconnected and its frames go, so
+  nothing answers from its old consents.
+- **Accepted:** an action's result `data` (the plugin's `deckpilot.calls`
+  answers only `outcome`) may feed later nodes of a workflow the user
+  built. Variables are refused by the manifest rule above.
 
 The agent's `PLUGIN_API` is not moved by this change, and the privileged
 policy has no `deckpilot.calls` entry yet: both are the owner's release
@@ -217,7 +236,8 @@ described in the
 [SDK permissions](marketplace/sdk/permissions.md#plugin-api-116-the-bundled-calls-plugin-only).
 They are privileged: only the bundled plugin `deckpilot.calls` declares
 them, with `^1.16`, and a plugin with `calls` has no `network`,
-`credentials`, `openUrl`, `tools` or `connections`. `Manifest::privileged_usages` lists
+`credentials`, `openUrl`, `tools`, `connections`, `resources` or `scripts`,
+and no variables. `Manifest::privileged_usages` lists
 all three, so the reviewed privileged policy pins them like the 1.9 kinds.
 
 | Grant | Tier | |

@@ -349,6 +349,14 @@ impl Agent {
         #[cfg(feature = "plugins")]
         self.calls.waiting.abandon("Calls was started again");
         if !consent.observe {
+            // Without the consent to observe calls nothing of Calls runs:
+            // an earlier install goes, its provider disconnected and its
+            // frames popped, so nothing answers from its old consents.
+            if let Some(mut old) = self.calls.service.take() {
+                old.provider.disconnect();
+                old.driver.clear(&mut self.runtime);
+                self.render_all();
+            }
             info!("calls not installed: no consent to observe calls");
             return;
         }

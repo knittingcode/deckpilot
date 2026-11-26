@@ -71,8 +71,7 @@ pub use value::{ActionOutcome, ParamValue, Params, ValidationError};
 /// `polls` of [`protocol::GuestLimits`]; and the capability operations of
 /// plugin API 1.14 ([`connections`]: `connections.get`,
 /// `connections.reportStatus`, `time.sleep`) and the `connection` member
-/// of `http.fetch`, which only a guest that uses them sends.
-/// guest that uses them sends; and the capability operations of plugin
-/// API 1.16 ([`calls`]: `call.state` and `call.control`), which only a
-/// guest that uses them sends.
+/// of `http.fetch`, which only a guest that uses them sends; and the
+/// capability operations of plugin API 1.16 ([`calls`]: `call.state` and
+/// `call.control`), which only a guest that uses them sends.
 pub const ABI_VERSION: u32 = 1;

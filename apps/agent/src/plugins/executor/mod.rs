@@ -1554,7 +1554,9 @@ impl Executor {
             | Allowed::ProfileRead { .. } => self.project(plugin, allowed),
             Allowed::Script(call) => self.script(plugin, call, interrupt),
             // Plugin API 1.16 (`calls.rs`).
-            Allowed::CallState | Allowed::CallControl { .. } => self.calls(plugin, allowed),
+            Allowed::CallState | Allowed::CallControl { .. } => {
+                self.calls(plugin, allowed, interrupt)
+            }
             Allowed::TimeNow => super::ambient::now(),
             Allowed::RandomBytes { length } => super::ambient::random(*length),
             Allowed::RunContext(context) => serde_json::to_value(context).map_or_else(

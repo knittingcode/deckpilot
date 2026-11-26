@@ -26,7 +26,13 @@ struct FakeAgent {
 }
 
 impl CallsHost for FakeAgent {
-    fn call(&self, plugin: &str, call: CallsCall) -> CallsReply {
+    fn call(
+        &self,
+        plugin: &str,
+        call: CallsCall,
+        _until: std::time::Instant,
+        _stopped: &dyn Fn() -> bool,
+    ) -> CallsReply {
         self.calls.lock().unwrap().push((plugin.to_owned(), call));
         match call {
             CallsCall::State => Ok(CallsAnswer::State(Box::new(CallStateReply {

@@ -238,6 +238,8 @@ pub(crate) enum Command {
         plugin: String,
         call: plugin_calls::CallsCall,
         reply: std::sync::mpsc::SyncSender<plugin_calls::CallsReply>,
+        /// Whether the lane still waits, and until when.
+        pending: plugin_calls::Pending,
     },
     /// A work session operation from a test (the keys call the service
     /// directly). `press: None` is a press now, in the current state.
@@ -536,7 +538,8 @@ impl AgentHandle {
         let call = action.map_or(CallsCall::State, CallsCall::Control);
         let host = AgentCallsHost::new(self.commands.clone());
         let plugin = plugin.to_owned();
-        let answer = tokio::task::spawn_blocking(move || host.call(&plugin, call))
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let answer = tokio::task::spawn_blocking(move || host.call(&plugin, call, far, &|| false))
             .await
             .map_err(|e| ("join".to_owned(), e.to_string()))?;
         match answer {
@@ -546,6 +549,33 @@ impl AgentHandle {
             }
             Err(refusal) => Err((refusal.code.to_owned(), refusal.message)),
         }
+    }
+
+    /// A `call.control` the lane already gave up on (cancelled, or told it
+    /// failed) when the agent gets to it: the refusal's code and message.
+    /// Tests only.
+    #[cfg(all(feature = "test-hooks", feature = "plugins"))]
+    pub async fn plugin_call_given_up(
+        &self,
+        plugin: &str,
+        action: deckpilot_plugin_abi::calls::CallAction,
+    ) -> Option<(String, String)> {
+        use plugin_calls::{CallsCall, Pending};
+        let pending = Pending::new(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        pending.give_up();
+        let (reply, answer) = std::sync::mpsc::sync_channel(1);
+        self.commands
+            .send(Command::PluginCall {
+                plugin: plugin.to_owned(),
+                call: CallsCall::Control(action),
+                reply,
+                pending,
+            })
+            .ok()?;
+        let answer = tokio::task::spawn_blocking(move || answer.recv().ok())
+            .await
+            .ok()??;
+        answer.err().map(|r| (r.code.to_owned(), r.message))
     }
 
     /// The work session as last published; changes on every transition.
@@ -1293,8 +1323,9 @@ impl Agent {
                 plugin,
                 call,
                 reply,
+                pending,
             } => {
-                self.plugin_call(&plugin, call, reply);
+                self.plugin_call(&plugin, call, reply, &pending);
                 Flow::Continue
             }
             Command::Request {

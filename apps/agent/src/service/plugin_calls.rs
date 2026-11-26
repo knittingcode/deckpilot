@@ -98,9 +98,11 @@ impl CallsRefusal {
                 "no call is in a state this action applies to",
             ),
             GateError::Unsupported(reason) => Self::new(codes::UNSUPPORTED, reason.code()),
+            // The engine's only `Unconfirmed` before sending: another
+            // command of this call still waits for its confirmation.
             GateError::Unconfirmed => Self::new(
-                codes::UNCONFIRMED,
-                "the call app did not confirm it (or another command still waits)",
+                codes::THROTTLED,
+                "another call action still waits for its confirmation",
             ),
             GateError::ProviderOffline => {
                 Self::new(codes::PROVIDER_OFFLINE, "the call app is not connected")
@@ -119,8 +121,50 @@ pub(crate) type CallsReply = Result<CallsAnswer, CallsRefusal>;
 pub(crate) trait CallsHost: Send + Sync + std::fmt::Debug {
     /// Carries out `call` for `plugin` (already allowed by the broker and
     /// checked by the executor). Blocks the caller's thread until the
-    /// answer, at most [`CONTROL_WAIT`].
-    fn call(&self, plugin: &str, call: CallsCall) -> CallsReply;
+    /// answer, at most [`CONTROL_WAIT`] and never past `until` (the
+    /// invocation's deadline, less a margin), and gives up as soon as
+    /// `stopped` says the invocation was cancelled.
+    fn call(
+        &self,
+        plugin: &str,
+        call: CallsCall,
+        until: std::time::Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> CallsReply;
+}
+
+/// How often a waiting call looks at its invocation's interrupt.
+const WAIT_SLICE: Duration = Duration::from_millis(100);
+
+/// A request the plugin's lane may give up on: the agent acts on it only
+/// while the lane still waits and before its deadline, so a control the
+/// plugin was already told failed (or was cancelled) is never sent late.
+#[derive(Debug, Clone)]
+pub(crate) struct Pending {
+    /// Set by the lane when it stops waiting, for any reason.
+    gone: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The agent does nothing for the request after this instant.
+    deadline: std::time::Instant,
+}
+
+impl Pending {
+    pub fn new(deadline: std::time::Instant) -> Self {
+        Self {
+            gone: std::sync::Arc::default(),
+            deadline,
+        }
+    }
+
+    /// Whether the lane stopped waiting, or the deadline passed.
+    pub fn is_stale(&self) -> bool {
+        self.gone.load(std::sync::atomic::Ordering::SeqCst)
+            || std::time::Instant::now() >= self.deadline
+    }
+
+    /// The lane stops waiting.
+    pub fn give_up(&self) {
+        self.gone.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// [`CallsHost`] through the agent's command channel, answered on the
@@ -135,31 +179,60 @@ impl AgentCallsHost {
 }
 
 impl CallsHost for AgentCallsHost {
-    fn call(&self, plugin: &str, call: CallsCall) -> CallsReply {
+    fn call(
+        &self,
+        plugin: &str,
+        call: CallsCall,
+        until: std::time::Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> CallsReply {
+        let wait = match call {
+            CallsCall::State => STATE_WAIT,
+            CallsCall::Control(_) => CONTROL_WAIT,
+        };
+        let deadline = until.min(std::time::Instant::now() + wait);
+        let pending = Pending::new(deadline);
         let (reply, answer) = sync_channel(1);
         self.0
             .send(Command::PluginCall {
                 plugin: plugin.to_owned(),
                 call,
                 reply,
+                pending: pending.clone(),
             })
             .map_err(|_| {
                 CallsRefusal::new(codes::PROVIDER_OFFLINE, "the agent is not answering")
             })?;
-        let wait = match call {
-            CallsCall::State => STATE_WAIT,
-            CallsCall::Control(_) => CONTROL_WAIT,
+        let late = || match call {
+            CallsCall::State => {
+                CallsRefusal::new(codes::PROVIDER_OFFLINE, "the agent is not answering")
+            }
+            CallsCall::Control(_) => {
+                CallsRefusal::new(codes::UNCONFIRMED, "no confirmation in time")
+            }
         };
-        answer.recv_timeout(wait).unwrap_or_else(|_| {
-            Err(match call {
-                CallsCall::State => {
-                    CallsRefusal::new(codes::PROVIDER_OFFLINE, "the agent is not answering")
+        loop {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                pending.give_up();
+                return Err(late());
+            }
+            if stopped() {
+                pending.give_up();
+                return Err(CallsRefusal::new(
+                    codes::UNCONFIRMED,
+                    "the action was cancelled before the call app confirmed it",
+                ));
+            }
+            match answer.recv_timeout(WAIT_SLICE.min(deadline - now)) {
+                Ok(reply) => return reply,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    pending.give_up();
+                    return Err(late());
                 }
-                CallsCall::Control(_) => {
-                    CallsRefusal::new(codes::UNCONFIRMED, "no confirmation in time")
-                }
-            })
-        })
+            }
+        }
     }
 }
 
@@ -220,10 +293,23 @@ impl Agent {
         plugin: &str,
         call: CallsCall,
         reply: SyncSender<CallsReply>,
+        pending: &Pending,
     ) {
         let refused = |reply: &SyncSender<CallsReply>, refusal: CallsRefusal| {
             let _ = reply.try_send(Err(refusal));
         };
+        // The lane gave up (cancelled, out of time) or the agent was busy
+        // past the request's deadline: nothing is done for it, above all no
+        // control is sent after the plugin was told it failed.
+        if pending.is_stale() {
+            return refused(
+                &reply,
+                CallsRefusal::new(
+                    codes::UNCONFIRMED,
+                    "the request came too late; nothing was sent",
+                ),
+            );
+        }
         if plugin != CALLS_PLUGIN_ID {
             // The broker and the executor refuse it already.
             return refused(
@@ -427,5 +513,71 @@ fn rejected(code: &str) -> CallsRefusal {
                 deckpilot_calls::snapshot::FailureCode::new(code)
             ),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant as WallInstant;
+
+    use super::*;
+
+    fn received(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Command>) -> Pending {
+        match rx.try_recv() {
+            Ok(Command::PluginCall { pending, .. }) => pending,
+            _ => panic!("no PluginCall"),
+        }
+    }
+
+    /// A cancelled invocation stops waiting at once, and the agent then
+    /// finds the request stale: nothing is done for it.
+    #[test]
+    fn a_cancelled_invocation_gives_the_request_up() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = AgentCallsHost::new(tx);
+        let started = WallInstant::now();
+        let far = started + Duration::from_secs(60);
+        let answer = host.call(
+            CALLS_PLUGIN_ID,
+            CallsCall::Control(abi::CallAction::End),
+            far,
+            &|| true,
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let refusal = answer.unwrap_err();
+        assert_eq!(refusal.code, codes::UNCONFIRMED);
+        assert!(refusal.message.contains("cancelled"), "{}", refusal.message);
+        assert!(received(&mut rx).is_stale());
+    }
+
+    /// The wait never passes the invocation's deadline (`until`), and the
+    /// request is stale once it did.
+    #[test]
+    fn the_wait_ends_at_the_invocations_deadline() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = AgentCallsHost::new(tx);
+        let started = WallInstant::now();
+        let until = started + Duration::from_millis(250);
+        let answer = host.call(
+            CALLS_PLUGIN_ID,
+            CallsCall::Control(abi::CallAction::End),
+            until,
+            &|| false,
+        );
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_millis(250), "{waited:?}");
+        assert!(waited < CONTROL_WAIT, "{waited:?}");
+        assert_eq!(answer.unwrap_err().code, codes::UNCONFIRMED);
+        assert!(received(&mut rx).is_stale());
+    }
+
+    /// A request still waited for, before its deadline, is not stale.
+    #[test]
+    fn a_fresh_request_is_not_stale() {
+        let pending = Pending::new(WallInstant::now() + Duration::from_secs(5));
+        assert!(!pending.is_stale());
+        pending.give_up();
+        assert!(pending.is_stale());
+        assert!(Pending::new(WallInstant::now()).is_stale());
     }
 }

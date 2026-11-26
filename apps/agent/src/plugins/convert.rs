@@ -1052,9 +1052,16 @@ fn privileged(effective: &[(GrantKey, GrantScope)]) -> Vec<ApprovedPermission> {
     // Plugin API 1.16: `calls` (observe), with `calls:control` only while
     // `calls` itself is granted. The broker allows them to
     // `deckpilot.calls` only, and never with a way out of the agent.
-    if has(&GrantScope::CallsObserve) {
+    // The Calls scopes only under the `calls` kind (defence in depth: only
+    // `Permission::Calls` produces them).
+    let calls = |scope: &GrantScope| {
+        effective
+            .iter()
+            .any(|(k, s)| k.kind == PermissionKind::Calls && s == scope)
+    };
+    if calls(&GrantScope::CallsObserve) {
         out.push(ApprovedPermission::Calls {
-            control: has(&GrantScope::CallsControl),
+            control: calls(&GrantScope::CallsControl),
         });
     }
     out

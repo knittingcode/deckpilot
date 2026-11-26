@@ -2034,6 +2034,51 @@ mod plugin_ops {
         deck.agent.shutdown().await;
     }
 
+    /// A control the plugin's lane already gave up on (cancelled, or told
+    /// it failed) when the agent reaches it is refused, and nothing is sent
+    /// to the call app.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_control_the_lane_gave_up_on_is_never_sent() {
+        let f = fixture();
+        let deck = start(&f).await;
+        deck.join().await;
+        let refusal = deck
+            .agent
+            .handle
+            .plugin_call_given_up(CALLS, CallAction::MicToggle)
+            .await
+            .expect("an answer");
+        assert_eq!(refusal.0, "calls-unconfirmed");
+        assert!(refusal.1.contains("too late"), "{}", refusal.1);
+        assert_eq!(sent_commands(&deck).await, Some(0));
+        deck.agent.shutdown().await;
+    }
+
+    /// Installing Calls again without the consent to observe removes the
+    /// earlier install: nothing answers from its old consents, and its
+    /// frames go.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn withdrawing_the_observe_consent_removes_calls() {
+        let f = fixture();
+        let deck = start(&f).await;
+        deck.join().await;
+        assert_eq!(state(&deck).await.unwrap().state, "active");
+        deck.agent
+            .handle
+            .install_calls_mock_with(
+                MockProvider::new(),
+                ActionParameters::new(),
+                ConsentState::default(),
+            )
+            .await;
+        let (refusal, _) = state(&deck).await.unwrap_err();
+        assert_eq!(refusal, "calls-provider-offline");
+        let (refusal, _) = code(control(&deck, CallAction::End).await);
+        assert_eq!(refusal, "calls-provider-offline");
+        deck.wait_overlay(false).await;
+        deck.agent.shutdown().await;
+    }
+
     /// Teams holding the microphone, as a Windows signals fixture shows it.
     struct TeamsInACall;
 

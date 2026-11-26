@@ -20,10 +20,15 @@ use deckpilot_calls::ops::CALLS_PLUGIN_ID;
 use deckpilot_plugin_abi::calls::codes;
 use deckpilot_plugin_abi::{CallErrorCode, CallResult};
 use deckpilot_plugin_broker::{Allowed, DenyReason, PluginId};
+use deckpilot_plugin_supervisor::CallInterrupt;
 use tracing::warn;
 
 use super::{Executor, PrivilegedRecord};
 use crate::service::plugin_calls::{CallsAnswer, CallsCall, CallsHost, CallsRefusal};
+
+/// What a call keeps of the invocation's time for its answer to reach the
+/// plugin.
+const DEADLINE_MARGIN: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Most `call.control`s one invocation may make: a press asks for one
 /// action (a set that toggles is still one), so a run the user started
@@ -38,7 +43,12 @@ impl Executor {
     }
 
     /// `call.state` or `call.control`, which the broker allowed.
-    pub(super) fn calls(&self, plugin: &PluginId, allowed: &Allowed) -> CallResult {
+    pub(super) fn calls(
+        &self,
+        plugin: &PluginId,
+        allowed: &Allowed,
+        interrupt: Option<&CallInterrupt>,
+    ) -> CallResult {
         let started = Instant::now();
         let (op, grant, call) = match allowed {
             Allowed::CallState => ("call.state", "calls", CallsCall::State),
@@ -89,7 +99,21 @@ impl Executor {
             ))
         } else {
             match &self.calls {
-                Some(host) => host.call(plugin.as_str(), call),
+                Some(host) => {
+                    // Never past the invocation's deadline (less a margin,
+                    // so the answer still reaches the plugin), and given up
+                    // as soon as the invocation is cancelled.
+                    let until = interrupt.map_or_else(
+                        || std::time::Instant::now() + std::time::Duration::from_secs(3600),
+                        |i| {
+                            i.deadline()
+                                .checked_sub(DEADLINE_MARGIN)
+                                .unwrap_or_else(std::time::Instant::now)
+                        },
+                    );
+                    let stopped = || interrupt.is_some_and(CallInterrupt::is_raised);
+                    host.call(plugin.as_str(), call, until, &stopped)
+                }
                 None => Err(CallsRefusal::new(
                     codes::PROVIDER_OFFLINE,
                     "Calls is not available in this agent",
