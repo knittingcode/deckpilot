@@ -5,6 +5,7 @@
 //! See `docs/background-agent.md` for the architecture.
 
 pub mod autostart;
+pub mod crash;
 mod devices;
 pub mod instance;
 pub mod launcher;

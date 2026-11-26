@@ -24,7 +24,9 @@ enum UserEvent {
     Ready(AgentHandle),
     State(Box<AgentStatus>),
     Menu(MenuEvent),
-    Exit,
+    /// The agent stopped: the process exits with this code
+    /// (`crash::Outcome::exit_code`).
+    Exit(u8),
 }
 
 const OPEN: &str = "open";
@@ -32,17 +34,30 @@ const REFRESH: &str = "refresh";
 const QUIT: &str = "quit";
 const PROFILE_PREFIX: &str = "profile:";
 
+/// Something the process keeps until it exits, then drops (the log
+/// writer's guard, which flushes the log). The event loop ends the process
+/// without returning, so nothing of `main` is dropped otherwise.
+pub type ExitGuard = Box<dyn std::any::Any + Send>;
+
 /// Runs the agent with a tray icon until the user quits or the agent stops.
-/// Never returns on some platforms; the process exits from the event loop.
+/// Never returns: the process exits from the event loop, with a non-zero
+/// code if the agent failed or panicked (`crash.rs`).
 pub fn run(options: AgentOptions, lock: InstanceLock) {
-    run_with_plugins(options, lock, crate::plugins::PluginSettings::default());
+    run_with_plugins(
+        options,
+        lock,
+        crate::plugins::PluginSettings::default(),
+        None,
+    );
 }
 
-/// [`run`] with plugins set up as `plugins` says.
+/// [`run`] with plugins set up as `plugins` says. `guard` is dropped right
+/// before the process exits.
 pub fn run_with_plugins(
     options: AgentOptions,
     lock: InstanceLock,
     plugins: crate::plugins::PluginSettings,
+    guard: Option<ExitGuard>,
 ) {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     #[cfg(target_os = "macos")]
@@ -50,10 +65,10 @@ pub fn run_with_plugins(
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
         let mut event_loop = event_loop;
         event_loop.set_activation_policy(ActivationPolicy::Accessory);
-        run_loop(event_loop, options, lock, plugins);
+        run_loop(event_loop, options, lock, plugins, guard);
     }
     #[cfg(not(target_os = "macos"))]
-    run_loop(event_loop, options, lock, plugins);
+    run_loop(event_loop, options, lock, plugins, guard);
 }
 
 fn run_loop(
@@ -61,6 +76,7 @@ fn run_loop(
     options: AgentOptions,
     lock: InstanceLock,
     plugins: crate::plugins::PluginSettings,
+    guard: Option<ExitGuard>,
 ) {
     let proxy = event_loop.create_proxy();
     let menu_proxy = proxy.clone();
@@ -71,6 +87,7 @@ fn run_loop(
 
     let mut tray: Option<TrayIcon> = None;
     let mut handle: Option<AgentHandle> = None;
+    let mut guard = guard;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -91,9 +108,10 @@ fn run_loop(
                     handle.tray(command);
                 }
             }
-            Event::UserEvent(UserEvent::Exit) => {
+            Event::UserEvent(UserEvent::Exit(code)) => {
                 tray.take();
-                *control_flow = ControlFlow::Exit;
+                drop(guard.take());
+                *control_flow = ControlFlow::ExitWithCode(i32::from(code));
             }
             _ => {}
         }
@@ -115,19 +133,16 @@ fn spawn_agent(
             Ok(runtime) => runtime,
             Err(error) => {
                 error!(%error, "cannot start the async runtime");
-                let _ = proxy.send_event(UserEvent::Exit);
+                exit(&proxy, crate::crash::Outcome::Failed);
                 return;
             }
         };
-        runtime.block_on(async {
-            let agent = match Agent::start(options, lock) {
-                Ok(agent) => agent.with_plugins(plugins),
-                Err(error) => {
-                    error!(%error, "agent failed to start");
-                    let _ = proxy.send_event(UserEvent::Exit);
-                    return;
-                }
-            };
+        let agent_proxy = proxy.clone();
+        let outcome = crate::crash::run_agent(runtime, async move {
+            let proxy = agent_proxy;
+            let agent = Agent::start(options, lock)?.with_plugins(plugins);
+            #[cfg(feature = "test-hooks")]
+            crate::crash::testing::arm(&agent.handle());
             let handle = agent.handle();
             let mut events = handle.subscribe();
             let _ = proxy.send_event(UserEvent::Ready(handle.clone()));
@@ -146,12 +161,24 @@ fn spawn_agent(
             });
             // Boxed: with Calls the loop's future is large (clippy
             // `large_futures`).
-            if let Err(error) = Box::pin(agent.run(crate::service::shutdown_signal())).await {
-                error!(%error, "agent stopped with an error");
-            }
+            Box::pin(agent.run(crate::service::shutdown_signal())).await
         });
-        let _ = proxy.send_event(UserEvent::Exit);
+        // Also after a panic in the agent's main loop (`crash.rs`): the
+        // endpoint is closed and the lock released by now, and the tray
+        // must not stay with a menu that does nothing.
+        exit(&proxy, outcome);
     });
+}
+
+/// Ends the process with `outcome`'s exit code: through the event loop,
+/// which removes the tray icon first, or at once if the event loop is gone.
+fn exit(proxy: &EventLoopProxy<UserEvent>, outcome: crate::crash::Outcome) {
+    if proxy
+        .send_event(UserEvent::Exit(outcome.exit_code()))
+        .is_err()
+    {
+        std::process::exit(i32::from(outcome.exit_code()));
+    }
 }
 
 fn command_for(id: &str) -> Option<TrayCommand> {
