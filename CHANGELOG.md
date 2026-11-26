@@ -110,6 +110,12 @@ released either. 0.6.0 is the first version intended for publication.
   A managed Calls layout that cannot be stored while the database is busy
   is tried again after 1 s, then after waits doubling up to a minute;
   other storage errors are not retried.
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
 - Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
   `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
   Settings › Devices gets a Calls section, in English and Polish, shown

@@ -1,0 +1,7 @@
+[
+  {
+    "processImage": "C:\\Program Files\\WindowsApps\\MSTeams_8wekyb3d8bbwe\\ms-teams.exe",
+    "state": "active"
+  },
+  { "processImage": "C:\\Windows\\System32\\svchost.exe", "state": "inactive" }
+]
