@@ -222,14 +222,40 @@ fn cut(line: &str, max: usize) -> String {
     text
 }
 
-/// Sensitive field names: a field (`key=value`, `key: value`,
-/// `"key": "value"`) whose name contains one of them has its value
-/// redacted.
+/// What a field's value may look like in a log line: `\"…\"` (JSON inside
+/// a quoted string), `"…"`, `'…'`, a quote not closed before the end of the
+/// line, `Type { … }`, `Type(…)` (`Some("…")`), `{ … }`, `( … )`, `[ … ]`
+/// (one level of nesting), or a bare word.
+const FIELD_VALUE: &str = concat!(
+    r#"(?:\\"(?:[^\\]|\\[^"])*\\""#,
+    r#"|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'"#,
+    r#"|"[^"]*$|'[^']*$"#,
+    r"|[A-Za-z_][A-Za-z0-9_:]*\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
+    r"|[A-Za-z_][A-Za-z0-9_:]*\((?:[^()]|\([^()]*\))*\)",
+    r"|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
+    r"|\((?:[^()]|\([^()]*\))*\)",
+    r"|\[[^\[\]]*\]",
+    r"|[^\s&,;)}\]:][^\s&,;)}\]]*)",
+);
+
+/// Between a field's name and its value: `=`, `:`, `=>`, `->`, `%3D`,
+/// after an optional closing quote (also `\"`).
+const FIELD_SEPARATOR: &str = r#"(\\?["']?\s*(?:=>|->|%3[Dd]|[=:])\s*)"#;
+
+/// Secret fields: a field (`key=value`, `key: value`, `"key": "value"`,
+/// `key => value`) whose name contains one of the words, or ends in one of
+/// the short ones, has its value redacted.
 static SECRET_FIELD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?i)([A-Za-z0-9_.-]*(?:token|passw(?:or)?d|pwd|secret|credential|api[_-]?key|private[_-]?key|access[_-]?key|auth|cookie|session|signature|bearer)[A-Za-z0-9_.-]*)(["']?\s*[=:]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s&,;)}\]]+)"#,
-    )
+    Regex::new(&format!(
+        r"(?i)\b((?:[A-Za-z0-9_.-]*(?:token|passw(?:or)?d|passphrase|pwd|secret|credential|api[_-]?key|private[_-]?key|access[_-]?key|auth|cookie|session|signature|bearer)[A-Za-z0-9_.-]*)|(?:[A-Za-z0-9.-]*[_.-])?(?:key|sig|pass|pw|pin|otp)){FIELD_SEPARATOR}({FIELD_VALUE})"
+    ))
     .expect("valid regex")
+});
+
+/// A secret command-line option and its value: `--password X`.
+static SECRET_OPTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^|\s)(--?[A-Za-z0-9_-]*(?:passw(?:or)?d|passphrase|token|secret|api-?key|key|pass|pw)[A-Za-z0-9_-]*)(\s+)([^\s-]\S*)")
+        .expect("valid regex")
 });
 
 /// The credential after an HTTP authorization scheme.
@@ -237,17 +263,17 @@ static AUTH_SCHEME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(bearer|basic|digest|token)(\s+)([A-Za-z0-9._~+/=-]+)").expect("valid regex")
 });
 
-/// User and password in a URL.
-static URL_USERINFO: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/@?#]+)@").expect("valid regex")
-});
-
-/// A URL's host.
-static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
+/// A URL: scheme, user information, host, and the rest (port, path, query).
+static URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(?i)\b([a-z][a-z0-9+.-]*://(?:[^\s/@?#]*@)?)(\[[0-9a-f:.]+\]|[^\s/:?#"'<>\[\]@]+)"#,
+        r#"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/@?#"'<>]*@)?(\[[0-9a-f:.]+\]|[^\s/:?#"'<>\[\]@]+)([^\s"'<>]*)"#,
     )
     .expect("valid regex")
+});
+
+/// A Windows UNC path's server: `\\server\share`.
+static UNC_SERVER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(^|[\s"'=(\[])(\\{2,})([A-Za-z0-9._-]+)(\\+)"#).expect("valid regex")
 });
 
 /// Tokens of well-known services and JSON web tokens.
@@ -264,6 +290,11 @@ static KNOWN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
 static OPAQUE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[A-Za-z0-9+=_-]{32,}").expect("valid regex"));
 
+/// The same with `/` (base64, a PEM line): redacted only when it mixes
+/// upper and lower case and digits, which paths rarely do.
+static OPAQUE_SLASHED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/=_-]{32,}").expect("valid regex"));
+
 /// A device ID as the agent logs it: `<model>#<serial>`, the model a dotted
 /// ID (`elgato.streamdeck.mk2`).
 static DEVICE_ID: LazyLock<Regex> = LazyLock::new(|| {
@@ -271,10 +302,15 @@ static DEVICE_ID: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid regex")
 });
 
-/// A serial number field.
+/// A serial number field (also `ID_SERIAL_SHORT=`, `serial_number:
+/// Some("…")`, `serial ABC123`).
 static SERIAL_FIELD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\b(serial(?:[_-]?(?:number|no))?)(["']?\s*[=:]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[A-Za-z0-9_-]+)"#)
-        .expect("valid regex")
+    Regex::new(concat!(
+        r#"(?i)(serial(?:[_-]?(?:number|no|short))?)(\\?["']?\s*(?:=>|->|[=:])\s*|\s+)"#,
+        r#"(\\"(?:[^\\]|\\[^"])*\\"|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'"#,
+        r#"|Some\((?:"(?:[^"\\]|\\.)*"|[^)]*)\)|[A-Za-z0-9_-]+)"#,
+    ))
+    .expect("valid regex")
 });
 
 /// Another user's home directory (the user's own is `~` already).
@@ -291,6 +327,80 @@ static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
 static IPV4: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b").expect("valid regex")
 });
+
+/// An IPv6 address (four or more groups, or a `::`), with a zone.
+static IPV6: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)(^|[^0-9a-z:.])(",
+        r"(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}",
+        r"|(?:[0-9a-f]{1,4}:){1,6}(?::[0-9a-f]{1,4}){1,6}",
+        r"|(?:[0-9a-f]{1,4}:){1,7}:",
+        r"|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?",
+        r")(%[0-9a-z]+)?",
+    ))
+    .expect("valid regex")
+});
+
+/// A webhook URL's secret path: everything after these segments.
+const WEBHOOK_SEGMENTS: [&str; 3] = ["/webhooks/", "/services/", "/hooks/"];
+
+/// A URL without what may identify the user: user information goes, and a
+/// host other than GitHub's or loopback becomes `<host>`, its query values
+/// `<redacted>` and a webhook path's secret part too.
+fn url(c: &Captures<'_>) -> String {
+    let scheme = &c[1];
+    let userinfo = if c.get(2).is_some() {
+        "<redacted>@"
+    } else {
+        ""
+    };
+    let host = &c[3];
+    let rest = &c[4];
+    if public_host(host) {
+        return format!("{scheme}{userinfo}{host}{rest}");
+    }
+    let (path, query) = match rest.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (rest, None),
+    };
+    let mut path = path.to_owned();
+    let lower = path.to_ascii_lowercase();
+    if let Some(at) = WEBHOOK_SEGMENTS
+        .iter()
+        .filter_map(|segment| lower.find(segment).map(|at| at + segment.len()))
+        .min()
+    {
+        path.truncate(at);
+        path.push_str(REDACTED);
+    }
+    let query = query.map(|query| {
+        query
+            .split('&')
+            .map(|pair| match pair.split_once('=') {
+                Some((name, value)) if !value.is_empty() => format!("{name}={REDACTED}"),
+                _ => pair.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("&")
+    });
+    match query {
+        Some(query) => format!("{scheme}{userinfo}<host>{path}?{query}"),
+        None => format!("{scheme}{userinfo}<host>{path}"),
+    }
+}
+
+/// A field value without the `Some(…)` and quotes around it.
+fn bare_value(value: &str) -> &str {
+    let value = value
+        .strip_prefix("Some(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(value);
+    let value = value
+        .strip_prefix("\\\"")
+        .and_then(|inner| inner.strip_suffix("\\\""))
+        .unwrap_or(value);
+    value.trim_matches(['"', '\''])
+}
 
 /// Hosts that say nothing about the user: DeckPilot's own and loopback.
 fn public_host(host: &str) -> bool {
@@ -373,9 +483,11 @@ impl LogRedactor {
     /// Credentials first: they may contain anything the later rules would
     /// split.
     fn credentials(line: &str) -> String {
-        let mut text = line.to_owned();
-        text = URL_USERINFO
-            .replace_all(&text, |c: &Captures<'_>| format!("{}{REDACTED}@", &c[1]))
+        let mut text = URL.replace_all(line, url).into_owned();
+        text = UNC_SERVER
+            .replace_all(&text, |c: &Captures<'_>| {
+                format!("{}{}<host>{}", &c[1], &c[2], &c[4])
+            })
             .into_owned();
         text = KNOWN_TOKEN.replace_all(&text, REDACTED).into_owned();
         text = AUTH_SCHEME
@@ -393,12 +505,16 @@ impl LogRedactor {
                 }
             })
             .into_owned();
-        text = SECRET_FIELD
+        text = SECRET_OPTION
+            .replace_all(&text, |c: &Captures<'_>| {
+                format!("{}{}{}{REDACTED}", &c[1], &c[2], &c[3])
+            })
+            .into_owned();
+        SECRET_FIELD
             .replace_all(&text, |c: &Captures<'_>| {
                 format!("{}{}{REDACTED}", &c[1], &c[2])
             })
-            .into_owned();
-        text
+            .into_owned()
     }
 
     /// Serials, as the report's pseudonyms, and the machine ID.
@@ -415,8 +531,14 @@ impl LogRedactor {
             .into_owned();
         text = SERIAL_FIELD
             .replace_all(&text, |c: &Captures<'_>| {
-                let raw = c[3].trim_matches(['"', '\'']);
-                if raw.starts_with("sha256:") || raw.is_empty() {
+                let raw = bare_value(&c[3]);
+                // `serial number`: only a value that looks like a serial
+                // after a space.
+                let spaced = c[2].trim().is_empty();
+                if raw.starts_with("sha256:")
+                    || raw.is_empty()
+                    || (spaced && !raw.chars().any(|ch| ch.is_ascii_digit()))
+                {
                     c[0].to_owned()
                 } else {
                     format!("{}{}{}", &c[1], &c[2], self.pseudonym(raw))
@@ -424,9 +546,7 @@ impl LogRedactor {
             })
             .into_owned();
         for serial in &self.serials {
-            if text.contains(serial.as_str()) {
-                text = text.replace(serial.as_str(), &self.pseudonym(serial));
-            }
+            text = replace_ignore_case(&text, serial, &self.pseudonym(serial));
         }
         if let Some(id) = &self.machine_id {
             text = replace_ignore_case(&text, id, "<machine-id>");
@@ -451,15 +571,6 @@ impl LogRedactor {
             })
             .into_owned();
         text = EMAIL.replace_all(&text, "<email>").into_owned();
-        text = URL_HOST
-            .replace_all(&text, |c: &Captures<'_>| {
-                if public_host(&c[2]) {
-                    c[0].to_owned()
-                } else {
-                    format!("{}<host>", &c[1])
-                }
-            })
-            .into_owned();
         for host in &self.hosts {
             text = replace_word(&text, host, "<host>", true);
         }
@@ -481,13 +592,35 @@ impl LogRedactor {
                 }
             })
             .into_owned();
-        text
+        IPV6.replace_all(&text, |c: &Captures<'_>| {
+            let address = &c[2];
+            if address == "::" || address == "::1" {
+                c[0].to_owned()
+            } else {
+                format!("{}<ip>", &c[1])
+            }
+        })
+        .into_owned()
     }
 
     /// Last: whatever long opaque string is left.
     fn opaque(text: &str) -> String {
+        let text = OPAQUE_SLASHED.replace_all(text, |c: &Captures<'_>| {
+            let run = &c[0];
+            // A run that starts with `/` is a path (`/var/folders/…/T/…`).
+            let mixed = run.contains('/')
+                && !run.starts_with('/')
+                && run.chars().any(|ch| ch.is_ascii_digit())
+                && run.chars().any(|ch| ch.is_ascii_uppercase())
+                && run.chars().any(|ch| ch.is_ascii_lowercase());
+            if mixed {
+                REDACTED.to_owned()
+            } else {
+                run.to_owned()
+            }
+        });
         OPAQUE
-            .replace_all(text, |c: &Captures<'_>| {
+            .replace_all(&text, |c: &Captures<'_>| {
                 let run = &c[0];
                 let digits = run.chars().any(|ch| ch.is_ascii_digit());
                 let letters = run.chars().any(|ch| ch.is_ascii_alphabetic());

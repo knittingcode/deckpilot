@@ -258,7 +258,10 @@ fn the_bundle_keeps_what_support_needs() {
     assert!(has("machine <machine-id>"), "the machine ID");
     assert!(has("permission denied"), "ordinary messages are kept");
     assert!(has("deckpilot_agent::service"), "module paths are kept");
-    assert!(has("page=2"), "ordinary query fields are kept");
+    assert!(
+        has("access_token=<redacted>&page=<redacted>"),
+        "a private URL keeps its query names, not its values"
+    );
     let updates = logs[2]["lines"][0].as_str().unwrap();
     assert!(
         updates.contains("https://github.com/knittingcode/deckpilot/releases"),
@@ -400,5 +403,110 @@ fn rules_one_by_one() {
         ("broadcast stays", "255.255.255.255", "255.255.255.255"),
     ] {
         assert!(redactor.line(input) == expected, "rule: {label}");
+    }
+}
+
+/// Forms a log line may give a secret: each fake value must be gone.
+#[test]
+fn secrets_in_other_forms_are_removed() {
+    let root = root();
+    let env = fixture(root.path());
+    let redactor = LogRedactor::new(&env);
+    for (label, input, secret) in [
+        (
+            "escaped json",
+            r#"body="{\"password\":\"FAKEescaped\"}""#,
+            "FAKEescaped",
+        ),
+        (
+            "escaped json in debug",
+            r#"error=Json("{\"access_token\":\"FAKEat\"}")"#,
+            "FAKEat",
+        ),
+        (
+            "option with a space",
+            r#"token=Some("FAKE with space")"#,
+            "with space",
+        ),
+        ("tuple", r#"auth: ("bob", Some("FAKEtuple"))"#, "FAKEtuple"),
+        (
+            "struct",
+            r#"credentials: Credentials { user: "bob", pass: "FAKEpass" }"#,
+            "FAKEpass",
+        ),
+        ("unclosed quote", r#"password="abc FAKEtail"#, "FAKEtail"),
+        (
+            "query key",
+            "https://api.example/x?key=FAKEKEY123&sig=FAKESIG",
+            "FAKEKEY123",
+        ),
+        (
+            "query sig",
+            "https://api.example/x?key=FAKEKEY123&sig=FAKESIG",
+            "FAKESIG",
+        ),
+        ("passphrase", "passphrase=FAKEphrase", "FAKEphrase"),
+        ("pw", "pw=FAKEpw", "FAKEpw"),
+        ("pin", "pin=135799", "135799"),
+        ("option", "running tool --password FAKEcli now", "FAKEcli"),
+        ("arrow", "password -> FAKEarrow", "FAKEarrow"),
+        ("fat arrow", "password => FAKEfat", "FAKEfat"),
+        (
+            "slack webhook",
+            "https://hooks.slack.com/services/T000/B000/FAKEhook",
+            "FAKEhook",
+        ),
+        (
+            "discord webhook",
+            "https://discord.com/api/webhooks/123/FAKE-wh-token",
+            "FAKE-wh-token",
+        ),
+        (
+            "url-encoded",
+            "data=client_secret%3DFAKEenc%26x%3D1",
+            "FAKEenc",
+        ),
+        ("ipv6", "ip 2001:db8:85a3::8a2e:370:7334 up", "2001:db8"),
+        ("ipv6 link-local", "via fe80::1c2b:3d4e%en0", "fe80::1c2b"),
+        (
+            "base64 with slashes",
+            "key material wJalrXUtnFEMI/K7MDENG/bPxRfiCYFAKEKEY9",
+            "wJalrXUtnFEMI",
+        ),
+        (
+            "serial in another case",
+            "serial cl19k2b04711 seen",
+            "cl19k2b04711",
+        ),
+        ("serial short", "ID_SERIAL_SHORT=ZZ99XX88", "ZZ99XX88"),
+        (
+            "serial option",
+            r#"serial_number: Some("ZZ99XX77")"#,
+            "ZZ99XX77",
+        ),
+        ("unc server", r"opened \\fileserver\share\x", "fileserver"),
+    ] {
+        let output = redactor.line(input).to_lowercase();
+        assert!(
+            !output.contains(&secret.to_lowercase()),
+            "a secret is left: {label}"
+        );
+    }
+    // What stays readable.
+    for (label, input) in [
+        ("timestamps", "2026-11-26T10:00:00.123Z"),
+        ("module paths", "deckpilot_agent::service::device_retry"),
+        (
+            "library paths",
+            "/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1",
+        ),
+        ("loopback ipv6", "listening on ::1"),
+        (
+            "windows home of another user stays a path",
+            r"C:\\Users\\<user>\\x",
+        ),
+        ("exit codes", "exited with code=1"),
+    ] {
+        assert!(redactor.line(input) == input, "changed: {label}");
     }
 }

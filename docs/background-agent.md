@@ -621,22 +621,37 @@ The bundle contains:
 Every log line, and every string of the report again, goes through one
 redaction filter (`apps/agent/src/diagnose/bundle.rs`):
 
-- secret values: the value of a field whose name contains `token`,
-  `password`, `secret`, `credential`, `api_key`, `private_key`,
-  `access_key`, `auth`, `cookie`, `session` or `signature`; the credential
-  after `Bearer`, `Basic` and `Digest`; user and password in URLs; tokens
-  with a known prefix (`ghp_`, `github_pat_`, `glpat-`, `xox?-`, `sk-`,
-  `AKIA`), JSON web tokens, and any run of 32 or more letters, digits and
-  `+=_-` that mixes letters and digits;
+- secret values:
+  - the value of a field whose name contains `token`, `password`,
+    `passphrase`, `secret`, `credential`, `api_key`, `private_key`,
+    `access_key`, `auth`, `cookie`, `session` or `signature`, or ends in
+    `key`, `sig`, `pass`, `pw`, `pin` or `otp`. This covers `k=v`, `k: v`,
+    `"k": "v"`, `k => v`, `k -> v`, escaped JSON (`\"k\":\"v\"`), `Some(…)`,
+    `Type { … }`, tuples, a quote left open, and `%3D`;
+  - the value of such a command-line option (`--password X`);
+  - the credential after `Bearer`, `Basic` and `Digest`;
+  - tokens with a known prefix (`ghp_`, `github_pat_`, `glpat-`, `xox?-`,
+    `sk-`, `AKIA`) and JSON web tokens;
+  - any run of 32 or more letters, digits and `+=_-` that mixes letters and
+    digits, and any such run with `/` (base64) that mixes upper and lower
+    case and digits and does not start with `/`;
+- URLs: user and password go. A host other than GitHub's or loopback
+  becomes `<host>`, every query value `<redacted>`, and the path after
+  `/webhooks/`, `/services/` or `/hooks/` `<redacted>`;
 - serial numbers become the report's pseudonyms, so a device in the logs
-  matches the report: after a device ID (`elgato.streamdeck.mk2#…`), after
-  `serial=`, and every serial of a device the report sees. The machine ID
-  becomes `<machine-id>`;
-- the home directory becomes `~`, other users' home directories
-  (`/home/…`, `/Users/…`, `C:\Users\…`, `/media/…`) `/home/<user>`, the
-  user name `<user>`, this computer's name `<host>`, e-mail addresses
-  `<email>`, IPv4 addresses other than loopback `<ip>`, and the host of a
-  URL `<host>`, except GitHub's and loopback.
+  matches the report. This applies after a device ID
+  (`elgato.streamdeck.mk2#…`), after `serial=`, `serial_number:` or
+  `ID_SERIAL_SHORT=`, and to every serial of a device the report sees, in
+  any case. The machine ID becomes `<machine-id>`;
+- personal names and addresses:
+  - the home directory becomes `~`;
+  - the user part of another home directory (`/home/…`, `/Users/…`,
+    `/var/home/…`, `/media/…`, `C:\Users\…`) becomes `<user>`;
+  - the user name becomes `<user>`;
+  - this computer's name (`uname -n`, on Windows `COMPUTERNAME`) and the
+    server of a UNC path become `<host>`;
+  - e-mail addresses become `<email>`;
+  - IPv4 and IPv6 addresses other than loopback become `<ip>`.
 
 Redaction is a filter over text: a secret in a form it does not know can
 pass. That is why the app shows the whole bundle before it is saved, and

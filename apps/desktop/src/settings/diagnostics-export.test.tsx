@@ -10,8 +10,6 @@ import { installDomStubs } from "@/test/dom"
 import { renderWithApp } from "@/test/render"
 import { ExportDiagnosticsButton } from "@/settings/diagnostics-export"
 
-const dialog = vi.hoisted(() => ({ save: vi.fn() }))
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: dialog.save, open: vi.fn() }))
 vi.mock("@/lib/api", async () => (await import("@/test/api-mock")).apiModule)
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -33,7 +31,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetApi()
-  dialog.save.mockReset()
   api.prepareDiagnostics.mockResolvedValue(preview)
   api.saveDiagnostics.mockResolvedValue({ path: "/tmp/d.json", bytes: 90 })
 })
@@ -54,38 +51,37 @@ describe("Export diagnostics", () => {
     expect(screen.getByText("2 lines", { exact: false })).toBeInTheDocument()
     expect(screen.getByText("(1 finding)", { exact: false })).toBeInTheDocument()
     expect(screen.getByText(/Nothing is uploaded|uploads nothing/)).toBeInTheDocument()
-    // Nothing is written until the user picks a file.
+    // Nothing is written until the user asks to save.
     expect(api.saveDiagnostics).not.toHaveBeenCalled()
-    expect(dialog.save).not.toHaveBeenCalled()
   })
 
-  it("saves the prepared bundle to the file the user picks", async () => {
-    dialog.save.mockResolvedValue("/home/u/d.json")
+  it("asks the app to save the prepared bundle, never sending content or a path", async () => {
     renderWithApp(<ExportDiagnosticsButton />)
     await userEvent.click(screen.getByRole("button", { name: "Export diagnostics…" }))
     await screen.findByLabelText("Content of the diagnostics file")
     await userEvent.click(screen.getByRole("button", { name: "Save…" }))
     await waitFor(() => {
-      expect(api.saveDiagnostics).toHaveBeenCalledWith("3", "/home/u/d.json")
+      expect(api.saveDiagnostics).toHaveBeenCalledWith(
+        "3",
+        "Export diagnostics",
+        "Diagnostics (JSON)",
+      )
     })
-    expect(dialog.save).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: preview.fileName }),
-    )
     await waitFor(() => {
       expect(screen.queryByLabelText("Content of the diagnostics file")).not.toBeInTheDocument()
     })
   })
 
-  it("writes nothing when the save dialog is cancelled", async () => {
-    dialog.save.mockResolvedValue(null)
+  it("stays open when the save dialog is cancelled", async () => {
+    api.saveDiagnostics.mockResolvedValue(null)
     renderWithApp(<ExportDiagnosticsButton />)
     await userEvent.click(screen.getByRole("button", { name: "Export diagnostics…" }))
     await screen.findByLabelText("Content of the diagnostics file")
     await userEvent.click(screen.getByRole("button", { name: "Save…" }))
     await waitFor(() => {
-      expect(dialog.save).toHaveBeenCalled()
+      expect(api.saveDiagnostics).toHaveBeenCalled()
     })
-    expect(api.saveDiagnostics).not.toHaveBeenCalled()
+    expect(api.discardDiagnostics).not.toHaveBeenCalled()
     expect(screen.getByLabelText("Content of the diagnostics file")).toBeInTheDocument()
   })
 

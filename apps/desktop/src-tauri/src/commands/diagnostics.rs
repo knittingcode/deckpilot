@@ -10,9 +10,10 @@
 //! be wrong), and nothing else.
 //!
 //! [`prepare_diagnostics`] returns the whole bundle for the window to show;
-//! [`save_diagnostics`] writes exactly those bytes to the path the user
-//! picked in a native save dialog. The window never sends content, only
-//! the token of a prepared bundle. Nothing is uploaded anywhere.
+//! [`save_diagnostics`] opens the native save dialog itself and writes
+//! exactly those bytes to the path the user picks there. The window never
+//! sends content or a path, only the token of a prepared bundle. Nothing is
+//! uploaded anywhere.
 
 use std::io::Read;
 use std::path::Path;
@@ -23,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::State;
+use tauri::{Manager, Runtime, State, WebviewWindow};
 
 use crate::error::{CommandError, CommandResult};
 use crate::state::{APP_VERSION, AppState};
@@ -44,6 +45,7 @@ pub struct PendingDiagnostics {
 #[derive(Debug)]
 struct Prepared {
     token: u64,
+    file_name: String,
     bytes: Vec<u8>,
 }
 
@@ -103,40 +105,80 @@ pub async fn prepare_diagnostics(
         .then(|| crate::updates::stored_channel(&state));
     let (bytes, preview) = finish(&output, &app_section(channel))?;
     let token = pending.next.fetch_add(1, Ordering::Relaxed) + 1;
-    *pending.slot() = Some(Prepared { token, bytes });
+    *pending.slot() = Some(Prepared {
+        token,
+        file_name: preview.file_name.clone(),
+        bytes,
+    });
     Ok(DiagnosticsPreview {
         token: token.to_string(),
         ..preview
     })
 }
 
-/// Writes the prepared bundle to `path` (chosen in a save dialog).
+/// Asks where to save the prepared bundle in a native save dialog (`title`
+/// and `file_type` are its labels) and writes it there. `None` when the
+/// user cancelled.
 #[tauri::command]
-pub fn save_diagnostics(
+pub async fn save_diagnostics<R: Runtime>(
+    window: WebviewWindow<R>,
     pending: State<'_, PendingDiagnostics>,
     token: String,
-    path: String,
-) -> CommandResult<SavedDiagnostics> {
-    save_prepared(&pending, &token, path)
+    title: String,
+    file_type: String,
+) -> CommandResult<Option<SavedDiagnostics>> {
+    use tauri_plugin_dialog::DialogExt;
+    let file_name = pending
+        .slot()
+        .as_ref()
+        .filter(|prepared| prepared.token.to_string() == token)
+        .map(|prepared| prepared.file_name.clone())
+        .ok_or_else(|| CommandError::Invalid("prepare the diagnostics again".into()))?;
+    if window
+        .try_state::<tauri_plugin_dialog::Dialog<R>>()
+        .is_none()
+    {
+        return Err(CommandError::Invalid("no file dialog is available".into()));
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title(title)
+        .set_file_name(file_name)
+        .add_filter(file_type, &["json"])
+        .save_file(move |file| {
+            let _ = tx.send(file);
+        });
+    let Some(path) = rx
+        .await
+        .ok()
+        .flatten()
+        .and_then(|file| file.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    save_prepared(&pending, &token, &path).map(Some)
 }
 
 fn save_prepared(
     pending: &PendingDiagnostics,
     token: &str,
-    path: String,
+    path: &Path,
 ) -> CommandResult<SavedDiagnostics> {
     let slot = pending.slot();
     let prepared = slot
         .as_ref()
         .filter(|prepared| prepared.token.to_string() == token)
         .ok_or_else(|| CommandError::Invalid("prepare the diagnostics again".into()))?;
-    if path.is_empty() {
+    if path.as_os_str().is_empty() {
         return Err(CommandError::Invalid("no file was chosen".into()));
     }
-    super::portability::write_export(Path::new(&path), &prepared.bytes)
+    super::portability::write_export(path, &prepared.bytes)
         .map_err(|error| CommandError::Invalid(error.to_string()))?;
     Ok(SavedDiagnostics {
-        path,
+        path: path.display().to_string(),
         bytes: prepared.bytes.len(),
     })
 }
@@ -229,10 +271,11 @@ fn run_bundle(executable: &Path, timeout: Duration) -> Result<Vec<u8>, String> {
         .spawn()
         .map_err(|error| format!("cannot start the agent's diagnostics: {error}"))?;
     let stdout = child.stdout.take().ok_or("no output from the agent")?;
-    let reader = std::thread::spawn(move || {
+    let (sender, output) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let limit = u64::try_from(MAX_BUNDLE_BYTES).unwrap_or(u64::MAX) + 1;
-        stdout.take(limit).read_to_end(&mut bytes).map(|_| bytes)
+        let _ = sender.send(stdout.take(limit).read_to_end(&mut bytes).map(|_| bytes));
     });
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -244,18 +287,24 @@ fn run_bundle(executable: &Path, timeout: Duration) -> Result<Vec<u8>, String> {
                 return Err("the agent's diagnostics did not finish in time".into());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(error) => return Err(error.to_string()),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.to_string());
+            }
         }
     };
-    let bytes = reader
-        .join()
+    // The output ends with the process; a program it left behind that
+    // keeps the pipe open is not waited for.
+    let bytes = output
+        .recv_timeout(Duration::from_secs(5))
         .map_err(|_| "cannot read the agent's diagnostics".to_owned())?
         .map_err(|error| error.to_string())?;
-    if !status.success() {
-        return Err(format!("the agent's diagnostics failed ({status})"));
-    }
     if bytes.len() > MAX_BUNDLE_BYTES {
         return Err("the agent's diagnostics are too large".into());
+    }
+    if !status.success() {
+        return Err(format!("the agent's diagnostics failed ({status})"));
     }
     Ok(bytes)
 }
@@ -364,34 +413,31 @@ mod tests {
         let pending = PendingDiagnostics::default();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bundle.json");
-        let text = |path: &Path| path.display().to_string();
         assert!(
-            save_prepared(&pending, "1", text(&path)).is_err(),
+            save_prepared(&pending, "1", &path).is_err(),
             "nothing prepared"
         );
         *pending.slot() = Some(Prepared {
             token: 7,
+            file_name: "d.json".into(),
             bytes: b"{\"a\":1}".to_vec(),
         });
         assert!(
-            save_prepared(&pending, "8", text(&path)).is_err(),
+            save_prepared(&pending, "8", &path).is_err(),
             "another token"
         );
         assert!(!path.exists());
         assert!(
-            save_prepared(&pending, "7", String::new()).is_err(),
+            save_prepared(&pending, "7", Path::new("")).is_err(),
             "no path"
         );
-        let saved = save_prepared(&pending, "7", text(&path)).unwrap();
+        let saved = save_prepared(&pending, "7", &path).unwrap();
         assert_eq!(saved.bytes, 7);
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"a\":1}");
         // Saved again (another place) until discarded.
         let again = dir.path().join("again.json");
-        assert!(save_prepared(&pending, "7", text(&again)).is_ok());
+        assert!(save_prepared(&pending, "7", &again).is_ok());
         *pending.slot() = None;
-        assert!(
-            save_prepared(&pending, "7", text(&path)).is_err(),
-            "discarded"
-        );
+        assert!(save_prepared(&pending, "7", &path).is_err(), "discarded");
     }
 }

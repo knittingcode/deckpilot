@@ -1,4 +1,3 @@
-import { save as saveDialog } from "@tauri-apps/plugin-dialog"
 import { FileDown } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
@@ -70,20 +69,15 @@ export function ExportDiagnosticsDialog({ onClose }: { onClose: () => void }) {
   const submit = async () => {
     if (!preview || saving) return
     setError(null)
-    let path: string | null
-    try {
-      path = await saveDialog({
-        defaultPath: preview.fileName,
-        filters: [{ name: t("settings:diagnostics.export.fileType"), extensions: ["json"] }],
-      })
-    } catch (e) {
-      setError(failureMessage(t("settings:diagnostics.export.saveFailed"), e))
-      return
-    }
-    if (!path) return
     setSaving(true)
     try {
-      await api.saveDiagnostics(preview.token, path)
+      // The app opens the save dialog itself and writes the prepared bundle.
+      const saved = await api.saveDiagnostics(
+        preview.token,
+        t("settings:diagnostics.export.title"),
+        t("settings:diagnostics.export.fileType"),
+      )
+      if (!saved) return
       toast.success(t("settings:diagnostics.export.saved"))
       void api.discardDiagnostics().catch(() => undefined)
       onClose()
