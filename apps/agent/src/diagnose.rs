@@ -165,7 +165,7 @@ impl Redactor {
         };
         let fold = |c: char| {
             if self.fold_case {
-                c.to_ascii_lowercase()
+                c.to_lowercase().next().unwrap_or(c)
             } else {
                 c
             }
@@ -454,7 +454,8 @@ fn probe_socket(endpoint: &deckpilot_ipc::Endpoint) -> &'static str {
 }
 
 fn udev_rules(env: &Environment) -> Value {
-    if env.platform != "linux" {
+    // In a Flatpak the rule directories are the runtime's, not the host's.
+    if env.platform != "linux" || env.root.join(".flatpak-info").is_file() {
         return Value::Null;
     }
     Value::Array(
@@ -650,8 +651,8 @@ fn hex4(id: u16) -> String {
     format!("{id:04x}")
 }
 
-/// `ok`; `not-a-stream-deck` (another Elgato product, such as a Cam Link
-/// or a microphone: not a finding); `usb-present-hid-missing` (no hidraw
+/// `ok`; `other-elgato-product` (not in the model catalog: a Cam Link, a
+/// microphone, or a Stream Deck model not known yet; not a finding); `usb-present-hid-missing` (no hidraw
 /// node: the kernel did not bind the HID interface); `hid-without-serial`
 /// (DeckPilot identifies a device by its serial and skips it);
 /// `node-missing` (sysfs has the node, `/dev` does not: a container or a
@@ -659,7 +660,7 @@ fn hex4(id: u16) -> String {
 /// open: the udev rule did not apply).
 fn device_state(device: &UsbDevice, stream_deck: bool, nodes: &[Value]) -> &'static str {
     if !stream_deck {
-        "not-a-stream-deck"
+        "other-elgato-product"
     } else if device.hidraw.is_empty() {
         "usb-present-hid-missing"
     } else if device.serial.is_none() {

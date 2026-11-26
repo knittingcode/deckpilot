@@ -408,7 +408,7 @@ The report contains:
 - the versions of the agent, and of the app and plugin host found next to
   it (they ship in one package);
 - the operating system, the distribution channel, the install type (deb,
-  rpm, AppImage, app, MSI, NSIS or development) and the IPC protocol range;
+  rpm, AppImage, Flatpak, app, MSI, NSIS, development or unknown) and the IPC protocol range;
 - whether an agent runs, from its instance lock and socket file;
 - on Linux, whether the udev rule is installed, and the Elgato USB devices
   in `/sys/bus/usb/devices` with their `hidraw` nodes and this user's
@@ -420,8 +420,9 @@ The report contains:
 A device's `state` is one of:
 
 - `ok`;
-- `not-a-stream-deck`: another Elgato product (a Cam Link, a microphone).
-  It is listed but not reported;
+- `other-elgato-product`: an Elgato product that is not in DeckPilot's
+  model catalog (a Cam Link, a microphone, or a Stream Deck model DeckPilot
+  does not know yet). It is listed but not reported;
 - `usb-present-hid-missing`: the USB device exists but the kernel bound no
   HID interface, so nothing can see it (see
   [troubleshooting/usb-hub-resets.md](troubleshooting/usb-hub-resets.md));
@@ -450,8 +451,9 @@ The report hides personal data:
   the same device can be recognised across reports from one machine. They
   are pseudonyms, not secrets: someone who knows the machine ID can test
   guessed serials against them;
-- the home directory becomes `~`, and the user name becomes `<user>`
-  wherever it stands as a word, in paths and messages;
+- the home directory becomes `~`, and the user name (of two or more
+  characters) becomes `<user>` wherever it stands as a word, in paths and
+  messages;
 - environment values and tokens are never included.
 
 ## Testing

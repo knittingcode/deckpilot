@@ -51,7 +51,9 @@ pub struct HidInterface {
 }
 
 /// The HID interfaces with Elgato's vendor ID that `hidapi` lists, of any
-/// model. Enumeration only: no device is opened, nothing is sent.
+/// model. Enumeration only: no report is read or written (on Windows
+/// hidapi opens each device without access rights to read its
+/// attributes).
 ///
 /// # Errors
 ///

@@ -16,6 +16,7 @@ static GITHUB_LINUX: Distribution = match Distribution::new(
 };
 
 const SERIAL_OK: &str = "CL12K1A00042";
+#[cfg(unix)]
 const MACHINE_ID: &str = "0123456789abcdef0123456789abcdef";
 #[cfg(unix)]
 const SERIAL_NO_HID: &str = "CL12K1A00043";
@@ -265,7 +266,7 @@ fn usb_present_hid_missing_is_detected_for_supported_models() {
     // Cam Link: not a Stream Deck, so no HID is expected and nothing is
     // reported about it.
     assert_eq!(usb[3]["model"], Value::Null);
-    assert_eq!(usb[3]["state"], "not-a-stream-deck");
+    assert_eq!(usb[3]["state"], "other-elgato-product");
 
     let findings = devices["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1, "{findings:?}");
@@ -752,4 +753,17 @@ fn probing_while_an_agent_starts_never_stops_it() {
     }
     stop.store(true, Ordering::Relaxed);
     assert!(prober.join().unwrap() > 0);
+}
+
+/// In a Flatpak the rule directories are the sandbox's: not reported.
+#[cfg(unix)]
+#[test]
+fn a_flatpak_reports_no_udev_rules() {
+    let root = root();
+    let env = linux_fixture(root.path());
+    write(&root.path().join(".flatpak-info"), "[Application]\n");
+    let report = collect(&env);
+    assert_eq!(report["install"]["type"], "flatpak");
+    assert_eq!(report["udevRules"], Value::Null);
+    conforms(&schema_v1(), &report, "flatpak report").unwrap();
 }
