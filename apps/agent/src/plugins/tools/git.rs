@@ -230,6 +230,24 @@ fn local(host: &ToolHost, of: &Plan, extra: &[&str]) -> Plan {
     }
 }
 
+/// `git <prefix> remote -v` in `dir`: the remotes and their URLs, for the
+/// host only (the app's "Link remote" suggestions, `remotes.rs`), never for
+/// a plugin, whose `remote` is bare. Local and read-only, with the local
+/// environment (no SSH agent).
+pub(super) fn remote_urls(host: &ToolHost, dir: &Path, program: PathBuf) -> Plan {
+    let mut args = prefix(dir);
+    args.extend(["remote", "-v"].map(OsString::from));
+    Plan {
+        env: environment(host, false, dir, &program),
+        program,
+        args,
+        cwd: dir.to_path_buf(),
+        timeout: GIT_READ_TIMEOUT,
+        max_stdout: MAX_STDOUT,
+        remote: None,
+    }
+}
+
 /// `git <prefix> remote`: the remotes `ls-remote` may contact.
 pub(super) fn remote_listing(host: &ToolHost, ls_remote: &Plan) -> Plan {
     local(host, ls_remote, &["remote"])

@@ -1200,6 +1200,7 @@ dependencies = [
  "deckpilot-storage",
  "deckpilot-update",
  "hkdf",
+ "interprocess",
  "minisign",
  "rcgen",
  "reqwest",

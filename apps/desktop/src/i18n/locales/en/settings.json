@@ -79,6 +79,10 @@
     "resources": {
       "title": "Resources",
       "description": "What each resource key stands for on this computer: folders, apps, terminals and URLs that actions open"
+    },
+    "connections": {
+      "title": "Connections",
+      "description": "Servers plugins connect to, such as GitHub and GitLab, and their tokens."
     }
   },
   "language": {
