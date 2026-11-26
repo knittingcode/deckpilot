@@ -253,9 +253,9 @@ fn usb_present_hid_missing_is_detected_for_supported_models() {
 
     assert_eq!(usb[1]["state"], "usb-present-hid-missing");
     assert_eq!(usb[1]["hidraw"], json!([]));
-    assert_eq!(
-        usb[1]["serial"],
-        serial_pseudonym(SERIAL_NO_HID, Some(MACHINE_ID))
+    assert!(
+        usb[1]["serial"] == serial_pseudonym(SERIAL_NO_HID, Some(MACHINE_ID)),
+        "port 1-3: the serial is not its pseudonym"
     );
 
     // XL: seen, no driver.
@@ -269,7 +269,8 @@ fn usb_present_hid_missing_is_detected_for_supported_models() {
     assert_eq!(usb[3]["state"], "other-elgato-product");
 
     let findings = devices["findings"].as_array().unwrap();
-    assert_eq!(findings.len(), 1, "{findings:?}");
+    let codes: Vec<&str> = findings.iter().filter_map(|f| f["code"].as_str()).collect();
+    assert_eq!(codes, ["usb-present-hid-missing"]);
     assert_eq!(findings[0]["code"], "usb-present-hid-missing");
     assert_eq!(findings[0]["port"], "1-3");
     assert_eq!(findings[0]["productId"], "0080");
@@ -370,21 +371,22 @@ fn serials_home_user_and_token_are_redacted() {
     env.exe = Some(root.path().join("opt/alice/deckpilot-agent"));
     let report = collect(&env);
     let text = serde_json::to_string(&report).unwrap();
-    for secret in [
-        SERIAL_OK,
-        SERIAL_NO_HID,
-        "XL0001",
-        "CAMLINK1",
-        TOKEN,
-        MACHINE_ID,
-        "/home/alice",
-        "alice",
+    // The failure message names the case, never the value or the report.
+    for (label, secret) in [
+        ("serial of the MK.2 on 1-2", SERIAL_OK),
+        ("serial of the MK.2 on 1-3", SERIAL_NO_HID),
+        ("serial of the XL", "XL0001"),
+        ("serial of the Cam Link", "CAMLINK1"),
+        ("IPC token", TOKEN),
+        ("machine ID", MACHINE_ID),
+        ("home directory", "/home/alice"),
+        ("user name", "alice"),
     ] {
-        assert!(!text.contains(secret), "{secret} in the report: {text}");
+        assert!(!text.contains(secret), "the report contains the {label}");
     }
-    assert_eq!(
-        report["agent"]["dataDirectory"],
-        "~/.local/share/io.github.knittingcode.deckpilot"
+    assert!(
+        report["agent"]["dataDirectory"] == "~/.local/share/io.github.knittingcode.deckpilot",
+        "the data directory is not shown below ~"
     );
     assert!(
         report["install"]["executable"]
@@ -394,13 +396,31 @@ fn serials_home_user_and_token_are_redacted() {
     );
     // The pseudonym is stable and not the plain hash of the serial.
     let pseudonym = serial_pseudonym(SERIAL_OK, Some(MACHINE_ID));
-    assert_eq!(report["devices"]["usb"][0]["serial"], pseudonym);
-    assert_eq!(pseudonym, serial_pseudonym(SERIAL_OK, Some(MACHINE_ID)));
-    assert_ne!(pseudonym, serial_pseudonym(SERIAL_NO_HID, Some(MACHINE_ID)));
+    assert!(
+        report["devices"]["usb"][0]["serial"] == pseudonym,
+        "port 1-2: the serial is not its pseudonym"
+    );
+    assert!(
+        pseudonym == serial_pseudonym(SERIAL_OK, Some(MACHINE_ID)),
+        "the pseudonym is not stable"
+    );
+    assert!(
+        pseudonym != serial_pseudonym(SERIAL_NO_HID, Some(MACHINE_ID)),
+        "two serials share a pseudonym"
+    );
     // Another machine, or none: another pseudonym.
-    assert_ne!(pseudonym, serial_pseudonym(SERIAL_OK, None));
-    assert_ne!(pseudonym, serial_pseudonym(SERIAL_OK, Some("fedcba98")));
-    assert!(pseudonym.starts_with("sha256:") && pseudonym.len() == "sha256:".len() + 16);
+    assert!(
+        pseudonym != serial_pseudonym(SERIAL_OK, None),
+        "the machine ID does not change the pseudonym"
+    );
+    assert!(
+        pseudonym != serial_pseudonym(SERIAL_OK, Some("fedcba98")),
+        "another machine ID gives the same pseudonym"
+    );
+    assert!(
+        pseudonym.starts_with("sha256:") && pseudonym.len() == "sha256:".len() + 16,
+        "the pseudonym is not sha256: and 16 hex digits"
+    );
     let plain =
         Sha256::digest(SERIAL_OK.as_bytes())[..8]
             .iter()
@@ -408,7 +428,10 @@ fn serials_home_user_and_token_are_redacted() {
                 let _ = write!(text, "{byte:02x}");
                 text
             });
-    assert!(!pseudonym.contains(&plain));
+    assert!(
+        !pseudonym.contains(&plain),
+        "the pseudonym is the plain hash of the serial"
+    );
 }
 
 #[test]
@@ -521,8 +544,14 @@ fn the_agent_state_comes_from_the_lock_without_touching_anything() {
     let report = collect(&env);
     assert_eq!(report["agent"]["lock"], "free");
     assert_eq!(report["agent"]["running"], false);
-    assert_eq!(fs::read(data.join("deckpilot.db")).unwrap(), before);
-    assert_eq!(fs::read_to_string(data.join("agent.token")).unwrap(), TOKEN);
+    assert!(
+        fs::read(data.join("deckpilot.db")).unwrap() == before,
+        "the database changed"
+    );
+    assert!(
+        fs::read_to_string(data.join("agent.token")).unwrap() == TOKEN,
+        "the token file changed"
+    );
 }
 
 /// macOS and Windows: HID interfaces from hidapi's list, no USB view.
@@ -571,7 +600,10 @@ fn listed_hid_interfaces_without_usb() {
     assert_eq!(report["udevRules"], Value::Null);
     let hid = report["devices"]["hid"].as_array().unwrap();
     assert_eq!(hid.len(), 3);
-    assert_eq!(hid[0]["serial"], serial_pseudonym(SERIAL_OK, None));
+    assert!(
+        hid[0]["serial"] == serial_pseudonym(SERIAL_OK, None),
+        "the first interface's serial is not its pseudonym"
+    );
     assert_eq!(hid[2]["model"], Value::Null);
     assert_eq!(report["devices"]["findings"].as_array().unwrap().len(), 1);
     assert_eq!(
@@ -594,7 +626,10 @@ fn listed_hid_interfaces_without_usb() {
     let report = collect(&failed);
     conforms(&schema_v1(), &report, "failed hidapi report").unwrap();
     assert_eq!(report["devices"]["hid"], Value::Null);
-    assert_eq!(report["devices"]["hidError"], "cannot open /Users/<user>/x");
+    assert!(
+        report["devices"]["hidError"] == "cannot open /Users/<user>/x",
+        "the hidapi error is not redacted"
+    );
 }
 
 #[cfg(unix)]
@@ -603,19 +638,21 @@ fn the_summary_names_the_finding() {
     let root = root();
     let report = collect(&linux_fixture(root.path()));
     let text = summary(&report);
-    assert!(
-        text.contains("DeckPilot agent 0.15.0 (deb on linux x86_64)"),
-        "{text}"
-    );
-    assert!(text.contains("agent running: no"), "{text}");
-    assert!(
-        text.contains("Elgato devices: 4 USB, 2 HID (sysfs)"),
-        "{text}"
-    );
-    assert!(
-        text.contains("! usb-present-hid-missing (product 0080, port 1-3)"),
-        "{text}"
-    );
+    // The failure message names the line, never the summary itself.
+    for (label, line) in [
+        (
+            "version and install type",
+            "DeckPilot agent 0.15.0 (deb on linux x86_64)",
+        ),
+        ("agent state", "agent running: no"),
+        ("device counts", "Elgato devices: 4 USB, 2 HID (sysfs)"),
+        (
+            "finding",
+            "! usb-present-hid-missing (product 0080, port 1-3)",
+        ),
+    ] {
+        assert!(text.contains(line), "the summary lacks the {label} line");
+    }
 }
 
 /// Every field of schema version 1 as it was published: path and type. The
