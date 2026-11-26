@@ -99,7 +99,7 @@ their timestamps.
      line, or happen while the log shows no reconnects.
    - **H2:** "device connected" and "device connection lost" pairs about
      2 seconds apart, which line up with the kernel's resets.
-   - H3 and H4 are checked in steps 7 and 6.
+   - H4 is checked in step 6, H3 in step 7.
 4. **Run with the agent stopped.** Quit the agent from the tray (or with
    **Stop agent** in Settings), check that it is gone with
    `pgrep -x deckpilot-agent`, and use the computer normally for a while.
@@ -128,7 +128,8 @@ their timestamps.
    done
    ```
 
-   `auto` means autosuspend is on.
+   `auto` means autosuspend is on. Check the hub the deck is attached to
+   as well (the parent entry of the deck's path, e.g. `1-2` for `1-2.3`).
 
 ## What helps
 
