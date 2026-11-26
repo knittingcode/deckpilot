@@ -28,6 +28,17 @@ fn data_dir(dir: &TempDir) -> AgentPaths {
 /// The agent headless (or with its tray), with a simulated MK.2, no USB
 /// and no plugins; it panics `panic_after` after starting.
 fn spawn(dir: &TempDir, paths: &AgentPaths, headless: bool, panic_after: Option<u64>) -> Child {
+    spawn_with(dir, paths, headless, panic_after, &[])
+}
+
+/// [`spawn`] with `extra` arguments.
+fn spawn_with(
+    dir: &TempDir,
+    paths: &AgentPaths,
+    headless: bool,
+    panic_after: Option<u64>,
+    extra: &[&str],
+) -> Child {
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -39,6 +50,7 @@ fn spawn(dir: &TempDir, paths: &AgentPaths, headless: bool, panic_after: Option<
     }
     command
         .args(["--no-usb", "--mock-devices", "mk2", "--disable-plugins"])
+        .args(extra)
         .env("DECKPILOT_DATA_DIR", &paths.data_dir)
         .env_remove("DECKPILOT_TEST_AGENT_ARGS")
         .env_remove(PANIC_AFTER_START_ENV)
@@ -156,4 +168,40 @@ async fn a_panic_in_the_main_loop_ends_the_tray_agent() {
     let paths = data_dir(&dir);
     let child = spawn(&dir, &paths, false, Some(1000));
     assert_crashed(child, &paths).await;
+}
+
+/// As the configuration app starts it (`--quiet-stderr`, standard error to
+/// `logs/output.log`): the log records go to the log files only, and the
+/// panic to standard error as one escaped summary line instead of Rust's
+/// default text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_quiet_stderr_a_panic_leaves_a_summary_line_on_stderr() {
+    let dir = TempDir::new("deckpilot-crash-quiet");
+    let paths = data_dir(&dir);
+    let child = spawn_with(
+        &dir,
+        &paths,
+        true,
+        Some(500),
+        &[deckpilot_ipc::paths::QUIET_STDERR_ARG],
+    );
+    assert_crashed(child, &paths).await;
+    let stderr = std::fs::read_to_string(dir.path().join("stderr.log")).unwrap();
+    let summaries: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("panic: thread="))
+        .collect();
+    assert_eq!(summaries.len(), 1, "{stderr}");
+    assert!(
+        summaries[0].contains(r#"message="test hook: the agent's main loop panics""#),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "no default panic text: {stderr}"
+    );
+    assert!(
+        !stderr.contains("agent started"),
+        "log records stay in the log files: {stderr}"
+    );
 }
