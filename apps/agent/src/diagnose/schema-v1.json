@@ -86,11 +86,13 @@
     "agent": "string",
     "desktop": {
       "present": "boolean",
-      "version": "string|null"
+      "version": "string|null",
+      "versionSource": "string|null"
     },
     "pluginHost": {
       "present": "boolean",
-      "version": "string|null"
+      "version": "string|null",
+      "versionSource": "string|null"
     }
   }
 }

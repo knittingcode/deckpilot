@@ -11,6 +11,14 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+const DIAGNOSE_HELP: &str = "\
+diagnose: a read-only report for support (versions, installation, whether
+the agent runs, the Elgato devices the system sees, e.g. a Stream Deck
+whose USB device is present but whose HID interface is missing). It starts
+and changes nothing, works while the configuration is locked, and replaces
+serial numbers with pseudonyms and the home directory and the user name
+with placeholders. --json prints the versioned JSON report.";
+
 const USAGE: &str = "\
 DeckPilot background agent
 
@@ -60,13 +68,6 @@ Options:
                       registry is used
   --version           Print the version
   --help              Print this help
-
-diagnose: a read-only report for support (versions, installation, whether
-the agent runs, the Elgato devices the system sees, e.g. a Stream Deck
-whose USB device is present but whose HID interface is missing). It starts
-and opens nothing, works while the configuration is locked, and hides
-serial numbers, the home directory and the user name. --json prints the
-versioned JSON report.
 
 Environment:
   DECKPILOT_DATA_DIR    Use a different data directory
@@ -236,7 +237,7 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
                 return Err(ExitCode::SUCCESS);
             }
             "--help" | "-h" => {
-                println!("{USAGE}");
+                println!("{USAGE}\n\n{DIAGNOSE_HELP}");
                 return Err(ExitCode::SUCCESS);
             }
             #[cfg(feature = "test-hooks")]
@@ -257,6 +258,10 @@ fn diagnose_command(options: &[String]) -> ExitCode {
     let json = match options {
         [] => false,
         [flag] if flag == "--json" => true,
+        [flag] if flag == "--help" || flag == "-h" => {
+            println!("usage: deckpilot-agent diagnose [--json]\n\n{DIAGNOSE_HELP}");
+            return ExitCode::SUCCESS;
+        }
         _ => {
             eprintln!("usage: deckpilot-agent diagnose [--json]");
             return ExitCode::from(2);

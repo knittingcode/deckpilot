@@ -413,16 +413,22 @@ The report contains:
 - on Linux, whether the udev rule is installed, and the Elgato USB devices
   in `/sys/bus/usb/devices` with their `hidraw` nodes and this user's
   access to them;
-- on macOS and Windows, the Elgato HID interfaces `hidapi` lists.
+- on macOS and Windows, the Elgato HID interfaces `hidapi` lists. On
+  Windows, listing them opens each HID device without any access rights, to
+  read its attributes. No report is read or written.
 
 A device's `state` is one of:
 
 - `ok`;
+- `not-a-stream-deck`: another Elgato product (a Cam Link, a microphone).
+  It is listed but not reported;
 - `usb-present-hid-missing`: the USB device exists but the kernel bound no
   HID interface, so nothing can see it (see
   [troubleshooting/usb-hub-resets.md](troubleshooting/usb-hub-resets.md));
 - `hid-without-serial`: the agent identifies devices by serial and skips
   this one;
+- `node-missing`: sysfs has the `hidraw` node but `/dev` does not (a
+  container, or a sandbox without the device);
 - `no-permission`: the udev rule did not apply.
 
 Each state other than `ok` is also listed under `findings` with a hint.
@@ -430,18 +436,22 @@ Each state other than `ok` is also listed under `findings` with a hint.
 The command is read-only, and works while the configuration is locked:
 
 - it never starts or connects to an agent;
-- it never opens the database, never reads the IPC token and opens no
-  device. Permissions come from `access(2)`;
+- it never opens the database or reads the IPC token. On Linux it opens
+  no device: permissions come from `access(2)`;
 - it writes, creates and resets nothing, and runs no other program;
 - the lock is probed with a shared lock on the existing file, released at
-  once. A starting agent waits for it.
+  once. It is never created. A starting agent retries its lock for 5 s and
+  the app's lock wait polls, so the probe makes neither give up.
 
 The report hides personal data:
 
 - serial numbers become pseudonyms (`sha256:` and 16 hex digits of a
-  SHA-256 over a fixed prefix and the serial), so the same device can be
-  recognised across reports;
-- the home directory becomes `~` and the user name `<user>` in paths;
+  SHA-256 over a fixed prefix, on Linux the machine ID, and the serial), so
+  the same device can be recognised across reports from one machine. They
+  are pseudonyms, not secrets: someone who knows the machine ID can test
+  guessed serials against them;
+- the home directory becomes `~`, and the user name becomes `<user>`
+  wherever it stands as a word, in paths and messages;
 - environment values and tokens are never included.
 
 ## Testing

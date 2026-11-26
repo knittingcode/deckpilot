@@ -11,20 +11,26 @@
 //!
 //! - it never starts an agent and never connects to one: the agent's state
 //!   comes from its instance lock (probed with a shared lock on the existing
-//!   file, opened read-only and released at once; a starting agent waits
-//!   for that moment) and from whether its socket file exists;
+//!   file, opened read-only and released at once; a starting agent retries
+//!   its lock for `STARTUP_LOCK_WAIT`, and the app's `wait_until_free`
+//!   polls, so the moment never makes either give up) and from whether its
+//!   socket file exists;
 //! - it never opens the database, so it works while the configuration is
 //!   locked, and it never reads the IPC token;
-//! - it opens no device: HID interfaces come from `/sys/class/hidraw` on
-//!   Linux (from `hidapi`'s enumeration elsewhere), USB devices from
-//!   `/sys/bus/usb/devices`, and a node's permission from `access(2)`;
+//! - on Linux it opens no device: HID interfaces come from
+//!   `/sys/class/hidraw`, USB devices from `/sys/bus/usb/devices`, and a
+//!   node's permission from `access(2)`. On macOS and Windows `hidapi`
+//!   enumerates the HID devices (on Windows by opening each with no access
+//!   rights, to read its attributes); no report is read or written;
 //! - it creates, writes and resets nothing, and runs no other program.
 //!
-//! Redacted: serial numbers become a stable pseudonym
-//! (`sha256:` and 16 hex digits of SHA-256 over a fixed prefix and the
-//! serial), the home directory becomes `~` and the user name `<user>` in
-//! every path. No environment value, token or configuration value is part
-//! of the report.
+//! Redacted: serial numbers become a pseudonym (`sha256:` and 16 hex
+//! digits of SHA-256 over a fixed prefix, on Linux the machine ID, and the
+//! serial): stable on one machine, so two reports can be compared, but a
+//! pseudonym, not an irreversible secret (without the machine ID, serials
+//! can be guessed and checked against it). The home directory becomes `~`
+//! and the user name `<user>` in paths and messages. No environment value,
+//! token or configuration value is part of the report.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -48,7 +54,11 @@ const ELGATO_VENDOR: u16 = 0x0fd9;
 /// The rule the `.deb` and `.rpm` install, and where a user installs it by
 /// hand (AppImage, Flatpak).
 const UDEV_RULE: &str = "70-deckpilot-streamdeck.rules";
-const UDEV_RULE_DIRS: [&str; 2] = ["usr/lib/udev/rules.d", "etc/udev/rules.d"];
+const UDEV_RULE_DIRS: [&str; 3] = [
+    "usr/lib/udev/rules.d",
+    "lib/udev/rules.d",
+    "etc/udev/rules.d",
+];
 /// The deb package's file list as dpkg keeps it.
 const DPKG_LIST: &str = "var/lib/dpkg/info/deck-pilot.list";
 /// What makes serial pseudonyms of this report differ from a plain hash.
@@ -82,6 +92,8 @@ pub struct Environment {
     pub appimage: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub user: Option<String>,
+    /// Linux `/etc/machine-id`: keys the serial pseudonyms. Never reported.
+    pub machine_id: Option<String>,
     pub hid: HidSource,
 }
 
@@ -111,6 +123,7 @@ impl Environment {
                 .or_else(|_| std::env::var("USERNAME"))
                 .ok()
                 .filter(|user| !user.is_empty()),
+            machine_id: read_trimmed(Path::new("/etc/machine-id")).filter(|id| !id.is_empty()),
             hid,
         })
     }
@@ -122,43 +135,95 @@ fn dirs_home() -> Option<PathBuf> {
         .filter(|home| home.is_absolute() && home.components().count() > 1)
 }
 
-/// Removes the home directory and the user name from paths.
+/// Removes the home directory and the user name from paths and messages.
 #[derive(Debug, Clone)]
 struct Redactor {
-    home: Option<String>,
+    home: Option<PathBuf>,
     user: Option<String>,
+    /// Paths compare without case (Windows).
+    fold_case: bool,
 }
 
 impl Redactor {
     fn path(&self, path: &Path) -> String {
-        let mut text = path.display().to_string();
-        if let Some(home) = &self.home
-            && let Some(rest) = text.strip_prefix(home.as_str())
-            && (rest.is_empty() || rest.starts_with(['/', '\\']))
-        {
-            text = format!("~{rest}");
-        }
-        if let Some(user) = self.user.as_deref().filter(|user| user.len() > 1) {
-            text = text
-                .split_inclusive(['/', '\\'])
-                .map(|segment| {
-                    let name = segment.trim_end_matches(['/', '\\']);
-                    if name == user {
-                        segment.replacen(user, "<user>", 1)
-                    } else {
-                        segment.to_owned()
-                    }
-                })
-                .collect();
-        }
-        text
+        let text = match &self.home {
+            Some(home) => match strip_home(path, home, self.fold_case) {
+                Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+                Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+                None => path.display().to_string(),
+            },
+            None => path.display().to_string(),
+        };
+        self.text(&text)
     }
+
+    /// The user name wherever it stands as a word of its own (between
+    /// characters that are not letters or digits), in any text.
+    fn text(&self, text: &str) -> String {
+        let Some(user) = self.user.as_deref().filter(|user| user.chars().count() > 1) else {
+            return text.to_owned();
+        };
+        let fold = |c: char| {
+            if self.fold_case {
+                c.to_ascii_lowercase()
+            } else {
+                c
+            }
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let name: Vec<char> = user.chars().map(fold).collect();
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0;
+        while i < chars.len() {
+            let matches = chars.len() - i >= name.len()
+                && chars[i..i + name.len()]
+                    .iter()
+                    .map(|c| fold(*c))
+                    .eq(name.iter().copied())
+                && (i == 0 || !chars[i - 1].is_alphanumeric())
+                && chars
+                    .get(i + name.len())
+                    .is_none_or(|c| !c.is_alphanumeric());
+            if matches {
+                out.push_str("<user>");
+                i += name.len();
+            } else {
+                out.push(chars[i]);
+                i += 1;
+            }
+        }
+        out
+    }
+}
+
+/// `path` below `home`, component by component (so a trailing separator
+/// does not matter), without case on Windows.
+fn strip_home(path: &Path, home: &Path, fold_case: bool) -> Option<PathBuf> {
+    let key = |c: std::path::Component<'_>| {
+        let text = c.as_os_str().to_string_lossy().into_owned();
+        if fold_case { text.to_lowercase() } else { text }
+    };
+    let mut rest = path.components();
+    for part in home.components() {
+        let next = rest.next()?;
+        if key(next) != key(part) {
+            return None;
+        }
+    }
+    Some(rest.as_path().to_path_buf())
 }
 
 /// A stable pseudonym for a serial number: the same device gives the same
 /// value in every report, and the serial itself is not in the report.
-pub fn serial_pseudonym(serial: &str) -> String {
-    let digest = Sha256::digest(format!("{SERIAL_PREFIX}{serial}").as_bytes());
+pub fn serial_pseudonym(serial: &str, machine_id: Option<&str>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(SERIAL_PREFIX.as_bytes());
+    if let Some(id) = machine_id {
+        hasher.update(id.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(serial.as_bytes());
+    let digest = hasher.finalize();
     let mut text = String::from("sha256:");
     for byte in &digest[..8] {
         let _ = write!(text, "{byte:02x}");
@@ -169,8 +234,9 @@ pub fn serial_pseudonym(serial: &str) -> String {
 /// The report.
 pub fn collect(env: &Environment) -> Value {
     let redactor = Redactor {
-        home: env.home.as_ref().map(|home| home.display().to_string()),
+        home: env.home.clone(),
         user: env.user.clone(),
+        fold_case: env.platform == "windows",
     };
     let catalog = ModelCatalog::builtin();
     let driven: Vec<(u16, u16)> = deckpilot_hid::ElgatoBackend::new()
@@ -178,7 +244,7 @@ pub fn collect(env: &Environment) -> Value {
         .iter()
         .filter_map(|model| model.usb.map(|usb| (usb.vendor_id, usb.product_id)))
         .collect();
-    let devices = devices(env, &catalog, &driven);
+    let devices = devices(env, &catalog, &driven, &redactor);
     json!({
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
@@ -212,6 +278,8 @@ fn versions(env: &Environment) -> Value {
         json!({
             "present": present,
             "version": present.then_some(env.agent_version),
+            // Not read from the file: what ships next to the agent.
+            "versionSource": present.then_some("same-package"),
         })
     };
     json!({
@@ -275,12 +343,14 @@ fn install_type(env: &Environment) -> &'static str {
             .package_format()
             .map_or("unknown", deckpilot_distribution::PackageFormat::name);
     };
-    // The path as seen from the root (`/` outside tests).
+    // The path as seen from the root (`/` outside tests), without the
+    // " (deleted)" Linux adds once an upgrade replaced the running file.
     let text = match exe.strip_prefix(&env.root) {
         Ok(relative) if env.root != Path::new("/") => format!("/{}", relative.display()),
         _ => exe.display().to_string(),
     }
     .replace('\\', "/");
+    let text = text.strip_suffix(" (deleted)").unwrap_or(&text).to_owned();
     if text.contains("/target/") {
         return "development";
     }
@@ -289,7 +359,10 @@ fn install_type(env: &Environment) -> &'static str {
     }
     match env.platform {
         "linux" => {
-            if env.appimage.is_some() {
+            if env.root.join(".flatpak-info").is_file() {
+                // In the sandbox: the os and udev values are the runtime's.
+                "flatpak"
+            } else if env.appimage.is_some() {
                 "appimage"
             } else if read_trimmed(&env.root.join(DPKG_LIST))
                 .is_some_and(|list| list.lines().any(|line| line == text))
@@ -409,13 +482,22 @@ struct UsbDevice {
     hidraw: Vec<String>,
 }
 
-fn devices(env: &Environment, catalog: &ModelCatalog, driven: &[(u16, u16)]) -> Value {
-    let describe = |product_id: u16| {
-        let model: Option<&DeviceModel> = catalog.iter().find(|model| {
+fn devices(
+    env: &Environment,
+    catalog: &ModelCatalog,
+    driven: &[(u16, u16)],
+    redactor: &Redactor,
+) -> Value {
+    let model_of = |product_id: u16| -> Option<&DeviceModel> {
+        catalog.iter().find(|model| {
             model
                 .usb
                 .is_some_and(|usb| usb.vendor_id == ELGATO_VENDOR && usb.product_id == product_id)
-        });
+        })
+    };
+    let known = |product_id: u16| model_of(product_id).is_some();
+    let describe = |product_id: u16| {
+        let model = model_of(product_id);
         json!({
             "vendorId": hex4(ELGATO_VENDOR),
             "productId": hex4(product_id),
@@ -427,14 +509,22 @@ fn devices(env: &Environment, catalog: &ModelCatalog, driven: &[(u16, u16)]) -> 
     let mut findings = Vec::new();
     let (source, usb, hid) = match &env.hid {
         HidSource::Sysfs => {
-            let (usb, hid) = sysfs_devices(&env.root, &describe, &mut findings);
+            let (usb, hid) = sysfs_devices(env, &describe, &known, &mut findings);
             ("sysfs", Value::Array(usb), Ok(hid))
         }
         HidSource::Listed(listed) => {
             let hid = listed
                 .as_ref()
-                .map(|interfaces| listed_devices(interfaces, &describe, &mut findings))
-                .map_err(Clone::clone);
+                .map(|interfaces| {
+                    listed_devices(
+                        interfaces,
+                        env.machine_id.as_deref(),
+                        &describe,
+                        &known,
+                        &mut findings,
+                    )
+                })
+                .map_err(|error| redactor.text(error));
             ("hidapi", Value::Null, hid)
         }
     };
@@ -454,14 +544,19 @@ fn devices(env: &Environment, catalog: &ModelCatalog, driven: &[(u16, u16)]) -> 
 /// Linux: the Elgato USB devices with their hidraw nodes, and those nodes
 /// as HID interfaces.
 fn sysfs_devices(
-    root: &Path,
+    env: &Environment,
     describe: &dyn Fn(u16) -> Value,
+    known: &dyn Fn(u16) -> bool,
     findings: &mut Vec<Value>,
 ) -> (Vec<Value>, Vec<Value>) {
+    let root = env.root.as_path();
     let mut usb = Vec::new();
     let mut hid = Vec::new();
     for device in usb_devices(root) {
-        let serial = device.serial.as_deref().map(serial_pseudonym);
+        let serial = device
+            .serial
+            .as_deref()
+            .map(|serial| serial_pseudonym(serial, env.machine_id.as_deref()));
         let nodes: Vec<Value> = device
             .hidraw
             .iter()
@@ -472,7 +567,7 @@ fn sysfs_devices(
                 })
             })
             .collect();
-        let state = device_state(&device, &nodes);
+        let state = device_state(&device, known(device.product_id), &nodes);
         if let Some(code) = finding_for(state) {
             findings.push(finding(
                 code,
@@ -507,15 +602,20 @@ fn sysfs_devices(
 /// macOS and Windows: the interfaces hidapi lists.
 fn listed_devices(
     interfaces: &[deckpilot_hid::HidInterface],
+    machine_id: Option<&str>,
     describe: &dyn Fn(u16) -> Value,
+    known: &dyn Fn(u16) -> bool,
     findings: &mut Vec<Value>,
 ) -> Vec<Value> {
     interfaces
         .iter()
         .filter(|interface| interface.vendor_id == ELGATO_VENDOR)
         .map(|interface| {
-            let serial = interface.serial.as_deref().map(serial_pseudonym);
-            if interface.serial.is_none() {
+            let serial = interface
+                .serial
+                .as_deref()
+                .map(|serial| serial_pseudonym(serial, machine_id));
+            if interface.serial.is_none() && known(interface.product_id) {
                 findings.push(finding(
                     "hid-without-serial",
                     None,
@@ -550,19 +650,23 @@ fn hex4(id: u16) -> String {
     format!("{id:04x}")
 }
 
-/// `ok`, `usb-present-hid-missing` (no hidraw node: the kernel did not
-/// bind the HID interface), `hid-without-serial` (DeckPilot identifies a
-/// device by its serial and skips it) or `no-permission` (a node this user
-/// may not open: the udev rule did not apply).
-fn device_state(device: &UsbDevice, nodes: &[Value]) -> &'static str {
-    if device.hidraw.is_empty() {
+/// `ok`; `not-a-stream-deck` (another Elgato product, such as a Cam Link
+/// or a microphone: not a finding); `usb-present-hid-missing` (no hidraw
+/// node: the kernel did not bind the HID interface); `hid-without-serial`
+/// (DeckPilot identifies a device by its serial and skips it);
+/// `node-missing` (sysfs has the node, `/dev` does not: a container or a
+/// sandbox without the device); `no-permission` (a node this user may not
+/// open: the udev rule did not apply).
+fn device_state(device: &UsbDevice, stream_deck: bool, nodes: &[Value]) -> &'static str {
+    if !stream_deck {
+        "not-a-stream-deck"
+    } else if device.hidraw.is_empty() {
         "usb-present-hid-missing"
     } else if device.serial.is_none() {
         "hid-without-serial"
-    } else if nodes
-        .iter()
-        .any(|node| node["access"] == "denied" || node["access"] == "missing")
-    {
+    } else if nodes.iter().any(|node| node["access"] == "missing") {
+        "node-missing"
+    } else if nodes.iter().any(|node| node["access"] == "denied") {
         "no-permission"
     } else {
         "ok"
@@ -574,6 +678,7 @@ fn finding_for(state: &str) -> Option<&'static str> {
         "usb-present-hid-missing" => Some("usb-present-hid-missing"),
         "hid-without-serial" => Some("hid-without-serial"),
         "no-permission" => Some("no-permission"),
+        "node-missing" => Some("node-missing"),
         _ => None,
     }
 }
@@ -591,6 +696,11 @@ fn hint(code: &str) -> &'static str {
         "hid-without-serial" => {
             "The HID interface reports no serial number; DeckPilot identifies devices by \
              their serial and skips this one. Replug the device."
+        }
+        "node-missing" => {
+            "The kernel has a hidraw node for the device, but /dev does not: DeckPilot runs in \
+             a container or sandbox without access to the device (a Flatpak needs \
+             --device=all), or /dev is not managed by udev."
         }
         "no-permission" => {
             "This user may not open the device's hidraw node: the udev rule is missing or has \
@@ -741,9 +851,10 @@ pub fn summary(report: &Value) -> String {
     ));
     for finding in devices["findings"].as_array().into_iter().flatten() {
         lines.push(format!(
-            "! {} (product {}): {}",
+            "! {} (product {}, port {}): {}",
             finding["code"].as_str().unwrap_or("?"),
             finding["productId"].as_str().unwrap_or("?"),
+            finding["port"].as_str().unwrap_or("-"),
             finding["hint"].as_str().unwrap_or(""),
         ));
     }

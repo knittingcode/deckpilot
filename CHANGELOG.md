@@ -275,9 +275,10 @@ released either. 0.6.0 is the first version intended for publication.
   runs, the udev rule on Linux, and the Elgato devices the system sees. On
   Linux it says when a Stream Deck's USB device is present but its HID
   interface is missing (for example behind a monitor's hub) or when the
-  device cannot be opened. It starts, opens and changes nothing, works
-  while the configuration is locked, and hides serial numbers, the home
-  directory and the user name. The JSON report is versioned (schema 1).
+  device cannot be opened. It starts and changes nothing, opens no device
+  on Linux, works while the configuration is locked, and replaces serial
+  numbers with pseudonyms and the home directory and the user name with
+  placeholders. The JSON report is versioned (schema 1).
 
 ### Changed
 

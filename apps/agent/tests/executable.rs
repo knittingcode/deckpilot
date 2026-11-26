@@ -65,5 +65,11 @@ fn diagnose_prints_the_report_and_creates_nothing() {
         .output()
         .unwrap();
     assert_eq!(wrong.status.code(), Some(2));
+    let help = Command::new(env!("CARGO_BIN_EXE_deckpilot-agent"))
+        .args(["diagnose", "--help"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("deckpilot-agent diagnose [--json]"));
     assert!(!data.exists());
 }

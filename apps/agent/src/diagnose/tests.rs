@@ -1,5 +1,6 @@
 use super::*;
 use deckpilot_distribution::{Architecture, Distribution, DistributionChannel, Platform};
+use std::collections::BTreeSet;
 
 /// A GitHub build for Linux: its package format comes from the bundler,
 /// so `install.type` is found from the files.
@@ -15,6 +16,7 @@ static GITHUB_LINUX: Distribution = match Distribution::new(
 };
 
 const SERIAL_OK: &str = "CL12K1A00042";
+const MACHINE_ID: &str = "0123456789abcdef0123456789abcdef";
 #[cfg(unix)]
 const SERIAL_NO_HID: &str = "CL12K1A00043";
 #[cfg(unix)]
@@ -44,10 +46,12 @@ fn conforms(schema: &Value, value: &Value, at: &str) -> Result<(), String> {
             let items = value
                 .as_array()
                 .ok_or_else(|| format!("{at}: {} is not an array", type_name(value)))?;
-            items
-                .iter()
-                .enumerate()
-                .try_for_each(|(i, item)| conforms(&element[0], item, &format!("{at}[{i}]")))
+            items.iter().enumerate().try_for_each(|(i, item)| {
+                let element = element
+                    .first()
+                    .ok_or_else(|| format!("{at}: empty array schema"))?;
+                conforms(element, item, &format!("{at}[{i}]"))
+            })
         }
         Value::Object(fields) if fields.contains_key("$nullable") => {
             if value.is_null() {
@@ -60,9 +64,9 @@ fn conforms(schema: &Value, value: &Value, at: &str) -> Result<(), String> {
             let object = value
                 .as_object()
                 .ok_or_else(|| format!("{at}: {} is not an object", type_name(value)))?;
-            let expected: Vec<&String> =
+            let expected: BTreeSet<&String> =
                 fields.keys().filter(|key| !key.starts_with('$')).collect();
-            let actual: Vec<&String> = object.keys().collect();
+            let actual: BTreeSet<&String> = object.keys().collect();
             if expected != actual {
                 return Err(format!(
                     "{at}: keys {actual:?}, the schema has {expected:?}"
@@ -137,6 +141,8 @@ fn linux_fixture(root: &Path) -> Environment {
     hidraw(root, "1-4", "0003:046D:C52B.0002", "hidraw0");
     usb_device(root, "1-5", "0fd9", "006c", Some("XL0001"));
     hidraw(root, "1-5", "0003:0FD9:006C.0003", "hidraw5");
+    // An Elgato product that is not a Stream Deck (Cam Link 4K): no HID.
+    usb_device(root, "1-6", "0fd9", "0066", Some("CAMLINK1"));
     // A root hub: no idVendor of Elgato.
     usb_device(root, "usb1", "1d6b", "0002", None);
     write(
@@ -173,6 +179,7 @@ fn linux_fixture(root: &Path) -> Environment {
         appimage: None,
         home: Some(home),
         user: Some("alice".into()),
+        machine_id: Some(MACHINE_ID.into()),
         hid: HidSource::Sysfs,
     }
 }
@@ -235,7 +242,7 @@ fn usb_present_hid_missing_is_detected_for_supported_models() {
     let usb = devices["usb"].as_array().unwrap();
     // Elgato only, sorted by port: not the root hub, not the other vendor.
     let ports: Vec<&str> = usb.iter().map(|d| d["port"].as_str().unwrap()).collect();
-    assert_eq!(ports, ["1-2", "1-3", "1-5"]);
+    assert_eq!(ports, ["1-2", "1-3", "1-5", "1-6"]);
 
     assert_eq!(usb[0]["state"], "ok");
     assert_eq!(usb[0]["model"], "elgato.streamdeck.mk2");
@@ -245,12 +252,20 @@ fn usb_present_hid_missing_is_detected_for_supported_models() {
 
     assert_eq!(usb[1]["state"], "usb-present-hid-missing");
     assert_eq!(usb[1]["hidraw"], json!([]));
-    assert_eq!(usb[1]["serial"], serial_pseudonym(SERIAL_NO_HID));
+    assert_eq!(
+        usb[1]["serial"],
+        serial_pseudonym(SERIAL_NO_HID, Some(MACHINE_ID))
+    );
 
     // XL: seen, no driver.
     assert_eq!(usb[2]["model"], "elgato.streamdeck.xl");
     assert_eq!(usb[2]["driver"], false);
     assert_eq!(usb[2]["state"], "ok");
+
+    // Cam Link: not a Stream Deck, so no HID is expected and nothing is
+    // reported about it.
+    assert_eq!(usb[3]["model"], Value::Null);
+    assert_eq!(usb[3]["state"], "not-a-stream-deck");
 
     let findings = devices["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1, "{findings:?}");
@@ -281,7 +296,7 @@ fn a_hid_node_without_serial_or_permission_is_reported() {
     assert_eq!(usb[0]["state"], "hid-without-serial");
     assert_eq!(usb[0]["serial"], Value::Null);
     assert_eq!(usb[2]["hidraw"][0]["access"], "missing");
-    assert_eq!(usb[2]["state"], "no-permission");
+    assert_eq!(usb[2]["state"], "node-missing");
     let codes: Vec<&str> = report["devices"]["findings"]
         .as_array()
         .unwrap()
@@ -293,8 +308,34 @@ fn a_hid_node_without_serial_or_permission_is_reported() {
         [
             "hid-without-serial",
             "usb-present-hid-missing",
-            "no-permission"
+            "node-missing"
         ]
+    );
+}
+
+/// A node this user may not open (no ACL: the udev rule did not apply).
+/// Root may open anything, so the check needs an ordinary user.
+#[cfg(unix)]
+#[test]
+fn a_node_without_access_is_no_permission() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = root();
+    let env = linux_fixture(root.path());
+    let node = root.path().join("dev/hidraw3");
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o000)).unwrap();
+    if rustix::fs::access(&node, rustix::fs::Access::READ_OK).is_ok() {
+        eprintln!("skipped: this user (root?) may open any file");
+        return;
+    }
+    let report = collect(&env);
+    assert_eq!(report["devices"]["usb"][0]["hidraw"][0]["access"], "denied");
+    assert_eq!(report["devices"]["usb"][0]["state"], "no-permission");
+    assert!(
+        report["devices"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "no-permission" && f["port"] == "1-2")
     );
 }
 
@@ -332,7 +373,9 @@ fn serials_home_user_and_token_are_redacted() {
         SERIAL_OK,
         SERIAL_NO_HID,
         "XL0001",
+        "CAMLINK1",
         TOKEN,
+        MACHINE_ID,
         "/home/alice",
         "alice",
     ] {
@@ -349,10 +392,13 @@ fn serials_home_user_and_token_are_redacted() {
             .ends_with("/opt/<user>/deckpilot-agent")
     );
     // The pseudonym is stable and not the plain hash of the serial.
-    let pseudonym = serial_pseudonym(SERIAL_OK);
+    let pseudonym = serial_pseudonym(SERIAL_OK, Some(MACHINE_ID));
     assert_eq!(report["devices"]["usb"][0]["serial"], pseudonym);
-    assert_eq!(pseudonym, serial_pseudonym(SERIAL_OK));
-    assert_ne!(pseudonym, serial_pseudonym(SERIAL_NO_HID));
+    assert_eq!(pseudonym, serial_pseudonym(SERIAL_OK, Some(MACHINE_ID)));
+    assert_ne!(pseudonym, serial_pseudonym(SERIAL_NO_HID, Some(MACHINE_ID)));
+    // Another machine, or none: another pseudonym.
+    assert_ne!(pseudonym, serial_pseudonym(SERIAL_OK, None));
+    assert_ne!(pseudonym, serial_pseudonym(SERIAL_OK, Some("fedcba98")));
     assert!(pseudonym.starts_with("sha256:") && pseudonym.len() == "sha256:".len() + 16);
     let plain =
         Sha256::digest(SERIAL_OK.as_bytes())[..8]
@@ -367,15 +413,38 @@ fn serials_home_user_and_token_are_redacted() {
 #[test]
 fn redaction_keeps_other_paths_and_partial_names() {
     let redactor = Redactor {
-        home: Some("/home/al".into()),
+        home: Some("/home/al/".into()),
         user: Some("al".into()),
+        fold_case: false,
     };
+    // A trailing separator of the home directory does not matter.
     assert_eq!(redactor.path(Path::new("/home/al")), "~");
-    assert_eq!(redactor.path(Path::new("/home/al/x")), "~/x");
-    // Not the home directory, only a prefix of it.
-    assert_eq!(redactor.path(Path::new("/home/alice/x")), "/home/alice/x");
+    assert_eq!(
+        redactor.path(Path::new("/home/al/x")),
+        format!("~{}x", std::path::MAIN_SEPARATOR)
+    );
+    // Not the home directory, only a prefix of its name.
+    assert_eq!(redactor.path(Path::new("/home/also/x")), "/home/also/x");
     assert_eq!(redactor.path(Path::new("/srv/al/x")), "/srv/<user>/x");
+    // The name as a word of its own, also inside a segment.
+    assert_eq!(
+        redactor.path(Path::new("/srv/al-deckpilot/x")),
+        "/srv/<user>-deckpilot/x"
+    );
     assert_eq!(redactor.path(Path::new("/srv/also/x")), "/srv/also/x");
+    assert_eq!(redactor.path(Path::new("/usr/local/bin")), "/usr/local/bin");
+    assert_eq!(
+        redactor.text("pipe deckpilot-al-1"),
+        "pipe deckpilot-<user>-1"
+    );
+    // Windows: paths compare without case.
+    let windows = Redactor {
+        home: Some(PathBuf::from("/Users/Al")),
+        user: Some("Al".into()),
+        fold_case: true,
+    };
+    assert_eq!(windows.path(Path::new("/users/al")), "~");
+    assert_eq!(windows.text("C:/USERS/AL/x"), "C:/USERS/<user>/x");
 }
 
 #[cfg(unix)]
@@ -390,11 +459,11 @@ fn install_type_and_versions_from_the_files() {
     assert_eq!(report["versions"]["agent"], "0.15.0");
     assert_eq!(
         report["versions"]["desktop"],
-        json!({ "present": true, "version": "0.15.0" })
+        json!({ "present": true, "version": "0.15.0", "versionSource": "same-package" })
     );
     assert_eq!(
         report["versions"]["pluginHost"],
-        json!({ "present": false, "version": null })
+        json!({ "present": false, "version": null, "versionSource": null })
     );
     assert_eq!(report["os"]["name"], "Ubuntu 24.04.1 LTS");
     assert_eq!(report["os"]["kernel"], "6.8.0-49-generic");
@@ -407,6 +476,11 @@ fn install_type_and_versions_from_the_files() {
     assert_eq!(install_type(&env), "unknown");
     fs::create_dir_all(root.path().join("var/lib/rpm")).unwrap();
     assert_eq!(install_type(&env), "rpm");
+    // After an upgrade replaced the running file.
+    env.exe = Some(root.path().join("usr/bin/deckpilot-agent (deleted)"));
+    assert_eq!(install_type(&env), "rpm");
+    write(&root.path().join(".flatpak-info"), "[Application]\n");
+    assert_eq!(install_type(&env), "flatpak");
     env.exe = Some(PathBuf::from("/src/deckpilot/target/debug/deckpilot-agent"));
     assert_eq!(install_type(&env), "development");
     env.exe = None;
@@ -469,6 +543,7 @@ fn listed_hid_interfaces_without_usb() {
         appimage: None,
         home: None,
         user: None,
+        machine_id: None,
         hid: HidSource::Listed(Ok(vec![
             deckpilot_hid::HidInterface {
                 vendor_id: 0x0fd9,
@@ -480,6 +555,12 @@ fn listed_hid_interfaces_without_usb() {
                 product_id: 0x0080,
                 serial: None,
             },
+            // Not a Stream Deck: listed, never a finding.
+            deckpilot_hid::HidInterface {
+                vendor_id: 0x0fd9,
+                product_id: 0x0070,
+                serial: None,
+            },
         ])),
     };
     let report = collect(&env);
@@ -488,8 +569,10 @@ fn listed_hid_interfaces_without_usb() {
     assert_eq!(report["devices"]["usb"], Value::Null);
     assert_eq!(report["udevRules"], Value::Null);
     let hid = report["devices"]["hid"].as_array().unwrap();
-    assert_eq!(hid.len(), 2);
-    assert_eq!(hid[0]["serial"], serial_pseudonym(SERIAL_OK));
+    assert_eq!(hid.len(), 3);
+    assert_eq!(hid[0]["serial"], serial_pseudonym(SERIAL_OK, None));
+    assert_eq!(hid[2]["model"], Value::Null);
+    assert_eq!(report["devices"]["findings"].as_array().unwrap().len(), 1);
     assert_eq!(
         report["devices"]["findings"][0]["code"],
         "hid-without-serial"
@@ -502,13 +585,15 @@ fn listed_hid_interfaces_without_usb() {
     );
 
     let failed = Environment {
-        hid: HidSource::Listed(Err("no HID API".into())),
+        hid: HidSource::Listed(Err("cannot open /Users/bob/x".into())),
+        home: Some(PathBuf::from("/Users/bob")),
+        user: Some("bob".into()),
         ..env
     };
     let report = collect(&failed);
     conforms(&schema_v1(), &report, "failed hidapi report").unwrap();
     assert_eq!(report["devices"]["hid"], Value::Null);
-    assert_eq!(report["devices"]["hidError"], "no HID API");
+    assert_eq!(report["devices"]["hidError"], "cannot open /Users/<user>/x");
 }
 
 #[cfg(unix)]
@@ -523,11 +608,148 @@ fn the_summary_names_the_finding() {
     );
     assert!(text.contains("agent running: no"), "{text}");
     assert!(
-        text.contains("Elgato devices: 3 USB, 2 HID (sysfs)"),
+        text.contains("Elgato devices: 4 USB, 2 HID (sysfs)"),
         "{text}"
     );
     assert!(
-        text.contains("! usb-present-hid-missing (product 0080)"),
+        text.contains("! usb-present-hid-missing (product 0080, port 1-3)"),
         "{text}"
     );
+}
+
+/// Every field of schema version 1 as it was published: path and type. The
+/// schema file may gain fields (they keep the version), but none of these
+/// may go away or change type without a new `SCHEMA_VERSION`; this list is
+/// never edited for version 1.
+const SCHEMA_V1_BASELINE: &[&str] = &[
+    "agent.dataDirectory: string",
+    "agent.dataDirectoryExists: boolean",
+    "agent.dataDirectoryOverridden: boolean",
+    "agent.endpoint: string",
+    "agent.endpointFile: string",
+    "agent.lock: string",
+    "agent.running: boolean|null",
+    "devices.findings[].code: string",
+    "devices.findings[].hint: string",
+    "devices.findings[].port: string|null",
+    "devices.findings[].productId: string",
+    "devices.findings[].serial: string|null",
+    "devices.hid?[].driver: boolean",
+    "devices.hid?[].model: string|null",
+    "devices.hid?[].name: string|null",
+    "devices.hid?[].node: string|null",
+    "devices.hid?[].productId: string",
+    "devices.hid?[].serial: string|null",
+    "devices.hid?[].vendorId: string",
+    "devices.hidError: string|null",
+    "devices.source: string",
+    "devices.usb?[].driver: boolean",
+    "devices.usb?[].hidraw[].access: string",
+    "devices.usb?[].hidraw[].node: string",
+    "devices.usb?[].model: string|null",
+    "devices.usb?[].name: string|null",
+    "devices.usb?[].port: string",
+    "devices.usb?[].productId: string",
+    "devices.usb?[].serial: string|null",
+    "devices.usb?[].state: string",
+    "devices.usb?[].vendorId: string",
+    "install.distributionChannel: string",
+    "install.executable: string|null",
+    "install.packageFormat: string|null",
+    "install.type: string",
+    "ipc.minimumCompatibleAgentProtocol: number",
+    "ipc.minimumProtocol: number",
+    "ipc.protocol: number",
+    "os.arch: string",
+    "os.kernel: string|null",
+    "os.name: string|null",
+    "os.platform: string",
+    "schema: string",
+    "schemaVersion: number",
+    "udevRules?[].path: string",
+    "udevRules?[].present: boolean",
+    "versions.agent: string",
+    "versions.desktop.present: boolean",
+    "versions.desktop.version: string|null",
+    "versions.desktop.versionSource: string|null",
+    "versions.pluginHost.present: boolean",
+    "versions.pluginHost.version: string|null",
+    "versions.pluginHost.versionSource: string|null",
+];
+
+/// The schema file's fields as `path: type` lines (`?` marks a nullable
+/// array or object, `[]` an array's elements).
+fn schema_fields(schema: &Value, at: &str, out: &mut BTreeSet<String>) {
+    match schema {
+        Value::String(types) => {
+            out.insert(format!("{at}: {types}"));
+        }
+        Value::Array(element) => {
+            if let Some(element) = element.first() {
+                schema_fields(element, &format!("{at}[]"), out);
+            }
+        }
+        Value::Object(fields) if fields.contains_key("$nullable") => {
+            schema_fields(&fields["$nullable"], &format!("{at}?"), out);
+        }
+        Value::Object(fields) => {
+            for (key, value) in fields.iter().filter(|(key, _)| !key.starts_with('$')) {
+                let path = if at.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{at}.{key}")
+                };
+                schema_fields(value, &path, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn the_schema_file_keeps_every_field_of_version_1() {
+    let mut fields = BTreeSet::new();
+    schema_fields(&schema_v1(), "", &mut fields);
+    let missing: Vec<&&str> = SCHEMA_V1_BASELINE
+        .iter()
+        .filter(|field| !fields.contains(**field))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "schema-v1.json lost or retyped fields of version 1: {missing:?}"
+    );
+}
+
+/// Probing the lock while an agent starts never makes it give up: the
+/// agent retries its lock for `STARTUP_LOCK_WAIT`.
+#[cfg(unix)]
+#[test]
+fn probing_while_an_agent_starts_never_stops_it() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let root = root();
+    let env = linux_fixture(root.path());
+    // A previous agent left its lock file behind (the probe never creates it).
+    fs::write(&env.paths.lock_file, "").unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let prober = {
+        let path = env.paths.lock_file.clone();
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut probes = 0_u32;
+            while !stop.load(Ordering::Relaxed) {
+                let _ = probe_lock(&path);
+                probes += 1;
+            }
+            probes
+        })
+    };
+    for _ in 0..20 {
+        let lock =
+            crate::InstanceLock::acquire_waiting(&env.paths.lock_file, crate::STARTUP_LOCK_WAIT)
+                .expect("a starting agent gets its lock despite the probes");
+        drop(lock);
+    }
+    stop.store(true, Ordering::Relaxed);
+    assert!(prober.join().unwrap() > 0);
 }
