@@ -35,10 +35,14 @@ printf '%s\n' \
 # names it or is "auto" (getArchitectureVariants, apt-pkg/aptconfiguration.cc),
 # and #clear empties that list (apt.conf(5)). The part sorts after the
 # image's numbered parts; /etc/apt/apt.conf is read after all parts, so the
-# result is printed and checked.
+# result is printed and checked. A package the image already has as an
+# amd64v3 build is swapped for the baseline build of the same version when
+# it is installed here (the variant counts as another version), nothing else.
 printf '%s\n' '#clear APT::Architecture-Variants;' |
   sudo tee /etc/apt/apt.conf.d/zz-deckpilot-baseline-variant >/dev/null
-variants=$(apt-config dump | { grep -E '^APT::Architecture-Variants' || true; } | tr '\n' ' ')
+# #clear leaves the option empty, and apt-config dumps empty values unless
+# told not to.
+variants=$(apt-config --no-empty dump APT::Architecture-Variants | tr '\n' ' ')
 if [ -n "$variants" ]; then
   echo "::warning::apt still enables architecture variants ($variants); amd64v3 builds may be used"
 else
