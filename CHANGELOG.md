@@ -110,6 +110,29 @@ released either. 0.6.0 is the first version intended for publication.
   A managed Calls layout that cannot be stored while the database is busy
   is tried again after 1 s, then after waits doubling up to a minute;
   other storage errors are not retried.
+- Calls (groundwork): the agent can preview a call page of the Calls layout
+  on a device for the Device Editor (IPC 19 `previewCallsPage`), with fixed
+  placeholder content and nothing from a real call. Only a connection that
+  declares itself the configuration app may ask; that is a policy guard,
+  while the IPC token is the access boundary. A lock or a real call always
+  wins, and the preview ends with the editor's connection.
+- Calls (groundwork): Settings › Devices › Calls can show a call page on
+  the device ("Show on the device", "End preview"). The preview ends when
+  the settings close, when the window hides or closes, or when the app
+  quits. The settings follow the agent: `callsChanged` names the page each
+  device previews, so a preview the agent ended by itself (a lock, a real
+  call, the dismiss key, a disconnect) shows as ended. A device that takes
+  no preview frame refuses it (`callsPreviewRefused`), and the preview
+  already there stays. The Calls status carries a revision, so the
+  settings never let an older status replace a newer one.
+- Calls (groundwork): Settings › Devices lists the call pages of each Calls
+  layout. A control the call app does not support stays listed, disabled,
+  with the reason (for Teams: Microsoft retired its device API). The
+  *Back to work* settings can be changed there: a 20, 30 or 60 s or
+  custom timer, when what you started ends, or that with a maximum (the
+  default, 60 s), plus what a failure or cancellation does and whether
+  every device goes back to work. A change counts as an edit of the Calls
+  layout. IPC 19 gains `setCallsBackToWork`.
 - Calls (groundwork, off in every build): a detection-only Microsoft Teams
   provider. It infers that a call is probably active while Teams holds the
   microphone, recognizing Teams only by its executable name. Answer, end,

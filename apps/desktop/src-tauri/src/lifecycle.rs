@@ -181,6 +181,13 @@ pub fn sync_dock<R: tauri::Runtime>(app: &tauri::AppHandle<R>, leaving: Option<&
 /// of destroying it and leaves the Dock when no other window is visible.
 pub fn hide_to_menu_bar<R: tauri::Runtime>(window: &tauri::Window<R>) {
     use tauri::Manager;
+    // The editor is out of sight: its Calls preview ends.
+    if let Some(preview) = window
+        .app_handle()
+        .try_state::<crate::commands::calls::CallsPreview>()
+    {
+        preview.stop();
+    }
     let _ = window.hide();
     sync_dock(window.app_handle(), Some(window.label()));
 }
@@ -229,6 +236,12 @@ pub fn on_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, event: &tau
             {
                 live.stop();
             }
+            // So does its Calls preview.
+            if window.label() == crate::windows::MAIN
+                && let Some(preview) = app.try_state::<crate::commands::calls::CallsPreview>()
+            {
+                preview.stop();
+            }
             let unlocked = app.state::<crate::state::AppState>().is_unlocked();
             crate::windows::closed(app, window.label(), unlocked);
             sync_dock(app, Some(window.label()));
@@ -253,12 +266,28 @@ pub fn on_page_load<R: tauri::Runtime>(
     {
         live.stop();
     }
+    if payload.event() == tauri::webview::PageLoadEvent::Started
+        && webview.label() == crate::windows::MAIN
+        && let Some(preview) = webview
+            .app_handle()
+            .try_state::<crate::commands::calls::CallsPreview>()
+    {
+        preview.stop();
+    }
 }
 
 /// The app's run loop events: on macOS, opening the app from Finder,
 /// Spotlight or the Dock while it runs without a visible window (closed to
 /// the menu bar) shows it again, like the tray's *Open DeckPilot*.
 pub fn on_run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::RunEvent) {
+    // The app quits: the editor's Calls preview ends (its connection would
+    // close with the process anyway).
+    if let tauri::RunEvent::Exit = event {
+        use tauri::Manager;
+        if let Some(preview) = app.try_state::<crate::commands::calls::CallsPreview>() {
+            preview.stop();
+        }
+    }
     // A quit the user asked for (⌘Q; `code` is set when the app exits by
     // itself) over unsaved layout edits: the window asks first.
     if let tauri::RunEvent::ExitRequested {

@@ -336,6 +336,8 @@ impl Agent {
         self.store = None;
         self.key = None;
         self.plugins.closed();
+        // A locked device shows no preview either.
+        self.calls_end_previews();
         // A locked device never shows a call.
         self.calls_set_locked(true);
         self.calls_layouts_changed();

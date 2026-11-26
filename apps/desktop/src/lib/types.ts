@@ -1569,6 +1569,11 @@ export interface CallsStatus {
   controls: boolean
   devices: CallsDevice[]
   layouts: CallsLayout[]
+  /**
+   * Counts up whenever the rest changes, within one run of the agent. An
+   * answer and an event may arrive in either order: the higher one wins.
+   */
+  revision: number
 }
 
 export interface CallsDevice {
@@ -1576,6 +1581,8 @@ export interface CallsDevice {
   overlay: boolean
   shown: boolean
   suspended: boolean
+  /** The page the device previews for the editor; absent once the agent ended it. */
+  preview?: CallsPageKind
 }
 
 export interface CallsLayout {
@@ -1584,6 +1591,41 @@ export interface CallsLayout {
   name: string
   edited: boolean
   templateVersion: string
+  /** The call pages, each control with whether the provider supports it now. */
+  pages: CallsPage[]
+  /** Absent when the layout has no "Back to work" key: nothing to set. */
+  back?: BackToWork
+}
+
+export type CallsPageKind = "incoming" | "outgoing" | "active"
+
+export interface CallsPage {
+  page: CallsPageKind
+  /** The page's name in the layout. */
+  name: string
+  controls: CallsControl[]
+}
+
+export interface CallsControl {
+  control: ControlId
+  /** `answer`, `reject`, `cancel-outgoing`, `end`, `mic-toggle`, `camera-toggle`, `return-to-work`, ... */
+  action: string
+  supported: boolean
+  /** Why not: `provider-has-no-api`, `platform-not-supported`, ... */
+  reason?: string
+}
+
+/** When a device that went back to work shows the call again. */
+export type BackToWorkMode =
+  | { kind: "timer"; seconds: number }
+  | { kind: "completion" }
+  | { kind: "completionOrMax"; maxSeconds: number }
+
+export interface BackToWork {
+  mode: BackToWorkMode
+  onFailure: "resume" | "stay"
+  onCancel: "resume" | "stay"
+  allDevices: boolean
 }
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */

@@ -13,7 +13,7 @@
 mod actions;
 pub(crate) mod agent;
 pub(crate) mod assets;
-mod calls;
+pub(crate) mod calls;
 mod credentials;
 mod icons;
 mod key_labels;
@@ -211,6 +211,9 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         calls::get_calls_status,
         calls::set_calls_overlay,
         calls::restore_calls_layout,
+        calls::set_calls_back_to_work,
+        calls::calls_preview_begin,
+        calls::calls_preview_end,
         plugins::get_plugin_runtime,
         plugins::list_plugins,
         plugins::list_plugin_navigation,

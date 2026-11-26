@@ -700,6 +700,10 @@ async fn a_protocol_18_connection_cannot_ask_about_calls() {
             model: deck.device.model.clone(),
             copy_name: "Mine".into(),
         },
+        Request::SetCallsBackToWork {
+            model: deck.device.model.clone(),
+            back: deckpilot_ipc::calls::BackToWork::default(),
+        },
     ] {
         let refused = old.request(request).await;
         assert!(
@@ -981,6 +985,733 @@ async fn a_busy_seed_is_tried_again_with_a_growing_wait_and_stored_once() {
     deck.join().await;
     let view = deck.agent.handle.calls_view().await.unwrap();
     assert_eq!(view.layouts, std::slice::from_ref(&first.layout.name));
+    deck.agent.shutdown().await;
+}
+
+/// C7 over IPC: each managed layout's call pages with their controls and
+/// whether the provider supports them; *Back to work* read (the default:
+/// completion or 60 s) and set (a 20 s timer the device then follows, the
+/// layout counting as edited); out-of-range times refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_call_pages_and_back_to_work_over_ipc() {
+    use deckpilot_ipc::calls::{BackToWork, BackToWorkMode, CallsPageKind};
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let status = async || match deck.agent.request(Request::GetCallsStatus).await.unwrap() {
+        Response::CallsStatus { status } => status,
+        other => panic!("{other:?}"),
+    };
+    let layout = status().await.layouts[0].clone();
+    let kinds: Vec<CallsPageKind> = layout.pages.iter().map(|p| p.page).collect();
+    assert_eq!(
+        kinds,
+        [
+            CallsPageKind::Incoming,
+            CallsPageKind::Outgoing,
+            CallsPageKind::Active
+        ]
+    );
+    let active = &layout.pages[2];
+    let control = |action: &str| {
+        active
+            .controls
+            .iter()
+            .find(|c| c.action == action)
+            .unwrap_or_else(|| panic!("{action} on {active:?}"))
+            .clone()
+    };
+    assert!(control("mic-toggle").supported, "the mock controls calls");
+    assert!(control("return-to-work").supported);
+    assert_eq!(layout.back, Some(BackToWork::default()));
+    assert_eq!(
+        layout.back.map(|b| b.mode),
+        Some(BackToWorkMode::CompletionOrMax { max_seconds: 60 })
+    );
+
+    // A 20 s timer.
+    let timer = BackToWork {
+        mode: BackToWorkMode::Timer { seconds: 20 },
+        ..BackToWork::default()
+    };
+    let Response::CallsStatus { status: set } = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: layout.model.clone(),
+            back: timer,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert_eq!(set.layouts[0].back, Some(timer));
+    assert!(set.layouts[0].edited, "a Back to work change is an edit");
+    // The device follows it: back after 20 s, not before.
+    deck.join().await;
+    deck.back_to_work().await;
+    deck.advance(19).await;
+    assert!(!deck.shows_overlay().await, "not before 20 s");
+    deck.advance(1).await;
+    deck.wait_overlay(true).await;
+
+    // Out of range: refused, nothing changes.
+    let refused = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: layout.model.clone(),
+            back: BackToWork {
+                mode: BackToWorkMode::Timer { seconds: 3 },
+                ..BackToWork::default()
+            },
+        })
+        .await;
+    match &refused {
+        Err(deckpilot_ipc::ClientError::Agent(error)) => {
+            assert_eq!(
+                error.code,
+                deckpilot_ipc::ErrorCode::InvalidRequest,
+                "{error:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(status().await.layouts[0].back, Some(timer));
+    // A model without a Calls layout.
+    let unknown = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: models::stream_deck_xl().id,
+            back: timer,
+        })
+        .await;
+    match &unknown {
+        Err(deckpilot_ipc::ClientError::Agent(error)) => {
+            assert_eq!(error.code, deckpilot_ipc::ErrorCode::NotFound);
+            assert_eq!(
+                error.reason.as_deref(),
+                Some(deckpilot_ipc::calls::reason::NO_LAYOUT)
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    deck.agent.shutdown().await;
+}
+
+/// With a detection-only provider (like Teams) every call control of the
+/// pages is unsupported, with the reason; "Back to work" still works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_detection_only_provider_lists_its_controls_as_unsupported() {
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-detect");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let _device = mock.plug(&models::stream_deck_mk2(), "CALLS-D");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::detection_only(), ActionParameters::new())
+        .await;
+    let Response::CallsStatus { status } = agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(!status.controls);
+    let controls: Vec<_> = status.layouts[0]
+        .pages
+        .iter()
+        .flat_map(|p| p.controls.iter())
+        .collect();
+    assert_ne!(controls.len(), 0);
+    for control in controls {
+        if control.action == "return-to-work" {
+            assert!(control.supported);
+        } else {
+            assert!(!control.supported, "{control:?}");
+            assert_eq!(control.reason.as_deref(), Some("provider-has-no-api"));
+        }
+    }
+    agent.shutdown().await;
+}
+
+/// With only the consent to observe calls, no control of the pages is
+/// supported (`consent-not-given`), whatever the provider can, and the
+/// status says nothing can be controlled.
+#[tokio::test(flavor = "multi_thread")]
+async fn observing_only_lists_every_control_as_not_allowed() {
+    use deckpilot_calls::provider::ConsentState;
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-observe");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let _device = mock.plug(&models::stream_deck_mk2(), "CALLS-O");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    let observe = ConsentState {
+        observe: true,
+        control: false,
+        titles: false,
+    };
+    agent
+        .handle
+        .install_calls_mock_with(MockProvider::new(), ActionParameters::new(), observe)
+        .await;
+    let Response::CallsStatus { status } = agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(!status.controls, "observe only: nothing controls");
+    for control in status.layouts[0]
+        .pages
+        .iter()
+        .flat_map(|p| p.controls.iter())
+    {
+        if control.action == "return-to-work" {
+            assert!(control.supported);
+        } else {
+            assert!(!control.supported, "{control:?}");
+            assert_eq!(control.reason.as_deref(), Some("consent-not-given"));
+        }
+    }
+    agent.shutdown().await;
+}
+
+/// Two "Back to work" keys on the managed layout: setting Back to work
+/// writes both, in one go, and each keeps a parameter the settings do not
+/// name.
+#[tokio::test(flavor = "multi_thread")]
+async fn back_to_work_is_written_to_every_key_keeping_other_parameters() {
+    use deckpilot_ipc::calls::{BackToWork, BackToWorkMode};
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let store = deck.agent.store();
+    let mk2 = models::stream_deck_mk2().id;
+    let managed = store
+        .managed_layout("deckpilot.calls", &mk2)
+        .unwrap()
+        .expect("seeded");
+    // A second "Back to work" key, and a parameter of the user's on each.
+    let mut layout = managed.layout.clone();
+    let mut actions = managed.actions.clone();
+    let first = actions
+        .iter_mut()
+        .find(|a| a.action_type.as_str() == "deckpilot.calls.return-to-work")
+        .unwrap();
+    first.parameters = first
+        .parameters
+        .clone()
+        .with("note", ParameterValue::Text("mine".into()));
+    let mut second = first.clone();
+    second.id = deckpilot_core::ActionInstanceId::new();
+    second.parameters = second
+        .parameters
+        .clone()
+        .with("note", ParameterValue::Text("second".into()));
+    let home = layout.home_page;
+    let used: Vec<ControlId> = layout
+        .page(home)
+        .unwrap()
+        .bindings
+        .iter()
+        .map(|b| b.control)
+        .collect();
+    let free = (0..15u16)
+        .map(key)
+        .find(|k| !used.contains(k))
+        .expect("a free key");
+    layout
+        .page_mut(home)
+        .unwrap()
+        .bindings
+        .push(ControlBinding::new(
+            free,
+            Trigger::Press,
+            BindingTarget::action(second.id),
+        ));
+    let ids = [first.id, second.id];
+    actions.push(second);
+    store
+        .seed_managed_layout(
+            "deckpilot.calls",
+            &layout,
+            &actions,
+            &managed.template_version,
+        )
+        .unwrap();
+    // Set a 20 s timer.
+    let timer = BackToWork {
+        mode: BackToWorkMode::Timer { seconds: 20 },
+        ..BackToWork::default()
+    };
+    let Response::CallsStatus { .. } = deck
+        .agent
+        .request(Request::SetCallsBackToWork {
+            model: mk2.clone(),
+            back: timer,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    let stored = store
+        .managed_layout("deckpilot.calls", &mk2)
+        .unwrap()
+        .unwrap();
+    for (id, note) in ids.into_iter().zip(["mine", "second"]) {
+        let action = stored.actions.iter().find(|a| a.id == id).unwrap();
+        assert_eq!(action.parameters.text("mode"), Some("timer"), "{id}");
+        assert_eq!(
+            action.parameters.get("seconds"),
+            Some(&ParameterValue::Integer(20)),
+            "{id}"
+        );
+        assert_eq!(action.parameters.text("note"), Some(note), "kept: {id}");
+    }
+    deck.agent.shutdown().await;
+}
+
+// ------------------------------------------------- C6b: the editor's preview
+
+/// Waits until the test view of Calls satisfies `check`.
+async fn wait_view(
+    deck: &Deck,
+    what: &str,
+    check: impl Fn(&deckpilot_agent::service::calls::CallsView) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let view = deck.agent.handle.calls_view().await.unwrap();
+        if check(&view) {
+            return;
+        }
+        assert!(tokio::time::Instant::now() <= deadline, "{what}: {view:?}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+fn preview(deck: &Deck, page: deckpilot_ipc::calls::CallsPageKind) -> deckpilot_ipc::Request {
+    deckpilot_ipc::Request::PreviewCallsPage {
+        device: deck.device.clone(),
+        page,
+    }
+}
+
+fn refused_with(
+    result: Result<deckpilot_ipc::Response, deckpilot_ipc::ClientError>,
+) -> deckpilot_ipc::IpcError {
+    match result {
+        Err(deckpilot_ipc::ClientError::Agent(error)) => error,
+        other => panic!("expected the agent's refusal, got {other:?}"),
+    }
+}
+
+/// Locked: no preview starts, and none is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preview_is_refused_while_locked() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    use deckpilot_ipc::{ErrorCode, Request};
+    let f = fixture();
+    let deck = start(&f).await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    let mut editor = deck.agent.client().await;
+    let error = refused_with(editor.request(preview(&deck, CallsPageKind::Active)).await);
+    assert_eq!(error.code, ErrorCode::Locked);
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!((view.previews, view.frames), (0, 0), "{view:?}");
+    deck.agent.shutdown().await;
+}
+
+/// A real call takes over a preview at once, a preview never starts during
+/// a call, and the call's end leaves no frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_real_call_takes_over_a_preview() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Incoming))
+        .await
+        .unwrap();
+    wait_view(&deck, "the preview", |v| v.previews == 1 && v.frames == 1).await;
+    assert!(deck.shows_overlay().await);
+    deck.join().await;
+    wait_view(&deck, "the call's frame only", |v| {
+        v.previews == 0 && v.frames == 1 && v.state == CallState::Active
+    })
+    .await;
+    let error = refused_with(editor.request(preview(&deck, CallsPageKind::Active)).await);
+    assert_eq!(
+        error.reason.as_deref(),
+        Some(deckpilot_ipc::calls::reason::PREVIEW_IN_CALL)
+    );
+    deck.hang_up().await;
+    wait_view(&deck, "no frame after the call", |v| v.frames == 0).await;
+    deck.agent.shutdown().await;
+}
+
+/// The preview belongs to the editor's connection: closing it ends it.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_the_connection_ends_the_preview() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Active))
+        .await
+        .unwrap();
+    wait_view(&deck, "the preview", |v| v.previews == 1 && v.frames == 1).await;
+    drop(editor);
+    wait_view(&deck, "the preview ended with the connection", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    deck.agent.shutdown().await;
+}
+
+/// Only a connection declaring the desktop (the configuration app)
+/// previews: any other client kind (a plugin host, the command line) is
+/// refused, and a protocol 18 one never sends it. The kind is declared,
+/// not authenticated: a policy guard behind the token.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connection_not_declaring_the_desktop_cannot_preview() {
+    use deckpilot_ipc::calls::CallsPageKind;
+    use deckpilot_ipc::{AgentClient, ClientError, ClientKind, ErrorCode};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut other = AgentClient::connect(&deck.agent.paths, ClientKind::Other)
+        .await
+        .unwrap();
+    let error = refused_with(other.request(preview(&deck, CallsPageKind::Active)).await);
+    assert_eq!(error.code, ErrorCode::Unauthorized);
+    assert_eq!(
+        error.reason.as_deref(),
+        Some(deckpilot_ipc::calls::reason::PREVIEW_DESKTOP_ONLY)
+    );
+    let mut old = AgentClient::connect_with_protocol(&deck.agent.paths, ClientKind::Desktop, 18)
+        .await
+        .unwrap();
+    let refused = old.request(preview(&deck, CallsPageKind::Active)).await;
+    assert!(
+        matches!(refused, Err(ClientError::Unsupported { needs: 19, .. })),
+        "{refused:?}"
+    );
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!((view.previews, view.frames), (0, 0), "{view:?}");
+    deck.agent.shutdown().await;
+}
+
+/// No frame leaks: a new preview replaces the old (one per device), the
+/// end request, the device's disconnect and a lock each leave no frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preview_never_leaves_a_frame_behind() {
+    use deckpilot_ipc::Request;
+    use deckpilot_ipc::calls::CallsPageKind;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut editor = deck.agent.client().await;
+    editor
+        .request(preview(&deck, CallsPageKind::Incoming))
+        .await
+        .unwrap();
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_view(&deck, "one frame, replaced", |v| {
+        v.previews == 1 && v.frames == 1
+    })
+    .await;
+    editor
+        .request(Request::EndCallsPreview {
+            device: deck.device.clone(),
+        })
+        .await
+        .unwrap();
+    wait_view(&deck, "ended", |v| v.previews == 0 && v.frames == 0).await;
+    // Unplugged while previewing, then plugged in again: nothing comes back.
+    editor
+        .request(preview(&deck, CallsPageKind::Active))
+        .await
+        .unwrap();
+    wait_view(&deck, "the preview", |v| v.frames == 1).await;
+    deck.mock.unplug(&deck.device);
+    wait_view(&deck, "ended by the disconnect", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    deck.mock
+        .plug(&models::stream_deck_mk2(), &deck.device.serial);
+    deck.advance(1).await;
+    wait_view(&deck, "nothing back after the reconnect", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    // Locked while previewing (once the device is back).
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while editor
+        .request(preview(&deck, CallsPageKind::Active))
+        .await
+        .is_err()
+    {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the device came back"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    wait_view(&deck, "the preview", |v| v.frames == 1).await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    wait_view(&deck, "ended by the lock", |v| {
+        v.previews == 0 && v.frames == 0
+    })
+    .await;
+    deck.agent.shutdown().await;
+}
+
+/// T-E2E for every class with key displays, not only the MK.2: on an XL
+/// (`grid-large`) and a Plus (`keys+dials`) the overlay comes with the
+/// call, the device draws its "Back to work" key where the class's
+/// template puts it, and the overlay goes with the call.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_overlay_is_drawn_on_every_class_of_device() {
+    for model in [models::stream_deck_xl(), models::stream_deck_plus()] {
+        let f = fixture();
+        let dir = TempDir::new("deckpilot-calls-class");
+        let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+        let mock = MockBackend::new();
+        let device = mock.plug(&model, "CALLS-C");
+        let clock = FakeInstant::default();
+        let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+        agent.unlock().await;
+        agent
+            .handle
+            .install_calls_mock(MockProvider::new(), ActionParameters::new())
+            .await;
+        let deck = Deck {
+            agent,
+            mock,
+            device: device.clone(),
+            clock,
+            _dir: dir,
+        };
+        deck.join().await;
+        // Where the class's template puts "Back to work".
+        let shape = Shape::of(&model.capabilities);
+        let template = builtin_templates()
+            .into_iter()
+            .find(|t| t.shape == shape)
+            .unwrap();
+        let generated = generate(&template, &model.id, &model.capabilities).unwrap();
+        let active = generated.pages[&deckpilot_calls::layouts::Page::Active];
+        let back = generated
+            .layout
+            .page(active)
+            .unwrap()
+            .bindings
+            .iter()
+            .find(|b| generated.action_of(b.target.action_id().unwrap()) == Some("return-to-work"))
+            .map(|b| b.control)
+            .unwrap();
+        let spec = model.capabilities.keys.and_then(|keys| keys.image).unwrap();
+        let face = KeyFace::new(FaceStyle::Action, "Back to work");
+        let image = deckpilot_agent::render::render(&face, spec.width, spec.height);
+        assert!(
+            deck.mock
+                .wait_for(&device, TIMEOUT, |frames, _| frames.get(&back)
+                    == Some(&image)),
+            "{}: the device shows the overlay's Back to work key",
+            model.id
+        );
+        deck.hang_up().await;
+        deck.wait_overlay(false).await;
+        deck.agent.shutdown().await;
+    }
+}
+
+/// Waits for a `callsChanged` in which `device` previews `page` (`None`:
+/// none) and `also` holds.
+async fn wait_preview(
+    events: &mut deckpilot_ipc::AgentClient,
+    device: &deckpilot_device::DeviceId,
+    page: Option<deckpilot_ipc::calls::CallsPageKind>,
+    also: impl Fn(&deckpilot_ipc::calls::CallsStatus) -> bool,
+    what: &str,
+) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = tokio::time::timeout(left, events.next_event())
+            .await
+            .unwrap_or_else(|_| panic!("no callsChanged: {what}"))
+            .unwrap();
+        if let deckpilot_ipc::AgentEvent::CallsChanged { status } = event {
+            let shown = status
+                .devices
+                .iter()
+                .find(|d| &d.device == device)
+                .and_then(|d| d.preview);
+            if shown == page && also(&status) {
+                return;
+            }
+        }
+    }
+}
+
+/// The app follows the agent's previews: `callsChanged` names the page a
+/// device previews, and drops it on every way a preview ends: the end
+/// request, the editor's connection closing, a lock, the dismiss key, the
+/// device's disconnect and a real call.
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_changed_follows_the_preview() {
+    use deckpilot_ipc::Request;
+    use deckpilot_ipc::calls::CallsPageKind;
+    let any = |_: &deckpilot_ipc::calls::CallsStatus| true;
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let mut editor = deck.agent.client().await;
+    let device = deck.device.clone();
+    let shown = Some(CallsPageKind::Outgoing);
+
+    // The end request.
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    editor
+        .request(Request::EndCallsPreview {
+            device: device.clone(),
+        })
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, None, any, "the end request").await;
+
+    // The editor's connection closes.
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    drop(editor);
+    wait_preview(&mut events, &device, None, any, "the connection closed").await;
+    let mut editor = deck.agent.client().await;
+
+    // The dismiss key (the model's last key).
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    let keys = models::stream_deck_mk2().capabilities.keys.unwrap();
+    deck.tap(keys.key_count() - 1);
+    wait_preview(&mut events, &device, None, any, "the dismiss key").await;
+
+    // A lock.
+    editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .unwrap();
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    deck.agent.request(Request::Lock).await.unwrap();
+    wait_preview(&mut events, &device, None, any, "the lock").await;
+    deck.agent.unlock().await;
+
+    // The device's disconnect: it is gone from the list (no preview named).
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .is_err()
+    {
+        assert!(tokio::time::Instant::now() <= deadline, "unlocked again");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    deck.mock.unplug(&deck.device);
+    wait_preview(
+        &mut events,
+        &device,
+        None,
+        |s| s.devices.iter().all(|d| d.device != device),
+        "the disconnect",
+    )
+    .await;
+    deck.mock
+        .plug(&models::stream_deck_mk2(), &deck.device.serial);
+    deck.advance(1).await;
+
+    // A real call.
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    while editor
+        .request(preview(&deck, CallsPageKind::Outgoing))
+        .await
+        .is_err()
+    {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the device came back"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    wait_preview(&mut events, &device, shown, any, "shown").await;
+    deck.join().await;
+    wait_preview(
+        &mut events,
+        &device,
+        None,
+        |s| s.state == "active",
+        "the real call",
+    )
+    .await;
+    deck.agent.shutdown().await;
+}
+
+/// The status's revision: the same content keeps its number in every
+/// answer and event, a change counts it up, and `callsChanged` carries
+/// the number a later `getCallsStatus` repeats.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_calls_status_counts_its_revisions() {
+    use deckpilot_ipc::{AgentEvent, Request, Response};
+    let f = fixture();
+    let deck = start(&f).await;
+    let mut events = deck.agent.events().await;
+    let status = || async {
+        let Response::CallsStatus { status } =
+            deck.agent.request(Request::GetCallsStatus).await.unwrap()
+        else {
+            panic!("calls status")
+        };
+        status
+    };
+    let first = status().await;
+    assert!(first.revision >= 1);
+    assert_eq!(status().await.revision, first.revision, "nothing changed");
+    deck.join().await;
+    let changed = loop {
+        if let AgentEvent::CallsChanged { status } =
+            tokio::time::timeout(TIMEOUT, events.next_event())
+                .await
+                .unwrap()
+                .unwrap()
+            && status.state == "active"
+        {
+            break status;
+        }
+    };
+    assert!(changed.revision > first.revision, "a change counts up");
+    let again = status().await;
+    assert_eq!(again.state, "active");
+    assert!(again.revision >= changed.revision, "never behind the event");
     deck.agent.shutdown().await;
 }
 

@@ -392,7 +392,8 @@ mock through the test hooks (`AgentHandle::install_calls_mock`,
   (`cancelled`) as a cancellation, other errors as failures. An action
   that could not run at all is no completion.
 
-Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2):
+Agent tests (`apps/agent/tests/calls.rs`, with a simulated MK.2; the
+overlay is also drawn on an XL and a Plus, every class with key displays):
 
 - the overlay drawn on the device (T-E2E);
 - a workflow's real end (T-R3);
@@ -443,10 +444,16 @@ configuration reload or a lock, never on the Calls tick.
 - whether Calls is installed;
 - the call's state name and the provider id;
 - whether any control is possible;
-- per connected device: the overlay setting, whether it shows the call, and
-  whether it went back to work;
+- per connected device: the overlay setting, whether it shows the call,
+  whether it went back to work, and the call page it shows as the editor's
+  preview (`preview`: `incoming`, `outgoing` or `active`; left out when
+  there is none, so an older agent's status reads as no preview);
 - per model: the managed layout's id, name, edited flag and template
-  version.
+  version;
+- its `revision`, which counts up whenever anything else in it changes
+  (the same content keeps its number) within one run of the agent. An
+  answer and a `callsChanged` may reach the app in either order: the app
+  keeps the higher revision, so an older status never replaces a newer one.
 
 It never holds a meeting title, a participant or a process name.
 
@@ -468,9 +475,130 @@ has the capability and Calls is installed. The section has:
   confirmation names the copy that keeps the user's version
   ("Calls (my version, <date>)").
 
+### Call pages and *Back to work* (C7)
+
+Each managed layout in `CallsStatus` also carries:
+
+- **`pages`:** its call pages (incoming, outgoing, active), and each one's
+  controls with their Calls action. Each control says whether the provider
+  supports it now (`supported`), and if not, why (`reason`, a stable code
+  such as `provider-has-no-api`). The support is worked out from the
+  provider's capabilities whenever the status is built, so it is never
+  cached with the layout. "Back to work" is always supported.
+- **`back`:** its *Back to work* settings:
+  - `mode`, one of:
+    - `timer { seconds }` (5–600; presets 20, 30, 60);
+    - `completion`;
+    - `completionOrMax { maxSeconds }` (10–1800; the default, with 60);
+  - `onFailure` and `onCancel` (`resume` or `stay`);
+  - `allDevices`.
+
+`back` is read from the layout's first bound "Back to work" key (a user
+may have bound it to more keys; the templates bind one), so Settings shows
+that key's settings. `back` is absent when no key is bound (the template of
+a device without displays has none).
+
+`setCallsBackToWork { model, back }` sets them on every bound "Back to
+work" key, in one transaction, each keeping its other parameters. It
+refuses times out of range. They are the parameters of the layout's "Back to work" action, so
+**a change is a user edit of the managed layout**: it counts as edited,
+a template update then never rewrites it, and *Restore defaults* keeps it
+first. The driver uses the new settings from the next press.
+
+In Settings › Devices, each managed layout gets two more sections (en and
+pl):
+
+- **Call pages:** every control of every page, with "Supported" or "Not
+  supported" and the reason. A disabled control stays listed, so muscle
+  memory does not move. For the detection-only Teams adapter, the reason
+  says Microsoft retired the Teams device API on 30 June 2026. Nothing
+  claims a Teams control works.
+- **Back to work:**
+  - the mode;
+  - for the timer, 20, 30 or 60 s or a custom time;
+  - for the default mode, the maximum;
+  - what a failed or cancelled run does;
+  - all devices.
+
+  Each change is applied at once. A time out of range is shown as such and
+  not saved.
+
 The per-device setting is kept by the running agent; saving it across
 restarts comes with the plugin's settings (C7). Opening the managed layouts
-in the Device Editor, and the state preview there, are still to come (C6b).
+in the Device Editor's layout chooser is left out for now (it needs a
+non-profile load and save path, an owner decision); the preview of a call
+page is below.
+
+### The editor's preview of a call page (C6b)
+
+`previewCallsPage { device, page }` shows one call page (incoming,
+outgoing or active) of `device`'s managed layout on the device, for the
+Device Editor. `endCallsPreview { device }` ends it. **This differs from the
+design, which drove the preview through the mock provider.** The mock
+exists only in `test-hooks` builds, so the shipped preview uses a fixed
+snapshot instead (decided 2026-11-25):
+
+- **Contents:** constant text only. The page's state, no title, no
+  participant, no number, the microphone and camera unknown. Nothing comes
+  from a provider or a real call except the provider's capabilities, so a
+  control it does not support shows disabled with its reason. The keys run
+  nothing.
+- **Who may ask:** only a connection at protocol 19 that declares itself a
+  desktop (editor) client. Any other client is refused with
+  `Unauthorized` (`callsPreviewDesktopOnly`); a protocol 18 client never
+  sends it. The client kind is the client's own declaration in its
+  `hello`, so this is a policy guard, not authentication: the IPC token is
+  the access boundary, and any holder of the token can declare itself a
+  desktop client.
+- **Priority:** a lock and a real call always win:
+  - refused while locked;
+  - refused while a call shows (`callsPreviewInCall`);
+  - refused when the device takes no preview frame
+    (`callsPreviewRefused`); a preview already there stays;
+  - ended when a call comes.
+- **When it ends:**
+  - on the end request;
+  - when the connection that asked closes;
+  - on lock;
+  - on the device's disconnect;
+  - when dismissed on the device.
+
+  It never leaves an overlay frame behind. Whichever way it ends,
+  `callsChanged` no longer names it on the device's entry (a disconnected
+  device leaves the list).
+- **One per device:** a new preview replaces the old. The new frame is
+  pushed first, so when the device takes none the old one stays.
+- **In the app:** the preview lives on a connection of its own in the
+  backend (`commands/calls.rs`, `CallsPreview`), one at a time. It is ended
+  with `endCallsPreview` when the Calls settings close, the main window
+  hides, reloads or closes, or the app quits; the connection closing ends
+  it too. A per-meeting capability reason may show on a preview; it is
+  informational only.
+- **The app follows the agent:** the settings hold one preview (the device,
+  the page, and whether the agent confirmed it). A new preview starts
+  unconfirmed. Once `begin` answers, the app asks `getCallsStatus`; the
+  agent answers in order, so that status is the one after the begin, and
+  from its revision on the status decides: a status that shows the preview
+  on that device confirms it, one that does not means the agent ended it
+  (a lock, a call, a dismiss, a disconnect), confirmed or not. An older
+  status decides nothing, and the answer itself goes through the revision
+  check, so it never rolls back a newer `callsChanged`. If that answer
+  fails, the preview is ended. A restarted agent has no preview, and an
+  answer of an earlier agent run (to a request made before the restart) is
+  dropped. A status
+  that names the page on another device of the same model is not this
+  preview, and the page buttons are pressed only for the device that
+  shows it.
+
+The IPC event for the app and the editor (C6, a release blocker) is
+`callsChanged`, above. It carries the managed layouts too, and is sent
+again after a configuration reload, so an edit made in the Device Editor
+is seen. Still to come:
+
+- a live signal source for the Teams provider (C5, after the macOS
+  permission check);
+- the plugin, whose enabling with consent installs Calls;
+- the managed layouts in the Device Editor, with the state preview (C6b).
 
 ## Operating-system signals and Teams (`deckpilot-calls::os_signals`)
 
@@ -518,7 +646,3 @@ The `os-signals` provider with its Teams profile is detection only:
   the microphone stream open while muted (assumed yes).
 - **Default:** the OS-signals provider is off until the user enables it
   (OD-C3). It inspects other processes' audio sessions.
-
-Still to come: a live source per platform (after the TCC verification); the plugin (C7), whose
-enabling with consent installs Calls; and the IPC event for the editor
-(C6, a release blocker).
