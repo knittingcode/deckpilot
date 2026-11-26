@@ -186,6 +186,8 @@ a menu that did nothing, after such a panic. Now:
    exit code for a panic). An agent that stops with an error, or cannot
    start, exits with code 1. One that stops as asked exits with code 0.
 
+The keys are not blanked after a panic, because the device threads end
+with the process. The token file stays, and the next agent replaces it.
 Nothing restarts the agent here. Panics that are caught on purpose are
 logged but do not stop the agent. Examples are a tray icon that cannot be
 created, and a single IPC connection or plugin task.

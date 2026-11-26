@@ -352,7 +352,8 @@ impl AgentHandle {
         let _ = self.commands.send(Command::ReloadVariables);
     }
 
-    /// Makes the main loop panic (tests: `--test-panic-after-start`).
+    /// Makes the main loop panic (tests:
+    /// `crash::testing::PANIC_AFTER_START_ENV`).
     #[cfg(feature = "test-hooks")]
     pub fn panic_main_loop(&self) {
         let _ = self.commands.send(Command::Panic);

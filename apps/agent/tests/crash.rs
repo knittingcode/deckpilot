@@ -111,6 +111,9 @@ async fn assert_crashed(mut child: Child, paths: &AgentPaths) {
         log.contains("the agent's main loop panicked; the agent stops"),
         "{log}"
     );
+    // Free in any case once the process is gone (an OS lock). That the lock
+    // goes only after the endpoint is the socket check below (Unix) and the
+    // unit test `crash::tests::a_panic_is_caught_and_stops_the_runtimes_tasks`.
     assert!(
         InstanceLock::acquire(&paths.lock_file).is_ok(),
         "the instance lock is released"

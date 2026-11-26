@@ -171,7 +171,8 @@ fn spawn_agent(
 }
 
 /// Ends the process with `outcome`'s exit code: through the event loop,
-/// which removes the tray icon first, or at once if the event loop is gone.
+/// which removes the tray icon and flushes the log first, or at once if the
+/// event loop is gone (the last log lines may then be lost).
 fn exit(proxy: &EventLoopProxy<UserEvent>, outcome: crate::crash::Outcome) {
     if proxy
         .send_event(UserEvent::Exit(outcome.exit_code()))

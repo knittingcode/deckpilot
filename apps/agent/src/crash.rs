@@ -26,10 +26,12 @@ pub const PANIC_EXIT_CODE: u8 = 101;
 /// The exit code of an agent that stopped with an error (it could not
 /// start, say).
 pub const FAILURE_EXIT_CODE: u8 = 1;
-/// How long the runtime may take, after a panic, to stop its tasks (the
-/// IPC server among them) and wait for its blocking threads. One that is
-/// stuck (a credential store prompt) does not keep the process alive.
-pub const SHUTDOWN_AFTER_PANIC: Duration = Duration::from_secs(2);
+/// How long the runtime may take, once the main loop has ended (as asked,
+/// with an error or with a panic), to stop its tasks (the IPC server among
+/// them) and wait for its blocking threads. One that is stuck (a credential
+/// store prompt, a plugin host call) does not keep the process, and the
+/// tray icon, alive.
+pub const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(2);
 /// The longest panic message written to the log.
 const MAX_MESSAGE: usize = 500;
 
@@ -55,16 +57,16 @@ impl Outcome {
     }
 }
 
-/// Runs the agent's main loop `main` on `runtime` to its end. A panic in
-/// it is caught: the runtime is shut down (its tasks dropped, its blocking
-/// threads given [`SHUTDOWN_AFTER_PANIC`]), and the outcome is
+/// Runs the agent's main loop `main` on `runtime` to its end, then shuts
+/// the runtime down (its tasks dropped, its blocking threads given
+/// [`RUNTIME_SHUTDOWN`]). A panic in the loop is caught, and the outcome is
 /// [`Outcome::Panicked`]. By then the agent has been dropped with its
 /// instance lock, and the IPC endpoint is closed.
 pub fn run_agent<E: std::fmt::Display>(
     runtime: tokio::runtime::Runtime,
     main: impl Future<Output = Result<(), E>>,
 ) -> Outcome {
-    match panic::catch_unwind(AssertUnwindSafe(|| runtime.block_on(main))) {
+    let outcome = match panic::catch_unwind(AssertUnwindSafe(|| runtime.block_on(main))) {
         Ok(Ok(())) => Outcome::Stopped,
         Ok(Err(error)) => {
             error!(%error, "agent stopped with an error");
@@ -73,15 +75,20 @@ pub fn run_agent<E: std::fmt::Display>(
         Err(_) => {
             // The panic itself is in the log already (the hook).
             error!("the agent's main loop panicked; the agent stops");
-            runtime.shutdown_timeout(SHUTDOWN_AFTER_PANIC);
             Outcome::Panicked
         }
-    }
+    };
+    // Bounded on every outcome: dropping the runtime would wait for its
+    // blocking threads without a limit.
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    outcome
 }
 
 /// Logs every panic (thread, location, message) before the previous hook
 /// runs (Rust's default prints it to standard error). Panics that are
 /// caught on purpose (the tray icon's, a plugin task's) are logged too.
+/// The message is logged escaped (`Debug`): a panic's text may come from a
+/// plugin, and must not be able to forge log lines.
 pub fn install_panic_hook() {
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
@@ -94,7 +101,7 @@ pub fn install_panic_hook() {
         error!(
             thread = thread.name().unwrap_or("unnamed"),
             %location,
-            %message,
+            ?message,
             "panic"
         );
         previous(info);
@@ -225,7 +232,19 @@ mod tests {
             Ok::<(), String>(())
         });
         assert_eq!(outcome, Outcome::Panicked);
-        assert!(started.elapsed() < SHUTDOWN_AFTER_PANIC + Duration::from_secs(5));
+        assert!(started.elapsed() < RUNTIME_SHUTDOWN + Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_stuck_blocking_thread_does_not_hold_up_a_normal_stop() {
+        let started = std::time::Instant::now();
+        let outcome = run_agent(runtime(), async {
+            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_secs(30)));
+            tokio::task::yield_now().await;
+            Ok::<(), String>(())
+        });
+        assert_eq!(outcome, Outcome::Stopped);
+        assert!(started.elapsed() < RUNTIME_SHUTDOWN + Duration::from_secs(5));
     }
 
     #[test]
