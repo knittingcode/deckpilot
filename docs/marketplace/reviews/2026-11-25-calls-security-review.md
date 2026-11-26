@@ -47,7 +47,7 @@ Deck.
 | #489 | C9 host wiring: `call.state`, `call.control` | 97e3f4e1 → APPROVE-WITH-FIXES (1 MEDIUM, 4 LOW, 2 NIT); b207b974 → re-check APPROVE | closed: replaced by #504 |
 | plugins #105 | C7 `official/calls` 0.1.0 (held ahead at 1.16) | 36befd54 → plugin coordinator's review APPROVED with LOWs (16/16 green); dfd7aea8 → LOWs 2–4 and the nit fixed | merged (cff690d2) |
 | #504 | C9 re-applied onto main (replaces #489), plus the refusal codes and connections/Scripts as ways out | 93bcad4a → fresh full independent security review APPROVE-WITH-FIXES (1 MEDIUM, 4 LOW, 3 NIT); 75089afe → re-check APPROVE | in the queue |
-| #496 | T-P2 end to end (tests only) | 3a46c0f3 → MERGE-READY | open |
+| #496 | T-P2 end to end (tests only) | 772b61c4 → MERGE-READY; 3a46c0f3 → delta (assertions tightened: each refusal by its text, verify by `PrivilegedNotReviewed` only) | open |
 | #497 | the per-device overlay setting survives a restart | b2817442 → delta MERGE-READY (2 wording LOWs) | closed: replaced by #505 (the LOWs fixed) |
 
 ## Findings and fixes
