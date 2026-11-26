@@ -1,5 +1,6 @@
-//! Agent lifecycle: starting over what a crashed agent left behind, and a
-//! restart that begins before the previous agent has fully stopped.
+//! Agent lifecycle: starting over what a crashed agent left behind, a
+//! restart that begins before the previous agent has fully stopped, and two
+//! agents started at once over a killed agent's leftovers.
 
 mod support;
 
@@ -112,4 +113,127 @@ async fn a_restart_waits_for_the_previous_agent_to_finish_stopping() {
     let agent = TestAgent::start(&paths, &key, &MockBackend::new(), None);
     agent.status().await;
     agent.shutdown().await;
+}
+
+/// The real agent executable, headless with a simulated MK.2, no USB and no
+/// plugins, on the data directory of `paths`.
+fn spawn_agent(dir: &TempDir, paths: &AgentPaths) -> std::process::Child {
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.path().join("stderr.log"))
+        .unwrap();
+    std::process::Command::new(env!("CARGO_BIN_EXE_deckpilot-agent"))
+        .args([
+            "--headless",
+            "--no-usb",
+            "--mock-devices",
+            "mk2",
+            "--disable-plugins",
+        ])
+        .env("DECKPILOT_DATA_DIR", &paths.data_dir)
+        .env_remove("DECKPILOT_TEST_AGENT_ARGS")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(log)
+        .spawn()
+        .expect("the agent starts")
+}
+
+/// The pid of the agent that answers, once one does.
+async fn answering_pid(paths: &AgentPaths) -> u32 {
+    let deadline = Instant::now() + support::TIMEOUT;
+    loop {
+        if let Ok(mut client) = AgentClient::connect(paths, ClientKind::Other).await
+            && let Ok(deckpilot_ipc::Response::Status { status }) =
+                client.request(deckpilot_ipc::Request::GetStatus).await
+        {
+            return status.pid;
+        }
+        assert!(Instant::now() < deadline, "no agent answered");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn wait_for_exit(child: &mut std::process::Child) -> std::process::ExitStatus {
+    let deadline = Instant::now() + support::TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "the agent did not exit");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// What the configuration app's restart of a crashed agent relies on
+/// (`apps/desktop/src-tauri/src/supervisor.rs`): an agent killed without
+/// warning leaves a lock file, its socket file (Unix) and its token, but
+/// the OS lock went with it, so the dead owner is detected at once; and two
+/// agents started over those leftovers at the same time (a restart racing
+/// an autostart, say) make exactly one running agent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_killed_agents_leftovers_let_exactly_one_next_agent_run() {
+    let dir = TempDir::new("deckpilot-lifecycle-killed");
+    let paths = data_dir(&dir);
+    // Password-protected: the agents stay locked and never ask the system's
+    // credential store for a key.
+    create_database(&paths);
+
+    let mut first = spawn_agent(&dir, &paths);
+    assert_eq!(answering_pid(&paths).await, first.id());
+    let stale = token::read(&paths.token_file).unwrap();
+    // SIGKILL on Unix, TerminateProcess on Windows: no clean-up at all.
+    first.kill().unwrap();
+    let killed = wait_for_exit(&mut first);
+    assert!(!killed.success(), "{killed:?}");
+
+    // The leftovers are there, and the dead owner is detected: the lock is
+    // free, and nobody answers on the stale endpoint.
+    assert!(paths.lock_file.exists());
+    assert!(paths.token_file.exists());
+    #[cfg(unix)]
+    assert!(std::path::Path::new(&paths.endpoint().display()).exists());
+    assert!(InstanceLock::is_free(&paths.lock_file).unwrap());
+    assert!(matches!(
+        AgentClient::connect(&paths, ClientKind::Desktop).await,
+        Err(ClientError::NotRunning)
+    ));
+
+    // Two agents at once: one takes the lock and replaces the stale socket
+    // and token, the other finds it running and leaves with exit code 0.
+    let a = spawn_agent(&dir, &paths);
+    let b = spawn_agent(&dir, &paths);
+    let running = answering_pid(&paths).await;
+    let (mut survivor, mut other) = if running == a.id() {
+        (a, b)
+    } else {
+        assert_eq!(running, b.id(), "the agent that answers is one of the two");
+        (b, a)
+    };
+    let left = wait_for_exit(&mut other);
+    assert_eq!(left.code(), Some(0), "the second agent leaves: {left:?}");
+    assert_eq!(
+        survivor.try_wait().unwrap(),
+        None,
+        "one agent keeps running"
+    );
+    assert!(!InstanceLock::is_free(&paths.lock_file).unwrap());
+    assert_ne!(token::read(&paths.token_file).unwrap(), stale);
+    match hello(&paths, &stale).await {
+        ServerMessage::Error { error, .. } => assert_eq!(error.code, ErrorCode::Unauthorized),
+        other => panic!("the killed agent's token was accepted: {other:?}"),
+    }
+
+    let mut client = AgentClient::connect(&paths, ClientKind::Other)
+        .await
+        .unwrap();
+    client
+        .request(deckpilot_ipc::Request::Shutdown)
+        .await
+        .unwrap();
+    drop(client);
+    let stopped = wait_for_exit(&mut survivor);
+    assert_eq!(stopped.code(), Some(0), "{stopped:?}");
+    assert!(InstanceLock::is_free(&paths.lock_file).unwrap());
 }

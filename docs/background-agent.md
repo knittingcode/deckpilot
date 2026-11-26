@@ -194,6 +194,59 @@ Nothing restarts the agent here. Panics that are caught on purpose are
 logged but do not stop the agent. Examples are a tray icon that cannot be
 created, and a single IPC connection or plugin task.
 
+### Restart after a crash
+
+The configuration app restarts an agent **it started** when that agent
+exits unexpectedly (`apps/desktop/src-tauri/src/supervisor.rs`). The limits
+are a conservative default that the owner chose:
+
+- At most 3 restarts in 10 minutes. The app waits 1 second before the first
+  restart, 5 seconds before the second and 30 seconds before the third.
+  Meanwhile Settings (Agent, Devices, Diagnostics) shows "The agent stopped unexpectedly" with
+  the exit code or signal.
+- After that the agent stays stopped. The app shows "DeckPilot agent
+  stopped" with a **Restart** button. The user's Start or Restart starts
+  the count again.
+- An exit is unexpected only if nobody asked for it and it is not a
+  success. These never cause a restart:
+  - an exit after the agent announced `shuttingDown` (the tray's Quit, a
+    restart, an update, a signal);
+  - an exit after the app asked it to stop (Stop agent, Restart agent, an
+    update). If the agent is still running 30 seconds after such a
+    request, the request failed, and a later exit counts as a crash again;
+  - an exit with code 0 (for example an agent that found another one
+    running).
+- An agent that the app did not start is never restarted. That includes an
+  agent started at login, by the user, or by another copy of the app. The
+  app only reconnects to it, as before.
+- Closing the configuration window never stops the agent. It runs in its
+  own process group, and the app never kills it. On Windows and Linux the
+  app's process ends with its last window, and so does the supervision.
+- Before each restart, the app checks three things:
+  - No update is in progress (`update-intent.json`).
+  - No agent answers on the endpoint, of any version. An agent of another
+    version keeps the compatibility notice. Nothing is replaced, and
+    nothing is downgraded.
+  - The instance lock is free. The app waits up to 5 seconds for it.
+
+  If any check fails, the app starts nothing and only reconnects, and the
+  skipped restart does not count toward the limit. The update check runs
+  again right before the start.
+- The app does not watch for the end of the session (logout, shutdown). If
+  the system ends the agent with a non-zero code a moment before the app,
+  the app may start it once more as the session ends.
+- The restarted agent starts locked, like every agent. The bridge unlocks
+  it the way it unlocks any agent that (re)started: with this app's key,
+  only while this app is unlocked, and never after a lock that needs the
+  password. The supervisor itself never reads or holds a key.
+
+The app sees the exit through the process it started. The app starts the
+agent with its tray, so this relies on the tray agent's exit codes from
+#508: 1 for an error, 101 for a panic. Before #508, a tray agent exited
+with 0 after an error and stayed alive without its endpoint after a panic.
+Neither is detected as a crash; such an agent is only reconnected to. Only
+a signal (a kill, an abort) is detected without #508.
+
 ### Start at login
 
 The agent can register itself to start at login using per-user mechanisms
