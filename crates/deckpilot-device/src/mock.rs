@@ -409,7 +409,14 @@ impl DeviceHandle for MockHandle {
 
     fn flush(&mut self) -> Result<(), DeviceError> {
         let queued = self.with_device(|device| Ok(device.pending.len()))?;
-        self.write(queued)?;
+        if let Err(error) = self.write(queued) {
+            // The reports are lost, as on a device that dropped.
+            let _ = self.with_device(|device| {
+                device.pending.clear();
+                Ok(())
+            });
+            return Err(error);
+        }
         self.with_device(|device| {
             for (control, frame) in std::mem::take(&mut device.pending) {
                 device.image_writes += 1;

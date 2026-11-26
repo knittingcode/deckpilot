@@ -738,6 +738,8 @@ pub struct Agent {
     /// When each device may be opened again, and the flap guard
     /// (`device_retry.rs`).
     device_retry: device_retry::DeviceRetry,
+    /// The devices the last successful discovery listed.
+    listed_devices: BTreeSet<DeviceId>,
     /// The monotonic clock of device retries; tests move it.
     device_clock: Arc<dyn Fn() -> std::time::Instant + Send + Sync>,
     persisted_project: Option<ProjectId>,
@@ -913,6 +915,7 @@ impl Agent {
             next_session: 0,
             open_failures: BTreeMap::new(),
             device_retry,
+            listed_devices: BTreeSet::new(),
             device_clock: Arc::new(std::time::Instant::now),
             persisted_project,
             saved_pages: None,
@@ -2380,6 +2383,12 @@ impl Agent {
         }
         self.open_failures.retain(|id, _| present.contains(id));
         let now = (self.device_clock)();
+        // Replugged, or back under another path: one open at once.
+        for device in present.difference(&self.listed_devices) {
+            self.device_retry.listed_again(device);
+        }
+        self.device_retry.prune(&present, now);
+        self.listed_devices.clone_from(&present);
         for device in present {
             if self.sessions.contains_key(&device) {
                 if self.device_retry.check_stable(&device, now) {

@@ -167,6 +167,16 @@ impl Agent {
         if self.sessions.get(device).map(|s| s.id) != Some(session) {
             return;
         }
+        if self
+            .sessions
+            .get(device)
+            .is_some_and(|s| s.restore_at.is_some())
+        {
+            // A flapping device whose keys are not restored yet
+            // (`device_retry.rs`): they show nothing, or what an earlier
+            // connection drew, so a press would act blind.
+            return;
+        }
         self.last_input_at = Some(super::unix_now());
         self.last_activity = self.now_seconds();
         if self.security != SecurityState::Unlocked {

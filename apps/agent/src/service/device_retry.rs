@@ -1,12 +1,15 @@
 //! When the agent tries to open a device again (DP-USB-02).
 //!
-//! The rescan looks for new devices every [`RetryPolicy::initial`] (2 s).
-//! A device that is listed but cannot be opened, or that opens and then
-//! fails within [`RetryPolicy::stable_after`], is not tried again on every
-//! rescan: each failure in a row doubles the wait, up to
-//! [`RetryPolicy::max`], with a jitter of ±20% so several devices (or
-//! agents) do not retry in step. A session that stays healthy for
-//! `stable_after` ends the streak.
+//! The agent looks for new devices on every rescan (every 2 s). A device
+//! that is listed but cannot be opened, or that opens and then fails
+//! within [`RetryPolicy::stable_after`], is not tried again on every
+//! rescan: each failure in a row doubles the wait, from
+//! [`RetryPolicy::initial`] up to [`RetryPolicy::max`], with a jitter of
+//! up to ±20% (never above `max`) so several devices (or agents) do not
+//! retry in step. A session that stays healthy for `stable_after` ends the
+//! streak. A device that was not listed and is listed again (replugged,
+//! or back under a new path) gets one open at once; its streak stays, so
+//! a failure then waits longer still.
 //!
 //! The flap guard: a device whose sessions keep ending soon after they
 //! opened ([`RetryPolicy::flap_threshold`] times within
@@ -271,6 +274,29 @@ impl DeviceRetry {
         }
     }
 
+    /// `device` was not listed at the last rescan and is now: its next
+    /// open comes at once, once (the streak stays).
+    pub fn listed_again(&mut self, device: &DeviceId) {
+        if let Some(entry) = self.entries.get_mut(device)
+            && entry.opened_at.is_none()
+        {
+            entry.bypass = true;
+        }
+    }
+
+    /// Forgets the devices not in `listed` whose streak is older than
+    /// [`RetryPolicy::flap_window`] (gone for good).
+    pub fn prune(&mut self, listed: &std::collections::BTreeSet<DeviceId>, now: Instant) {
+        let window = self.policy.flap_window;
+        self.entries.retain(|device, entry| {
+            listed.contains(device)
+                || entry.opened_at.is_some()
+                || entry
+                    .last_failure
+                    .is_none_or(|at| now.saturating_duration_since(at) < window)
+        });
+    }
+
     /// Whether `device` is flapping at `now`.
     #[cfg(test)]
     pub fn is_flapping(&self, device: &DeviceId, now: Instant) -> bool {
@@ -494,6 +520,42 @@ mod tests {
         let delay = retry.open_failed(&a, now);
         assert!(within_jitter(delay, secs(60), policy.max), "{delay:?}");
         assert!(!retry.may_open(&a, now));
+    }
+
+    #[test]
+    fn a_device_listed_again_is_opened_at_once_and_keeps_its_streak() {
+        let policy = RetryPolicy::default();
+        let mut retry = DeviceRetry::with_seed(policy, 4);
+        let a = device("A");
+        let now = Instant::now();
+        for _ in 0..5 {
+            retry.open_failed(&a, now);
+        }
+        assert!(!retry.may_open(&a, now));
+        retry.listed_again(&a);
+        assert!(retry.may_open(&a, now));
+        let delay = retry.open_failed(&a, now);
+        assert!(within_jitter(delay, secs(60), policy.max), "{delay:?}");
+        assert!(!retry.may_open(&a, now));
+        // A device never seen failing has nothing to bypass.
+        retry.listed_again(&device("B"));
+        assert!(retry.may_open(&device("B"), now));
+    }
+
+    #[test]
+    fn devices_gone_for_good_are_forgotten() {
+        let policy = RetryPolicy::default();
+        let mut retry = DeviceRetry::with_seed(policy, 4);
+        let (a, b) = (device("A"), device("B"));
+        let now = Instant::now();
+        retry.open_failed(&a, now);
+        retry.open_failed(&b, now);
+        let listed = std::collections::BTreeSet::from([b.clone()]);
+        retry.prune(&listed, now + secs(10));
+        assert_eq!(retry.entries.len(), 2, "too recent");
+        retry.prune(&listed, now + policy.flap_window);
+        assert!(retry.entries.contains_key(&b), "still listed");
+        assert!(!retry.entries.contains_key(&a));
     }
 
     #[test]

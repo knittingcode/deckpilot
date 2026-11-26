@@ -288,8 +288,9 @@ released either. 0.6.0 is the first version intended for publication.
   jitter, and a connection that lasts 30 s ends the streak. A device that
   keeps dropping (3 short connections within 5 minutes) also gets its
   brightness and key images only once a connection has lasted 10 s, so a
-  marginal USB link is not sent a full redraw on every attempt. Refresh
-  Devices still tries at once. DeckPilot never resets or re-binds a USB
+  marginal USB link is not sent a full redraw on every attempt; its key
+  presses are ignored until then. Refresh Devices, and replugging the
+  device, still try at once. DeckPilot never resets or re-binds a USB
   device, and a reconnect restores the page, layout, key images and
   brightness, never actions. Verified with simulated devices only; not yet
   on a physical device.

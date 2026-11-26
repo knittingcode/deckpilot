@@ -195,6 +195,37 @@ async fn a_device_that_cannot_be_opened_is_retried_with_growing_waits() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replugged_device_is_tried_at_once_after_long_waits() {
+    let dir = TempDir::new("deckpilot-retry");
+    let (paths, key_material) = support::data_dir(&dir, &profile(), &[]);
+    let mock = MockBackend::new();
+    let device = mock.plug(&models::stream_deck_mk2(), "MK2-A");
+    // Another program holds the device.
+    mock.fail_open(&device, DeviceError::Io("Device or resource busy".into()));
+    let clock = FakeInstant::default();
+    let policy = deckpilot_agent::RetryPolicy::default();
+    let agent = TestAgent::start_with_device_retry(&paths, &key_material, &mock, policy, &clock);
+    agent.unlock().await;
+    for attempts in 1..=5 {
+        wait_until("open", || mock.open_attempts(&device) == attempts).await;
+        clock.advance(policy.max);
+    }
+    wait_until("sixth open", || mock.open_attempts(&device) == 6).await;
+    assert_eq!(settled_attempts(&mock, &device).await, 6, "waits 60 s now");
+
+    // The user quits the other program and replugs: with the clock
+    // standing still, the device opens at once.
+    mock.unplug(&device);
+    tokio::time::sleep(QUIET).await;
+    mock.clear_faults(&device);
+    mock.plug(&models::stream_deck_mk2(), "MK2-A");
+    wait_status(&agent, |s| connected(s, &device)).await;
+    home_frames(&mock, &device);
+    assert_eq!(mock.open_attempts(&device), 7);
+    agent.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn refresh_devices_retries_a_waiting_device_at_once() {
     let dir = TempDir::new("deckpilot-retry");
     let (paths, key_material) = support::data_dir(&dir, &profile(), &[]);
@@ -302,6 +333,9 @@ async fn a_flapping_device_is_not_redrawn_on_every_cycle_and_gets_its_state_back
         mock.frames(&device).is_empty(),
         "nothing drawn before it settles"
     );
+    // Presses on keys that show nothing yet are ignored.
+    mock.tap(&device, key(2));
+    tokio::time::sleep(QUIET).await;
     clock.advance(policy.settle);
     assert!(
         mock.wait_for(&device, TIMEOUT, |frames, _| *frames == folder),
