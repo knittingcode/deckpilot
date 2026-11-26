@@ -46,9 +46,9 @@ Deck.
 | #490 | statuses of an earlier agent run dropped | fcd46f6b → delta (#486's LOWs) | merged in group C3 (#490, 78283134) |
 | #489 | C9 host wiring: `call.state`, `call.control` | 97e3f4e1 → APPROVE-WITH-FIXES (1 MEDIUM, 4 LOW, 2 NIT); b207b974 → re-check APPROVE | closed: replaced by #504 |
 | plugins #105 | C7 `official/calls` 0.1.0 (held ahead at 1.16) | 36befd54 → plugin coordinator's review APPROVED with LOWs (16/16 green); dfd7aea8 → LOWs 2–4 and the nit fixed | merged (cff690d2) |
-| #504 | C9 re-applied onto main (replaces #489), plus the refusal codes and connections/Scripts as ways out | 93bcad4a → fresh full independent security review: pending | in the queue |
+| #504 | C9 re-applied onto main (replaces #489), plus the refusal codes and connections/Scripts as ways out | 93bcad4a → fresh full independent security review APPROVE-WITH-FIXES (1 MEDIUM, 4 LOW, 3 NIT); 75089afe → re-check APPROVE | in the queue |
 | #496 | T-P2 end to end (tests only) | 3a46c0f3 → MERGE-READY | open |
-| #497 | the per-device overlay setting survives a restart | b2817442 → delta MERGE-READY (2 wording LOWs, fixed on its main-based successor) | open |
+| #497 | the per-device overlay setting survives a restart | b2817442 → delta MERGE-READY (2 wording LOWs) | closed: replaced by #505 (the LOWs fixed) |
 
 ## Findings and fixes
 
@@ -252,7 +252,31 @@ The re-check LOWs were fixed in #478: one transaction for every key, and the fal
 - The distinct refusal codes `calls-not-user-started` and `calls-throttled`.
 - The run's origin is checked before the per-run count.
 
-Because C9 now sits on a changed broker, #504 gets a fresh, full independent security review of its whole diff against main.
+Because C9 now sits on a changed broker, #504 got a fresh, full independent security review of its whole diff against main.
+
+### #504 C9 on main
+
+**APPROVE-WITH-FIXES at 93bcad4a** (fresh reviewer, whole diff against main). It confirmed:
+
+- only `deckpilot.calls`, checked three times;
+- the grant conversion;
+- the `call.control` gating;
+- `Grants::derive`;
+- the broker ordering: the Scripts and connections paths are unchanged, and `call.*` still takes the shared rate limit and `validate()`;
+- the lock, reinstall sessions and data minimisation.
+
+Findings:
+
+1. **MEDIUM:** a control the plugin's lane had timed out on could still run later, against whatever call had the focus then. Fixed: each request carries a "gone" flag and a deadline, and the agent refuses a stale one before doing anything.
+2. **LOW:** `call.control` ignored the invocation's interrupt and deadline. Fixed: it waits in slices, stops on cancel, and ends 500 ms before the deadline.
+3. **LOW:** the docs claimed `calls-*` codes for the broker's own refusals. Fixed in the docs. A second command while one waits is now `calls-throttled`.
+4. **LOW (latent):** installing again without the observe consent left the old service running. Fixed: it is removed.
+5. **LOW:** variables could carry call data into other actions. Fixed: a manifest rule refuses them. Outcome `data` in a workflow the user built is accepted.
+6. **NIT:** the manifest rule now also refuses `resources` and `scripts`.
+7. **NIT:** the Calls grant record is built only under its kind.
+8. **NIT:** a doc comment was mangled by the conflict resolution; fixed.
+
+**Re-check at 75089afe: APPROVE.** The accepted residual: in the microseconds between the agent's stale check and the send, a control can be sent just as the plugin is told it failed. Any timeout has that gap.
 
 **Checked and fine:**
 
