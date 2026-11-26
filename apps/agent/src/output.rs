@@ -50,11 +50,13 @@ pub fn spawn_cap(output: &Path) {
             loop {
                 std::thread::sleep(CHECK_EVERY);
                 #[cfg(unix)]
-                let file = target.as_ref().and_then(|file| file.try_clone().ok());
+                let file = target.as_ref();
                 #[cfg(not(unix))]
-                let file = truncatable(&output);
+                let opened = truncatable(&output);
+                #[cfg(not(unix))]
+                let file = opened.as_ref();
                 if let Some(file) = file {
-                    let _ = cap(&file, MAX_OUTPUT_LOG_BYTES, &mut io::stderr());
+                    let _ = cap(file, MAX_OUTPUT_LOG_BYTES, &mut io::stderr());
                 }
             }
         });
