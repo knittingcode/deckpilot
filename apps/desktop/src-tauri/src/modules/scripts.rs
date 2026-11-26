@@ -422,7 +422,13 @@ mod tests {
         let work = dir.path().join("work");
         std::fs::create_dir(&work).unwrap();
         let real = canonical_folder(&work).unwrap();
-        assert_eq!(real, std::fs::canonicalize(&work).unwrap());
+        // The same folder; on Windows without the `\\?\` prefix, the one
+        // canonical form the agent compares (std's keeps it).
+        assert_eq!(
+            std::fs::canonicalize(&real).unwrap(),
+            std::fs::canonicalize(&work).unwrap()
+        );
+        assert!(!real.to_string_lossy().starts_with(r"\\?\"));
         // A link is resolved now: pointing it elsewhere later moves nothing.
         #[cfg(unix)]
         {
