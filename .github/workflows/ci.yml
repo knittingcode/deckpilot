@@ -243,6 +243,10 @@ jobs:
           shared-key: ci-workspace
           save-if: false
       - run: cargo test -p deckpilot-storage --features sqlcipher --locked
+      # A release build compiles the storage's release-only guards (an empty
+      # migration place never ships, `sqlite.rs`); a debug build does not.
+      - name: Storage release guards
+        run: cargo check --release -p deckpilot-storage --locked
 
   # The real credential store of each platform, under throwaway service
   # names that the test creates and deletes (never DeckPilot's own).

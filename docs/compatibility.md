@@ -19,7 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
-| Current main | see `Cargo.toml` | 20 | 15 |
+| Current main | see `Cargo.toml` | 20 | 16 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
 permissions `tools`, `resources`, `projectContext` and `hostViews`, an
@@ -96,6 +96,16 @@ one upgrade). **0.15.x and older refuse a schema 15 database** with
 too (supported 14); they change nothing. The way back is the pre-migration
 backup, as above: restore it in place of `deckpilot.db`, without its `-wal`
 and `-shm` files.
+
+Current main then moves the configuration database to schema **16**,
+after 15: the scripts of a profile (`docs/data-model.md`, "Scripts"). The
+migration is additive, two new, empty tables: `scripts` (portable, with its
+profile) and `script_trust` (machine-local: the trusted source hash and the
+script's grants, never exported). Nothing existing is rewritten. It runs
+after an encrypted backup (`backups/deckpilot-schema15-*.db`, or the
+older schema's when 15 and 16 run in one upgrade). **Older builds refuse a
+schema 16 database** with `UnsupportedSchema` and change nothing; the way
+back is that backup, as above.
 
 0.14.0 speaks protocol 17 and changes no schema: database schema 13,
 plugin API 1.9, plugin store schema 6, and the same nine bundled plugins

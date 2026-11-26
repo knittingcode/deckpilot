@@ -38,7 +38,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use deckpilot_core::script_grants::{
-    FsAccess, FsRoot, FsScope, ProcessCwd, ProcessEnv, ProcessGrant, ScriptGrants,
+    CommandClass, FsAccess, FsRoot, FsScope, ProcessCwd, ProcessEnv, ProcessGrant, ScriptGrants,
+    command_class,
 };
 use deckpilot_plugin_abi::privileged::Tool;
 use deckpilot_plugin_abi::scripts::{
@@ -311,18 +312,33 @@ impl Executor {
             command: Some(grant.command.clone()),
             ..fault(code, format!("{what} was not found on this computer"))
         };
+        // Not grantable, whatever a stored record says, by name or by the
+        // file it resolves to: container runtimes (an open owner decision),
+        // programs that act as another user, and shells (their own grant).
+        let refused = |what: &str| {
+            let message = match command_class(what) {
+                CommandClass::ContainerRuntime => {
+                    "container runtimes are not available to scripts yet"
+                }
+                CommandClass::Elevation => "a script cannot run a program as another user",
+                CommandClass::Shell => "a shell runs only through shell.run and its grant",
+                CommandClass::RunsAnyProgram | CommandClass::Plain => return None,
+            };
+            Some(ScriptFault {
+                command: Some(grant.command.clone()),
+                ..fault(codes::NOT_GRANTED, message)
+            })
+        };
+        if let Some(fault) = refused(&grant.command) {
+            return Err(fault);
+        }
         let (code, path) = match grant.command.as_str() {
-            "git" | "docker" => {
-                let (tool, code) = if grant.command == "git" {
-                    (Tool::Git, codes::GIT_UNAVAILABLE)
-                } else {
-                    (Tool::Docker, codes::DOCKER_UNAVAILABLE)
-                };
+            "git" => {
                 let path = self
                     .tools
-                    .executable(tool)
-                    .map_err(|_| not_found(code, &grant.command))?;
-                (code, path)
+                    .executable(Tool::Git)
+                    .map_err(|_| not_found(codes::GIT_UNAVAILABLE, &grant.command))?;
+                (codes::GIT_UNAVAILABLE, path)
             }
             command if Path::new(command).is_absolute() => {
                 (codes::COMMAND_NOT_FOUND, PathBuf::from(command))
@@ -334,6 +350,11 @@ impl Executor {
             ),
         };
         let real = canonical(&path).map_err(|_| not_found(code, &grant.command))?;
+        if let Some(fault) =
+            refused(&path.to_string_lossy()).or_else(|| refused(&real.to_string_lossy()))
+        {
+            return Err(fault);
+        }
         if !real.is_file() || !runnable(&real) {
             return Err(not_found(code, &grant.command));
         }

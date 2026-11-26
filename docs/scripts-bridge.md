@@ -15,9 +15,13 @@ Status:
   broker; the agent's executor for the run's own operations, the
   projects, the file system and processes; the manifest's kinds at
   plugin API 1.13 (validator, store grant, supervisor limits);
-- next: the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8), and
-  the script store and Scripts page (P7; until then the agent keeps no
-  scripts and every run ends with `scriptMissing`).
+- in place (P7, part 1): the script store (schema 16) with its
+  machine-local trust and grants, and the trust lifecycle
+  (`docs/data-model.md`, "Scripts");
+- next: portability of scripts, the agent's script host, the Scripts
+  page (P7), the agent's `PLUGIN_API` 1.13 and the bundled plugin (P8);
+  until the agent's script host lands every run ends with
+  `scriptMissing`.
 
 ## Operations
 
@@ -350,8 +354,8 @@ the run is stopped (`cancelled`), or the grant it used is revoked
 runs of the plugin at once.
 
 - **The command** must be one the script was granted, by the same name
-  or path. `git` and `docker` are the user's configured tools
-  (`gitUnavailable`, `dockerUnavailable` when not found); another bare
+  or path. `git` is the user's configured tool (`gitUnavailable` when
+  not found); another bare
   name is looked up on the agent's `PATH` (with `PATHEXT`, `.exe` and
   `.com`, on Windows); an absolute grant must exist
   (`commandNotFound`). The file found is canonicalized and is never a
@@ -386,9 +390,39 @@ runs of the plugin at once.
   Restricted git still runs the repository's own hooks and filters (the
   user's repository); with `unrestrictedArgs` a git grant runs any
   program the user could, and is shown as such.
-- **docker** has no argument limits: a docker grant can start containers
-  with the host's folders mounted, so it is effectively full access to
-  the computer, and is shown as such.
+- **What a command may be** (`deckpilot_core::script_grants::
+  command_class`, by its file name without case and program extension,
+  for the granted name, the path found and the file it resolves to):
+  - **container runtimes, virtual machines and namespace tools are not
+    available to scripts** in this version (an open owner decision, kept
+    at the safest option): `docker`, `podman`, `nerdctl`, `colima`,
+    `lima`/`limactl`, `containerd`/`ctr`, `runc`/`crun`, `buildah`,
+    `finch`, Rancher Desktop's and OrbStack's tools, Apple's `container`,
+    `wsl`, `lxc`/`lxd`/`incus`, `multipass`, `nsenter`, `unshare`,
+    `chroot`, `systemd-nspawn`, `lxc-*`, `machinectl`, QEMU (`qemu-*`),
+    `virsh`, VirtualBox, Parallels, VMware's `vmrun`, UTM, Vagrant, Tart,
+    and every `docker-*` or `podman-*` helper (`CONTAINER_RUNTIMES`). They are effectively full access to
+    the computer; when the owner decides, they become a high-risk
+    consent or stay off;
+  - programs that act as another user (`sudo`, `sudoedit`, `doas`,
+    `pkexec`, `su`, `runuser`, `run0`, `systemd-run`, `runas`,
+    `osascript`, `launchctl`, …) are never grantable;
+  - shells (`sh`, `bash`, `zsh`, `pwsh`, `cmd`, …, and `busybox` and
+    `toybox`, which have a shell applet) run only through `shell.run` and
+    its own grant;
+  - a grant naming one of these is refused when it is saved, a stored
+    record naming one grants nothing, and a granted command whose name
+    or resolved file is one is refused at run time (`notGranted`, with
+    the reason, e.g. "container runtimes are not available to scripts
+    yet"); a bare name is ASCII;
+  - programs that run any other program (interpreters such as `python`
+    or `node`, `env`, `xargs`, build tools, package runners, `open`,
+    `ssh`, `curl`, `RUNS_ANY_PROGRAM`) are grantable, but such a grant is
+    as broad as a shell, a container runtime included (`curl
+    --unix-socket` reaches a container daemon's socket), and the
+    Permissions tab shows it as such. The refusal above stops only a
+    direct call. A copy of a refused program under another name is not
+    recognized; nor is a program reached on another computer (`ssh`).
 - **`cwd`** follows the grant's rule: `repositories` (a repository of the
   run's project), `fsScopes` (one of the script's scopes) or `any` (an
   existing folder, never one of DeckPilot's private folders). It is

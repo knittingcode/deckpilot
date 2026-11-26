@@ -26,6 +26,7 @@ pub mod driver;
 pub mod engine;
 pub mod layouts;
 pub mod ops;
+pub mod os_signals;
 pub mod provider;
 pub mod ret;
 pub mod snapshot;

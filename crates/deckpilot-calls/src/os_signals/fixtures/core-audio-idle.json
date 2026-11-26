@@ -1,0 +1,7 @@
+{
+  "processes": [
+    { "executable": "MSTeams", "isRunningInput": false },
+    { "executable": "zoom.us", "isRunningInput": true }
+  ],
+  "camerasInUse": [false]
+}

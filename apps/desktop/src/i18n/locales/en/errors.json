@@ -144,7 +144,12 @@
     "variableInUse_one": "the variable is still used in {{count}} place; remove those references first",
     "variableInUse_other": "the variable is still used in {{count}} places; remove those references first",
     "actionInUse_one": "the action is still used in {{count}} place; replace or unbind those first",
-    "actionInUse_other": "the action is still used in {{count}} places; replace or unbind those first"
+    "actionInUse_other": "the action is still used in {{count}} places; replace or unbind those first",
+    "unknownScript": "there is no such script",
+    "scriptNameTaken": "a script named “{{name}}” already exists in this profile",
+    "scriptRevision": "the script was changed elsewhere (now revision {{revision}}); reload it",
+    "scriptChanged": "the script changed after it was reviewed; review it again",
+    "scriptNotTrusted": "the script is not trusted; review it first"
   },
   "registry": {
     "duplicate": "action type `{{actionType}}` is already registered",

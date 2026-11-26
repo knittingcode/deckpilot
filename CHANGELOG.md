@@ -133,6 +133,12 @@ released either. 0.6.0 is the first version intended for publication.
   default, 60 s), plus what a failure or cancellation does and whether
   every device goes back to work. A change counts as an edit of the Calls
   layout. IPC 19 gains `setCallsBackToWork`.
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
 - Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
   `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
   Settings › Devices gets a Calls section, in English and Polish, shown
@@ -227,6 +233,12 @@ released either. 0.6.0 is the first version intended for publication.
   file a script reads in parts comes from one snapshot of the file, so
   its parts never mix two versions; a file replaced or changed between
   them fails the read.
+- Storage (schema 16, not usable yet): the scripts of a profile, and on
+  this computer only whether each is trusted and what it may do. A
+  script made in the editor is trusted with nothing granted; an imported
+  or duplicated one is never trusted and never runs until reviewed. A
+  script can never be granted a container runtime (Docker, Podman and
+  the like) in this version.
 
 ### Changed
 
