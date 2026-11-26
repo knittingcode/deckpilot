@@ -65,12 +65,12 @@
     "unknown": "State unknown"
   },
   "accessGuide": {
-    "permissionTitle": "DeckPilot may not open your Stream Deck",
+    "permissionTitle": "DeckPilot is not allowed to open your Stream Deck",
     "permissionIntro": "The Stream Deck is plugged in, but Linux does not let DeckPilot open it. A udev rule gives you access to it without root.",
     "rule": {
-      "deb": "The .deb package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still may not open it, reinstall the package you downloaded, in the folder where the file is:",
-      "rpm": "The .rpm package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still may not open it, reinstall the package you downloaded, in the folder where the file is:",
-      "manual": "The AppImage and the Flatpak cannot install the rule. Install it once yourself, in a terminal on this computer (not inside the Flatpak):"
+      "deb": "The .deb package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still cannot open it, reinstall the package, from the folder with the file you downloaded:",
+      "rpm": "The .rpm package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still cannot open it, reinstall the package, from the folder with the file you downloaded:",
+      "manual": "The AppImage cannot install the rule. Install it once yourself, in a terminal on this computer. The second command shows the rule before you install it:"
     },
     "commands": "Commands",
     "replug": "Then unplug the Stream Deck and plug it in again.",
@@ -83,7 +83,8 @@
     "usbPowerCycle": "If it is behind a monitor's or dock's hub, turn that device off and on again.",
     "usbNoReset": "DeckPilot never resets a USB device itself.",
     "troubleshootingLink": "Troubleshooting page",
-    "copy": "Copy {{what}}",
+    "copyCommands": "Copy the commands",
+    "copyLink": "Copy the link",
     "copied": "Copied",
     "notCopied": "Not copied: select the text and copy it by hand",
     "once": "This guide is shown once. Settings › Devices keeps showing the device's state.",

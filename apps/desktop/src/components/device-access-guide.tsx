@@ -18,44 +18,50 @@ import {
   writeDismissed,
 } from "@/lib/device-access"
 
+/** What the open guide shows: kept while it is open. */
+interface Shown {
+  issue: DeviceAccessIssue
+  source: RuleSource
+  version: string
+  target: string
+  channel: string
+}
+
 /** Shows the guide once per issue while the app runs (mounted in the shell). */
 export function DeviceAccessGuide() {
   const { agent, updates } = useAppContext()
   const [dismissed, setDismissed] = useState(readDismissed)
-  const [shown, setShown] = useState<DeviceAccessIssue | null>(null)
-  const issue = deviceAccessIssue(agent, updates)
-  // Once shown, the guide stays until it is closed, even if the device
-  // recovers meanwhile (state adjusted while rendering, not in an effect).
-  if (shown === null && issue !== null && !dismissed.includes(issue)) {
-    setShown(issue)
+  const [shown, setShown] = useState<Shown | null>(null)
+  const issue = deviceAccessIssue(agent, updates, dismissed)
+  // The permission fix depends on the package: wait for the update state
+  // that says which one. Once shown, the guide and its text stay until it
+  // is closed, even if the device recovers meanwhile (state adjusted while
+  // rendering, not in an effect).
+  if (shown === null && issue !== null && (issue !== "permission" || updates !== null)) {
+    setShown({
+      issue,
+      source: ruleSource(updates?.packageFormat),
+      version: updates?.currentVersion ?? agent?.status?.version ?? "<version>",
+      target: updates?.target ?? "",
+      channel: updates?.distributionChannel ?? "",
+    })
   }
 
   if (shown === null) return null
   const close = () => {
-    const next = [...new Set([...dismissed, shown])]
+    const next = [...new Set([...dismissed, shown.issue])]
     writeDismissed(next)
     setDismissed(next)
     setShown(null)
   }
-  return (
-    <DeviceAccessDialog
-      issue={shown}
-      source={ruleSource(updates?.packageFormat)}
-      version={updates?.currentVersion ?? agent?.status?.version ?? "<version>"}
-      target={updates?.target ?? ""}
-      onClose={close}
-    />
-  )
+  return <DeviceAccessDialog {...shown} onClose={close} />
 }
 
-function CopyBlock({ text, label }: { text: string; label: string }) {
+function CopyBlock({ text, label, copy }: { text: string; label: string; copy: string }) {
   const { t } = useTranslation()
   return (
-    <div className="grid gap-1">
-      <pre
-        className="relative overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs leading-5 whitespace-pre select-text"
-        aria-label={label}
-      >
+    <div className="grid gap-1" role="region" aria-label={label}>
+      <pre className="relative overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs leading-5 whitespace-pre select-text">
         {text}
       </pre>
       <div>
@@ -70,7 +76,7 @@ function CopyBlock({ text, label }: { text: string; label: string }) {
             )
           }}
         >
-          <ClipboardCopy /> {t("devices:accessGuide.copy", { what: label })}
+          <ClipboardCopy /> {copy}
         </Button>
       </div>
     </div>
@@ -82,14 +88,9 @@ export function DeviceAccessDialog({
   source,
   version,
   target,
+  channel,
   onClose,
-}: {
-  issue: DeviceAccessIssue
-  source: RuleSource
-  version: string
-  target: string
-  onClose: () => void
-}) {
+}: Shown & { onClose: () => void }) {
   const { t } = useTranslation()
   const permission = issue === "permission"
   return (
@@ -110,12 +111,17 @@ export function DeviceAccessDialog({
           <>
             <p>{t(`devices:accessGuide.rule.${source}`)}</p>
             <CopyBlock
-              text={udevCommands(source, version, target)}
+              text={udevCommands(source, version, target, channel)}
               label={t("devices:accessGuide.commands")}
+              copy={t("devices:accessGuide.copyCommands")}
             />
             <p>{t("devices:accessGuide.replug")}</p>
             <p className="text-muted-foreground">{t("devices:accessGuide.neverRuns")}</p>
-            <CopyBlock text={INSTALLATION_URL} label={t("devices:accessGuide.installationLink")} />
+            <CopyBlock
+              text={INSTALLATION_URL}
+              label={t("devices:accessGuide.installationLink")}
+              copy={t("devices:accessGuide.copyLink")}
+            />
           </>
         ) : (
           <>
@@ -130,6 +136,7 @@ export function DeviceAccessDialog({
         <CopyBlock
           text={TROUBLESHOOTING_URL}
           label={t("devices:accessGuide.troubleshootingLink")}
+          copy={t("devices:accessGuide.copyLink")}
         />
         <p className="text-muted-foreground">{t("devices:accessGuide.once")}</p>
       </div>

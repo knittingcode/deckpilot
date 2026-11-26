@@ -226,9 +226,13 @@ reports (`UpdateState.packageFormat`), so it needs no IPC change:
 - `permissionDenied` on Linux: the udev fix for the package type.
   - `.deb`/`.rpm`: replug the device first (the package installs the rule
     and reloads udev). If that does not help, reinstall the package file.
-  - AppImage, Flatpak or unknown: install the rule by hand, with the
-    commands the rule file documents (download, `install -m 0644` into
-    `/etc/udev/rules.d/`, `udevadm control --reload-rules`), then replug.
+  - From an APT repository: `sudo apt install --reinstall deck-pilot`.
+  - AppImage, Flatpak (not released yet) or unknown: install the rule by
+    hand. The download and `cat` come from `packaging/flatpak/udev.md`
+    (the rule of the installed version's tag); `install -m 0644` into
+    `/etc/udev/rules.d/` and `udevadm control --reload-rules` are the
+    commands the rule file documents. Replugging takes the place of the
+    broad `udevadm trigger` of the installation page.
 - `usbPresentHidUnavailable`: replug the device, connect it without a hub
   or dock, or power-cycle the hub. Links to
   [the USB hub troubleshooting page](troubleshooting/usb-hub-resets.md).
@@ -239,13 +243,16 @@ is shown once; closing it is remembered in the webview's storage
 (`deckpilot.deviceAccessGuide.dismissed`). The device rows keep showing the
 state and its hint.
 
-There is no macOS guide. The agent opens a Stream Deck through hidapi's
-IOKit backend, outside the App Sandbox. macOS's Input Monitoring rule
-refuses keyboard and pointer interfaces only; vendor and consumer
-interfaces open without it
-(`experiments/distribution/macos-sandbox-hid`), and the GitHub build has
-opened a Stream Deck MK.2 on macOS without asking for it. That experiment
-had no Stream Deck attached, so this is an inference, not a measurement.
+There is no macOS guide, on purpose. The agent opens a Stream Deck
+through hidapi's IOKit backend, outside the App Sandbox. In
+`experiments/distribution/macos-sandbox-hid`, macOS's Input Monitoring
+rule refused keyboard and pointer interfaces only; vendor and consumer
+interfaces opened without it. That experiment had no Stream Deck
+attached, and its README only reports, without a measurement, that the
+GitHub build opens Stream Decks without asking for Input Monitoring. So
+no macOS permission is known to be needed, and the guide has no verified
+fix to give. The installation page's advice stands: if macOS asks for
+Input Monitoring, grant it.
 Windows needs no permission: the device uses the built-in HID driver.
 
 ### Where vendor code lives

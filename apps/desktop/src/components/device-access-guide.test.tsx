@@ -14,6 +14,7 @@ import {
   TROUBLESHOOTING_URL,
   deviceAccessIssue,
   ruleSource,
+  ruleUrl,
   udevCommands,
 } from "@/lib/device-access"
 import type { DeviceAvailability } from "@/lib/types"
@@ -81,6 +82,25 @@ describe("which issue the guide is about", () => {
     expect(deviceAccessIssue(null, null)).toBeNull()
   })
 
+  it("after one guide is closed, the other issue still gets its guide", () => {
+    const agent = agentConnection({
+      status: agentStatus({
+        devices: [
+          deviceInfo({ state: "disconnected", availability: "permissionDenied" }),
+          deviceInfo({
+            id: { model: "elgato.streamdeck.mk2", serial: "SIM-2" },
+            state: "disconnected",
+            availability: "usbPresentHidUnavailable",
+          }),
+        ],
+        distribution: agentWith("permissionDenied").status?.distribution,
+      }),
+    })
+    expect(deviceAccessIssue(agent, null)).toBe("permission")
+    expect(deviceAccessIssue(agent, null, ["permission"])).toBe("usbWithoutHid")
+    expect(deviceAccessIssue(agent, null, ["permission", "usbWithoutHid"])).toBeNull()
+  })
+
   it("an agent without its distribution record: the update target decides", () => {
     const agent = agentConnection({
       status: agentStatus({
@@ -107,13 +127,23 @@ describe("the udev fix", () => {
     )
   })
 
+  it("the rule of the installed version, and reinstalling from a repository by name", () => {
+    expect(ruleUrl("0.16.0")).toBe(
+      "https://raw.githubusercontent.com/knittingcode/deckpilot/v0.16.0/packaging/linux/70-deckpilot-streamdeck.rules",
+    )
+    expect(ruleUrl("<version>")).toContain("/main/packaging/linux/")
+    expect(udevCommands("deb", "0.16.0", "linux-x86_64", "apt")).toBe(
+      "sudo apt install --reinstall deck-pilot",
+    )
+  })
+
   it("by hand: the commands the rule file itself documents", () => {
     const rule = readFileSync(RULE_FILE, "utf8")
     const commands = udevCommands("manual", "0.16.0").split("\n")
-    expect(commands[0]).toMatch(
-      /^curl -fsSLO https:\/\/raw\.githubusercontent\.com\/.+\/70-deckpilot-streamdeck\.rules$/,
-    )
-    for (const command of commands.slice(1)) {
+    expect(commands[0]).toBe(`curl -fsSLO ${ruleUrl("0.16.0")}`)
+    // The rule is shown before it is installed.
+    expect(commands[1]).toBe("cat 70-deckpilot-streamdeck.rules")
+    for (const command of commands.filter((line) => line.startsWith("sudo "))) {
       expect(rule).toContain(command)
     }
     // Only the rule and a reload: no broad trigger, no chmod, no group.
@@ -128,14 +158,18 @@ describe("the guide", () => {
       agent: agentWith("permissionDenied"),
       updates: appImage(),
     })
-    expect(await screen.findByText("DeckPilot may not open your Stream Deck")).toBeInTheDocument()
+    expect(
+      await screen.findByText("DeckPilot is not allowed to open your Stream Deck"),
+    ).toBeInTheDocument()
     expect(screen.getByLabelText("Commands")).toHaveTextContent(
       "sudo install -m 0644 70-deckpilot-streamdeck.rules /etc/udev/rules.d/",
     )
     expect(screen.getByLabelText("Troubleshooting page")).toHaveTextContent(TROUBLESHOOTING_URL)
     expect(screen.getByText(/does not run these commands/)).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Done" }))
-    expect(screen.queryByText("DeckPilot may not open your Stream Deck")).not.toBeInTheDocument()
+    expect(
+      screen.queryByText("DeckPilot is not allowed to open your Stream Deck"),
+    ).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem(DEVICE_ACCESS_GUIDE_KEY) ?? "[]")).toEqual([
       "permission",
     ])
@@ -144,7 +178,9 @@ describe("the guide", () => {
       agent: agentWith("permissionDenied"),
       updates: appImage(),
     })
-    expect(screen.queryByText("DeckPilot may not open your Stream Deck")).not.toBeInTheDocument()
+    expect(
+      screen.queryByText("DeckPilot is not allowed to open your Stream Deck"),
+    ).not.toBeInTheDocument()
   })
 
   it("a .deb install is told to replug, then to reinstall its package", async () => {
@@ -152,6 +188,7 @@ describe("the guide", () => {
       agent: agentWith("permissionDenied"),
       updates: updateState("apt", {
         packageFormat: "deb",
+        distributionChannel: "github",
         currentVersion: "0.16.0",
         target: "linux-x86_64",
       }),
@@ -180,8 +217,30 @@ describe("the guide", () => {
       agent: agentWith("permissionDenied"),
       updates: appImage(),
     })
-    await user.click(await screen.findByRole("button", { name: "Copy Commands" }))
+    await user.click(await screen.findByRole("button", { name: "Copy the commands" }))
     expect(writeText).toHaveBeenCalledWith(udevCommands("manual", "0.15.0", "linux-x86_64"))
+  })
+
+  it("waits for the package type, then keeps its text while open", async () => {
+    const context = renderWithApp(<DeviceAccessGuide />, {
+      agent: agentWith("permissionDenied"),
+      updates: null,
+    })
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    const updates = updateState("apt", {
+      packageFormat: "deb",
+      currentVersion: "0.16.0",
+      target: "linux-x86_64",
+    })
+    context.rerender(<DeviceAccessGuide />, { ...context.context, updates })
+    expect(await screen.findByText(/The .deb package installs the rule/)).toBeInTheDocument()
+    // The device recovers: the open guide stays until it is closed.
+    context.rerender(<DeviceAccessGuide />, {
+      ...context.context,
+      updates,
+      agent: agentWith("connected"),
+    })
+    expect(screen.getByText(/The .deb package installs the rule/)).toBeInTheDocument()
   })
 
   it("shows nothing on macOS for a permission state", () => {

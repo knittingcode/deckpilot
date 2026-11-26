@@ -12,18 +12,24 @@ import type { AgentConnection, PackageFormat, UpdateState } from "@/lib/types"
  * - `usbWithoutHid`: the USB bus lists the device without its HID
  *   interface (behind a hub or dock).
  *
- * It shows text to copy and never runs a command. macOS and Windows need
- * no permission for a Stream Deck with this stack (hidapi, IOKit and the
- * Windows HID driver; docs/background-agent.md, "Platform requirements"),
- * so a permission guide is Linux only.
+ * It shows text to copy and never runs a command. The permission guide is
+ * Linux only, on purpose: on Windows the device uses the built-in HID
+ * driver, and on macOS no permission is known to be needed for a Stream
+ * Deck with hidapi's IOKit backend (Input Monitoring refuses keyboard and
+ * pointer interfaces; experiments/distribution/macos-sandbox-hid). That
+ * is not measured with a Stream Deck, so there is no macOS fix to give
+ * (docs/devices.md, "Device access guide").
  */
 export type DeviceAccessIssue = "permission" | "usbWithoutHid"
 
 /** Which guides were closed: each one is shown once. */
 export const DEVICE_ACCESS_GUIDE_KEY = "deckpilot.deviceAccessGuide.dismissed"
 
-const RULE_URL =
-  "https://raw.githubusercontent.com/knittingcode/deckpilot/main/packaging/linux/70-deckpilot-streamdeck.rules"
+/** The rule of the installed version's tag (`main` for other versions). */
+export function ruleUrl(version: string): string {
+  const ref = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version) ? `v${version}` : "main"
+  return `https://raw.githubusercontent.com/knittingcode/deckpilot/${ref}/packaging/linux/70-deckpilot-streamdeck.rules`
+}
 /** The troubleshooting page of #513. */
 export const TROUBLESHOOTING_URL =
   "https://github.com/knittingcode/deckpilot/blob/main/docs/troubleshooting/usb-hub-resets.md"
@@ -42,18 +48,27 @@ export function ruleSource(format: PackageFormat | null | undefined): RuleSource
 /**
  * The commands to copy for `source`; the user runs them, the app never
  * does. `target` is the update target (`linux-x86_64`), for the package's
- * file name.
+ * file name; `channel` the distribution channel (`apt`: a repository, so
+ * the package is reinstalled by name).
  */
-export function udevCommands(source: RuleSource, version: string, target = ""): string {
+export function udevCommands(
+  source: RuleSource,
+  version: string,
+  target = "",
+  channel = "",
+): string {
   const arm = target.endsWith("aarch64")
   switch (source) {
     case "deb":
-      return `sudo apt install --reinstall ./DeckPilot_${version}_${arm ? "arm64" : "amd64"}.deb`
+      return channel === "apt"
+        ? "sudo apt install --reinstall deck-pilot"
+        : `sudo apt install --reinstall ./DeckPilot_${version}_${arm ? "arm64" : "amd64"}.deb`
     case "rpm":
       return `sudo dnf reinstall ./DeckPilot-${version}-1.${arm ? "aarch64" : "x86_64"}.rpm`
     case "manual":
       return [
-        `curl -fsSLO ${RULE_URL}`,
+        `curl -fsSLO ${ruleUrl(version)}`,
+        "cat 70-deckpilot-streamdeck.rules",
         "sudo install -m 0644 70-deckpilot-streamdeck.rules /etc/udev/rules.d/",
         "sudo udevadm control --reload-rules",
       ].join("\n")
@@ -66,15 +81,20 @@ function isLinux(agent: AgentConnection | null, updates: UpdateState | null): bo
   return updates?.target.startsWith("linux") ?? false
 }
 
-/** The issue the guide is about now, if any: permission first. */
+/**
+ * The issue the guide is about now, if any: the first of permission and
+ * USB without HID that is present and not in `dismissed`.
+ */
 export function deviceAccessIssue(
   agent: AgentConnection | null,
   updates: UpdateState | null,
+  dismissed: readonly DeviceAccessIssue[] = [],
 ): DeviceAccessIssue | null {
   const states = (agent?.status?.devices ?? []).map(deviceAvailability)
-  if (states.includes("permissionDenied") && isLinux(agent, updates)) return "permission"
-  if (states.includes("usbPresentHidUnavailable")) return "usbWithoutHid"
-  return null
+  const present: DeviceAccessIssue[] = []
+  if (states.includes("permissionDenied") && isLinux(agent, updates)) present.push("permission")
+  if (states.includes("usbPresentHidUnavailable")) present.push("usbWithoutHid")
+  return present.find((issue) => !dismissed.includes(issue)) ?? null
 }
 
 export function readDismissed(): DeviceAccessIssue[] {
