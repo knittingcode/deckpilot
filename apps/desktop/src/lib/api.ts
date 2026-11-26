@@ -4,6 +4,13 @@ import type { IncompleteUse, SavedAction } from "./action-completeness"
 import { errorCode, rawErrorMessage } from "./backend-error"
 
 import type {
+  Script,
+  ScriptCommandClass,
+  ScriptGrants,
+  ScriptReview,
+  ScriptSettings,
+  ScriptUsage,
+  StoredScript,
   ActionInstance,
   ContextIssue,
   ActionReference,
@@ -71,6 +78,10 @@ import type {
   WorkSessionSettings,
   WorkSessionSnapshot,
   WorkSessionSummary,
+  BackToWork,
+  CallsPageKind,
+  CallsStatus,
+  DeviceId,
 } from "./types"
 
 export interface ActionInput {
@@ -332,6 +343,34 @@ export const api = {
   runWorkflow: (profileId: string, workflowId: string) =>
     invoke<WorkflowReport>("run_workflow", { profileId, workflowId }),
 
+  listScripts: (profileId: string) => invoke<StoredScript[]>("list_scripts", { profileId }),
+  /** A new script: trusted (made here), with no permissions. */
+  createScript: (
+    profileId: string,
+    script: { name: string; source?: string; settings?: ScriptSettings },
+  ) => invoke<Script>("create_script", { profileId, script }),
+  /** The editor's save, from `script.revision`; refused when it is older. */
+  saveScript: (profileId: string, script: Script) =>
+    invoke<Script>("save_script", { profileId, script }),
+  /** A copy with a new id and no trust or permissions. */
+  duplicateScript: (profileId: string, scriptId: string) =>
+    invoke<Script>("duplicate_script", { profileId, scriptId }),
+  scriptUsages: (profileId: string, scriptId: string) =>
+    invoke<ScriptUsage[]>("script_usages_of", { profileId, scriptId }),
+  deleteScript: (profileId: string, scriptId: string, clearKeys: boolean) =>
+    invoke<null>("delete_script", { profileId, scriptId, clearKeys }),
+  reviewScript: (profileId: string, scriptId: string) =>
+    invoke<ScriptReview>("review_script", { profileId, scriptId }),
+  /** Names the hash of the source and the permissions the review showed. */
+  trustScript: (profileId: string, scriptId: string, sourceSha256: string, grants: ScriptGrants) =>
+    invoke<null>("trust_script", { profileId, scriptId, sourceSha256, grants }),
+  setScriptGrants: (profileId: string, scriptId: string, grants: ScriptGrants) =>
+    invoke<null>("set_script_grants", { profileId, scriptId, grants }),
+  revokeScriptGrants: (profileId: string, scriptId: string) =>
+    invoke<null>("revoke_script_grants", { profileId, scriptId }),
+  scriptCommandClass: (command: string) =>
+    invoke<ScriptCommandClass>("script_command_class", { command }),
+
   createProject: (profileId: string, project: ProjectInput) =>
     invoke<Project>("create_project", { profileId, project }),
   updateProject: (profileId: string, projectId: string, project: ProjectInput) =>
@@ -569,6 +608,22 @@ export const api = {
   /** Validates the workflows against their contracts before it writes. */
   saveWorkSessionSettings: (profileId: string, settings: WorkSessionSettings) =>
     invoke<WorkSessionSettings>("save_work_session_settings", { profileId, settings }),
+
+  // Calls (protocol 19, docs/calls.md). The agent owns Calls; with an agent
+  // below protocol 19 they reject with "callsAgentTooOld".
+  getCallsStatus: () => invoke<CallsStatus>("get_calls_status"),
+  setCallsOverlay: (device: DeviceId, on: boolean) =>
+    invoke<CallsStatus>("set_calls_overlay", { device, on }),
+  /** Keeps the user's version as `copyName` first; answers the copy's id. */
+  restoreCallsLayout: (model: string, copyName: string) =>
+    invoke<string | null>("restore_calls_layout", { model, copyName }),
+  setCallsBackToWork: (model: string, back: BackToWork) =>
+    invoke<CallsStatus>("set_calls_back_to_work", { model, back }),
+  // The editor's preview of a call page on a device (fixed content, no
+  // call): on a connection of its own in the backend, one at a time.
+  callsPreviewBegin: (device: DeviceId, page: CallsPageKind) =>
+    invoke<null>("calls_preview_begin", { device, page }),
+  callsPreviewEnd: () => invoke<null>("calls_preview_end"),
 }
 
 /** Backend event carrying the latest {@link AgentConnection}. */

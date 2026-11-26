@@ -21,13 +21,13 @@ use deckpilot_core::work_session::WorkSessionSnapshot;
 use deckpilot_core::{
     ActionInstanceId, ActionResult, ActionStatus, ContextEffect, CycleDirection, ExecutionId,
     ExecutionRecord, ExecutionSummary, LayoutId, LayoutStatus, PageId, ProfileId, Project,
-    ProjectId, WorkSessionId, WorkflowId, WorkflowReport,
+    ProjectId, RepositoryId, WorkSessionId, WorkflowId, WorkflowReport,
 };
 use deckpilot_device::{ConnectionState, ControlId, ControlInput, DeviceDescriptor, DeviceId};
 
 use crate::plugin_dialogs::check_answer_ids;
-use crate::plugins;
 use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessionSummary};
+use crate::{connections, plugins};
 
 /// Protocol spoken by this build.
 ///
@@ -193,7 +193,30 @@ use crate::work_session::{MAX_WORK_SESSION_LIST, WorkSessionSettings, WorkSessio
 /// `json` without members or keys, no members-only entries, a structured
 /// preview as `redacted` JSON and the nearest older reason
 /// ([`Response::for_protocol`]); no request changes.
-pub const PROTOCOL_VERSION: u32 = 18;
+///
+/// Version 19: Calls (capability `calls`, [`crate::calls`]):
+/// `getCallsStatus`, `setCallsOverlay`, `restoreCallsLayout` and the
+/// `callsChanged` event. A client of protocol 18 or older never sends them
+/// (refused locally, and by the agent from such a connection) and receives
+/// no `callsChanged` events, and only desktop clients receive them
+/// ([`AgentEvent::desktop_only`]). (Version 18, structured variables, is
+/// the step before it.)
+///
+/// Version 20 (19 is the Calls event's): plugin connections (capability
+/// `pluginConnections`, [`crate::connections`], plugin API 1.14):
+/// `listPluginConnections`, `createPluginConnection`,
+/// `setPluginConnectionSecret`, `updatePluginConnection`,
+/// `testPluginConnection` and `removePluginConnection`. A token goes from
+/// the app to the agent only; no answer carries one. A client of protocol
+/// 19 or older never sends them (refused locally, and by the agent from
+/// such a connection); nothing older clients receive changes.
+pub const PROTOCOL_VERSION: u32 = CONNECTIONS_PROTOCOL;
+
+/// The protocol of Calls ([`Capability::Calls`]).
+pub const CALLS_PROTOCOL: u32 = 19;
+
+/// The protocol of plugin connections ([`Capability::PluginConnections`]).
+pub const CONNECTIONS_PROTOCOL: u32 = 20;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -389,10 +412,19 @@ pub enum Capability {
     /// members, member entries in catalogs, `structured` previews.
     /// Protocol 18.
     StructuredVariables,
+    /// Calls ([`crate::calls`]): `getCallsStatus`, `setCallsOverlay`,
+    /// `restoreCallsLayout` and `callsChanged` events. Without it the app
+    /// shows no Calls settings. Protocol 19.
+    Calls,
+    /// Plugin connections (plugin API 1.14): `listPluginConnections` and
+    /// the requests that create, test and remove them. Without it the app
+    /// shows no Connections settings. Protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    PluginConnections,
 }
 
 impl Capability {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -412,6 +444,8 @@ impl Capability {
         Self::DisplayTemplates,
         Self::KeyLabels,
         Self::StructuredVariables,
+        Self::Calls,
+        Self::PluginConnections,
     ];
 
     /// The protocol that introduced the capability.
@@ -434,6 +468,8 @@ impl Capability {
             Self::LivePreview => 16,
             Self::DisplayTemplates | Self::KeyLabels => 17,
             Self::StructuredVariables => 18,
+            Self::Calls => CALLS_PROTOCOL,
+            Self::PluginConnections => CONNECTIONS_PROTOCOL,
         }
     }
 
@@ -451,8 +487,11 @@ pub fn negotiate(client: u32, agent: u32) -> u32 {
     client.min(agent)
 }
 
-/// What kind of program is connecting. Used for diagnostics and to decide
-/// whether the configuration window is already open.
+/// What kind of program is connecting, **as the client itself declares** in
+/// its `hello`. Used for diagnostics, to decide whether the configuration
+/// window is already open, and as a policy guard (only `Desktop` receives
+/// `callsChanged` or may preview a call page). It is not authentication:
+/// the IPC token is, and any holder of the token can declare `Desktop`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ClientKind {
@@ -929,6 +968,96 @@ pub enum Request {
         plugin: String,
         setting: String,
     },
+    /// A plugin's connections and the connection types it declares (plugin
+    /// API 1.14). Answers `pluginConnections`. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    ListPluginConnections {
+        plugin: String,
+    },
+    /// Makes the server of the old plugin `from` (`deckpilot.github`,
+    /// `deckpilot.gitlab`) a Git Providers connection, and with `token`
+    /// copies its saved token into it inside the agent (Git Providers
+    /// design §11.2): the user's opt-in, item by item. Importing again
+    /// changes nothing; the old plugin is never changed. Answers
+    /// `pluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`], with
+    /// the [`plugins::feature::LEGACY_IMPORT`] feature.
+    ImportPluginConnection {
+        from: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        token: bool,
+    },
+    /// The git remotes of a project repository's folder on this computer,
+    /// read by the agent with `git remote -v` (read-only, no network), with
+    /// every URL's credentials removed: what "Link remote" suggests
+    /// ([`connections::DetectedRemote`]). Answers `repositoryRemotes`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`], with the
+    /// [`plugins::feature::REPOSITORY_REMOTES`] feature.
+    ListRepositoryRemotes {
+        profile: ProfileId,
+        project: ProjectId,
+        repository: RepositoryId,
+    },
+    /// Creates a connection: the user's consent to exactly the server
+    /// `url` names (the address they open in the browser; ignored for the
+    /// cloud), and, only with `private_network`, to reach it on a private
+    /// network. It reads until `allow_changes`. `secret`, the token, is
+    /// stored with it and never sent back. Answers `pluginConnection`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`].
+    #[serde(rename_all = "camelCase")]
+    CreatePluginConnection {
+        plugin: String,
+        connection_type: String,
+        deployment: connections::ConnectionDeployment,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        display_name: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        allow_changes: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        private_network: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<plugins::PluginSecret>,
+    },
+    /// Stores (or replaces: reconnect) a connection's token; the id,
+    /// consent and references stay, and it is untested again. Answers
+    /// `pluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
+    SetPluginConnectionSecret {
+        plugin: String,
+        connection: String,
+        secret: plugins::PluginSecret,
+    },
+    /// Renames a connection, turns it off or on, lets it make changes or
+    /// only read, or makes it the default of its type. The server cannot
+    /// change: that is a new connection. Answers `pluginConnection`. Since
+    /// protocol [`CONNECTIONS_PROTOCOL`].
+    #[serde(rename_all = "camelCase")]
+    UpdatePluginConnection {
+        plugin: String,
+        connection: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allow_changes: Option<bool>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        make_default: bool,
+    },
+    /// Tests a connection: the plugin checks the server and the token, and
+    /// the state, account and capabilities it found are stored. Answers
+    /// `pluginConnectionTested` once the plugin is done. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    TestPluginConnection {
+        plugin: String,
+        connection: String,
+    },
+    /// Deletes a connection and its token. Saved actions that name it stay
+    /// as they are and show it as removed. Answers `pluginConnections`.
+    /// Since protocol [`CONNECTIONS_PROTOCOL`].
+    RemovePluginConnection {
+        plugin: String,
+        connection: String,
+    },
     /// Answers a plugin dialog this connection received
     /// ([`plugins::PluginEvent::DialogOpened`]). Only on a connection that
     /// announced [`plugin_dialogs::FEATURE`](crate::plugin_dialogs::FEATURE);
@@ -1036,6 +1165,47 @@ pub enum Request {
         context: Box<ResolutionContext>,
         templates: Vec<String>,
     },
+    /// Calls as it is now ([`crate::calls`]). Answers
+    /// [`Response::CallsStatus`]. Since protocol 19.
+    GetCallsStatus,
+    /// Turns the Calls overlay on or off for `device` (the per-device
+    /// setting). Answers [`Response::CallsStatus`]. Since protocol 19.
+    SetCallsOverlay {
+        device: DeviceId,
+        on: bool,
+    },
+    /// *Restore defaults* of `model`'s managed Calls layout: the user's
+    /// version is kept first as a layout of their own named `copy_name`.
+    /// Answers [`Response::CallsLayoutRestored`]. Since protocol 19.
+    #[serde(rename_all = "camelCase")]
+    RestoreCallsLayout {
+        model: deckpilot_device::DeviceModelId,
+        copy_name: String,
+    },
+    /// Sets the *Back to work* settings of `model`'s managed Calls layout
+    /// (the parameters of its "Back to work" action; the layout counts as
+    /// edited afterwards). Answers [`Response::CallsStatus`]. Since
+    /// protocol 19.
+    SetCallsBackToWork {
+        model: deckpilot_device::DeviceModelId,
+        back: crate::calls::BackToWork,
+    },
+    /// The Device Editor's preview of a call page of `device`'s managed
+    /// Calls layout: fixed placeholder faces, no call, no provider. Only
+    /// from a connection that declares itself a desktop client (a policy
+    /// guard; the token is the access boundary); refused while locked or while a real call
+    /// shows, which always wins. Ends with `endCallsPreview`, when the
+    /// connection closes, on lock, a real call or the device's disconnect.
+    /// Answers [`Response::Ok`]. Since protocol 19.
+    PreviewCallsPage {
+        device: DeviceId,
+        page: crate::calls::CallsPageKind,
+    },
+    /// Ends this connection's preview on `device`. Answers
+    /// [`Response::Ok`]. Since protocol 19.
+    EndCallsPreview {
+        device: DeviceId,
+    },
 }
 
 impl Request {
@@ -1094,6 +1264,31 @@ impl Request {
             Self::ResolveDisplayTemplates { templates, .. } => {
                 crate::display_templates::check_templates(templates)
             }
+            Self::RestoreCallsLayout { copy_name, .. }
+                if !crate::calls::valid_copy_name(copy_name) =>
+            {
+                Err(format!(
+                    "the copy's name is 1 to {} characters, without control characters",
+                    crate::calls::MAX_COPY_NAME
+                ))
+            }
+            Self::SetCallsBackToWork { back, .. } if back.validate().is_err() => back.validate(),
+            Self::PreviewCallsPage { device, .. } | Self::EndCallsPreview { device }
+                if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
+            {
+                Err(format!(
+                    "device serial must be 1 to {} bytes",
+                    crate::calls::MAX_SERIAL
+                ))
+            }
+            Self::SetCallsOverlay { device, .. }
+                if device.serial.is_empty() || device.serial.len() > crate::calls::MAX_SERIAL =>
+            {
+                Err(format!(
+                    "device serial must be 1 to {} bytes",
+                    crate::calls::MAX_SERIAL
+                ))
+            }
             Self::PreviewReferences { items, .. } if items.len() > MAX_PREVIEW_ITEMS => Err(
                 format!("at most {MAX_PREVIEW_ITEMS} references can be previewed at once"),
             ),
@@ -1128,6 +1323,13 @@ impl Request {
             | Self::InstallPluginPlan { .. }
             | Self::PlanPluginRemoval { .. }
             | Self::RemovePlugin { .. } => plugins::check_request(self),
+            Self::ListPluginConnections { .. }
+            | Self::CreatePluginConnection { .. }
+            | Self::SetPluginConnectionSecret { .. }
+            | Self::UpdatePluginConnection { .. }
+            | Self::TestPluginConnection { .. }
+            | Self::RemovePluginConnection { .. } => connections::check_request(self),
+            Self::ImportPluginConnection { from, .. } => plugins::check_text("from", from),
             Self::InstallPlugin { source, consent } => {
                 source.check()?;
                 plugins::check_consent(consent)
@@ -1332,6 +1534,17 @@ pub enum Response {
     DisplayTemplates {
         texts: Vec<crate::display_templates::ResolvedDisplayTemplate>,
     },
+    /// Answer to `getCallsStatus` and `setCallsOverlay`. Since protocol 19.
+    CallsStatus {
+        status: Box<crate::calls::CallsStatus>,
+    },
+    /// Answer to `restoreCallsLayout`: the id of the kept copy of the
+    /// user's version (`None`: it was unedited, nothing to keep). Since
+    /// protocol 19.
+    CallsLayoutRestored {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        copy: Option<String>,
+    },
     /// Answer to `getWorkSession` and `clearWorkSessionNotices`. Since
     /// protocol 8.
     WorkSession {
@@ -1453,6 +1666,31 @@ pub enum Response {
     PluginCredentials {
         plugin: String,
         credentials: Vec<plugins::PluginCredentialSlot>,
+    },
+    /// Answer to `listPluginConnections` and `removePluginConnection`.
+    /// Never a secret. Since protocol [`CONNECTIONS_PROTOCOL`].
+    PluginConnections {
+        connections: Box<connections::PluginConnections>,
+    },
+    /// Answer to `listRepositoryRemotes`: at most
+    /// [`connections::MAX_DETECTED_REMOTES`], without credentials. Since
+    /// protocol [`CONNECTIONS_PROTOCOL`].
+    RepositoryRemotes {
+        remotes: Vec<connections::DetectedRemote>,
+    },
+    /// Answer to `createPluginConnection`, `setPluginConnectionSecret` and
+    /// `updatePluginConnection`. Since protocol [`CONNECTIONS_PROTOCOL`].
+    PluginConnection {
+        plugin: String,
+        connection: Box<connections::PluginConnection>,
+    },
+    /// Answer to `testPluginConnection`: the connection as it stands after
+    /// the test, and what the test found. Since protocol
+    /// [`CONNECTIONS_PROTOCOL`].
+    PluginConnectionTested {
+        plugin: String,
+        connection: Box<connections::PluginConnection>,
+        outcome: connections::ConnectionTestOutcome,
     },
     /// Answer to `listModuleMigrations`. Since protocol 10.
     ModuleMigrations {
@@ -1768,11 +2006,17 @@ pub enum AgentEvent {
     WorkSessionChanged {
         snapshot: Box<WorkSessionSnapshot>,
     },
+    /// Calls changed: the call's state, a device's overlay, a managed
+    /// layout. Since protocol 19.
+    CallsChanged {
+        status: Box<crate::calls::CallsStatus>,
+    },
 }
 
 impl Request {
     /// The first protocol that has this request. Clients do not send it on
     /// a connection with an older protocol, and the agent refuses it there.
+    #[allow(clippy::too_many_lines)] // One arm per request, exhaustive on purpose.
     pub fn since_protocol(&self) -> u32 {
         match self {
             Self::StartWorkflow { .. }
@@ -1843,6 +2087,20 @@ impl Request {
             | Self::EndLivePreview { .. }
             | Self::InspectMockDevice { .. } => 16,
             Self::ListDisplayVariables { .. } | Self::ResolveDisplayTemplates { .. } => 17,
+            Self::GetCallsStatus
+            | Self::SetCallsOverlay { .. }
+            | Self::RestoreCallsLayout { .. }
+            | Self::SetCallsBackToWork { .. }
+            | Self::PreviewCallsPage { .. }
+            | Self::EndCallsPreview { .. } => CALLS_PROTOCOL,
+            Self::ListPluginConnections { .. }
+            | Self::CreatePluginConnection { .. }
+            | Self::SetPluginConnectionSecret { .. }
+            | Self::UpdatePluginConnection { .. }
+            | Self::TestPluginConnection { .. }
+            | Self::RemovePluginConnection { .. }
+            | Self::ImportPluginConnection { .. }
+            | Self::ListRepositoryRemotes { .. } => CONNECTIONS_PROTOCOL,
             Self::RunWorkflow { .. } | Self::PrepareForUpdate => 2,
             Self::GetStatus
             | Self::ListDevices
@@ -1875,6 +2133,12 @@ impl Request {
 }
 
 impl AgentEvent {
+    /// Whether only desktop clients receive the event (Calls: whether the
+    /// user is in a call is not for every client that subscribes).
+    pub fn desktop_only(&self) -> bool {
+        matches!(self, Self::CallsChanged { .. })
+    }
+
     /// The first protocol that has this event; clients that speak an older
     /// one do not receive it.
     pub fn since_protocol(&self) -> u32 {
@@ -1890,6 +2154,7 @@ impl AgentEvent {
             | Self::DeviceContextChanged { .. }
             | Self::ExecutionContextChanged { .. } => 7,
             Self::WorkSessionChanged { .. } => 8,
+            Self::CallsChanged { .. } => CALLS_PROTOCOL,
             Self::OpenWindow { .. } => 4,
             Self::State { .. }
             | Self::ActionCompleted { .. }
@@ -2647,6 +2912,66 @@ mod tests {
         );
     }
 
+    /// `setCallsBackToWork` on the wire, and its times checked at the
+    /// boundaries of their ranges.
+    #[test]
+    fn back_to_work_is_set_in_range_only() {
+        use crate::calls::{BackToWork, BackToWorkMode};
+        let set = |mode| Request::SetCallsBackToWork {
+            model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+            back: BackToWork {
+                mode,
+                ..BackToWork::default()
+            },
+        };
+        let json =
+            serde_json::to_value(set(BackToWorkMode::CompletionOrMax { max_seconds: 60 })).unwrap();
+        assert_eq!(json["type"], "setCallsBackToWork");
+        assert_eq!(
+            json["back"],
+            serde_json::json!({
+                "mode": { "kind": "completionOrMax", "maxSeconds": 60 },
+                "onFailure": "resume",
+                "onCancel": "stay",
+                "allDevices": false,
+            })
+        );
+        let timer = serde_json::to_value(set(BackToWorkMode::Timer { seconds: 20 })).unwrap();
+        assert_eq!(
+            timer["back"]["mode"],
+            serde_json::json!({"kind": "timer", "seconds": 20})
+        );
+        for (seconds, ok) in [
+            (4, false),
+            (5, true),
+            (600, true),
+            (601, false),
+            (u32::MAX, false),
+        ] {
+            assert_eq!(
+                set(BackToWorkMode::Timer { seconds }).validate().is_ok(),
+                ok,
+                "timer {seconds}"
+            );
+        }
+        for (max_seconds, ok) in [
+            (9, false),
+            (10, true),
+            (1800, true),
+            (1801, false),
+            (u32::MAX, false),
+        ] {
+            assert_eq!(
+                set(BackToWorkMode::CompletionOrMax { max_seconds })
+                    .validate()
+                    .is_ok(),
+                ok,
+                "maximum {max_seconds}"
+            );
+        }
+        assert!(set(BackToWorkMode::Completion).validate().is_ok());
+    }
+
     /// Protocol 18: structured variables reach only clients that know
     /// them; an older client gets `json` without members, no member
     /// entries, a redacted preview and the nearest older reasons.
@@ -2801,6 +3126,154 @@ mod tests {
         assert_eq!(shown.clone().for_protocol(18), shown);
     }
 
+    /// A layout of an agent before the call pages (no `pages`, no `back`)
+    /// reads as none of either.
+    #[test]
+    fn a_calls_layout_without_pages_or_back_reads_as_none() {
+        let layout: crate::calls::CallsLayout = serde_json::from_value(serde_json::json!({
+            "model": "elgato.streamdeck.mk2",
+            "layout": "0b6f3f3e-6c51-4d0e-9a55-2f1f0c1d9a01",
+            "name": "Calls",
+            "edited": false,
+            "templateVersion": "1.0.0",
+        }))
+        .unwrap();
+        assert_eq!(layout.pages.len(), 0);
+        assert_eq!(layout.back, None);
+        let json = serde_json::to_value(&layout).unwrap();
+        assert!(json.get("back").is_none(), "no back key: {json}");
+    }
+
+    #[test]
+    fn calls_need_protocol_19() {
+        assert!(!Capability::of_protocol(18).contains(&Capability::Calls));
+        assert!(Capability::of_protocol(19).contains(&Capability::Calls));
+        assert_eq!(serde_json::to_value(Capability::Calls).unwrap(), "calls");
+        for request in [
+            Request::GetCallsStatus,
+            Request::SetCallsOverlay {
+                device: DeviceId {
+                    model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                    serial: "A".into(),
+                },
+                on: false,
+            },
+            Request::RestoreCallsLayout {
+                model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                copy_name: "Rozmowy (moja wersja)".into(),
+            },
+            Request::SetCallsBackToWork {
+                model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                back: crate::calls::BackToWork::default(),
+            },
+        ] {
+            assert_eq!(request.since_protocol(), 19);
+            request.validate().unwrap();
+        }
+        let event = AgentEvent::CallsChanged {
+            status: Box::default(),
+        };
+        assert!(event.desktop_only());
+        assert!(!AgentEvent::ShowWindow.desktop_only());
+        assert!(event.clone().for_protocol(18).is_none());
+        assert!(event.for_protocol(19).is_some());
+    }
+
+    /// The Calls requests refuse a bad copy name and an over-long serial.
+    #[test]
+    fn calls_requests_refuse_bad_names_and_serials() {
+        let json = serde_json::to_value(Request::RestoreCallsLayout {
+            model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+            copy_name: "Mine".into(),
+        })
+        .unwrap();
+        assert_eq!(json["type"], "restoreCallsLayout");
+        assert_eq!(json["copyName"], "Mine");
+        for bad in [
+            "",
+            "   ",
+            &"x".repeat(crate::calls::MAX_COPY_NAME + 1),
+            "a\nb",
+            "\u{202E}x",
+            "\0",
+            "a\u{2066}b",
+            "a\u{200B}b",
+            "a\u{2028}b",
+            "\u{FEFF}x",
+        ] {
+            assert!(
+                Request::RestoreCallsLayout {
+                    model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                    copy_name: bad.into(),
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            Request::SetCallsOverlay {
+                device: DeviceId {
+                    model: deckpilot_device::DeviceModelId::new("elgato.streamdeck.mk2"),
+                    serial: "x".repeat(crate::calls::MAX_SERIAL + 1),
+                },
+                on: true,
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(crate::calls::valid_copy_name("  Rozmowy (moja wersja)  "));
+    }
+
+    /// The Calls status and each device's entry carry no private text: no
+    /// title, participant or process, and a preview only as its page kind.
+    #[test]
+    fn calls_status_and_device_entries_carry_no_private_text() {
+        // The status names no title, participant or process.
+        let status = serde_json::to_value(crate::calls::CallsStatus::default()).unwrap();
+        let keys: Vec<&String> = status.as_object().unwrap().keys().collect();
+        assert_eq!(
+            keys,
+            [
+                "controls",
+                "devices",
+                "installed",
+                "layouts",
+                "revision",
+                "state"
+            ]
+        );
+        // Nor does a device's entry: with a preview it adds only the page
+        // kind, without one the field is left out.
+        let entry = |preview| crate::calls::CallsDevice {
+            device: deckpilot_device::DeviceId {
+                model: deckpilot_device::DeviceModelId::new("elgato.mk2"),
+                serial: "A1".into(),
+            },
+            overlay: true,
+            shown: false,
+            suspended: false,
+            preview,
+        };
+        let keys = |value: serde_json::Value| -> Vec<String> {
+            value.as_object().unwrap().keys().cloned().collect()
+        };
+        let with = serde_json::to_value(entry(Some(crate::calls::CallsPageKind::Active))).unwrap();
+        assert_eq!(
+            keys(with.clone()),
+            ["device", "overlay", "preview", "shown", "suspended"]
+        );
+        assert_eq!(with["preview"], "active");
+        assert_eq!(keys(with["device"].clone()), ["model", "serial"]);
+        let without = serde_json::to_value(entry(None)).unwrap();
+        assert_eq!(
+            keys(without.clone()),
+            ["device", "overlay", "shown", "suspended"]
+        );
+        // An entry from an agent without the field reads as no preview.
+        let old: crate::calls::CallsDevice = serde_json::from_value(without).unwrap();
+        assert_eq!(old, entry(None));
+    }
+
     #[test]
     fn the_variable_registry_needs_protocol_9() {
         use deckpilot_core::variables::{
@@ -2813,7 +3286,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 18);
+        assert_eq!(PROTOCOL_VERSION, 20);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),

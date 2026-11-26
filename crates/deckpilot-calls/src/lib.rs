@@ -10,6 +10,10 @@
 //! - [`ops`]: the host operations `call.state` and `call.control` of the
 //!   bundled Calls plugin, and the gate an action passes before a command
 //!   is sent.
+//! - [`engine`]: the call state engine: tracks, timeouts, focus, and the
+//!   overlay intent.
+//! - [`ret`]: "Wróć do pracy" (Back to work): the per-device return
+//!   sessions.
 //! - [`clock`]: the engine's monotonic clock. Nothing here reads a clock:
 //!   every call that needs the time is given `now`, so tests run on a
 //!   virtual clock.
@@ -18,9 +22,16 @@
 //! adapters live in the agent.
 
 pub mod clock;
+pub mod driver;
+pub mod engine;
+pub mod layouts;
 pub mod ops;
+pub mod os_signals;
 pub mod provider;
+pub mod ret;
 pub mod snapshot;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use clock::Instant;
 pub use ops::{CallControlRequest, CallControlResult, GateError, OP_CALL_CONTROL, OP_CALL_STATE};

@@ -25,9 +25,12 @@ import type { ModuleInfo } from "./types"
 
 export const WORKFLOWS_PLUGIN = "deckpilot.workflows"
 export const PROJECTS_PLUGIN = "deckpilot.projects"
+export const SCRIPTS_PLUGIN = "deckpilot.scripts"
+/** The Scripts plugin's action that runs a script, which it names by id. */
+export const RUN_SCRIPT = `${SCRIPTS_PLUGIN}.run`
 
 /** The app's own screens a plugin can activate. */
-export type HostViewKind = "workflows" | "projects"
+export type HostViewKind = "workflows" | "projects" | "scripts"
 /** Status-bar items the app draws for a plugin. */
 export type HostStatusItem = "activeProject"
 /** Dashboard cards the app draws for a plugin. */
@@ -42,6 +45,7 @@ const HOST_CONTRIBUTIONS: Record<
   { views: HostViewKind[]; statusItems: HostStatusItem[]; dashboardCards: HostDashboardCard[] }
 > = {
   [WORKFLOWS_PLUGIN]: { views: ["workflows"], statusItems: [], dashboardCards: [] },
+  [SCRIPTS_PLUGIN]: { views: ["scripts"], statusItems: [], dashboardCards: [] },
   [PROJECTS_PLUGIN]: {
     views: ["projects"],
     statusItems: ["activeProject"],
@@ -64,7 +68,7 @@ export interface PluginFeatures {
 /** Every feature on: outside the main window, which has no plugin list. */
 const ALL_ACTIVE: PluginFeatures = {
   isPluginActive: () => true,
-  hostViews: new Set<HostViewKind>(["workflows", "projects"]),
+  hostViews: new Set<HostViewKind>(["workflows", "projects", "scripts"]),
   statusItems: new Set<HostStatusItem>(["activeProject"]),
   dashboardCards: new Set<HostDashboardCard>(["activeProject"]),
 }

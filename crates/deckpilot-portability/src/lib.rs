@@ -23,9 +23,10 @@ pub use import::{
     ConflictResolution, ImportMode, ImportOptions, ImportPreview, ImportSummary, plan, preview,
 };
 pub use payload::{
-    AppSettings, ExportOptions, ExportedValue, LibraryExport, ModuleExport, PAYLOAD_VERSION,
-    PAYLOAD_VERSION_WITH_LABELS, PAYLOAD_VERSION_WITH_LIBRARY, PAYLOAD_VERSION_WITHOUT_LIBRARY,
-    Payload, UpdateSettings, VariablesExport, export,
+    AppSettings, ExportOptions, ExportedScript, ExportedValue, LibraryExport, ModuleExport,
+    PAYLOAD_VERSION, PAYLOAD_VERSION_WITH_LABELS, PAYLOAD_VERSION_WITH_LIBRARY,
+    PAYLOAD_VERSION_WITH_REPOSITORIES, PAYLOAD_VERSION_WITHOUT_LIBRARY, Payload, UpdateSettings,
+    VariablesExport, export,
 };
 
 #[derive(Debug, Error)]

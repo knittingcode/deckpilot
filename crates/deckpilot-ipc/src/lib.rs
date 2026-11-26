@@ -22,7 +22,9 @@
 //! user. The socket itself is also restricted to the current user, so the
 //! token is a second, platform-independent layer of access control.
 
+pub mod calls;
 pub mod client;
+pub mod connections;
 pub mod display_templates;
 pub mod endpoint;
 pub mod framing;

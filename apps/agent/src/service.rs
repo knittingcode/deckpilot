@@ -33,6 +33,7 @@ use crate::devices::{CLOSE_TIMEOUT, DeviceIo, DeviceSignal};
 use crate::instance::{InstanceLock, LockError};
 use crate::render;
 
+pub mod calls;
 mod deck;
 mod display;
 mod display_redraws;
@@ -41,7 +42,11 @@ mod folders;
 mod gestures;
 mod live_preview;
 #[cfg(feature = "plugins")]
+pub(crate) mod plugin_calls;
+#[cfg(feature = "plugins")]
 pub(crate) mod plugin_projects;
+#[cfg(feature = "plugins")]
+pub(crate) mod plugin_scripts;
 mod security;
 mod simulate;
 mod stateful;
@@ -151,6 +156,9 @@ pub(crate) const PROJECTS_PLUGIN: &str = "deckpilot.projects";
 /// The reason ([`IpcError::reason`]) of a project request refused while no
 /// project context provider is active.
 pub(crate) const PROJECTS_OFF: &str = "projectsOff";
+/// `listRepositoryRemotes`: the repository's folder is not set on this
+/// computer.
+pub(crate) const NO_FOLDER: &str = "no-folder";
 
 #[derive(Debug)]
 pub(crate) enum Command {
@@ -186,6 +194,16 @@ pub(crate) enum Command {
         request: Request,
         reply: oneshot::Sender<Result<Response, IpcError>>,
     },
+    /// A Calls page preview request of connection `viewer` (`server.rs`).
+    CallsPreview {
+        viewer: u64,
+        request: Request,
+        reply: oneshot::Sender<Result<Response, IpcError>>,
+    },
+    /// The connection `viewer` closed: its Calls previews end.
+    CallsPreviewClosed {
+        viewer: u64,
+    },
     /// The connection `viewer` closed: its live preview sessions end.
     LivePreviewClosed {
         viewer: u64,
@@ -202,6 +220,9 @@ pub(crate) enum Command {
         reply: Option<oneshot::Sender<Result<Response, IpcError>>>,
         /// The folder the key that started it is in (`folders.rs`).
         hold: Option<deckpilot_core::FolderHold>,
+        /// The return session of a suspended device it counts for
+        /// (`calls.rs`).
+        calls: Option<calls::CallsRun>,
     },
     /// A plugin's project operation or profile read (plugin API 1.9, X6
     /// and X9), which the broker allowed, from its lane thread.
@@ -210,6 +231,24 @@ pub(crate) enum Command {
         plugin: String,
         call: plugin_projects::ProjectCall,
         reply: std::sync::mpsc::SyncSender<plugin_projects::ProjectReply>,
+    },
+    /// The Calls plugin's `call.state` or `call.control` (plugin API
+    /// 1.16), which the broker allowed, from its lane thread. A control is
+    /// answered once confirmed.
+    #[cfg(feature = "plugins")]
+    PluginCall {
+        plugin: String,
+        call: plugin_calls::CallsCall,
+        reply: std::sync::mpsc::SyncSender<plugin_calls::CallsReply>,
+        /// Whether the lane still waits, and until when.
+        pending: plugin_calls::Pending,
+    },
+    /// A script run's question to the script store (plugin API 1.13),
+    /// from its lane thread.
+    #[cfg(feature = "plugins")]
+    PluginScript {
+        query: plugin_scripts::ScriptQuery,
+        reply: std::sync::mpsc::SyncSender<plugin_scripts::ScriptAnswer>,
     },
     /// A work session operation from a test (the keys call the service
     /// directly). `press: None` is a press now, in the current state.
@@ -223,6 +262,33 @@ pub(crate) enum Command {
     /// A tagged run "ended" with `canFinish` (`None`: it failed), e.g. a
     /// late result of an older verification.
     /// When the elapsed time on work session keys is redrawn next.
+    /// Installs Calls with the mock provider (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsInstallMock {
+        mock: Box<dyn calls::Provider>,
+        /// The parameters of "Back to work" in the templates.
+        back: deckpilot_core::ActionParameters,
+        /// The consent the test grants.
+        consent: deckpilot_calls::provider::ConsentState,
+        reply: oneshot::Sender<()>,
+    },
+    /// Edits the installed mock provider (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsMock {
+        edit: calls::CallsMockEdit,
+        reply: oneshot::Sender<()>,
+    },
+    /// The next seeds of a managed layout fail as if busy (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsFailSeeds {
+        count: u32,
+        reply: oneshot::Sender<()>,
+    },
+    /// What Calls shows (tests).
+    #[cfg(feature = "test-hooks")]
+    CallsView {
+        reply: oneshot::Sender<calls::CallsView>,
+    },
     #[cfg(feature = "test-hooks")]
     WorkSessionFaceDue {
         reply: oneshot::Sender<Option<i64>>,
@@ -351,6 +417,26 @@ impl AgentHandle {
             .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?
     }
 
+    /// A Calls page preview request of connection `viewer`.
+    pub async fn calls_preview(&self, viewer: u64, request: Request) -> Result<Response, IpcError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(Command::CallsPreview {
+                viewer,
+                request,
+                reply,
+            })
+            .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?;
+        response
+            .await
+            .map_err(|_| IpcError::new(ErrorCode::Failed, "agent is shutting down"))?
+    }
+
+    /// The connection `viewer` closed: its Calls previews end.
+    pub fn calls_preview_closed(&self, viewer: u64) {
+        let _ = self.commands.send(Command::CallsPreviewClosed { viewer });
+    }
+
     /// The connection `viewer` closed: its live preview sessions end and
     /// their devices show the saved configuration again.
     pub fn live_preview_closed(&self, viewer: u64) {
@@ -446,6 +532,61 @@ impl AgentHandle {
         }
     }
 
+    /// The Calls plugin's operation as its executor asks the agent (plugin
+    /// API 1.16, after the broker and the executor allowed it): `None` is
+    /// `call.state`, `Some(action)` is `call.control`. The state's JSON, or
+    /// the control's outcome as `"confirmed"` / `"alreadyThere"`, or the
+    /// refusal's code and message. Tests only.
+    #[cfg(all(feature = "test-hooks", feature = "plugins"))]
+    pub async fn plugin_call(
+        &self,
+        plugin: &str,
+        action: Option<deckpilot_plugin_abi::calls::CallAction>,
+    ) -> Result<serde_json::Value, (String, String)> {
+        use plugin_calls::{AgentCallsHost, CallsAnswer, CallsCall, CallsHost};
+        let call = action.map_or(CallsCall::State, CallsCall::Control);
+        let host = AgentCallsHost::new(self.commands.clone());
+        let plugin = plugin.to_owned();
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let answer = tokio::task::spawn_blocking(move || host.call(&plugin, call, far, &|| false))
+            .await
+            .map_err(|e| ("join".to_owned(), e.to_string()))?;
+        match answer {
+            Ok(CallsAnswer::State(state)) => Ok(serde_json::to_value(*state).unwrap_or_default()),
+            Ok(CallsAnswer::Control(outcome)) => {
+                Ok(serde_json::to_value(outcome).unwrap_or_default())
+            }
+            Err(refusal) => Err((refusal.code.to_owned(), refusal.message)),
+        }
+    }
+
+    /// A `call.control` the lane already gave up on (cancelled, or told it
+    /// failed) when the agent gets to it: the refusal's code and message.
+    /// Tests only.
+    #[cfg(all(feature = "test-hooks", feature = "plugins"))]
+    pub async fn plugin_call_given_up(
+        &self,
+        plugin: &str,
+        action: deckpilot_plugin_abi::calls::CallAction,
+    ) -> Option<(String, String)> {
+        use plugin_calls::{CallsCall, Pending};
+        let pending = Pending::new(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        pending.give_up();
+        let (reply, answer) = std::sync::mpsc::sync_channel(1);
+        self.commands
+            .send(Command::PluginCall {
+                plugin: plugin.to_owned(),
+                call: CallsCall::Control(action),
+                reply,
+                pending,
+            })
+            .ok()?;
+        let answer = tokio::task::spawn_blocking(move || answer.recv().ok())
+            .await
+            .ok()??;
+        answer.err().map(|r| (r.code.to_owned(), r.message))
+    }
+
     /// The work session as last published; changes on every transition.
     pub fn work_session(
         &self,
@@ -473,6 +614,103 @@ impl AgentHandle {
             })
             .ok()?;
         outcome.await.ok()
+    }
+
+    /// Installs Calls with the mock provider (tests): the only way Calls
+    /// runs in this build.
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_mock(
+        &self,
+        mock: deckpilot_calls::testing::MockProvider,
+        back: deckpilot_core::ActionParameters,
+    ) {
+        let full = deckpilot_calls::provider::ConsentState {
+            observe: true,
+            control: true,
+            titles: false,
+        };
+        self.install_calls_mock_with(mock, back, full).await;
+    }
+
+    /// [`AgentHandle::install_calls_mock`] with the consent `consent`
+    /// (tests: observe only, say).
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_mock_with(
+        &self,
+        mock: deckpilot_calls::testing::MockProvider,
+        back: deckpilot_core::ActionParameters,
+        consent: deckpilot_calls::provider::ConsentState,
+    ) {
+        self.install_calls_provider(mock, back, consent).await;
+    }
+
+    /// Installs Calls with `provider` (tests: the operating-system signals
+    /// provider on a fixture source, say) and the consent `consent`.
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_provider(
+        &self,
+        provider: impl deckpilot_calls::provider::CallProvider + 'static,
+        back: deckpilot_core::ActionParameters,
+        consent: deckpilot_calls::provider::ConsentState,
+    ) {
+        let mock: Box<dyn calls::Provider> = Box::new(provider);
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::CallsInstallMock {
+                mock,
+                back,
+                consent,
+                reply,
+            })
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    /// Edits the installed mock provider (tests), with the engine clock's
+    /// now.
+    #[cfg(feature = "test-hooks")]
+    pub async fn calls_mock(
+        &self,
+        edit: impl FnOnce(&mut deckpilot_calls::testing::MockProvider, deckpilot_calls::clock::Instant)
+        + Send
+        + 'static,
+    ) {
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::CallsMock {
+                edit: calls::CallsMockEdit(Box::new(edit)),
+                reply,
+            })
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    /// The next `count` seeds of a managed Calls layout fail as if another
+    /// connection held the database (tests).
+    #[cfg(feature = "test-hooks")]
+    pub async fn calls_fail_seeds(&self, count: u32) {
+        let (reply, done) = oneshot::channel();
+        if self
+            .commands
+            .send(Command::CallsFailSeeds { count, reply })
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    /// What Calls shows (tests).
+    #[cfg(feature = "test-hooks")]
+    pub async fn calls_view(&self) -> Option<calls::CallsView> {
+        let (reply, view) = oneshot::channel();
+        self.commands.send(Command::CallsView { reply }).ok()?;
+        view.await.ok()
     }
 
     /// When the elapsed time on work session keys is redrawn next
@@ -633,6 +871,8 @@ pub struct Agent {
     detached: Arc<AtomicUsize>,
     /// The runs keys of folders started and their folders (`folders.rs`).
     folder_runs: folders::FolderRuns,
+    /// Calls (`calls.rs`): off unless a provider is installed.
+    calls: Box<calls::AgentCalls>,
     /// The editor's live preview sessions (protocol 16).
     live_previews: live_preview::LivePreviews,
     handle: AgentHandle,
@@ -768,6 +1008,7 @@ impl Agent {
             locale: None,
             detached: Arc::default(),
             folder_runs: folders::FolderRuns::default(),
+            calls: Box::default(),
             live_previews: live_preview::LivePreviews::default(),
             handle,
             commands,
@@ -869,6 +1110,10 @@ impl Agent {
             // seconds its Back key shows change, if a countdown runs.
             let folder_due = tokio::time::Instant::now()
                 + self.next_folder_wake().unwrap_or(Duration::from_secs(3600));
+            // Calls, while a provider is installed: what is due is handled
+            // here, and the loop wakes for the next.
+            let calls_due = tokio::time::Instant::now()
+                + self.calls_wake().unwrap_or(Duration::from_secs(3600));
             // Sleeps until a coalesced variable redraw is due, if any.
             let display_due = self.display_redraws.next_due().map_or_else(
                 || tokio::time::Instant::now() + Duration::from_secs(3600),
@@ -924,6 +1169,7 @@ impl Agent {
                     self.on_folder_wake();
                     Flow::Continue
                 }
+                () = tokio::time::sleep_until(calls_due) => Flow::Continue,
                 () = tokio::time::sleep_until(face_due) => {
                     self.on_work_session_face_due();
                     Flow::Continue
@@ -1031,6 +1277,18 @@ impl Agent {
                 let _ = reply.send(self.live_preview(viewer, request));
                 Flow::Continue
             }
+            Command::CallsPreview {
+                viewer,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.calls_preview(viewer, &request));
+                Flow::Continue
+            }
+            Command::CallsPreviewClosed { viewer } => {
+                self.calls_preview_closed(viewer);
+                Flow::Continue
+            }
             Command::LivePreviewClosed { viewer } => {
                 self.live_preview_closed(viewer);
                 Flow::Continue
@@ -1045,7 +1303,10 @@ impl Agent {
                 result,
                 reply,
                 hold,
+                calls,
             } => {
+                let calls_end = calls::detached_end(&result);
+                self.calls_run_ended(calls, calls_end);
                 // Over: a result (success or a handled failure) ran; an
                 // engine error means it could not run at all.
                 let end = if result.is_ok() {
@@ -1064,6 +1325,21 @@ impl Agent {
                 reply,
             } => {
                 let _ = reply.try_send(self.plugin_project(&plugin, call));
+                Flow::Continue
+            }
+            #[cfg(feature = "plugins")]
+            Command::PluginCall {
+                plugin,
+                call,
+                reply,
+                pending,
+            } => {
+                self.plugin_call(&plugin, call, reply, &pending);
+                Flow::Continue
+            }
+            #[cfg(feature = "plugins")]
+            Command::PluginScript { query, reply } => {
+                let _ = reply.try_send(self.plugin_script(query));
                 Flow::Continue
             }
             Command::Request {
@@ -1102,6 +1378,35 @@ impl Agent {
                 Flow::Continue
             }
             #[cfg(feature = "test-hooks")]
+            Command::CallsInstallMock {
+                mock,
+                back,
+                consent,
+                reply,
+            } => {
+                // Tests only: the consent a test grants.
+                self.install_calls(mock, consent, calls::templates_with_back(&back));
+                let _ = reply.send(());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsMock { edit, reply } => {
+                self.calls_edit_mock(edit);
+                let _ = reply.send(());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsFailSeeds { count, reply } => {
+                self.calls_fail_seeds(count);
+                let _ = reply.send(());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
+            Command::CallsView { reply } => {
+                let _ = reply.send(self.calls_view());
+                Flow::Continue
+            }
+            #[cfg(feature = "test-hooks")]
             Command::WorkSessionFaceDue { reply } => {
                 let _ = reply.send(self.work_session_face_due());
                 Flow::Continue
@@ -1115,6 +1420,36 @@ impl Agent {
                 let end = work_session::RunEnd::with_can_finish(can_finish);
                 self.work_session_run_ended(purpose, &end);
                 let _ = reply.send(());
+                Flow::Continue
+            }
+            Command::Request {
+                request:
+                    Request::ListRepositoryRemotes {
+                        profile,
+                        project,
+                        repository,
+                    },
+                reply,
+            } => {
+                // Answered once `git remote -v` finished on its own thread.
+                match self
+                    .repository_folder(profile, project, repository)
+                    .and_then(|folder| self.plugins.repository_remotes(folder))
+                {
+                    Ok(detect) => {
+                        let spawned = std::thread::Builder::new()
+                            .name("repository-remotes".into())
+                            .spawn(move || {
+                                let _ = reply.send(detect());
+                            });
+                        if let Err(error) = spawned {
+                            warn!(%error, "cannot read a repository's remotes");
+                        }
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                    }
+                }
                 Flow::Continue
             }
             Command::Request { request, reply } if crate::plugins::is_plugin_request(&request) => {
@@ -1221,6 +1556,16 @@ impl Agent {
             }
             Request::ResolveDisplayTemplates { context, templates } => {
                 self.resolve_display_templates(&context, templates)
+            }
+            Request::GetCallsStatus => Ok(Response::CallsStatus {
+                status: Box::new(self.calls_status()),
+            }),
+            Request::SetCallsOverlay { device, on } => self.set_calls_overlay(&device, on),
+            Request::SetCallsBackToWork { model, back } => {
+                self.set_calls_back_to_work(&model, &back)
+            }
+            Request::RestoreCallsLayout { model, copy_name } => {
+                self.restore_calls_layout(&model, &copy_name)
             }
             Request::GetAutostart => {
                 let enabled = self.autostart()?.is_enabled().map_err(failed)?;
@@ -1341,6 +1686,13 @@ impl Agent {
                 Ok(Response::Ok)
             }
             Request::InspectMockDevice { device } => self.inspect_mock_device(&device),
+            // Per connection: the preview belongs to it (`server.rs`).
+            Request::PreviewCallsPage { .. } | Request::EndCallsPreview { .. } => {
+                Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "Calls previews belong to a connection",
+                ))
+            }
             // Per connection: the session belongs to it (`server.rs`).
             Request::BeginLivePreview { .. }
             | Request::ApplyLivePreview { .. }
@@ -1378,6 +1730,10 @@ impl Agent {
             | Request::PreviewReferences { .. }
             | Request::ListDisplayVariables { .. }
             | Request::ResolveDisplayTemplates { .. }
+            | Request::GetCallsStatus
+            | Request::SetCallsOverlay { .. }
+            | Request::RestoreCallsLayout { .. }
+            | Request::SetCallsBackToWork { .. }
             | Request::GetAutostart
             | Request::Subscribe
             | Request::SubscribePluginEvents { .. }
@@ -1430,8 +1786,18 @@ impl Agent {
             | Request::InstallPluginPlan { .. }
             | Request::PlanPluginRemoval { .. }
             | Request::RemovePlugin { .. }
-            | Request::RestoreBundledPlugin { .. } => {
+            | Request::RestoreBundledPlugin { .. }
+            | Request::ListPluginConnections { .. }
+            | Request::CreatePluginConnection { .. }
+            | Request::SetPluginConnectionSecret { .. }
+            | Request::UpdatePluginConnection { .. }
+            | Request::TestPluginConnection { .. }
+            | Request::RemovePluginConnection { .. }
+            | Request::ImportPluginConnection { .. } => {
                 unreachable!("plugin requests are handled by handle_command")
+            }
+            Request::ListRepositoryRemotes { .. } => {
+                unreachable!("listRepositoryRemotes is answered by handle_command")
             }
             Request::Unlock { .. }
             | Request::Lock
@@ -1575,6 +1941,50 @@ impl Agent {
         match &self.options.open_desktop {
             Some(open) => open(),
             None => Err("opening the configuration app is not supported".into()),
+        }
+    }
+
+    /// The folder of a project repository on this computer
+    /// (`listRepositoryRemotes`): its resource's directory binding. Only
+    /// while unlocked, with the Projects feature; a stored id never names
+    /// a path, so nothing the app sends reaches another folder.
+    fn repository_folder(
+        &self,
+        profile: ProfileId,
+        project: ProjectId,
+        repository: deckpilot_core::RepositoryId,
+    ) -> Result<std::path::PathBuf, IpcError> {
+        if self.security != SecurityState::Unlocked {
+            return Err(locked());
+        }
+        self.require_projects()?;
+        let not_found =
+            |what: &str| IpcError::new(ErrorCode::NotFound, format!("{what} does not exist"));
+        let profile = self
+            .store()?
+            .load_profile(profile)
+            .map_err(|e| storage_error(&e))?
+            .ok_or_else(|| not_found("profile"))?;
+        let project = profile
+            .projects
+            .iter()
+            .find(|p| p.id == project)
+            .ok_or_else(|| not_found("project"))?
+            .with_derived_repositories();
+        let repository = project
+            .repositories
+            .iter()
+            .find(|r| r.id == repository)
+            .ok_or_else(|| not_found("repository"))?;
+        match self.runtime.machine().binding(&repository.resource) {
+            Some(binding) if binding.kind == deckpilot_core::ResourceKind::Directory => {
+                Ok(std::path::PathBuf::from(&binding.value))
+            }
+            _ => Err(IpcError::new(
+                ErrorCode::Failed,
+                "the repository has no folder on this computer",
+            )
+            .with_reason(NO_FOLDER)),
         }
     }
 
@@ -1722,6 +2132,8 @@ impl Agent {
         stages.done("faces");
         stages.report();
         info!("configuration reloaded");
+        // A managed layout may have been edited in the app.
+        self.calls_layouts_changed();
         self.after_change();
         Ok(())
     }
@@ -1829,12 +2241,14 @@ impl Agent {
         let commands = self.handle.commands.clone();
         // A key of a folder started it: the folder waits for its end.
         let hold = self.hold_folder_for_run();
+        let calls = self.calls_hold_for_run(deckpilot_calls::ret::RunKind::DetachedAction);
         let spawned = std::thread::Builder::new()
             .name("detached action".into())
             .spawn({
                 let running = running.clone();
                 let name = name.clone();
                 let hold = hold.clone();
+                let calls = calls.clone();
                 move || {
                     let result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run()))
@@ -1851,6 +2265,7 @@ impl Agent {
                         result,
                         reply,
                         hold,
+                        calls,
                     });
                 }
             });
@@ -1858,6 +2273,8 @@ impl Agent {
             running.fetch_sub(1, Ordering::SeqCst);
             warn!(%error, "no thread for the action");
             self.release_folder_run(hold, deckpilot_core::HoldEnd::NotRun);
+            // No thread: it never ran, nothing completed.
+            self.calls_run_ended(calls, deckpilot_calls::ret::RunEnd::Interrupted);
         }
     }
 
@@ -2079,6 +2496,7 @@ impl Agent {
             device: device.clone(),
         });
         info!(%device, "device connected");
+        self.calls_device_connected();
         self.render(&device, true);
         self.refresh_states();
         self.publish();
@@ -2100,6 +2518,7 @@ impl Agent {
             device: device.clone(),
         });
         info!(%device, "device disconnected");
+        self.calls_device_disconnected(device);
         self.publish();
         self.publish_device_context(Some(device.clone()));
     }

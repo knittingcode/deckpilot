@@ -26,7 +26,7 @@ pub mod permissions;
 pub mod plugin_id;
 pub mod rate;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -36,6 +36,7 @@ use deckpilot_plugin_abi::dialog::DialogRequest;
 use deckpilot_plugin_abi::privileged::{
     OpenUrlParam, ProjectCycle, ResourceOpen, ResourceResolve, ToolAccess, ToolRun,
 };
+pub use deckpilot_plugin_abi::scripts::ScriptScope;
 use deckpilot_plugin_abi::{CallErrorCode, CapabilityRequest, HttpMethod, NetworkErrorKind};
 use serde_json::Value;
 use url::Url;
@@ -44,9 +45,10 @@ pub use addr::{BlockedAddr, check_connect_addr, check_private_network_addr};
 pub use audit::{AuditDecision, AuditRecord, AuditSink, MemoryAudit};
 pub use origin::{Origin, OriginError, UserOrigin};
 pub use permissions::{
-    ApprovedPermission, ApprovedPermissions, CredentialGrant, DEFAULT_STORAGE_QUOTA_BYTES,
-    GrantError, Grants, MAX_STORAGE_KEYS, MAX_STORAGE_QUOTA_BYTES, ProfileScope, ResourceGrant,
-    StorageQuota, ToolGrant, UserOriginGrant,
+    ApprovedPermission, ApprovedPermissions, ConnectionGrant, CredentialGrant,
+    DEFAULT_STORAGE_QUOTA_BYTES, GrantError, Grants, MAX_CONNECTION_GRANTS, MAX_STORAGE_KEYS,
+    MAX_STORAGE_QUOTA_BYTES, ProfileScope, ResourceGrant, ScriptsGrant, StorageQuota, ToolGrant,
+    UserOriginGrant,
 };
 pub use plugin_id::PluginId;
 pub use rate::{Clock, ManualClock, Rate, RateLimits, SystemClock};
@@ -55,6 +57,11 @@ use rate::Bucket;
 
 /// Most redirects one brokered fetch may follow.
 pub const MAX_REDIRECTS: u32 = 5;
+
+/// The only plugin plugin API 1.16's `call.*` operations exist for
+/// (`docs/calls.md`). The broker refuses them for every other plugin id,
+/// whatever it was granted.
+pub const CALLS_PLUGIN: &str = "deckpilot.calls";
 
 /// Headers a plugin may never set. Credentials are injected by the agent
 /// from handles (design §5.5); framing and routing headers belong to the
@@ -136,9 +143,21 @@ pub enum DenyReason {
     /// (an option of the tool itself is the host's alone).
     NoSubcommand,
     /// An operation of a plugin API level this broker knows but the agent
-    /// does not carry out yet (plugin API 1.14's connections and
-    /// `time.sleep`): answered as an unsupported operation, never allowed.
+    /// does not carry out: answered as an unsupported operation, never
+    /// allowed.
     NotImplemented,
+    /// Plugin API 1.14: the connection is not one the invocation is bound
+    /// to, or it does not exist (removed, or of another plugin). The
+    /// message carries the code `connection-missing`.
+    ConnectionMissing,
+    /// Plugin API 1.14: the user turned the connection off
+    /// (`connection-disabled`).
+    ConnectionDisabled,
+    /// Plugin API 1.14: a request on a connection was redirected off its
+    /// origin or path prefix (`redirect-refused`). A provider API has no
+    /// legitimate cross-origin redirect, so the request ends there; the
+    /// secret never leaves its server.
+    RedirectRefused,
 }
 
 impl DenyReason {
@@ -148,6 +167,7 @@ impl DenyReason {
             Self::RateLimited => CallErrorCode::Throttled,
             Self::TooLarge | Self::ForbiddenHeader => CallErrorCode::BadRequest,
             Self::NotImplemented => CallErrorCode::UnsupportedOp,
+            Self::ConnectionDisabled => CallErrorCode::Unavailable,
             _ => CallErrorCode::NotPermitted,
         }
     }
@@ -203,6 +223,17 @@ impl fmt::Display for DenyReason {
                 f.write_str("the arguments must start with a subcommand, not an option")
             }
             Self::NotImplemented => f.write_str("not supported by this version of DeckPilot"),
+            Self::ConnectionMissing => f.write_str(
+                "connection-missing: the connection is not one this action was given, or it was \
+                 removed",
+            ),
+            Self::ConnectionDisabled => {
+                f.write_str("connection-disabled: the connection is turned off in DeckPilot")
+            }
+            Self::RedirectRefused => f.write_str(
+                "redirect-refused: the server redirected the request away from the connection's \
+                 address",
+            ),
         }
     }
 }
@@ -230,6 +261,11 @@ pub struct AllowedFetch {
     /// ([`check_connect_addr`]). Loopback and link-local are never
     /// reachable either way.
     pub private_network: bool,
+    /// Plugin API 1.14: the request is on this connection, bound to the
+    /// invocation. The executor injects the connection's secret (never
+    /// `auth`'s, which is then `None`), and every redirect must stay
+    /// within the connection's origin and path prefix.
+    pub connection: Option<String>,
 }
 
 /// What the agent may carry out.
@@ -356,12 +392,63 @@ pub enum Allowed {
     ProfileRead {
         scopes: std::collections::BTreeSet<ProfileScope>,
     },
+    /// `call.state` (plugin API 1.16): granted `calls`, and the plugin is
+    /// [`CALLS_PLUGIN`]. The executor answers the focused call's sanitised
+    /// state only while the user's consent to observe calls holds.
+    CallState,
+    /// `call.control` (plugin API 1.16): granted `calls:control`, the
+    /// plugin is [`CALLS_PLUGIN`], and the user started the run. The agent
+    /// passes it through the state engine's gate (the call's state, the
+    /// provider's capabilities, the user's consent to control calls) and
+    /// answers the confirmed outcome.
+    CallControl {
+        action: deckpilot_plugin_abi::calls::CallAction,
+    },
     /// One of the plugin's own translation keys (plugin API 1.6): the
     /// executor resolves it against the locale files of the plugin the
     /// session belongs to, and nothing else. Always allowed.
     LocaleTranslate {
         request: deckpilot_plugin_abi::locale::Translate,
     },
+    /// `connections.get` (plugin API 1.14): a connection the invocation is
+    /// bound to. The executor answers its record without the secret.
+    ConnectionGet {
+        connection: String,
+    },
+    /// `connections.reportStatus` (plugin API 1.14): a reportable status
+    /// and a detail code for a bound connection.
+    ConnectionReportStatus {
+        connection: String,
+        status: deckpilot_plugin_abi::connections::ConnectionStatus,
+        detail: Option<String>,
+    },
+    /// `time.sleep` (plugin API 1.14): at most
+    /// [`MAX_SLEEP_MS`](deckpilot_plugin_abi::connections::MAX_SLEEP_MS).
+    /// The executor also keeps a second of the invocation's deadline free
+    /// and wakes at once when the invocation is interrupted.
+    Sleep {
+        ms: u32,
+    },
+    /// A Scripts bridge operation (plugin API 1.13) of `deckpilot.scripts`
+    /// within its `scripts` ceiling. The agent's executor checks it again
+    /// against the script's own grants (read at the call), the run's
+    /// origin and the limits before anything happens.
+    Script(Box<ScriptCall>),
+}
+
+/// The plugin the Scripts bridge answers, and no other
+/// (`docs/scripts-bridge.md`).
+pub const SCRIPTS_PLUGIN: &str = "deckpilot.scripts";
+
+/// A Scripts bridge call the broker allowed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptCall {
+    /// The request as the guest sent it (validated).
+    pub request: CapabilityRequest,
+    /// The sub-ceiling it was allowed under.
+    pub scope: ScriptScope,
+    /// The plugin's `scripts` ceiling at the call.
+    pub ceiling: ScriptsGrant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -405,12 +492,21 @@ enum RateClass {
     ResourceOpen,
     OpenUrlParam,
     ProjectSwitch,
+    Scripts,
+    /// Requests on connections, per plugin (plugin API 1.14).
+    ConnectionHttp,
+    Sleep,
+    ConnectionReport,
+    CallControl,
 }
 
 #[derive(Debug)]
 struct Inner {
     grants: RwLock<HashMap<PluginId, Arc<Grants>>>,
     buckets: Mutex<HashMap<(PluginId, RateClass), Bucket>>,
+    /// Requests per connection (plugin API 1.14): one slow or busy
+    /// connection cannot starve another.
+    connection_buckets: Mutex<HashMap<(PluginId, String), Bucket>>,
     limits: RateLimits,
     audit: Arc<dyn AuditSink>,
     clock: Arc<dyn Clock>,
@@ -429,6 +525,7 @@ impl Broker {
             inner: Arc::new(Inner {
                 grants: RwLock::new(HashMap::new()),
                 buckets: Mutex::new(HashMap::new()),
+                connection_buckets: Mutex::new(HashMap::new()),
                 limits,
                 audit,
                 clock,
@@ -504,6 +601,11 @@ impl Broker {
     /// always-on capabilities are denied too).
     pub fn remove_plugin(&self, plugin: &PluginId) {
         self.write_grants().remove(plugin);
+        self.inner
+            .connection_buckets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(owner, _), _| owner != plugin);
     }
 
     /// The plugin's **current** grant of `tool` (plugin API 1.9, X3), read
@@ -516,6 +618,12 @@ impl Broker {
         tool: deckpilot_plugin_abi::privileged::Tool,
     ) -> Option<ToolGrant> {
         self.grants(plugin)?.tool(tool)
+    }
+
+    /// The plugin's `scripts` ceiling now (plugin API 1.13), for a
+    /// running process's watcher: `None` once it is revoked.
+    pub fn scripts_grant(&self, plugin: &PluginId) -> Option<ScriptsGrant> {
+        self.grants(plugin)?.scripts
     }
 
     /// A session for the plugin whose host process the caller spawned. The
@@ -572,6 +680,11 @@ impl Broker {
             RateClass::ResourceOpen => self.inner.limits.resource_open,
             RateClass::OpenUrlParam => self.inner.limits.open_url_param,
             RateClass::ProjectSwitch => self.inner.limits.project_switch,
+            RateClass::Scripts => self.inner.limits.scripts,
+            RateClass::ConnectionHttp => self.inner.limits.connections_http,
+            RateClass::Sleep => self.inner.limits.sleep,
+            RateClass::ConnectionReport => self.inner.limits.connection_report,
+            RateClass::CallControl => self.inner.limits.call_control,
         };
         let now = self.inner.clock.now();
         let mut buckets = self.inner.buckets.lock().unwrap_or_else(|e| e.into_inner());
@@ -579,6 +692,22 @@ impl Broker {
             .entry((plugin.clone(), class))
             .or_insert_with(|| Bucket::new(rate, now))
             .take_n(rate, now, n)
+    }
+
+    /// One request on `connection` (plugin API 1.14), against its own
+    /// bucket.
+    fn take_connection(&self, plugin: &PluginId, connection: &str) -> bool {
+        let rate = self.inner.limits.connection_http;
+        let now = self.inner.clock.now();
+        let mut buckets = self
+            .inner
+            .connection_buckets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        buckets
+            .entry((plugin.clone(), connection.to_owned()))
+            .or_insert_with(|| Bucket::new(rate, now))
+            .take_n(rate, now, 1)
     }
 
     /// An audit record for a decision without an [`Allowed`] value.
@@ -673,7 +802,21 @@ impl Session {
         request: &CapabilityRequest,
         context: Option<&RunContext>,
     ) -> Decision {
-        let (decision, target) = self.decide(request, context);
+        self.authorize_bound(request, context, &BTreeSet::new())
+    }
+
+    /// [`Session::authorize_in`] for an invocation bound to `connections`
+    /// (plugin API 1.14): the ids of the connections its parameters named,
+    /// or the one the app named for its own query. A connection operation
+    /// on any other id is refused (`connection-missing`), so a plugin can
+    /// never pick a connection it was not given.
+    pub fn authorize_bound(
+        &self,
+        request: &CapabilityRequest,
+        context: Option<&RunContext>,
+        connections: &BTreeSet<String>,
+    ) -> Decision {
+        let (decision, target) = self.decide(request, context, connections);
         let target = match request {
             CapabilityRequest::ToolRun(run) => Some(tool_target(run)),
             _ => target.as_ref().map(Origin::to_string),
@@ -717,8 +860,19 @@ impl Session {
         request: &CapabilityRequest,
         context: Option<&RunContext>,
     ) -> Decision {
+        self.authorize_state_bound(request, context, &BTreeSet::new())
+    }
+
+    /// [`Session::authorize_state_in`] for a key bound to `connections`
+    /// (plugin API 1.14).
+    pub fn authorize_state_bound(
+        &self,
+        request: &CapabilityRequest,
+        context: Option<&RunContext>,
+        connections: &BTreeSet<String>,
+    ) -> Decision {
         if deckpilot_plugin_abi::state::allowed_in_state(request) {
-            return self.authorize_in(request, context);
+            return self.authorize_bound(request, context, connections);
         }
         let decision = Decision::Deny(DenyReason::NotInStateCall);
         self.broker
@@ -748,11 +902,23 @@ impl Session {
         &self,
         request: &CapabilityRequest,
         context: Option<&RunContext>,
+        bound: &BTreeSet<String>,
     ) -> (Decision, Option<Origin>) {
         let b = &self.broker;
         let Some(grants) = b.grants(&self.plugin) else {
             return (Decision::Deny(DenyReason::UnknownPlugin), None);
         };
+        // The Scripts bridge has its own rate (a run polls and logs far
+        // more often than other plugins call) and is bounded per run by
+        // the host's call budgets; `project.list` is one of its operations
+        // for a plugin that holds `scripts` and not `projectContext`.
+        if let Some(scope) = request.script_scope().or_else(|| {
+            (matches!(request, CapabilityRequest::ProjectList(_))
+                && self.plugin.as_str() == SCRIPTS_PLUGIN)
+                .then_some(ScriptScope::Projects)
+        }) {
+            return (self.decide_script(&grants, request, scope), None);
+        }
         if !b.take(&self.plugin, RateClass::Any) {
             return (Decision::Deny(DenyReason::RateLimited), None);
         }
@@ -760,16 +926,48 @@ impl Session {
             return (Decision::Deny(DenyReason::TooLarge), None);
         }
         match request {
-            // Plugin API 1.14 (connections): known, never carried out yet.
-            // A fetch naming a connection is refused as a whole, never
-            // checked as an ordinary fetch.
-            CapabilityRequest::ConnectionGet(_)
-            | CapabilityRequest::ConnectionReportStatus(_)
-            | CapabilityRequest::TimeSleep(_)
-            | CapabilityRequest::HttpFetch(HttpFetch {
-                connection: Some(_),
-                ..
-            }) => (Decision::Deny(DenyReason::NotImplemented), None),
+            // Plugin API 1.14 (connections): only connections the
+            // invocation is bound to, each against its own grant. A fetch
+            // naming a connection is never checked as an ordinary fetch.
+            CapabilityRequest::HttpFetch(
+                f @ HttpFetch {
+                    connection: Some(id),
+                    ..
+                },
+            ) => self.decide_connection_fetch(&grants, f, id, bound),
+            CapabilityRequest::ConnectionGet(c) => (
+                match bound_connection(&grants, &c.connection, bound) {
+                    Err(reason) => Decision::Deny(reason),
+                    Ok(_) => Decision::Allow(Allowed::ConnectionGet {
+                        connection: c.connection.clone(),
+                    }),
+                },
+                None,
+            ),
+            CapabilityRequest::ConnectionReportStatus(r) => (
+                match bound_connection(&grants, &r.connection, bound) {
+                    Err(reason) => Decision::Deny(reason),
+                    Ok(_) if !b.take(&self.plugin, RateClass::ConnectionReport) => {
+                        Decision::Deny(DenyReason::RateLimited)
+                    }
+                    Ok(_) => Decision::Allow(Allowed::ConnectionReportStatus {
+                        connection: r.connection.clone(),
+                        status: r.status,
+                        detail: r.detail.clone(),
+                    }),
+                },
+                None,
+            ),
+            // Waiting reaches nothing of the user's; bounded per call and
+            // by the invocation's deadline, rate limited.
+            CapabilityRequest::TimeSleep(t) => (
+                if b.take(&self.plugin, RateClass::Sleep) {
+                    Decision::Allow(Allowed::Sleep { ms: t.ms })
+                } else {
+                    Decision::Deny(DenyReason::RateLimited)
+                },
+                None,
+            ),
             CapabilityRequest::HttpFetch(f) => {
                 let (url, origin) = match request_url(&grants, &f.url) {
                     Ok(v) => v,
@@ -795,6 +993,7 @@ impl Session {
                         body: f.body.clone(),
                         auth: f.auth.clone(),
                         private_network: route.private_network,
+                        connection: None,
                     })),
                 };
                 (d, Some(origin))
@@ -906,7 +1105,7 @@ impl Session {
             // the user entered and allowed whose pages may be opened (only
             // such a server may be a private host). Audited by origin only.
             CapabilityRequest::OpenUrl(o) => {
-                let (url, origin) = match open_url_target(&grants, &o.url) {
+                let (url, origin) = match open_url_target(&grants, &o.url, bound) {
                     Ok(v) => v,
                     Err(e) => return (Decision::Deny(DenyReason::Url(e)), None),
                 };
@@ -914,7 +1113,10 @@ impl Session {
                     || grants
                         .user_origins
                         .iter()
-                        .any(|u| u.open_url && u.origin.origin() == &origin);
+                        .any(|u| u.open_url && u.origin.origin() == &origin)
+                    // Plugin API 1.14: pages of a connection the invocation
+                    // is bound to (`openUrl.connections`), enabled.
+                    || bound_web_origins(&grants, bound).any(|(web, _)| web == &origin);
                 let d = if url.as_str().len() > deckpilot_plugin_abi::limits::MAX_OPEN_URL_LEN {
                     // Normalizing (punycode, percent-encoding) made it longer.
                     Decision::Deny(DenyReason::TooLarge)
@@ -964,6 +1166,35 @@ impl Session {
             | CapabilityRequest::ProfileRead(_) => {
                 (self.decide_privileged(&grants, request, context), None)
             }
+            // Decided before the shared rate limit (`decide_script`).
+            CapabilityRequest::ScriptLoad(_)
+            | CapabilityRequest::ScriptPoll(_)
+            | CapabilityRequest::ScriptLog(_)
+            | CapabilityRequest::ScriptSleep(_)
+            | CapabilityRequest::ScriptConfirm(_)
+            | CapabilityRequest::ProjectRepositories(_)
+            | CapabilityRequest::FsExists(_)
+            | CapabilityRequest::FsStat(_)
+            | CapabilityRequest::FsList(_)
+            | CapabilityRequest::FsMkdir(_)
+            | CapabilityRequest::FsReadFile(_)
+            | CapabilityRequest::FsWriteFile(_)
+            | CapabilityRequest::FsWriteOpen(_)
+            | CapabilityRequest::FsWriteChunk(_)
+            | CapabilityRequest::FsWriteCommit(_)
+            | CapabilityRequest::FsWriteAbort(_)
+            | CapabilityRequest::FsCopy(_)
+            | CapabilityRequest::FsMove(_)
+            | CapabilityRequest::FsRemove(_)
+            | CapabilityRequest::FsRemoveContents(_)
+            | CapabilityRequest::ProcessRun(_)
+            | CapabilityRequest::ShellRun(_)
+            | CapabilityRequest::ShellAvailable(_) => {
+                unreachable!("the Scripts bridge is decided by decide_script")
+            }
+            CapabilityRequest::CallState(_) | CapabilityRequest::CallControl(_) => {
+                (self.decide_calls(&grants, request, context), None)
+            }
             // Own variables (design §5.2): always granted, rate limited.
             CapabilityRequest::VariablesPublish(_) | CapabilityRequest::VariablesClear(_) => {
                 if !b.take(&self.plugin, RateClass::Variables) {
@@ -982,6 +1213,47 @@ impl Session {
                 (Decision::Allow(allowed), None)
             }
         }
+    }
+
+    /// The Scripts bridge (plugin API 1.13, `docs/scripts-bridge.md`):
+    /// only `deckpilot.scripts`, only with the `scripts` permission, and
+    /// only the operations of the sub-ceilings it holds (`fs`, `process`,
+    /// `shell`; the run's own operations and the projects with any). The
+    /// agent decides each allowed call again against the script's own
+    /// grants, the run's origin and the limits.
+    fn decide_script(
+        &self,
+        grants: &Grants,
+        request: &CapabilityRequest,
+        scope: ScriptScope,
+    ) -> Decision {
+        let deny = Decision::Deny;
+        if self.plugin.as_str() != SCRIPTS_PLUGIN {
+            return deny(DenyReason::NotGranted);
+        }
+        let Some(ceiling) = grants.scripts else {
+            return deny(DenyReason::NotGranted);
+        };
+        if !self.broker.take(&self.plugin, RateClass::Scripts) {
+            return deny(DenyReason::RateLimited);
+        }
+        if request.validate().is_err() {
+            return deny(DenyReason::TooLarge);
+        }
+        let held = match scope {
+            ScriptScope::Run | ScriptScope::Projects => true,
+            ScriptScope::Fs => ceiling.fs,
+            ScriptScope::Process => ceiling.process,
+            ScriptScope::Shell => ceiling.shell,
+        };
+        if !held {
+            return deny(DenyReason::NotGranted);
+        }
+        Decision::Allow(Allowed::Script(Box::new(ScriptCall {
+            request: request.clone(),
+            scope,
+            ceiling,
+        })))
     }
 
     /// Plugin API 1.9's operations (`docs/marketplace/module-migration.md`
@@ -1100,6 +1372,42 @@ impl Session {
         }
     }
 
+    /// Plugin API 1.16's operations (`docs/calls.md`): only for the plugin
+    /// [`CALLS_PLUGIN`], whatever another plugin was granted (a grant record
+    /// for another plugin is refused here too), each against its own
+    /// grant; `call.control` only in a run the user started (checked
+    /// before the rate limit, so a refused call uses none), 4 per second.
+    fn decide_calls(
+        &self,
+        grants: &Grants,
+        request: &CapabilityRequest,
+        context: Option<&RunContext>,
+    ) -> Decision {
+        if self.plugin.as_str() != CALLS_PLUGIN {
+            return Decision::Deny(DenyReason::NotGranted);
+        }
+        match request {
+            CapabilityRequest::CallState(_) => match grants.calls {
+                None => Decision::Deny(DenyReason::NotGranted),
+                Some(_) => Decision::Allow(Allowed::CallState),
+            },
+            CapabilityRequest::CallControl(control) => {
+                if grants.calls != Some(true) {
+                    Decision::Deny(DenyReason::NotGranted)
+                } else if !context.is_some_and(RunContext::is_user_initiated) {
+                    Decision::Deny(DenyReason::PrivilegedNotUserInitiated)
+                } else if !self.broker.take(&self.plugin, RateClass::CallControl) {
+                    Decision::Deny(DenyReason::RateLimited)
+                } else {
+                    Decision::Allow(Allowed::CallControl {
+                        action: control.action,
+                    })
+                }
+            }
+            _ => unreachable!("only plugin API 1.16's operations come here"),
+        }
+    }
+
     /// Whether a fetch may go to `url`: a network grant of its exact
     /// origin, or a user origin (G2) of its exact origin whose path prefix
     /// contains it, either with the method; and allowed headers.
@@ -1150,6 +1458,10 @@ impl Session {
         if joined.scheme() == "http" {
             return (Decision::Deny(DenyReason::InsecureRedirect), None);
         }
+        // Plugin API 1.14: a request on a connection stays on it.
+        if let Some(id) = &previous.connection {
+            return self.decide_connection_redirect(&grants, previous, id, &joined);
+        }
         // Re-run the full request check on the absolute URL: a redirect to
         // http:, to an IP literal, to userinfo or to an origin that is not
         // granted (or outside a user origin's path prefix) is denied
@@ -1181,10 +1493,191 @@ impl Session {
                 body: previous.body.clone(),
                 auth: previous.auth.clone(),
                 private_network: route.private_network,
+                connection: None,
             })),
         };
         (d, Some(origin))
     }
+}
+
+impl Session {
+    /// `http.fetch` on a connection (plugin API 1.14): bound, granted and
+    /// enabled; exactly its origin, within its path prefix, one of its
+    /// methods; no forbidden header and never the header its secret goes
+    /// in; its own rate and the plugin's.
+    fn decide_connection_fetch(
+        &self,
+        grants: &Grants,
+        f: &HttpFetch,
+        id: &str,
+        bound: &BTreeSet<String>,
+    ) -> (Decision, Option<Origin>) {
+        let b = &self.broker;
+        let grant = match bound_connection(grants, id, bound) {
+            Ok(grant) => grant,
+            Err(reason) => return (Decision::Deny(reason), None),
+        };
+        let (url, origin) = match connection_url(grant, &f.url) {
+            Ok(v) => v,
+            Err(e) => return (Decision::Deny(e), None),
+        };
+        let checked = check_connection_request(grant, &url, &origin, f.method, &f.headers);
+        let d = match checked {
+            Err(reason) => Decision::Deny(reason),
+            Ok(())
+                // The connection's own rate first: a connection over its
+                // rate uses nothing of the plugin's.
+                if !b.take_connection(&self.plugin, id)
+                    || !b.take(&self.plugin, RateClass::ConnectionHttp) =>
+            {
+                Decision::Deny(DenyReason::RateLimited)
+            }
+            Ok(()) => Decision::Allow(Allowed::Fetch(AllowedFetch {
+                url,
+                origin: origin.clone(),
+                method: f.method,
+                headers: f.headers.clone(),
+                body: f.body.clone(),
+                auth: None,
+                private_network: grant.private_network,
+                connection: Some(id.to_owned()),
+            })),
+        };
+        (d, Some(origin))
+    }
+
+    /// A redirect of a request on a connection: only within the same
+    /// connection's origin and path prefix (re-checked against its
+    /// current grant, so a connection turned off meanwhile stops it);
+    /// anything else, another connection's server included, is
+    /// `redirect-refused`.
+    fn decide_connection_redirect(
+        &self,
+        grants: &Grants,
+        previous: &AllowedFetch,
+        id: &str,
+        joined: &Url,
+    ) -> (Decision, Option<Origin>) {
+        let Some(grant) = grants.connections.get(id) else {
+            return (Decision::Deny(DenyReason::ConnectionMissing), None);
+        };
+        if !grant.enabled {
+            return (Decision::Deny(DenyReason::ConnectionDisabled), None);
+        }
+        let (url, origin) = match connection_url(grant, joined.as_str()) {
+            Ok(v) => v,
+            // Not even a URL of the connection's server.
+            Err(_) => return (Decision::Deny(DenyReason::RedirectRefused), None),
+        };
+        let d = match check_connection_request(
+            grant,
+            &url,
+            &origin,
+            previous.method,
+            &previous.headers,
+        ) {
+            Err(
+                DenyReason::OriginNotGranted
+                | DenyReason::PathNotGranted
+                | DenyReason::MethodNotGranted
+                | DenyReason::ForbiddenHeader,
+            ) => Decision::Deny(DenyReason::RedirectRefused),
+            Err(reason) => Decision::Deny(reason),
+            Ok(()) => Decision::Allow(Allowed::Fetch(AllowedFetch {
+                url,
+                origin: origin.clone(),
+                method: previous.method,
+                headers: previous.headers.clone(),
+                body: previous.body.clone(),
+                auth: None,
+                private_network: grant.private_network,
+                connection: Some(id.to_owned()),
+            })),
+        };
+        (d, Some(origin))
+    }
+}
+
+/// The grant of connection `id` when the invocation is bound to it and it
+/// is enabled. An id outside the binding and an id without a grant are the
+/// same refusal, so a plugin learns nothing about connections it was not
+/// given.
+fn bound_connection<'a>(
+    grants: &'a Grants,
+    id: &str,
+    bound: &BTreeSet<String>,
+) -> Result<&'a ConnectionGrant, DenyReason> {
+    let grant = bound
+        .contains(id)
+        .then(|| grants.connections.get(id))
+        .flatten()
+        .ok_or(DenyReason::ConnectionMissing)?;
+    if grant.enabled {
+        Ok(grant)
+    } else {
+        Err(DenyReason::ConnectionDisabled)
+    }
+}
+
+/// The web origins of the bound, enabled connections whose pages may be
+/// opened, each with whether it may be on a private network.
+fn bound_web_origins<'a>(
+    grants: &'a Grants,
+    bound: &'a BTreeSet<String>,
+) -> impl Iterator<Item = (&'a Origin, bool)> + 'a {
+    bound
+        .iter()
+        .filter_map(|id| grants.connections.get(id))
+        .filter(|g| g.enabled && g.open_url)
+        .map(|g| (&g.web, g.private_network && g.api.private_host()))
+}
+
+/// The normalized URL and origin of a request on a connection: by the
+/// strict rules, or, for a connection the user allowed on a private
+/// network whose host is an IP literal or a local name, by the private
+/// rules; then exactly the connection's origin.
+fn connection_url(grant: &ConnectionGrant, text: &str) -> Result<(Url, Origin), DenyReason> {
+    let parsed = match origin::parse_request_url(text) {
+        Err(OriginError::IpLiteralNotAllowed | OriginError::InvalidHost)
+            if grant.private_network && grant.api.private_host() =>
+        {
+            origin::parse_private_request_url(text)
+        }
+        other => other,
+    };
+    let (url, origin) = parsed.map_err(DenyReason::Url)?;
+    if &origin != grant.api.origin() {
+        return Err(DenyReason::OriginNotGranted);
+    }
+    Ok((url, origin))
+}
+
+fn check_connection_request(
+    grant: &ConnectionGrant,
+    url: &Url,
+    origin: &Origin,
+    method: HttpMethod,
+    headers: &[Header],
+) -> Result<(), DenyReason> {
+    if !grant.api.matches(origin, url) {
+        return Err(DenyReason::PathNotGranted);
+    }
+    if !grant.methods.contains(&method) {
+        return Err(DenyReason::MethodNotGranted);
+    }
+    let secret_header = |h: &Header| {
+        grant
+            .header_name
+            .as_deref()
+            .is_some_and(|name| h.name.eq_ignore_ascii_case(name))
+    };
+    if headers
+        .iter()
+        .any(|h| !header_allowed(h) || secret_header(h))
+    {
+        return Err(DenyReason::ForbiddenHeader);
+    }
+    Ok(())
 }
 
 /// How an allowed fetch may be carried out.
@@ -1225,7 +1718,11 @@ fn request_url(grants: &Grants, text: &str) -> Result<(Url, Origin), OriginError
 /// or, for a host on a private network (an IP literal or a local name),
 /// only when it is exactly a server the user allowed on a private network
 /// and whose pages may be opened. Otherwise the strict error stands.
-fn open_url_target(grants: &Grants, text: &str) -> Result<(Url, Origin), OriginError> {
+fn open_url_target(
+    grants: &Grants,
+    text: &str,
+    bound: &BTreeSet<String>,
+) -> Result<(Url, Origin), OriginError> {
     match origin::parse_request_url(text) {
         Err(strict @ (OriginError::IpLiteralNotAllowed | OriginError::InvalidHost)) => {
             let opens = |origin: &Origin| {
@@ -1234,7 +1731,8 @@ fn open_url_target(grants: &Grants, text: &str) -> Result<(Url, Origin), OriginE
                         && u.private_network
                         && u.origin.private_host()
                         && u.origin.origin() == origin
-                })
+                }) || bound_web_origins(grants, bound)
+                    .any(|(web, private)| private && web == origin)
             };
             match origin::parse_private_request_url(text) {
                 Ok((url, origin)) if opens(&origin) => Ok((url, origin)),

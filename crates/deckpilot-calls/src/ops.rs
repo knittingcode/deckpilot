@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::provider::{
-    CallAction, Capability, CapabilitySet, ConsentState, Tri, UnsupportedReason,
+    CallAction, Capability, CapabilitySet, ConsentState, Support, Tri, UnsupportedReason,
 };
 use crate::snapshot::CallState;
 
@@ -107,6 +107,46 @@ pub fn action_of(id: &str) -> Option<CallAction> {
         .map(|(_, action)| *action)
 }
 
+/// Whether the Calls action `id` can work with a provider of
+/// `capabilities` under the user's `consent` (what a page shows before any
+/// call): `None` for an id that is no control (`return-to-work`,
+/// `show-calls`), `Ok` when it can, else the reason it stays disabled.
+/// Without the control consent nothing controls (`consent-not-given`),
+/// whatever the provider can. A set the provider can only toggle counts
+/// when it can read the state; a capability it can only observe or infer
+/// never controls (`provider-has-no-api`).
+pub fn control_support(
+    id: &str,
+    capabilities: &CapabilitySet,
+    consent: ConsentState,
+) -> Option<Result<(), UnsupportedReason>> {
+    let action = action_of(id)?;
+    if !consent.control {
+        return Some(Err(UnsupportedReason::ConsentNotGiven));
+    }
+    let support = capabilities.get(action.capability());
+    if support.allows_command() {
+        return Some(Ok(()));
+    }
+    let toggle = match action {
+        CallAction::MicSet { .. } => Some((Capability::MicToggle, Capability::MicReadState)),
+        CallAction::CameraSet { .. } => {
+            Some((Capability::CameraToggle, Capability::CameraReadState))
+        }
+        _ => None,
+    };
+    if let Some((toggle, read)) = toggle
+        && capabilities.get(toggle).allows_command()
+        && capabilities.get(read).allows_command()
+    {
+        return Some(Ok(()));
+    }
+    Some(Err(match support {
+        Support::Unsupported { reason } => reason,
+        _ => UnsupportedReason::ProviderHasNoApi,
+    }))
+}
+
 /// What the gate decided to send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Plan {
@@ -155,6 +195,19 @@ pub fn gate(input: GateInput<'_>, action: CallAction) -> Result<Plan, GateError>
     }
     let caps = input.capabilities;
     let support = caps.get(action.capability());
+    // A set of the state the call already has (confirmed) sends nothing.
+    let already = match action {
+        CallAction::MicSet { muted } => input.mic_muted.known() == Some(muted),
+        CallAction::CameraSet { on } => input.camera_on.known() == Some(on),
+        _ => false,
+    };
+    // Only a state the provider reads from the app itself is trusted.
+    if already
+        && caps.get(read_of(action)).allows_command()
+        && (support.allows_command() || caps.get(toggle_of(action)).allows_command())
+    {
+        return Ok(Plan::AlreadyThere);
+    }
     if support.allows_command() {
         return Ok(Plan::Send(action));
     }
@@ -194,6 +247,22 @@ pub fn gate(input: GateInput<'_>, action: CallAction) -> Result<Plan, GateError>
     }
 }
 
+/// The capability that reads the state a set changes.
+fn read_of(action: CallAction) -> Capability {
+    match action {
+        CallAction::CameraSet { .. } => Capability::CameraReadState,
+        _ => Capability::MicReadState,
+    }
+}
+
+/// The toggle capability behind a set.
+fn toggle_of(action: CallAction) -> Capability {
+    match action {
+        CallAction::CameraSet { .. } => Capability::CameraToggle,
+        _ => Capability::MicToggle,
+    }
+}
+
 fn unsupported(support: crate::provider::Support) -> GateError {
     match support {
         crate::provider::Support::Unsupported { reason } => GateError::Unsupported(reason),
@@ -205,7 +274,6 @@ fn unsupported(support: crate::provider::Support) -> GateError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::Support;
 
     fn caps(supported: &[Capability]) -> CapabilitySet {
         CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| {
@@ -441,5 +509,59 @@ mod tests {
                 "{extra}"
             );
         }
+    }
+
+    /// A page's controls before any call: supported, disabled with the
+    /// provider's reason, a set covered by a readable toggle, and an
+    /// inferred capability that never controls.
+    #[test]
+    fn control_support_names_the_reason() {
+        let all = ConsentState {
+            observe: true,
+            control: true,
+            titles: false,
+        };
+        let full = caps(&Capability::ALL);
+        // Observe only: nothing controls, whatever the provider can.
+        let observe = ConsentState {
+            control: false,
+            ..all
+        };
+        assert_eq!(
+            control_support("answer", &full, observe),
+            Some(Err(UnsupportedReason::ConsentNotGiven))
+        );
+        assert_eq!(control_support("return-to-work", &full, observe), None);
+        assert_eq!(control_support("answer", &full, all), Some(Ok(())));
+        assert_eq!(control_support("return-to-work", &full, all), None);
+        let none = caps(&[]);
+        for id in ["answer", "reject", "end", "mic-toggle", "camera-off"] {
+            assert_eq!(
+                control_support(id, &none, all),
+                Some(Err(UnsupportedReason::ProviderHasNoApi)),
+                "{id}"
+            );
+        }
+        let toggles = caps(&[Capability::MicToggle, Capability::MicReadState]);
+        assert_eq!(control_support("mic-mute", &toggles, all), Some(Ok(())));
+        let inferred = CapabilitySet::from_reported(Capability::ALL.into_iter().map(|c| {
+            let s = if c == Capability::MicToggle {
+                Support::Inferred
+            } else {
+                Support::Unsupported {
+                    reason: UnsupportedReason::PlatformNotSupported,
+                }
+            };
+            (c, s)
+        }))
+        .0;
+        assert_eq!(
+            control_support("mic-toggle", &inferred, all),
+            Some(Err(UnsupportedReason::ProviderHasNoApi))
+        );
+        assert_eq!(
+            control_support("end", &inferred, all),
+            Some(Err(UnsupportedReason::PlatformNotSupported))
+        );
     }
 }

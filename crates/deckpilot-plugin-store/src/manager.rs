@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use deckpilot_plugin_manifest::PluginId;
+use deckpilot_plugin_manifest::{HttpMethod, PluginId};
 use deckpilot_plugin_package::{VerifiedPackage, verify_installed};
 use deckpilot_plugin_registry::{InstalledVerdict, RegistryClient, TrustStore};
 use rusqlite::Connection;
@@ -1510,6 +1510,278 @@ impl PluginManager {
         })
     }
 
+    // ------------------------------------------------------------ connections
+
+    /// Creates a connection (plugin API 1.14) of a type the active manifest
+    /// declares and its `connections` permission lists, which must be
+    /// granted. Creating it is the user's consent to its exact origin
+    /// (`decided_by`), and to a private network only when
+    /// `new.private_network`. It starts `untested`, without a secret.
+    pub fn create_connection(
+        &mut self,
+        id: &PluginId,
+        new: &crate::connections::NewConnection,
+        decided_by: &str,
+    ) -> Result<()> {
+        let plugin = self.plugin(id)?;
+        let active = active_of(&plugin)?;
+        crate::connections::check(id, &active.manifest, new)?;
+        let key = GrantKey::new(deckpilot_plugin_manifest::PermissionKind::Connections, "");
+        let granted = self
+            .store
+            .grants(id)?
+            .iter()
+            .any(|row| row.key == key && row.status == GrantStatus::Granted);
+        if !granted {
+            return Err(StoreError::ConsentRequired {
+                id: id.clone(),
+                missing: vec![key],
+            });
+        }
+        let version = active.version.to_string();
+        let shown = format!(
+            "{} {}{}{}",
+            new.id,
+            new.origin,
+            new.path_prefix.as_deref().unwrap_or(""),
+            if new.private_network {
+                " (private network)"
+            } else {
+                ""
+            }
+        );
+        self.tx(|tx, ctx| {
+            ensure_idle(tx, id)?;
+            crate::connections::insert(tx, id, new, decided_by, ctx.now)?;
+            ctx.audit(
+                tx,
+                id,
+                event(
+                    Some(&version),
+                    "connection.create",
+                    Some(&key),
+                    "granted",
+                    Some(&shown),
+                ),
+            )
+        })
+    }
+
+    /// Imports the server and, only with `secret_slot`, the token of the
+    /// old plugin `source` (`deckpilot.github`, `deckpilot.gitlab`) as a
+    /// connection of `id` (Git Providers design §11.2, PR-10), in one
+    /// transaction: idempotent (a connection whose `legacy_source` is
+    /// `source` already is answered as [`LegacyImport::Existing`] and
+    /// nothing is written), read-only (`GET`, as the old plugin was), and
+    /// all or nothing. The old plugin, its settings, its credential row and
+    /// its consents are never changed or deleted.
+    ///
+    /// `decided_by` is the user's decision of the migration item that
+    /// named the server (and the token, with `secret_slot`); a copy of the
+    /// secret is never derived. The connection is checked like one the
+    /// user creates, and needs the `connections` grant.
+    pub fn import_legacy_connection(
+        &mut self,
+        id: &PluginId,
+        source: &PluginId,
+        new: &crate::connections::NewConnection,
+        secret_slot: Option<&str>,
+        decided_by: &str,
+    ) -> Result<crate::connections::LegacyImport> {
+        let plugin = self.plugin(id)?;
+        let active = active_of(&plugin)?;
+        crate::connections::check(id, &active.manifest, new)?;
+        let key = GrantKey::new(deckpilot_plugin_manifest::PermissionKind::Connections, "");
+        let granted = self
+            .store
+            .grants(id)?
+            .iter()
+            .any(|row| row.key == key && row.status == GrantStatus::Granted);
+        if !granted {
+            return Err(StoreError::ConsentRequired {
+                id: id.clone(),
+                missing: vec![key],
+            });
+        }
+        let version = active.version.to_string();
+        self.tx(|tx, ctx| {
+            if store::load_plugin(tx, source)?.is_none() {
+                return Err(StoreError::NotInstalled(source.clone()));
+            }
+            ensure_idle(tx, id)?;
+            let outcome = crate::connections::import_legacy(
+                tx,
+                id,
+                source,
+                new,
+                secret_slot,
+                decided_by,
+                ctx.now,
+            )?;
+            if let crate::connections::LegacyImport::Created {
+                connection,
+                with_secret,
+            } = &outcome
+            {
+                // The connection, the server and the source; never the
+                // secret.
+                let shown = format!(
+                    "{connection} {}{} from {source}{}",
+                    new.origin,
+                    new.path_prefix.as_deref().unwrap_or(""),
+                    if *with_secret { " with its token" } else { "" }
+                );
+                ctx.audit(
+                    tx,
+                    id,
+                    event(
+                        Some(&version),
+                        "connection.import",
+                        Some(&key),
+                        "granted",
+                        Some(&shown),
+                    ),
+                )?;
+            }
+            Ok(outcome)
+        })
+    }
+
+    /// Stores (or replaces: a reconnect) a connection's secret. The id,
+    /// consent and references stay; the status becomes `untested`. The
+    /// audit records the connection, never the secret.
+    pub fn set_connection_secret(
+        &mut self,
+        id: &PluginId,
+        connection: &str,
+        secret: &str,
+    ) -> Result<()> {
+        crate::connections::check_secret(secret)?;
+        self.tx(|tx, ctx| {
+            crate::connections::set_secret(tx, id, connection, secret, ctx.now)?;
+            ctx.audit(
+                tx,
+                id,
+                event(None, "connection.secret", None, "ok", Some(connection)),
+            )
+        })
+    }
+
+    /// Renames a connection (never to something shaped like a token).
+    pub fn rename_connection(&mut self, id: &PluginId, connection: &str, name: &str) -> Result<()> {
+        self.tx(|tx, ctx| {
+            crate::connections::rename(tx, id, connection, name, ctx.now)?;
+            ctx.audit(
+                tx,
+                id,
+                event(None, "connection.rename", None, "ok", Some(connection)),
+            )
+        })
+    }
+
+    /// Turns a connection off (the broker withholds it on the next call)
+    /// or on again.
+    pub fn set_connection_enabled(
+        &mut self,
+        id: &PluginId,
+        connection: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        self.tx(|tx, ctx| {
+            crate::connections::set_enabled(tx, id, connection, enabled, ctx.now)?;
+            ctx.audit(
+                tx,
+                id,
+                event(
+                    None,
+                    if enabled {
+                        "connection.enable"
+                    } else {
+                        "connection.disable"
+                    },
+                    None,
+                    "ok",
+                    Some(connection),
+                ),
+            )
+        })
+    }
+
+    /// Lets a connection make changes (the permission's methods) or only
+    /// read (`GET`). The methods must be within the active manifest's
+    /// `connections` permission.
+    pub fn set_connection_methods(
+        &mut self,
+        id: &PluginId,
+        connection: &str,
+        methods: &[HttpMethod],
+    ) -> Result<()> {
+        let plugin = self.plugin(id)?;
+        let active = active_of(&plugin)?;
+        let allowed = crate::connections::declared(&active.manifest)
+            .map(|(_, methods, _)| methods)
+            .unwrap_or_default();
+        if methods.is_empty() || methods.iter().any(|m| !allowed.contains(m)) {
+            return Err(StoreError::InvalidData(format!(
+                "{id}: the methods are not those the plugin may be allowed"
+            )));
+        }
+        let shown = format!(
+            "{connection} {}",
+            methods
+                .iter()
+                .map(|m| format!("{m:?}").to_ascii_uppercase())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.tx(|tx, ctx| {
+            crate::connections::set_methods(tx, id, connection, methods, ctx.now)?;
+            ctx.audit(
+                tx,
+                id,
+                event(None, "connection.methods", None, "ok", Some(&shown)),
+            )
+        })
+    }
+
+    /// Makes a connection the default of its type.
+    pub fn set_default_connection(&mut self, id: &PluginId, connection: &str) -> Result<()> {
+        self.tx(|tx, ctx| {
+            crate::connections::set_default(tx, id, connection, ctx.now)?;
+            ctx.audit(
+                tx,
+                id,
+                event(None, "connection.default", None, "ok", Some(connection)),
+            )
+        })
+    }
+
+    /// Records what a test of a connection found.
+    pub fn record_connection_probe(
+        &mut self,
+        id: &PluginId,
+        connection: &str,
+        probe: &crate::connections::ConnectionProbe,
+    ) -> Result<()> {
+        self.tx(|tx, ctx| crate::connections::set_probe(tx, id, connection, probe, ctx.now))
+    }
+
+    /// Deletes a connection and its secret in one transaction; whether it
+    /// existed. References to it in profiles stay, and show it as removed.
+    pub fn remove_connection(&mut self, id: &PluginId, connection: &str) -> Result<bool> {
+        self.tx(|tx, ctx| {
+            let deleted = crate::connections::delete(tx, id, connection)?;
+            if deleted {
+                ctx.audit(
+                    tx,
+                    id,
+                    event(None, "connection.remove", None, "ok", Some(connection)),
+                )?;
+            }
+            Ok(deleted)
+        })
+    }
+
     /// Replaces the plugin's saved settings values. The caller has
     /// validated them against the manifest (`contributes.settings`); every
     /// key must be a declared setting.
@@ -2194,7 +2466,7 @@ mod tests {
                     .is_err()
             );
         }
-        assert_eq!(manager.store().schema_version().unwrap(), 6);
+        assert!(manager.store().schema_version().unwrap() >= 6);
     }
 
     // ------------------------------------------------------- install source

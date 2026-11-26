@@ -104,10 +104,16 @@ let runs: Runs = response.json().map_err(|_| PluginError::new("invalid-response"
     `x-ratelimit-reset`, `x-ratelimit-used`, `x-ratelimit-resource`, and
     GitLab's and the IETF draft's `ratelimit`, `ratelimit-policy`,
     `ratelimit-limit`, `ratelimit-remaining`, `ratelimit-reset`,
-    `ratelimit-observed`.
+    `ratelimit-observed`;
+  - on a connection's responses only (plugin API 1.14), a token's
+    permissions and expiry (GitHub): `x-oauth-scopes`,
+    `x-accepted-oauth-scopes`, `github-authentication-token-expiration`
+    (scope names and a date, never a secret). A fetch with a credential
+    slot never receives them.
 
   Everything else is dropped: `set-cookie`, `www-authenticate`,
-  `authorization`-style and vendor headers (`x-oauth-scopes`, ...),
+  `authorization`-style and vendor headers (`x-oauth-scopes`, except on a
+  connection's responses, ...),
   `location` (redirects are followed by the agent). A value longer than
   4 KiB or with control characters is dropped, and at most 32 headers are
   returned. When the request carried a credential, every form of the
@@ -569,11 +575,37 @@ base32 characters; `BadRequest` without a host call). Only connections the
 invocation is bound to are reachable: the connection its `connection`
 parameter names, or the one the app names for its own screens.
 
-**Status: the ABI and the SDK are in place; no agent carries the
-operations out yet.** The broker answers all four `unsupported-op`
-(`CapabilityErrorKind::Unsupported`) whatever the grants, including a
-fetch that names a connection, which is never checked as an ordinary
-fetch. The agent provides plugin API 1.10 until the host side lands.
+**Status: the agent carries the operations out** (the plugin store's
+connections, schema 7; the broker's per-connection grants; the executor).
+Every call on a connection the invocation is not bound to, or one the user
+removed, is `not-permitted` with the code `connection-missing` in its
+message; a connection the user turned off is `unavailable` with
+`connection-disabled`; a redirect off the connection's origin or path
+prefix ends the request with `redirect-refused`. Each of these messages
+**starts with its code and `: `** (`redirect-refused: …`), a contract
+plugins may rely on. A request the user cancelled, or one past its
+deadline, is answered by the supervisor as for every other plugin
+(`unavailable`, "the action was cancelled…"); `time.sleep` interrupted
+answers a message starting with `cancelled: `. A connection without a
+token sends nothing (`unavailable`). A fetch that names a connection is
+never checked as an ordinary fetch. `time.sleep` is rate limited to 30 a
+minute. The agent's `PLUGIN_API` still reports the level it fully
+provides, so a `^1.14` plugin installs only once the agent's level reaches
+1.14 (with plugin API 1.12 and 1.13, `docs/compatibility.md`).
+
+## Calls (plugin API 1.16, the bundled `deckpilot.calls` only)
+
+| Operation | `Context` | Needs | Run origin | Rate |
+| --- | --- | --- | --- | --- |
+| `call.state` → `{state, provider?, connected, micMuted?, cameraOn?, pending, unconfirmed, controls, title?, generation}` | `call_state` | `calls` | any, also a key's state call | |
+| `call.control {action}` → `confirmed` or `alreadyThere` | `call_control` | `calls:control` | user-started | 4 per second |
+
+For every other plugin both are denied, whatever it was granted. The
+answer to a control comes only once the call app confirmed it; a refusal
+starts with its code (`calls-not-in-call`, `calls-unsupported: <reason>`,
+`calls-unconfirmed`, `calls-provider-offline`, `calls-consent`,
+`calls-locked`, `calls-not-user-started` for a run the user did not
+start, `calls-throttled` for too many controls). See [Calls](../../calls.md#plugin-operations-who-may-ask-and-how-c9).
 
 ## What there is not (ABI 1)
 

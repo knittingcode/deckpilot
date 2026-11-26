@@ -17,6 +17,69 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Git Providers (builds with plugins, not bundled yet): the agent can make
+  the server of the GitHub or GitLab plugin a Git Providers connection when
+  you ask, and, only if you also choose so, use the token saved there. It
+  happens once (asking again changes nothing), all or nothing, read-only
+  like the old plugin, and the old plugin keeps its settings and token and
+  keeps running your keys. A GitHub Enterprise Cloud data-residency server
+  or a private-network server without its earlier consent is not imported
+  but reported. The old plugin's time limit is not carried over yet (open
+  decision); its 20 s stays.
+- Projects (builds with plugins): a project repository can be linked to a
+  repository on one of your connections. Choose the connection, find the
+  repository there, check what will be linked and confirm; the link keeps
+  the provider's own id (`gh:…`, `gl:…`), so a rename on the server keeps
+  it, and only the app writes it. In the project editor, each saved
+  repository lists its remotes and has a "Link remote…" button; the link is
+  saved at once, not with the project form.
+- Link remote suggests the remotes of the repository's folder: DeckPilot
+  reads them with `git remote -v` (read-only; it never fetches, pulls or
+  writes, and leaves out any user name, password or token in a URL), and
+  for a connection on the same server "Find origin on …" asks the
+  provider for exactly that repository. You still confirm the link; when
+  the provider does not know it, you search by its path.
+- Settings › Connections (builds with plugins): the servers plugins connect
+  to, per plugin that declares them, with their state (connected, token
+  rejected, missing permission, can't reach the server, certificate not
+  trusted, turned off), the account, Default and Read-only. Add a
+  connection to GitHub.com or GitLab.com, or to GitHub Enterprise Server or
+  a self-managed GitLab at the address you open in the browser (a port or
+  a path is fine), with the token's permissions explained in plain words,
+  read-only unless you allow changes, and a private network only when you
+  say so; it is tested at once. Test, Replace token, Turn off and Remove
+  are on each connection. The token is typed once and never shown again.
+  In English and Polish.
+- Plugins: a connection's HTTP answers carry GitHub's `x-oauth-scopes`,
+  `x-accepted-oauth-scopes` and `github-authentication-token-expiration`
+  (scope names and a date), so a connection's test can name a missing
+  permission or an expiring token; no other plugin request gets them. A
+  connection's refusals always start with their code (`redirect-refused:
+  …`).
+- Plugins: connections (plugin API 1.14, host side). A plugin that
+  declares connection types (DeckPilot's own bundled plugins only) can be
+  connected to several servers, each with its own address, consent, token
+  and status: GitHub.com and GitLab.com at their own addresses, GitHub
+  Enterprise Server and self-managed GitLab at the address the user opens
+  in the browser (`https` only, with a port or a path). Tokens are kept in
+  the encrypted plugin database, protected like the configuration (its key
+  derives from the configuration's), are never sent back to the app, logged, exported or handed to
+  the plugin, and are injected by the agent only into requests to their
+  own server, and only to a connection the user chose for the action (never
+  one a workflow maps in); a redirect off that server ends the request, certificates
+  are checked against the system's trust store with no way to skip it,
+  and a server on a private network needs its own consent (this computer
+  and link-local addresses never). A plugin reaches only the connections
+  an action's parameters name. The app's requests to list, create, test,
+  rename, turn off and remove connections are IPC protocol 20; the plugin
+  store goes to schema 7. No plugin uses them yet.
+- Calls (groundwork): a locked device never shows a call. Locking the
+  configuration takes the Calls overlay off every device, and it comes back
+  after unlocking if the call is still going on.
+- Calls (groundwork, tests): "Back to work" is followed to the end of a
+  real plugin action through a spawned agent and the sandboxed plugin
+  host. A test-only agent option installs the mock call provider; normal
+  builds do not have it, which a test checks.
 - Calls (groundwork, nothing user-visible yet): the provider contract
   with capability discovery, where every capability a provider does not
   offer is explicitly unsupported with a reason; the sanitised call state;
@@ -27,6 +90,71 @@ released either. 0.6.0 is the first version intended for publication.
   DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
   detected, not controlled: Microsoft retired its device API on
   2026-06-30 (`docs/calls.md`).
+- Calls (groundwork): the call state engine (incoming, outgoing,
+  connecting, active, ending, ended, failed, unknown) with a timeout on
+  every live state, missed, rejected and remote hang-up, provider and app
+  restarts, meeting-to-meeting moves and simultaneous calls; and the
+  "Back to work" return sessions (timer, real completion, or whichever
+  comes first, 60 s by default), one per device. Tested on a virtual clock;
+  nothing user-visible yet.
+- Calls (groundwork, nothing user-visible yet):
+  - **Per-device overlay.** A device can show the Calls layout without
+    anything of its own presentation changing: profile, page, folder and
+    remembered layouts stay as they were. Keys held during the switch run
+    nothing, Auto Exit pauses underneath, and a protected key always
+    dismisses the overlay.
+  - **Managed Calls layouts.** One per device model, generated for its
+    capability class with stable ids. They are regenerated only while
+    unedited, and "Restore defaults" first keeps your version as a layout
+    of your own. This adds storage schema 15, which is additive.
+- Calls (tests): a mock call provider with full control (answer, reject,
+  cancel, end, microphone, camera), used only by tests. It runs the
+  "Back to work" scenarios on a virtual clock. No real call app is
+  driven.
+- Calls (groundwork, off in every build): the agent runs the Calls overlay
+  when a provider is installed. "Back to work" waits for the real end of
+  what a key started: a workflow, a plugin's action, or an action run in
+  place. Agent tests cover this with the mock provider and a simulated
+  Stream Deck.
+  A managed Calls layout that cannot be stored while the database is busy
+  is tried again after 1 s, then after waits doubling up to a minute;
+  other storage errors are not retried.
+- Calls (groundwork): the agent can preview a call page of the Calls layout
+  on a device for the Device Editor (IPC 19 `previewCallsPage`), with fixed
+  placeholder content and nothing from a real call. Only a connection that
+  declares itself the configuration app may ask; that is a policy guard,
+  while the IPC token is the access boundary. A lock or a real call always
+  wins, and the preview ends with the editor's connection.
+- Calls (groundwork): Settings › Devices › Calls can show a call page on
+  the device ("Show on the device", "End preview"). The preview ends when
+  the settings close, when the window hides or closes, or when the app
+  quits. The settings follow the agent: `callsChanged` names the page each
+  device previews, so a preview the agent ended by itself (a lock, a real
+  call, the dismiss key, a disconnect) shows as ended. A device that takes
+  no preview frame refuses it (`callsPreviewRefused`), and the preview
+  already there stays. The Calls status carries a revision, so the
+  settings never let an older status replace a newer one.
+- Calls (groundwork): Settings › Devices lists the call pages of each Calls
+  layout. A control the call app does not support stays listed, disabled,
+  with the reason (for Teams: Microsoft retired its device API). The
+  *Back to work* settings can be changed there: a 20, 30 or 60 s or
+  custom timer, when what you started ends, or that with a maximum (the
+  default, 60 s), plus what a failure or cancellation does and whether
+  every device goes back to work. A change counts as an edit of the Calls
+  layout. IPC 19 gains `setCallsBackToWork`.
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
+- Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
+  `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
+  Settings › Devices gets a Calls section, in English and Polish, shown
+  only while Calls is installed, which no build does yet. It shows the
+  call's state, says plainly that Teams can only be detected, has a switch
+  per device for the overlay, and has *Restore defaults*, which first keeps
+  your version of the layout under a name it tells you.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
@@ -93,6 +221,56 @@ released either. 0.6.0 is the first version intended for publication.
   deleted by itself, and there is no "delete all". Until now a saved
   action that no key, gesture or workflow used could not be opened.
 
+- Plugins (for the coming Scripts plugin, plugin API 1.13, not usable
+  yet): the plugin runtime knows the Scripts bridge's operations (files,
+  processes, the script's run) and refuses them to every plugin until
+  the agent's checks for them land. Files move in chunks within the
+  existing message size limits. The Scripts plugin alone can be given a
+  larger budget of calls per run, and its polling and logging never
+  extend its continuous CPU limit, so a busy script is still stopped
+  after 2 seconds. The agent checks every file operation of a script
+  against that script's own folders and access, never follows a link
+  out of them, never changes a `.git` folder, the home folder, system
+  folders or DeckPilot's own, and asks before it deletes or replaces
+  files, showing what it computed itself. A script runs only the
+  programs granted to it, with an argument list and never a shell (a
+  shell only with its own grant), in its granted folders, with a clean
+  environment, and the program is stopped when the script is stopped,
+  runs out of time or loses its grant. Plugin manifests know the
+  Scripts plugin's permission, its script parameter, its page and its
+  limits (plugin API 1.13), for DeckPilot's own Scripts plugin only. A
+  file a script reads in parts comes from one snapshot of the file, so
+  its parts never mix two versions; a file replaced or changed between
+  them fails the read.
+- Storage (schema 16, not usable yet): the scripts of a profile, and on
+  this computer only whether each is trusted and what it may do. A
+  script made in the editor is trusted with nothing granted; an imported
+  or duplicated one is never trusted and never runs until reviewed. A
+  script can never be granted a container runtime (Docker, Podman and
+  the like) in this version.
+- Export and import of scripts (export format 6, only when there are
+  scripts): an export holds a script's code and settings, never whether
+  it is trusted or what it may do. An imported script arrives untrusted
+  with no permissions, and nothing runs on import; the import window
+  says so.
+- The agent runs a script only from the active profile and only while it
+  is trusted; its permissions are read again at every step. Scripts see
+  each repository's remotes, with the connection and the provider's
+  repository they are linked to.
+- A Scripts page (while the Scripts plugin is on, not usable yet): write
+  and edit the profile's scripts in a code editor with JavaScript
+  highlighting, checks and completion, rename, duplicate and delete them
+  (a script's uses are listed first), and review a script that came from
+  elsewhere before trusting it: its code is shown read only, with
+  invisible characters marked, and with the permissions it would get
+  back.
+- On the Scripts page, a script's permissions: which projects, files and
+  folders (picked with the system's dialog), programs and shells it may
+  use, and whether it may delete without asking; container runtimes
+  (Docker, Podman and the like) and programs that act as another user
+  are not available. The Action Library lists a "Run …" entry for every
+  script, which puts the script on a key by reference.
+
 ### Changed
 
 - System actions: the Action Library offers one Open for files and
@@ -104,6 +282,27 @@ released either. 0.6.0 is the first version intended for publication.
   keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
   nudge starts from the last one. Escape or a click on the key lets go of
   the label, and the arrows move between keys again.
+
+- Calls (groundwork, inert until the plugin and its policy entry exist):
+  the plugin operations `call.state` and `call.control` of plugin API
+  1.16, in the ABI, the broker, the agent and the guest SDK. Only the
+  bundled plugin `deckpilot.calls` may use them, each with its own grant
+  (`calls`, `calls:control`), a control only in a run you started, and
+  never together with network, credentials, opening pages or tools. A
+  control is answered only once the call app confirmed it. Your consents
+  to observe and to control calls apply as for the call pages, and
+  detection-only Teams refuses every control with the reason. A control
+  from a run you did not start, or one too many, is refused with its own
+  code. The agent's plugin API is not raised yet.
+- Calls: the operating-system signals provider reports its connection, so
+  a Teams control is refused with its reason (no supported API) instead of
+  "not connected".
+- Calls (groundwork, off in every build): a detection-only Microsoft Teams
+  provider. It infers that a call is probably active while Teams holds the
+  microphone, recognizing Teams only by its executable name. Answer, end,
+  mute and camera stay unsupported: Microsoft retired the device API. The
+  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
+  no build queries the operating system yet.
 
 ## [0.15.0] - 2026-11-24
 

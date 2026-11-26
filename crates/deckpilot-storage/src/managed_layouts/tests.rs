@@ -1,0 +1,375 @@
+//! T-L1 and T-L2: managed layouts are seeded once, never touch another
+//! layout and never adopt one, are regenerated only while unedited, and
+//! *Restore defaults* keeps the user's version first.
+
+use deckpilot_core::{
+    ActionInstance, ActionInstanceId, ActionParameters, ActionTypeId, BindingTarget,
+    ControlBinding, DeviceLayout, LayoutId, ParameterValue, Trigger,
+};
+use deckpilot_device::{ControlId, DeviceModelId, models};
+
+use super::Seeded;
+use crate::{ConfigStore, SqliteStore, StorageError};
+
+const OWNER: &str = "deckpilot.calls";
+
+fn mk2() -> DeviceModelId {
+    DeviceModelId::new(models::STREAM_DECK_MK2_ID)
+}
+
+/// A generated layout with fixed ids (the generator's are stable), its key
+/// 0 running the microphone action with `mode`.
+fn generated(
+    layout_id: LayoutId,
+    action_id: ActionInstanceId,
+    mode: &str,
+) -> (DeviceLayout, Vec<ActionInstance>) {
+    let mut layout = DeviceLayout::new("Calls", mk2());
+    layout.id = layout_id;
+    let action = ActionInstance {
+        id: action_id,
+        name: "Microphone".into(),
+        action_type: ActionTypeId::new("deckpilot.calls.mic-toggle").unwrap(),
+        parameters: ActionParameters::new().with("mode", ParameterValue::Text(mode.into())),
+        description: String::new(),
+        icon: None,
+        label: None,
+    };
+    let home = layout.home_page;
+    layout
+        .page_mut(home)
+        .unwrap()
+        .bindings
+        .push(ControlBinding::new(
+            ControlId::Key { index: 0 },
+            Trigger::Press,
+            BindingTarget::action(action.id),
+        ));
+    (layout, vec![action])
+}
+
+fn ids() -> (LayoutId, ActionInstanceId) {
+    (LayoutId::new(), ActionInstanceId::new())
+}
+
+#[test]
+fn seeding_is_idempotent_and_touches_no_other_layout() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut mine = DeviceLayout::new("Rozmowy", mk2());
+    mine.name = "Rozmowy".into();
+    store.create_shared_layout(&mine, None).unwrap();
+    let before = store.shared_layout(mine.id).unwrap().unwrap();
+
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+            .unwrap(),
+        Seeded::Created
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            store
+                .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+                .unwrap(),
+            Seeded::Unchanged
+        );
+    }
+    let managed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(managed.layout, layout);
+    assert_eq!(managed.actions, actions);
+    assert!(!managed.edited);
+    assert_eq!(store.managed_layouts(OWNER).unwrap().len(), 1);
+    // The user's layout named like it is the user's, untouched.
+    assert_eq!(store.shared_layout(mine.id).unwrap().unwrap(), before);
+    assert_eq!(store.managed_layouts("deckpilot.other").unwrap().len(), 0);
+}
+
+#[test]
+fn a_layout_of_the_users_is_never_adopted() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    // The same id exists already, without being managed.
+    let mut plain = DeviceLayout::new("Mine", mk2());
+    plain.id = layout_id;
+    store.create_shared_layout(&plain, None).unwrap();
+    let result = store.seed_managed_layout(OWNER, &layout, &actions, "1.0.0");
+    assert!(
+        matches!(result, Err(StorageError::Invalid(_))),
+        "{result:?}"
+    );
+    assert!(store.managed_layout(OWNER, &mk2()).unwrap().is_none());
+}
+
+#[test]
+fn a_template_update_regenerates_only_an_unedited_layout() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    // Unedited: the new template version is written in place.
+    let (newer, newer_actions) = generated(layout_id, action_id, "set");
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &newer, &newer_actions, "1.1.0")
+            .unwrap(),
+        Seeded::Regenerated
+    );
+    let managed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(managed.actions, newer_actions);
+    assert_eq!(managed.template_version, "1.1.0");
+    assert!(!managed.edited);
+
+    // The user edits it: it is never rewritten.
+    store
+        .rename_shared_layout(layout_id, "Moje Rozmowy")
+        .unwrap();
+    assert!(store.managed_layout(OWNER, &mk2()).unwrap().unwrap().edited);
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &layout, &actions, "1.2.0")
+            .unwrap(),
+        Seeded::UpdateAvailable
+    );
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &newer, &newer_actions, "1.1.0")
+            .unwrap(),
+        Seeded::Unchanged
+    );
+    let managed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(managed.layout.name, "Moje Rozmowy");
+    assert_eq!(managed.template_version, "1.1.0");
+}
+
+#[test]
+fn restore_defaults_keeps_the_users_version_first() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    // Nothing of the user's to keep: no copy.
+    assert_eq!(
+        store
+            .restore_managed_layout(OWNER, &layout, &actions, "1.0.0", "copy")
+            .unwrap(),
+        None
+    );
+    store.rename_shared_layout(layout_id, "Edited").unwrap();
+    let copy = store
+        .restore_managed_layout(OWNER, &layout, &actions, "1.0.0", "Rozmowy (moja wersja)")
+        .unwrap()
+        .unwrap();
+    // The managed layout is the generated one again.
+    let managed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(managed.layout, layout);
+    assert!(!managed.edited);
+    // The user's version is an ordinary layout of its own, with copies of
+    // its actions: regenerating never changes it.
+    let kept = store.shared_layout(copy).unwrap().unwrap();
+    assert_eq!(kept.layout.name, "Rozmowy (moja wersja)");
+    assert_eq!(kept.profiles.len(), 0);
+    let (kept_actions, _) = store.layout_library(&kept.layout).unwrap();
+    assert_eq!(kept_actions.len(), 1);
+    assert_ne!(kept_actions[0].id, action_id);
+    assert_eq!(kept_actions[0].parameters, actions[0].parameters);
+}
+
+#[test]
+fn removing_takes_the_unedited_unless_asked_and_imports_never_do() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    // Deleted as an ordinary layout: refused.
+    assert!(matches!(
+        store.delete_shared_layout(layout_id, &[]),
+        Err(StorageError::Invalid(_))
+    ));
+    store.rename_shared_layout(layout_id, "Edited").unwrap();
+    assert_eq!(store.remove_managed_layouts(OWNER, false).unwrap().len(), 0);
+    assert_eq!(
+        store.remove_managed_layouts(OWNER, true).unwrap(),
+        [layout_id]
+    );
+    assert!(store.managed_layout(OWNER, &mk2()).unwrap().is_none());
+    assert!(store.shared_layout(layout_id).unwrap().is_none());
+    // Seeded again from scratch afterwards.
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+            .unwrap(),
+        Seeded::Created
+    );
+}
+
+#[test]
+fn a_layout_must_bring_the_actions_it_binds() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, _) = generated(layout_id, action_id, "toggle");
+    assert!(matches!(
+        store.seed_managed_layout(OWNER, &layout, &[], "1.0.0"),
+        Err(StorageError::Invalid(_))
+    ));
+}
+
+#[test]
+fn a_managed_layout_is_not_listed_and_never_assigned_to_a_profile() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    // Not in the Layouts list, so never exported with the unused layouts.
+    assert!(
+        store
+            .shared_layouts()
+            .unwrap()
+            .iter()
+            .all(|s| s.layout.id != layout_id)
+    );
+    let mut profile = deckpilot_core::Profile::new("Work");
+    store.save_profile(&profile).unwrap();
+    assert!(matches!(
+        store.assign_layout(profile.id, layout_id),
+        Err(StorageError::Invalid(_))
+    ));
+    // Nor through a profile document that names it.
+    profile.layouts.push(layout.clone());
+    profile.actions.extend(actions.clone());
+    assert!(store.save_profile(&profile).is_err());
+    assert!(!store.managed_layout(OWNER, &mk2()).unwrap().unwrap().edited);
+}
+
+#[test]
+fn restore_defaults_copies_the_whole_closure_with_its_references() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, mut actions) = generated(layout_id, action_id, "toggle");
+    // A Multi Action style step: the bound action names another action.
+    let step = ActionInstance {
+        id: ActionInstanceId::new(),
+        name: "Step".into(),
+        action_type: ActionTypeId::new("deckpilot.calls.end").unwrap(),
+        parameters: ActionParameters::new(),
+        description: String::new(),
+        icon: None,
+        label: None,
+    };
+    actions[0].parameters = actions[0]
+        .parameters
+        .clone()
+        .with("steps", ParameterValue::Text(step.id.to_string()));
+    actions.push(step.clone());
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    assert_eq!(
+        store
+            .managed_layout(OWNER, &mk2())
+            .unwrap()
+            .unwrap()
+            .actions
+            .len(),
+        2
+    );
+    store.rename_shared_layout(layout_id, "Edited").unwrap();
+    let copy = store
+        .restore_managed_layout(OWNER, &layout, &actions, "1.0.0", "Mine")
+        .unwrap()
+        .unwrap();
+    let kept = store.shared_layout(copy).unwrap().unwrap();
+    let (kept_actions, _) = store.layout_library(&kept.layout).unwrap();
+    assert_eq!(kept_actions.len(), 2, "the step was copied too");
+    let ids: Vec<ActionInstanceId> = kept_actions.iter().map(|a| a.id).collect();
+    assert!(!ids.contains(&action_id) && !ids.contains(&step.id));
+    let bound = kept_actions
+        .iter()
+        .find(|a| a.parameters.text("steps").is_some())
+        .unwrap();
+    let named = bound.parameters.text("steps").unwrap();
+    assert_ne!(named, step.id.to_string(), "not the regenerated step");
+    assert!(ids.iter().any(|id| id.to_string() == named), "its own copy");
+}
+
+/// The *Back to work* settings are a parameter edit of one of the managed
+/// layout's actions: only that action changes, the layout counts as edited,
+/// and an action of another layout or an unknown model is refused.
+#[test]
+fn a_managed_action_parameter_edit_changes_only_that_action() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    let parameters = ActionParameters::new().with("mode", ParameterValue::Text("set".into()));
+    store
+        .set_managed_action_parameters(OWNER, &mk2(), action_id, &parameters)
+        .unwrap();
+    let managed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(managed.layout, layout, "the layout itself is unchanged");
+    assert_eq!(managed.actions[0].parameters, parameters);
+    assert!(managed.edited);
+    // Now edited: a template update never rewrites it.
+    assert_eq!(
+        store
+            .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+            .unwrap(),
+        Seeded::Unchanged
+    );
+    assert!(matches!(
+        store.set_managed_action_parameters(OWNER, &mk2(), ActionInstanceId::new(), &parameters),
+        Err(StorageError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.set_managed_action_parameters(
+            OWNER,
+            &DeviceModelId::new(models::STREAM_DECK_XL_ID),
+            action_id,
+            &parameters
+        ),
+        Err(StorageError::UnknownLayout)
+    ));
+}
+
+/// Several actions change in one transaction: all of them, or none when
+/// one of them is not the layout's.
+#[test]
+fn several_managed_actions_change_together_or_not_at_all() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let (layout_id, action_id) = ids();
+    let (layout, actions) = generated(layout_id, action_id, "toggle");
+    store
+        .seed_managed_layout(OWNER, &layout, &actions, "1.0.0")
+        .unwrap();
+    let set = ActionParameters::new().with("mode", ParameterValue::Text("set".into()));
+    assert!(matches!(
+        store.set_managed_actions_parameters(
+            OWNER,
+            &mk2(),
+            &[
+                (action_id, set.clone()),
+                (ActionInstanceId::new(), set.clone())
+            ]
+        ),
+        Err(StorageError::Invalid(_))
+    ));
+    let unchanged = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(unchanged.actions, actions, "none changed");
+    store
+        .set_managed_actions_parameters(OWNER, &mk2(), &[(action_id, set.clone())])
+        .unwrap();
+    let changed = store.managed_layout(OWNER, &mk2()).unwrap().unwrap();
+    assert_eq!(changed.actions[0].parameters, set);
+}

@@ -309,11 +309,23 @@ impl Agent {
                 .engine
                 .cancel(device, GestureCancel::PageChanged);
         }
+        // A key of the Calls overlay (`calls.rs`).
+        if let Ok(outcome) = &outcome
+            && self.calls_outcome(device, outcome)
+        {
+            self.gestures
+                .engine
+                .cancel(device, GestureCancel::PageChanged);
+            self.after_change();
+            self.calls_publish();
+            return;
+        }
         match outcome {
             Ok(RuntimeOutcome::Action { action, mut result }) => {
                 // It ran in place: a folder that exits after its actions
                 // complete is left once the key is handled.
                 self.folder_action_ran();
+                self.calls_ran_in_place(deckpilot_calls::ret::RunKind::Action, result.is_success());
                 let name = self.action_name(action);
                 // A Random Action's pick runs as the key's own binding
                 // would, for this device; picks do not nest.
@@ -360,6 +372,7 @@ impl Agent {
                 self.gestures
                     .engine
                     .cancel(device, GestureCancel::PageChanged);
+                self.calls_ran_in_place(deckpilot_calls::ret::RunKind::Navigation, true);
             }
             Ok(RuntimeOutcome::Ignored { reason }) => {
                 debug!(%device, %control, %reason, "input ignored");
@@ -409,7 +422,11 @@ impl Agent {
         let current = self.sessions.get(&fired.device).map(|s| s.id)
             == Some(session_of(fired.connection))
             && self.security == SecurityState::Unlocked
-            && fired.generation == self.gestures.generation
+            && fired.generation
+                == with_presentation(
+                    self.gestures.generation,
+                    self.runtime.presentation_generation_of(&fired.device),
+                )
             && self.runtime.current_page(&fired.device) == fired.page;
         if !current {
             debug!(device = %fired.device, control = %fired.control, gesture = ?fired.gesture, "stale gesture dropped");
@@ -434,6 +451,14 @@ impl Agent {
     }
 }
 
+/// The gesture generation with the device's presentation generation in it:
+/// a gesture whose press came before an overlay was pushed, popped,
+/// suspended or resumed on the device is stale when it fires, so it never
+/// runs on the other presentation (`docs/calls.md`, input fence).
+fn with_presentation(generation: u64, presentation: u64) -> u64 {
+    generation ^ presentation.rotate_left(32)
+}
+
 /// The key's gesture bindings on the page `device` shows now.
 pub(super) fn key_context(
     runtime: &deckpilot_core::Runtime,
@@ -451,8 +476,11 @@ pub(super) fn key_context(
             bound,
             timings,
             page,
-            generation,
+            generation: with_presentation(generation, runtime.presentation_generation_of(device)),
         },
-        None => KeyContext::raw(page, generation),
+        None => KeyContext::raw(
+            page,
+            with_presentation(generation, runtime.presentation_generation_of(device)),
+        ),
     }
 }

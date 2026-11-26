@@ -428,6 +428,9 @@ pub(crate) fn delete_plugin_data(conn: &Connection, id: &PluginId, keep: Retenti
             "DELETE FROM plugin_credentials WHERE plugin_id = ?1",
             [id.as_str()],
         )?;
+        // A connection is a credential with its server: kept or deleted
+        // with the credentials, never one without the other.
+        crate::connections::delete_all(conn, id)?;
     }
     Ok(())
 }
@@ -497,5 +500,63 @@ impl PluginData {
     /// The values the user saved (without defaults).
     pub fn settings(&self, id: &PluginId) -> Result<BTreeMap<String, Value>> {
         settings(self.db.connection(), id)
+    }
+
+    /// One of the plugin's connections (plugin API 1.14), without its
+    /// secret.
+    pub fn connection(
+        &self,
+        id: &PluginId,
+        connection: &str,
+    ) -> Result<Option<crate::connections::StoredConnection>> {
+        crate::connections::get(self.db.connection(), id, connection)
+    }
+
+    /// The secret of one of the plugin's connections, for injection into
+    /// one request.
+    pub fn connection_secret(&self, id: &PluginId, connection: &str) -> Result<Option<Secret>> {
+        crate::connections::secret(self.db.connection(), id, connection)
+    }
+
+    /// What the host's test of a connection found: the status, and the
+    /// account and capabilities when given.
+    pub fn record_connection_probe(
+        &mut self,
+        id: &PluginId,
+        connection: &str,
+        probe: &crate::connections::ConnectionProbe,
+    ) -> Result<()> {
+        let now = (self.clock)();
+        let tx = self.db.write()?;
+        crate::connections::set_probe(&tx, id, connection, probe, now)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// What a request of the plugin found about one of its connections
+    /// (`connections.reportStatus`): the status and a detail code only.
+    pub fn report_connection_status(
+        &mut self,
+        id: &PluginId,
+        connection: &str,
+        status: crate::connections::ConnectionStatus,
+        detail: Option<&str>,
+    ) -> Result<()> {
+        let now = (self.clock)();
+        let tx = self.db.write()?;
+        crate::connections::set_probe(
+            &tx,
+            id,
+            connection,
+            &crate::connections::ConnectionProbe {
+                status,
+                detail: detail.map(str::to_owned),
+                account_label: None,
+                capabilities: None,
+            },
+            now,
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 }

@@ -108,9 +108,12 @@ use tracing::{debug, info, warn};
 
 use super::variables::{PublishedVariables, typed};
 
+pub(super) mod calls;
+mod connections;
 mod open;
 pub(super) mod project;
 pub(super) mod resources;
+pub(crate) mod scripts;
 mod tools;
 
 /// The plugin data connection the executors share; `None` once the store
@@ -594,6 +597,19 @@ pub(super) struct Executor {
     /// without it the project operations and `profile.read` are
     /// `unavailable`.
     projects: Option<Arc<dyn crate::service::plugin_projects::ProjectHost>>,
+    /// The script run of an invocation of `deckpilot.scripts` (plugin API
+    /// 1.13, `scripts/`); without it every bridge call is refused.
+    scripts: Option<scripts::ScriptRun>,
+    /// The connections this invocation is bound to (plugin API 1.14,
+    /// `connections.rs`): those its parameters named, or the one the app
+    /// named. The broker refuses every other one.
+    connections: std::collections::BTreeSet<String>,
+    /// Calls (plugin API 1.16, `calls.rs`); without it the `call.*`
+    /// operations are `calls-provider-offline`.
+    calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
+    /// The `call.control`s of this invocation (at most
+    /// [`calls::MAX_CONTROLS`]).
+    call_controls: std::sync::atomic::AtomicU32,
 }
 
 /// One audit record of a plugin API 1.9 operation the executor carried
@@ -714,7 +730,18 @@ impl Executor {
             audit: Arc::new(log_privileged),
             tools: super::tools::ToolHost::from_agent(),
             projects: None,
+            scripts: None,
+            connections: std::collections::BTreeSet::new(),
+            calls: None,
+            call_controls: std::sync::atomic::AtomicU32::new(0),
         }
+    }
+
+    /// Binds the invocation to `connections` (plugin API 1.14): the only
+    /// ones its capability calls may name.
+    pub fn with_connections(mut self, connections: std::collections::BTreeSet<String>) -> Self {
+        self.connections = connections;
+        self
     }
 
     /// Records of plugin API 1.9's operations go to `audit`.
@@ -1230,10 +1257,18 @@ impl Executor {
             // Read for every hop: the broker re-allowed this hop's
             // credential for its origin (a redirect off the origin never
             // carries one).
-            let auth = match current.auth.as_ref().map(|a| self.credential(plugin, a)) {
-                Some(Ok(auth)) => Some(auth),
-                Some(Err(refused)) => return refused,
-                None => None,
+            let auth = match (&current.connection, &current.auth) {
+                // Plugin API 1.14: the connection's own secret, read for
+                // every hop (the broker kept the hop on its server).
+                (Some(connection), _) => match self.connection_auth(plugin, connection, &current) {
+                    Ok(auth) => Some(auth),
+                    Err(refused) => return refused,
+                },
+                (None, Some(a)) => match self.credential(plugin, a) {
+                    Ok(auth) => Some(auth),
+                    Err(refused) => return refused,
+                },
+                (None, None) => None,
             };
             let forms = auth.as_ref().map_or_else(Vec::new, |a| {
                 let secret = match a {
@@ -1262,15 +1297,22 @@ impl Executor {
                 })
                 .flatten();
             let Some(location) = location.filter(|_| exchange.status != 304) else {
-                return reply(exchange);
+                return reply(exchange, current.connection.is_some());
             };
             hop += 1;
             match session.authorize_redirect(&current, &location, hop) {
                 Decision::Allow(Allowed::Fetch(next)) => current = next,
                 Decision::Deny(reason) => {
+                    // A connection's refusals start with their code
+                    // (`redirect-refused: …`), which plugins read.
+                    let message = if current.connection.is_some() {
+                        reason.to_string()
+                    } else {
+                        format!("a redirect was refused by the permission broker ({reason})")
+                    };
                     return CallResult::error_with_kind(
                         reason.call_error_code(),
-                        format!("a redirect was refused by the permission broker ({reason})"),
+                        message,
                         reason.network_kind(),
                     );
                 }
@@ -1405,11 +1447,16 @@ fn quota(granted: GrantedQuota) -> StorageQuota {
 /// [`MAX_HEADERS`]. `set-cookie`, authentication challenges and every
 /// header not listed are dropped. Called after [`redacted`], so a kept
 /// value never carries an injected secret.
-fn response_headers(headers: Vec<(String, String)>) -> Vec<Header> {
+/// On a connection's responses (`connection`, plugin API 1.14) the token's
+/// scopes and expiry are kept too
+/// ([`CONNECTION_RESPONSE_HEADERS`](deckpilot_plugin_abi::capability::CONNECTION_RESPONSE_HEADERS)).
+fn response_headers(headers: Vec<(String, String)>, connection: bool) -> Vec<Header> {
     headers
         .into_iter()
         .filter(|(name, value)| {
-            is_response_header(name)
+            (is_response_header(name)
+                || (connection
+                    && deckpilot_plugin_abi::capability::is_connection_response_header(name)))
                 && value.len() <= MAX_HEADER_LEN
                 && !value.chars().any(char::is_control)
         })
@@ -1421,8 +1468,8 @@ fn response_headers(headers: Vec<(String, String)>) -> Vec<Header> {
         .collect()
 }
 
-fn reply(exchange: Exchange) -> CallResult {
-    let headers = response_headers(exchange.headers);
+fn reply(exchange: Exchange, connection: bool) -> CallResult {
+    let headers = response_headers(exchange.headers, connection);
     let response = HttpResponse {
         status: exchange.status,
         headers,
@@ -1455,6 +1502,10 @@ impl CapabilityExecutor for Executor {
     fn run_context(&self) -> Option<&RunContext> {
         Some(&self.run)
     }
+
+    fn bound_connections(&self) -> &std::collections::BTreeSet<String> {
+        &self.connections
+    }
 }
 
 impl Executor {
@@ -1470,6 +1521,14 @@ impl Executor {
     ) -> CallResult {
         match allowed {
             Allowed::Fetch(fetch) => self.fetch(plugin, fetch, interrupt),
+            // Plugin API 1.14 (`connections.rs`).
+            Allowed::ConnectionGet { connection } => self.connection_info(plugin, connection),
+            Allowed::ConnectionReportStatus {
+                connection,
+                status,
+                detail,
+            } => self.report_connection_status(plugin, connection, *status, detail.as_deref()),
+            Allowed::Sleep { ms } => connections::sleep(*ms, interrupt),
             Allowed::VariablePublish { id, value } => self.publish(plugin, id, Some(value)),
             Allowed::VariableClear { id: Some(id) } => self.publish(plugin, id, None),
             Allowed::VariableClear { id: None } => self.clear(plugin),
@@ -1493,6 +1552,11 @@ impl Executor {
             | Allowed::ProjectSelect { .. }
             | Allowed::ProjectCycle { .. }
             | Allowed::ProfileRead { .. } => self.project(plugin, allowed),
+            Allowed::Script(call) => self.script(plugin, call, interrupt),
+            // Plugin API 1.16 (`calls.rs`).
+            Allowed::CallState | Allowed::CallControl { .. } => {
+                self.calls(plugin, allowed, interrupt)
+            }
             Allowed::TimeNow => super::ambient::now(),
             Allowed::RandomBytes { length } => super::ambient::random(*length),
             Allowed::RunContext(context) => serde_json::to_value(context).map_or_else(
@@ -1598,6 +1662,7 @@ mod tests {
             body: None,
             auth: None,
             private_network,
+            connection: None,
         };
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
         let check = |private: bool, address: &str| {
@@ -1640,6 +1705,7 @@ mod tests {
             body: None,
             auth: None,
             private_network,
+            connection: None,
         };
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
         // Tunnel, translation and special ranges that are not plainly
@@ -1728,6 +1794,7 @@ mod tests {
             body: None,
             auth: None,
             private_network: false,
+            connection: None,
         };
         let failure = |code: &'static str, message: &str| {
             SendFailure::from_transport((code, message.to_owned()), &fetch)
@@ -1815,6 +1882,12 @@ mod tests {
                     ("authorization", format!("Bearer {secret}")),
                     ("x-api-key", secret.to_owned()),
                     ("x-oauth-scopes", "repo".to_owned()),
+                    ("X-Accepted-OAuth-Scopes", "repo, workflow".to_owned()),
+                    (
+                        "github-authentication-token-expiration",
+                        "2026-12-31 00:00:00 UTC".to_owned(),
+                    ),
+                    ("x-oauth-scopes", "repo\r\nset-cookie: a=b".to_owned()),
                     ("location", "https://api.example.com/".to_owned()),
                     ("x-ratelimit-token", "t".to_owned()),
                     ("retry-after", "a\u{7f}b".to_owned()),
@@ -1827,7 +1900,8 @@ mod tests {
             },
             &forms,
         );
-        let headers = response_headers(exchange.headers);
+        let connection = response_headers(exchange.headers.clone(), true);
+        let headers = response_headers(exchange.headers, false);
         let names: Vec<&str> = headers.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(
             names,
@@ -1839,6 +1913,22 @@ mod tests {
                 "etag"
             ]
         );
+        // A connection's responses (plugin API 1.14) also keep the token's
+        // scopes and expiry, still without control characters.
+        let names: Vec<&str> = connection.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "link",
+                "x-ratelimit-remaining",
+                "ratelimit-reset",
+                "x-total",
+                "etag",
+                "x-oauth-scopes",
+                "x-accepted-oauth-scopes",
+                "github-authentication-token-expiration"
+            ]
+        );
         let all = format!("{headers:?}");
         assert!(!all.contains(secret), "{all}");
         assert!(!all.contains(&base64(secret.as_bytes())), "{all}");
@@ -1848,7 +1938,7 @@ mod tests {
         );
         // Never more than the ABI allows.
         let many = (0..100).map(|i| ("link".to_owned(), format!("<https://a.example.com/{i}>")));
-        assert_eq!(response_headers(many.collect()).len(), MAX_HEADERS);
+        assert_eq!(response_headers(many.collect(), true).len(), MAX_HEADERS);
     }
 
     #[test]
@@ -2189,6 +2279,15 @@ pub(super) mod test_transport {
     }
 
     impl Canned {
+        /// Canned `routes` (the JSON of the file), logged to `log`.
+        #[cfg(test)]
+        pub fn new(routes: &serde_json::Value, log: PathBuf) -> Self {
+            Self {
+                routes: serde_json::from_value(routes.clone()).unwrap(),
+                log,
+            }
+        }
+
         pub fn from_env() -> Option<Self> {
             let path = PathBuf::from(std::env::var_os(ENV)?);
             let routes = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;

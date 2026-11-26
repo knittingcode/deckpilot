@@ -71,6 +71,8 @@ struct KeyWatch {
     viewer: u64,
     actions: BTreeSet<ActionInstanceId>,
     changes: Option<broadcast::Receiver<Vec<KeyStateEntry>>>,
+    /// The connection previewed a Calls page: its previews end with it.
+    calls_preview: bool,
 }
 
 /// The live preview messages of a connection that began a session
@@ -259,6 +261,7 @@ async fn serve_connection<R, W>(
         viewer: NEXT_VIEWER.fetch_add(1, Ordering::Relaxed),
         actions: BTreeSet::new(),
         changes: None,
+        calls_preview: false,
     };
     let mut live: LiveEvents = None;
     loop {
@@ -294,8 +297,10 @@ async fn serve_connection<R, W>(
             event = next_event(&mut events) => match event {
                 // Clients of an older protocol do not know newer events
                 // (nor, before protocol 10, plugin variables).
+                // Calls only to desktop clients (`desktop_only`).
                 Ok(event) => {
                     if let Some(event) = event.for_protocol(protocol)
+                        && (client == ClientKind::Desktop || !event.desktop_only())
                         && !send(&mut writer, &ServerMessage::Event { event }).await
                     {
                         break;
@@ -352,7 +357,9 @@ async fn serve_connection<R, W>(
                 // Deliver the final notifications before closing.
                 if let Some(events) = events.as_mut() {
                     while let Ok(event) = events.try_recv() {
-                        if let Some(event) = event.for_protocol(protocol) {
+                        if let Some(event) = event.for_protocol(protocol)
+                            && (client == ClientKind::Desktop || !event.desktop_only())
+                        {
                             send(&mut writer, &ServerMessage::Event { event }).await;
                         }
                     }
@@ -364,6 +371,10 @@ async fn serve_connection<R, W>(
     drop(desktop);
     if watch.changes.is_some() {
         handle.unwatch_key_states(watch.viewer);
+    }
+    // Its Calls previews end with it: no frame is left behind.
+    if watch.calls_preview {
+        handle.calls_preview_closed(watch.viewer);
     }
     // Its live previews end with it: the devices show the saved
     // configuration again.
@@ -511,6 +522,25 @@ async fn handle_message(
         }
         return reply(id, handle.live_preview(watch.viewer, request).await);
     }
+    if matches!(
+        request,
+        Request::PreviewCallsPage { .. } | Request::EndCallsPreview { .. }
+    ) {
+        // Only the configuration app's editor previews a call page; a
+        // plugin or the command line never does.
+        if client != ClientKind::Desktop {
+            return ServerMessage::Error {
+                id: Some(id),
+                error: IpcError::new(
+                    ErrorCode::Unauthorized,
+                    "only the configuration app previews a call page",
+                )
+                .with_reason(deckpilot_ipc::calls::reason::PREVIEW_DESKTOP_ONLY),
+            };
+        }
+        watch.calls_preview = true;
+        return reply(id, handle.calls_preview(watch.viewer, request).await);
+    }
     if matches!(request, Request::Subscribe) {
         if events.is_none() {
             *events = Some(handle.subscribe());
@@ -570,6 +600,11 @@ mod tests {
 
     /// An authenticated connection subscribed to runtime events.
     async fn subscribed() -> Peer {
+        subscribed_as(ClientKind::Other).await
+    }
+
+    /// [`subscribed`] as a `client`.
+    async fn subscribed_as(client: ClientKind) -> Peer {
         let (handle, commands) = AgentHandle::detached();
         answer_all(commands);
         let (client_end, agent_end) = tokio::io::duplex(4 * MAX_MESSAGE_BYTES);
@@ -593,7 +628,7 @@ mod tests {
         let hello = ClientMessage::Hello {
             protocol: PROTOCOL_VERSION,
             token: TOKEN.into(),
-            client: ClientKind::Other,
+            client,
         };
         write_message(&mut peer.writer, &hello).await.unwrap();
         assert!(matches!(
@@ -689,6 +724,26 @@ mod tests {
             }
             other => panic!("expected an uncorrelated error, got {other:?}"),
         }
+    }
+
+    /// Whether the user is in a call goes to desktop clients only.
+    #[tokio::test]
+    async fn calls_events_reach_desktop_clients_only() {
+        let calls = || AgentEvent::CallsChanged {
+            status: Box::default(),
+        };
+        let mut other = subscribed().await;
+        other.handle.emit_for_test(calls());
+        other.event().await;
+        other.quiet().await;
+        let mut desktop = subscribed_as(ClientKind::Desktop).await;
+        desktop.handle.emit_for_test(calls());
+        assert!(matches!(
+            desktop.receive().await,
+            Some(ServerMessage::Event {
+                event: AgentEvent::CallsChanged { .. }
+            })
+        ));
     }
 
     #[tokio::test]

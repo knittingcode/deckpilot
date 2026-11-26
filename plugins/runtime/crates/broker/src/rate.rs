@@ -109,6 +109,24 @@ pub struct RateLimits {
     /// `project.select` and `project.cycle` (X6): 2 per second without a
     /// burst, so a second switch within 500 ms is throttled.
     pub project_switch: Rate,
+    /// The Scripts bridge (plugin API 1.13), in place of `any`: a run
+    /// polls and logs often, and the host bounds each run to 4,096 calls
+    /// and 8,192 polls anyway.
+    pub scripts: Rate,
+    /// Requests on one connection (plugin API 1.14): 60 per minute each.
+    pub connection_http: Rate,
+    /// Requests on all of a plugin's connections together: 180 per minute.
+    pub connections_http: Rate,
+    /// `time.sleep` (plugin API 1.14): 30 per minute; each one is also
+    /// bounded by the invocation's deadline.
+    pub sleep: Rate,
+    /// `connections.reportStatus` (plugin API 1.14): 12 per minute per
+    /// plugin, so a plugin cannot flood the store or keep overwriting the
+    /// status the user sees.
+    pub connection_report: Rate,
+    /// `call.control` (plugin API 1.16): 4 per second with a burst of 4;
+    /// the engine allows one waiting command per call anyway.
+    pub call_control: Rate,
 }
 
 impl Default for RateLimits {
@@ -130,6 +148,12 @@ impl Default for RateLimits {
             resource_open: Rate::new(5, Duration::from_secs(5)),
             open_url_param: Rate::new(10, Duration::from_secs(20)),
             project_switch: Rate::new(1, Duration::from_millis(500)),
+            scripts: Rate::new(2_000, Duration::from_secs(1)),
+            connection_http: Rate::new(60, Duration::from_secs(60)),
+            connections_http: Rate::new(180, Duration::from_secs(60)),
+            sleep: Rate::new(30, Duration::from_secs(60)),
+            connection_report: Rate::new(12, Duration::from_secs(60)),
+            call_control: Rate::new(4, Duration::from_secs(1)),
         }
     }
 }

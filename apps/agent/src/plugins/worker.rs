@@ -50,6 +50,12 @@ pub(crate) struct Events {
     /// The agent's project context (plugin API 1.9); without it the
     /// project operations and `profile.read` are `unavailable`.
     pub projects: Option<Arc<dyn crate::service::plugin_projects::ProjectHost>>,
+    /// Calls (plugin API 1.16); without it the `call.*` operations are
+    /// `calls-provider-offline`.
+    pub calls: Option<Arc<dyn crate::service::plugin_calls::CallsHost>>,
+    /// The agent's script store (plugin API 1.13); without it every run of
+    /// `deckpilot.scripts` ends with `scriptMissing`.
+    pub scripts: Option<Arc<dyn crate::plugins::script_host::ScriptHost>>,
 }
 
 /// Why an engine invocation produced no outcome: a stable code for the
@@ -115,6 +121,12 @@ pub(super) enum Message {
 pub(crate) struct Invoker(mpsc::Sender<Message>, super::key_state::StateBook);
 
 impl Invoker {
+    /// An invoker whose worker is gone: every invocation is `None`.
+    #[cfg(test)]
+    pub fn detached() -> Self {
+        Self(mpsc::channel().0, super::key_state::StateBook::default())
+    }
+
     /// Queues an invocation of a run that `run` describes; `None` when the
     /// worker is gone. The answer arrives on the returned channel;
     /// dropping it discards a late one.
@@ -293,6 +305,11 @@ impl State {
                     params,
                 },
             ) => service.invoke(&plugin, &action, &params, reply),
+            // Answered from the plugin's lane when its test finished
+            // (plugin API 1.14).
+            (Some(service), Request::TestPluginConnection { plugin, connection }) => {
+                service.test_connection(&plugin, &connection, reply);
+            }
             (Some(service), request) => {
                 let answer = service.handle(request);
                 // Before the answer: the agent then registers the new

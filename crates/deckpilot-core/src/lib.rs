@@ -43,6 +43,8 @@ pub mod registry;
 pub mod resolution;
 pub mod resource;
 pub mod runtime;
+pub mod script;
+pub mod script_grants;
 pub mod shared_layouts;
 pub mod stateful;
 pub mod target_kind;
@@ -96,9 +98,10 @@ pub use credentials::{
     NoCredentials, Secret,
 };
 pub use device_runtime::{
-    DetachedAction, DisplayTexts, EditorTarget, LayoutStatus, NavigationError, NavigationState,
-    Runtime, RuntimeOutcome, core_display, page_faces, page_faces_in, page_faces_scoped,
-    page_faces_with,
+    DetachedAction, DisplayTexts, EditorTarget, LayoutStatus, MAX_FRAMES, NavigationError,
+    NavigationState, OverlayError, OverlayOwner, OverlayPriority, OverlaySession, OverlaySpec,
+    OverlayView, Runtime, RuntimeOutcome, core_display, page_faces, page_faces_in,
+    page_faces_scoped, page_faces_with,
 };
 pub use editor_navigation::{
     ControlNavigation, EditorNavigation, NavigationOperation, control_navigation,
@@ -127,8 +130,8 @@ pub use history::{
     safe_event, safe_report,
 };
 pub use id::{
-    ActionInstanceId, ExecutionId, IconId, LayoutId, PageId, ProfileId, ProjectId, VerificationId,
-    WorkSessionId, WorkflowId,
+    ActionInstanceId, ExecutionId, IconId, LayoutId, PageId, ProfileId, ProjectId, ScriptId,
+    VerificationId, WorkSessionId, WorkflowId,
 };
 pub use layout::{
     BindingTarget, ControlBinding, DeviceLayout, IncompatibleBinding, LayoutIssue, LayoutPage,

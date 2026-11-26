@@ -1,0 +1,7 @@
+{
+  "processes": [
+    { "executable": "MSTeams", "isRunningInput": true },
+    { "executable": "Music", "isRunningInput": false }
+  ],
+  "camerasInUse": [true]
+}

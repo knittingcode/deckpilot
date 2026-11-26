@@ -25,7 +25,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog, FormDialog } from "@/components/dialogs"
@@ -54,7 +54,13 @@ import { api } from "@/lib/api"
 import { failureDetail, failureMessage, toastFailure } from "@/lib/failure"
 import { useTitlebar } from "@/hooks/use-titlebar"
 import { useAppContext } from "@/lib/app-context"
-import type { Project, ProfileView, ResourceCheck, ResourceStatus } from "@/lib/types"
+import type {
+  Project,
+  ProfileView,
+  RepositoryRemote,
+  ResourceCheck,
+  ResourceStatus,
+} from "@/lib/types"
 import type { ProjectInput } from "@/lib/api"
 
 import { StatusIcon } from "@/components/resource-status-icon"
@@ -553,6 +559,14 @@ function ProjectForm({
   const initialDefault = project?.defaultRepository ?? null
   const [repositories, setRepositories] = useState<RepositoryRow[]>(initialRepositories)
   const [defaultRepository, setDefaultRepository] = useState<string | null>(initialDefault)
+  // Each saved repository's remotes as stored; a link made in this form is
+  // written at once (not with the save), so the page reloads when it closes.
+  const [remotes, setRemotes] = useState<Record<string, RepositoryRemote[]>>(() =>
+    Object.fromEntries((project?.repositories ?? []).map((r) => [r.id, r.remotes ?? []])),
+  )
+  const [linked, setLinked] = useState(false)
+  // A save already reloads the page (`onDone`), linked or not.
+  const submitted = useRef(false)
   // The role/key pairs are advanced once a project has repositories.
   const [rolesOpen, setRolesOpen] = useState(initialRepositories.length === 0)
   const initialRows = Object.entries(project?.resources ?? {}).map(([role, resource]) => ({
@@ -628,6 +642,7 @@ function ProjectForm({
         failed.push(`${row.key}: ${failureDetail(e)}`)
       }
     }
+    submitted.current = true
     if (failed.length > 0) {
       toast.error(t("workspace:projects.repositories.bindFailed"), {
         description: failed.join("\n"),
@@ -654,7 +669,11 @@ function ProjectForm({
       submitLabel={t("workspace:projects.form.save")}
       canSubmit={Boolean(key.trim()) && rowsValid(repositories)}
       dirty={dirty}
-      onClose={onClose}
+      // A link was written already: the list shows it once the form closes.
+      onClose={() => {
+        if (linked && !submitted.current) onDone()
+        else onClose()
+      }}
       onSubmit={submit}
       describeError={(e) =>
         e instanceof InvalidInput
@@ -700,6 +719,19 @@ function ProjectForm({
           rows.find((r) => r.role.trim() === "repository")?.key.trim() || null
         }
         checks={checks}
+        link={
+          project
+            ? {
+                profileId,
+                projectId: project.id,
+                remotes,
+                onLinked: (repositoryId, saved) => {
+                  setRemotes((current) => ({ ...current, [repositoryId]: saved }))
+                  setLinked(true)
+                },
+              }
+            : null
+        }
       />
       <div className="grid gap-2">
         <Button

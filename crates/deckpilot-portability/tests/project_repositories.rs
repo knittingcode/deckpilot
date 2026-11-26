@@ -14,7 +14,8 @@ use deckpilot_device::ModelCatalog;
 use deckpilot_portability::import::{ConflictResolution, preview, validate};
 use deckpilot_portability::payload::{self, ExportOptions, Payload};
 use deckpilot_portability::{
-    ImportMode, ImportOptions, PAYLOAD_VERSION, PAYLOAD_VERSION_WITHOUT_LIBRARY, plan,
+    ImportMode, ImportOptions, PAYLOAD_VERSION_WITH_REPOSITORIES, PAYLOAD_VERSION_WITHOUT_LIBRARY,
+    plan,
 };
 use deckpilot_storage::crypto::{KdfParams, Password};
 use deckpilot_storage::{ConfigStore, SqliteStore};
@@ -158,7 +159,7 @@ fn several_repositories_round_trip_without_paths_or_connection_ids() {
     let original = original.projects[0].clone();
 
     let (payload, json) = exported(&store);
-    assert_eq!(payload.version, PAYLOAD_VERSION);
+    assert_eq!(payload.version, PAYLOAD_VERSION_WITH_REPOSITORIES);
     let text = json.to_string();
     assert!(!text.contains(SHOP_PATH), "a path was exported");
     assert!(!text.contains("connectionId") && !text.contains("local-connection-7"));

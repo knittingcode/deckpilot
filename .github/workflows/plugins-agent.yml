@@ -42,6 +42,12 @@ on:
       - tools/release-pipeline/check-bundled-plugins.sh
       - tools/release-pipeline/check-released-pins.sh
       - .github/workflows/plugins-agent.yml
+  # A merge queue group (gh-readonly-queue/main/...). GitHub applies no
+  # paths filter to it, so the merge-group-paths job applies the
+  # pull_request paths above to the group's files and the jobs report as
+  # skipped when none matches. Inert until the merge queue is enabled.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -57,8 +63,34 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
+  # Merge queue groups only (skipped for every other event): whether the
+  # group changes a path of on.pull_request.paths
+  # (tools/ci/merge-group-paths.sh). The jobs below run unless this job
+  # succeeded and found no such path: skipped (any other event) or failed
+  # (when in doubt), they run.
+  merge-group-paths:
+    name: Changed paths (merge group)
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: tools/ci/merge-group-paths.sh .github/workflows/plugins-agent.yml
+
   e2e:
     name: Plugins in the agent (${{ matrix.os }})
+    needs: merge-group-paths
+    if: ${{ !cancelled() && (needs.merge-group-paths.result != 'success' || needs.merge-group-paths.outputs.run == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +195,11 @@ jobs:
       # seeded offline, checked against its pins and run in the host.
       - name: Bundled plugins end to end
         run: cargo test -p deckpilot-agent --features plugins --test plugins_bundled --locked -- --nocapture
+      # Calls: a device that went "back to work" comes back to the call when
+      # the plugin action its key started really ends (the bundled test
+      # fixture in the host, the mock call provider of a test-hooks agent).
+      - name: Calls follow a plugin action to its end
+        run: cargo test -p deckpilot-agent --features plugins --test calls_plugin_action --locked -- --nocapture
       # A built-in module moved to its migration-class bundled plugin: the
       # agent's fixture legacy module and the fixture plugin, consent,
       # restarts mid-migration, health check, retries, drift, the user's
@@ -258,8 +295,14 @@ jobs:
             diff -r -x plugin.wasm "$dir" "plugins/first-party/contracts/$id"
           done
           [ "$(ls plugins/first-party/contracts | wc -l | tr -d ' ')" = "$(jq '.plugins | length' plugins/first-party/bundled.json | tr -d '\r')" ]
+          # Each build pins every plugin of both lists (build.sh checks it
+          # too; this also covers a shell that ends with status 0 from
+          # outside, before build.sh's own check runs).
+          want=$(jq -s '[.[].plugins[]] | length' plugins/first-party/bundled.json plugins/first-party/test-fixtures/bundled.json | tr -d '\r')
           for run in a b; do
             plugins/first-party/build.sh --test-fixtures --out "$RUNNER_TEMP/bundle-$run" --target-dir "$RUNNER_TEMP/first-party-$run" "${artifacts[@]}"
+            got=$(jq '.plugins | length' "$RUNNER_TEMP/bundle-$run/bundled/pins.json" | tr -d '\r')
+            [ "$got" = "$want" ] || { echo "::error::bundle-$run pins $got plugins, the lists name $want"; exit 1; }
           done
           # bundled/ only: the artifacts' audit log next to it records times.
           diff -r "$RUNNER_TEMP/bundle-a/bundled" "$RUNNER_TEMP/bundle-b/bundled"
