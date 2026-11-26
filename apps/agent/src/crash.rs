@@ -10,8 +10,10 @@
 //! [`PANIC_EXIT_CODE`].
 //!
 //! [`install_panic_hook`] writes every panic to the agent's log as well,
-//! because the configuration app starts the agent with its standard error
-//! going nowhere.
+//! because the log files are what support asks for. The configuration app
+//! starts the agent with `--quiet-stderr` and its standard error going to
+//! `logs/output.log`; there the panic is written as a one-line summary
+//! with the same text as the log's ([`PanicStderr::Summary`]).
 
 use std::future::Future;
 use std::panic::{self, AssertUnwindSafe};
@@ -84,12 +86,25 @@ pub fn run_agent<E: std::fmt::Display>(
     outcome
 }
 
-/// Logs every panic (thread, location, message) before the previous hook
-/// runs (Rust's default prints it to standard error). Panics that are
-/// caught on purpose (the tray icon's, a plugin task's) are logged too.
-/// The message is logged escaped (`Debug`): a panic's text may come from a
-/// plugin, and must not be able to forge log lines.
-pub fn install_panic_hook() {
+/// What a panic writes to standard error, after the log record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanicStderr {
+    /// What the previous hook writes (Rust's default: the whole message,
+    /// as it is, and the backtrace hint).
+    Default,
+    /// One line with the log record's text: thread, location, and the
+    /// message escaped and shortened as in the log (`--quiet-stderr`).
+    /// It is written at once, unlike the log record, which a background
+    /// thread writes: so it is there even if the process aborts first.
+    Summary,
+}
+
+/// Logs every panic (thread, location, message), then writes it to
+/// standard error as `stderr` says. Panics that are caught on purpose (the
+/// tray icon's, a plugin task's) are logged too. The message is logged
+/// escaped (`Debug`): a panic's text may come from a plugin, and must not
+/// be able to forge log lines.
+pub fn install_panic_hook(stderr: PanicStderr) {
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         let location = info
@@ -98,14 +113,25 @@ pub fn install_panic_hook() {
             .unwrap_or_default();
         let message = message(info.payload());
         let thread = std::thread::current();
-        error!(
-            thread = thread.name().unwrap_or("unnamed"),
-            %location,
-            ?message,
-            "panic"
-        );
-        previous(info);
+        let thread = thread.name().unwrap_or("unnamed");
+        error!(thread, %location, ?message, "panic");
+        match stderr {
+            PanicStderr::Default => previous(info),
+            PanicStderr::Summary => {
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "{}",
+                    summary(thread, &location, &message)
+                );
+            }
+        }
     }));
+}
+
+/// The line [`PanicStderr::Summary`] writes: the log record's fields.
+fn summary(thread: &str, location: &str, message: &str) -> String {
+    format!("panic: thread={thread:?} location={location:?} message={message:?}")
 }
 
 /// The text of a panic's payload, at most [`MAX_MESSAGE`] characters.
@@ -173,6 +199,19 @@ mod tests {
         fn drop(&mut self) {
             self.0.store(true, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn a_summary_is_one_escaped_line() {
+        let line = summary("agent", "src/x.rs:1", "two\nlines \u{1b}[31m");
+        assert_eq!(
+            line,
+            r#"panic: thread="agent" location="src/x.rs:1" message="two\nlines \u{1b}[31m""#
+        );
+        assert!(!line.contains('\n'));
+        // As shortened as the log's.
+        let long = message(&"x".repeat(MAX_MESSAGE + 10));
+        assert_eq!(long.chars().count(), MAX_MESSAGE + 1);
     }
 
     #[test]

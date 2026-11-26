@@ -196,9 +196,9 @@ A panic in the agent's main loop ends the agent's process, with or without
 the tray (`apps/agent/src/crash.rs`). The agent used to keep its tray, with
 a menu that did nothing, after such a panic. Now:
 
-1. The panic is written to the agent's log. Every panic is, because the
-   configuration app starts the agent with its standard error going
-   nowhere.
+1. The panic is written to the agent's log. Every panic is. An agent the
+   configuration app started also writes it to `logs/output.log`, as one
+   line with the same text (see "Logs" below).
 2. The runtime is shut down. Its blocking threads get 2 seconds, as after
    any stop, so a stuck one (a credential store prompt, a plugin host call)
    cannot keep the process alive.
@@ -519,7 +519,20 @@ DECKPILOT_DATA_DIR=/tmp/deckpilot-dev cargo run -p deckpilot-agent -- --mock-dev
 ```
 
 Logs go to stderr and to `<data dir>/logs/agent.YYYY-MM-DD.log` (seven files
-are kept). Use `--log-level debug` for request and input details. Action
+are kept). With `--quiet-stderr` they go to the files only.
+
+The configuration app starts the agent with `--quiet-stderr` and sends its
+standard output and error to `<data dir>/logs/output.log`, readable by the
+user only. That file keeps what the log files cannot hold: what the agent
+prints before its logging starts, a panic as one line (thread, location,
+and the message escaped and shortened as in the log), and what the Rust
+runtime or a system library prints, for example as the process aborts.
+Text from system libraries is written as they print it, so DeckPilot
+cannot filter it. When the app starts an agent and the file has reached
+1 MiB, it is renamed to `output.1.log`, replacing the one before, and a new
+file is started. So at most these two files are kept, plus whatever a
+single run adds. An agent started at login, or from a terminal, writes its
+standard error wherever that start sends it. Use `--log-level debug` for request and input details. Action
 results are logged by name and status only; result messages are not logged
 because they may contain machine-specific paths.
 
