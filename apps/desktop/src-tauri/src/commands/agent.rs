@@ -28,7 +28,7 @@ pub async fn start_agent(state: State<'_, AppState>) -> CommandResult<AgentConne
     if connection.running {
         return Ok(connection);
     }
-    agent::start_agent().map_err(CommandError::Invalid)?;
+    agent::start_agent_by_user().map_err(CommandError::Invalid)?;
     Ok(agent::wait_until_running(&state.paths, Duration::from_secs(5)).await)
 }
 
@@ -62,7 +62,7 @@ pub async fn restart_agent(
     agent::wait_until_released(&state.paths, Duration::from_secs(10))
         .await
         .map_err(CommandError::Invalid)?;
-    agent::start_agent().map_err(CommandError::Invalid)?;
+    agent::start_agent_by_user().map_err(CommandError::Invalid)?;
     Ok(agent::wait_until_running(&state.paths, Duration::from_secs(5)).await)
 }
 

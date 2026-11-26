@@ -9,7 +9,7 @@ import { api } from "@/lib/api"
 import { toastFailure } from "@/lib/failure"
 import { useAppContext } from "@/lib/app-context"
 import { describeLayout } from "@/lib/format"
-import type { AgentCapability, DeviceInfo } from "@/lib/types"
+import type { AgentCapability, AgentExit, AgentSupervision, DeviceInfo } from "@/lib/types"
 import { type TranslationKey, Trans, useTranslation } from "@/i18n"
 import { useFormat } from "@/i18n/format"
 
@@ -25,11 +25,67 @@ export function AgentBadge() {
   )
 }
 
+/** How an agent's exit is told to the user. */
+function useExitText() {
+  const { t } = useTranslation()
+  return (exit: AgentExit) =>
+    exit.code !== null
+      ? t("devices:agent.supervision.exitCode", {
+          // Windows crash codes (NTSTATUS) read as hex, e.g. 0xC0000005.
+          code: exit.code < 0 ? `0x${(exit.code >>> 0).toString(16).toUpperCase()}` : exit.code,
+        })
+      : exit.signal !== null
+        ? t("devices:agent.supervision.exitSignal", { signal: exit.signal })
+        : t("devices:agent.supervision.exitUnknown")
+}
+
+/** An agent this app started exited unexpectedly: it is being restarted, or stays stopped. */
+function AgentSupervisionNotice({ supervision }: { supervision: AgentSupervision }) {
+  const { t } = useTranslation()
+  const exitText = useExitText()
+  if (supervision.state === "restarting") {
+    return (
+      <Alert>
+        <RotateCw />
+        <AlertTitle>{t("devices:agent.supervision.restartingTitle")}</AlertTitle>
+        <AlertDescription>
+          {t("devices:agent.supervision.restarting", {
+            exit: exitText(supervision.exit),
+            restart: supervision.restart,
+            max: supervision.max,
+            count: Math.max(1, Math.round(supervision.delayMs / 1000)),
+          })}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  return (
+    <Alert variant="destructive">
+      <TriangleAlert />
+      <AlertTitle>{t("devices:agent.supervision.stoppedTitle")}</AlertTitle>
+      <AlertDescription>
+        <p>
+          {supervision.restarts > 0
+            ? t("devices:agent.supervision.gaveUp", {
+                exit: exitText(supervision.exit),
+                count: supervision.restarts,
+                minutes: supervision.windowMinutes,
+              })
+            : t("devices:agent.supervision.notRestarted", { exit: exitText(supervision.exit) })}
+        </p>
+        <p>{t("devices:agent.checkLogInDiagnostics")}</p>
+      </AlertDescription>
+    </Alert>
+  )
+}
+
 /** Start button and explanation shown while the agent is not running. */
 export function AgentStopped() {
   const { t } = useTranslation()
   const { agent, setAgent } = useAppContext()
   const [busy, setBusy] = useState(false)
+  const supervision = agent?.supervision ?? null
+  const gaveUp = supervision?.state === "stopped"
 
   const start = async () => {
     setBusy(true)
@@ -50,10 +106,19 @@ export function AgentStopped() {
 
   return (
     <div className="grid gap-2 py-3">
+      {supervision && <AgentSupervisionNotice supervision={supervision} />}
       <p className="text-sm text-muted-foreground">{t("devices:agent.stoppedPanel.explanation")}</p>
       <div>
         <Button size="sm" disabled={busy || !agent?.canStart} onClick={() => void start()}>
-          <Play /> {t("devices:agent.stoppedPanel.start")}
+          {gaveUp ? (
+            <>
+              <RotateCw /> {t("devices:agent.supervision.restart")}
+            </>
+          ) : (
+            <>
+              <Play /> {t("devices:agent.stoppedPanel.start")}
+            </>
+          )}
         </Button>
         {agent && !agent.canStart && (
           <p className="mt-2 text-xs text-muted-foreground">

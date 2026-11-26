@@ -420,6 +420,9 @@ impl PluginRuntime {
                         projects: Some(std::sync::Arc::new(
                             crate::service::plugin_projects::AgentProjects::new(commands.clone()),
                         )),
+                        calls: Some(std::sync::Arc::new(
+                            crate::service::plugin_calls::AgentCallsHost::new(commands.clone()),
+                        )),
                         scripts: Some(std::sync::Arc::new(
                             crate::service::plugin_scripts::AgentScripts::new(commands),
                         )),

@@ -459,8 +459,11 @@ tag; that push starts the release workflow.
      version as the signed build (WiX refuses `0.6.0-alpha.1`);
    - runs the real-binary compatibility matrix against the previous release
      (`tools/compat/matrix.sh`, baseline in
-     `tools/release-pipeline/compat-baseline`): database migration and IPC
-     in both directions, on the tagged commit;
+     `tools/release-pipeline/compat-baseline`, the latest published
+     release; the Compatibility workflow uses the same file): database
+     migration and IPC in both directions, on the tagged commit. Once a
+     release is published, the file moves to its tag
+     ([compatibility.md](compatibility.md#versions-involved));
    - creates the **one** draft release of the tag for exactly the gate's
      commit (`tools/release-pipeline/create-draft.sh`). It refuses a tag
      that already has a published release (a published release is never

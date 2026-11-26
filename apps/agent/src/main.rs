@@ -369,7 +369,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let _guard = init_logging(&paths, args.level);
+    let guard = init_logging(&paths, args.level);
+    // Panics reach the log, not only standard error (which goes nowhere
+    // when the configuration app starts the agent).
+    deckpilot_agent::crash::install_panic_hook();
 
     // A previous agent may still be finishing its shutdown (a restart or an
     // update starts the next one as soon as the endpoint closes).
@@ -406,8 +409,12 @@ fn main() -> ExitCode {
             }
         };
         let plugins = args.plugins;
-        let result = runtime.block_on(async {
+        // A panic in the main loop is caught: the endpoint closes, the lock
+        // is released, and the process exits non-zero (`crash.rs`).
+        let outcome = deckpilot_agent::crash::run_agent(runtime, async {
             let agent = Agent::start(options, lock)?.with_plugins(plugins);
+            #[cfg(feature = "test-hooks")]
+            deckpilot_agent::crash::testing::arm(&agent.handle());
             #[cfg(feature = "test-hooks")]
             if let Some(back) = calls_mock {
                 // Queued before the loop runs; answered once it does.
@@ -422,12 +429,16 @@ fn main() -> ExitCode {
             // Boxed: with Calls the loop's future is large.
             Box::pin(agent.run(deckpilot_agent::service::shutdown_signal())).await
         });
-        if let Err(error) = result {
-            error!(%error, "agent stopped with an error");
-            return ExitCode::FAILURE;
-        }
+        drop(guard);
+        ExitCode::from(outcome.exit_code())
     } else {
-        deckpilot_agent::tray::run_with_plugins(options, lock, args.plugins);
+        // Never returns: the process exits from the tray's event loop.
+        deckpilot_agent::tray::run_with_plugins(
+            options,
+            lock,
+            args.plugins,
+            guard.map(|guard| Box::new(guard) as deckpilot_agent::tray::ExitGuard),
+        );
+        ExitCode::SUCCESS
     }
-    ExitCode::SUCCESS
 }
