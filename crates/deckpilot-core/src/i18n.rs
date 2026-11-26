@@ -113,6 +113,13 @@ texts! {
     TrayNoDevices => "tray.noDevices", "No devices", "Brak urządzeń";
     TrayConnected => "tray.connected", "connected", "połączone";
     TrayDisconnected => "tray.disconnected", "disconnected", "rozłączone";
+    TrayUsbWithoutHid => "tray.usbWithoutHid", "on USB, not usable – replug it or power-cycle the hub", "widoczne na USB, niedostępne – podłącz ponownie lub wyłącz i włącz hub";
+    TrayPermissionDenied => "tray.permissionDenied", "no permission to open it", "brak uprawnień do otwarcia";
+    TrayUnsupported => "tray.unsupported", "not supported", "nieobsługiwane";
+    TrayBusy => "tray.busy", "in use by another program", "używane przez inny program";
+    TrayCommunicationError => "tray.communicationError", "communication error", "błąd komunikacji";
+    TrayReconnecting => "tray.reconnecting", "reconnecting…", "ponowne łączenie…";
+    TrayUnknownState => "tray.unknownState", "state unknown", "stan nieznany";
     TrayRefresh => "tray.refresh", "Refresh Devices", "Odśwież urządzenia";
     TrayAbout => "tray.about", "About DeckPilot", "O programie DeckPilot";
     TrayQuit => "tray.quit", "Quit DeckPilot", "Zakończ DeckPilot";

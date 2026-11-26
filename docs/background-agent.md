@@ -107,7 +107,10 @@ closed and reopened at any time without interrupting devices.
 - **Active Profile**: lists profiles; selecting one switches immediately and
   redraws all devices
 - **Project**: shows the active project (informational)
-- **Connected Devices**: devices and their connection state
+- **Connected Devices**: devices and their state: connected, disconnected,
+  or why a present device is not usable (no permission, in use by another
+  program, on USB without its HID interface, not supported, communication
+  error, reconnecting); see [devices.md](devices.md#device-states-dp-usb-01-ipc-protocol-21)
 - **Refresh Devices**: rescans and redraws all keys
 - **About DeckPilot** and **Quit DeckPilot**: quits DeckPilot completely;
   the agent stops, and on macOS open configuration apps close too (see

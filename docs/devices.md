@@ -184,6 +184,34 @@ the model descriptors from `models`, and register the driver. The test
 in the test: it is discovered, described, its native reports drive a layout
 through generic events, and it receives frames at its model's image size.
 
+### Device states (DP-USB-01, IPC protocol 21)
+
+`ConnectionState` stays `connected` or `disconnected` for older clients.
+`DeviceInfo.availability` (`DeviceAvailability` in `deckpilot-device`) says
+why a device is or is not usable:
+
+| State | When | Detected by |
+| ----- | ---- | ----------- |
+| `connected` | a session is open | the agent |
+| `notConnected` | the system does not list it | discovery |
+| `usbPresentHidUnavailable` | the USB bus lists a supported Stream Deck without a `hidraw` interface (e.g. a hub that could not configure it, kernel `-28`) | Linux only: sysfs `idVendor`/`idProduct`/`serial` and a `hidraw` directory below the device, read-only |
+| `permissionDenied` | the open was refused (no udev rule; macOS `not permitted`) | hidapi's open error |
+| `unsupported` | an Elgato model without a driver, or an open that says so | discovery, open error |
+| `busy` | another program holds the device (Linux `EBUSY`, macOS exclusive access, Windows access denied or sharing violation) | hidapi's open error |
+| `communicationError` | another open error, or a device that keeps dropping right after it connects (flapping) | open error, retry state |
+| `reconnecting` | the connection was lost while the device is still listed; it is opened again shortly | the agent |
+| `unknown` | discovery fails, so devices not open cannot be told apart; also a newer state in an older client | the agent |
+
+hidapi reports open errors only as text; `deckpilot-hid` classifies the
+platforms' wordings and codes (`classify_open_error`). A device that is
+present is never `notConnected`: one that is listed but cannot be opened,
+or that the USB bus lists without HID, appears in the device list with its
+reason even though it never connected (`DeviceInfo::never_opened`, kept in
+the agent). Clients before protocol 21 receive neither the field nor those
+devices, so their list is what it was. The desktop's device rows and the
+tray's Connected Devices show the state, with a hint where the user can act
+(en and pl). Nothing here resets, re-binds or writes to a device.
+
 ### Where vendor code lives
 
 - Elgato protocol types (`elgato_streamdeck`, `hidapi`) are only in

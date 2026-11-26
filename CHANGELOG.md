@@ -273,6 +273,14 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Changed
 
+- Devices: the device list and the tray's Connected Devices say why a
+  Stream Deck is not usable instead of showing it disconnected: no
+  permission (on Linux, usually the udev rule), in use by another program,
+  on USB without its HID interface (Linux; often a hub or monitor dock),
+  not supported, communication error, reconnecting, or unknown while
+  devices cannot be listed. A device that is present is never shown as
+  disconnected. IPC protocol 21; an older app sees the list it always did.
+  Verified with simulated devices only; not yet on a physical device.
 - System actions: the Action Library offers one Open for files and
   folders (Choose file… or Choose folder…); Open folder is no longer
   offered for new keys, actions or workflow nodes. Saved Open folder

@@ -37,10 +37,28 @@
     "noneDetected": "No Stream Deck detected.",
     "agentStopped": "The agent is not running.",
     "simulated": "Simulated",
-    "connected": "Connected",
-    "disconnected": "Disconnected",
     "serialState": "{{serial}} · {{state}}",
     "settings": "Device settings"
+  },
+  "state": {
+    "connected": "Connected",
+    "notConnected": "Disconnected",
+    "usbPresentHidUnavailable": "On USB, not usable",
+    "permissionDenied": "No permission",
+    "unsupported": "Not supported",
+    "busy": "In use by another program",
+    "communicationError": "Communication error",
+    "reconnecting": "Reconnecting…",
+    "unknown": "State unknown"
+  },
+  "stateHint": {
+    "usbPresentHidUnavailable": "The USB bus lists the Stream Deck, but its HID interface is missing, often behind a hub or monitor dock. Replug it, or power-cycle the hub.",
+    "permissionDenied": "The system does not allow DeckPilot to open the device. On Linux, check that the udev rule is installed, then replug the device.",
+    "unsupported": "DeckPilot has no driver for this model yet.",
+    "busy": "Another program has the device open. Quit it, then refresh devices.",
+    "communicationError": "The device opens but keeps failing. DeckPilot retries less often; check the cable or hub.",
+    "reconnecting": "The connection was lost. DeckPilot opens the device again shortly.",
+    "unknown": "Devices could not be listed. DeckPilot keeps trying."
   },
   "summary": {
     "none": "No devices",

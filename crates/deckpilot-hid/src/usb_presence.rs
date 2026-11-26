@@ -136,6 +136,9 @@ mod tests {
             without_hid(&tree.0, 0x0fd9, &[0x0080]),
             vec![(0x0080, "AL2".to_owned())]
         );
-        assert!(without_hid(&tree.0.join("missing"), 0x0fd9, &[0x0080]).is_empty());
+        assert_eq!(
+            without_hid(&tree.0.join("missing"), 0x0fd9, &[0x0080]),
+            vec![]
+        );
     }
 }
