@@ -634,8 +634,13 @@ pl):
   Each change is applied at once. A time out of range is shown as such and
   not saved.
 
-The per-device setting is kept by the running agent; saving it across
-restarts comes with the plugin's settings (C7). Opening the managed layouts
+The per-device setting is saved and survives an agent restart. It is
+saved machine-locally in the `settings` table under
+`calls.overlay.devices`: only the devices the user changed, by model and
+serial, and of those the first 64 by device id (model, then serial). Of the
+`settings` table an export carries only the update preferences, never this
+key. A damaged value is ignored and the defaults apply. A change made before the store is open wins over the saved
+one. Opening the managed layouts
 in the Device Editor's layout chooser is left out for now (it needs a
 non-profile load and save path, an owner decision); the preview of a call
 page is below.

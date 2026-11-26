@@ -1796,6 +1796,86 @@ async fn a_locked_device_never_shows_the_call() {
     deck.agent.shutdown().await;
 }
 
+/// The per-device overlay setting survives an agent restart: turned off,
+/// it stays off after the restart, and a call then shows no overlay on that
+/// device. It is kept machine-local (the `settings` table), never in a
+/// profile.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_overlay_setting_survives_a_restart() {
+    use deckpilot_ipc::{Request, Response};
+    let f = fixture();
+    let dir = TempDir::new("deckpilot-calls-setting");
+    let (paths, db) = support::data_dir(&dir, &f.profile, &[]);
+    let mock = MockBackend::new();
+    let device = mock.plug(&models::stream_deck_mk2(), "CALLS-S");
+    let clock = FakeInstant::default();
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::new(), ActionParameters::new())
+        .await;
+    agent.status().await;
+    let Response::CallsStatus { status } = agent
+        .request(Request::SetCallsOverlay {
+            device: device.clone(),
+            on: false,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(
+        status
+            .devices
+            .iter()
+            .any(|d| d.device == device && !d.overlay)
+    );
+    let saved = deckpilot_storage::ConfigStore::setting(&agent.store(), "calls.overlay.devices")
+        .unwrap()
+        .expect("saved");
+    assert!(saved.contains("CALLS-S"), "{saved}");
+    agent.shutdown().await;
+
+    let agent = TestAgent::start_with_folder_clock(&paths, &db, &mock, &clock);
+    agent.unlock().await;
+    agent
+        .handle
+        .install_calls_mock(MockProvider::new(), ActionParameters::new())
+        .await;
+    agent.status().await;
+    let Response::CallsStatus { status } = agent.request(Request::GetCallsStatus).await.unwrap()
+    else {
+        panic!("calls status")
+    };
+    assert!(
+        status
+            .devices
+            .iter()
+            .any(|d| d.device == device && !d.overlay),
+        "still off after the restart: {:?}",
+        status.devices
+    );
+    // A call: no overlay on this device.
+    agent
+        .handle
+        .calls_mock(|mock, now| mock.join(now, "meeting"))
+        .await;
+    let deck = Deck {
+        agent,
+        mock,
+        device,
+        clock,
+        _dir: dir,
+    };
+    deck.advance(5).await;
+    let view = deck.agent.handle.calls_view().await.unwrap();
+    assert_eq!(view.state, CallState::Active);
+    assert_eq!(view.frames, 0, "{view:?}");
+    deck.agent.shutdown().await;
+}
+
 /// Plugin API 1.16's `call.state` and `call.control` as the Calls plugin's
 /// executor asks the agent (after the broker allowed them; the broker's
 /// and the executor's refusals are tested in their crates): the user's
