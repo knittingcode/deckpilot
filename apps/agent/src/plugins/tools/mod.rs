@@ -59,6 +59,7 @@ use deckpilot_plugin_manifest::{ToolDeclaration, ToolExecutable};
 
 mod docker;
 mod git;
+pub(crate) mod remotes;
 #[cfg(test)]
 mod tests;
 
@@ -671,6 +672,8 @@ pub(crate) struct ToolHost {
     network_timeout: Duration,
     modify_timeout: Duration,
     environment: Environment,
+    /// Whose running processes count against the per-plugin limit.
+    slots: std::sync::Arc<RunSlots>,
 }
 
 /// git's local reads.
@@ -704,7 +707,17 @@ impl ToolHost {
     /// agent may have configured meanwhile ([`configure`]).
     #[cfg(test)]
     pub fn for_test() -> Self {
-        Self::unconfigured()
+        Self {
+            // Its own slots: tests running side by side never hold up
+            // each other's processes.
+            slots: std::sync::Arc::default(),
+            ..Self::unconfigured()
+        }
+    }
+
+    /// The running processes this host's runs count against.
+    pub fn slots(&self) -> &std::sync::Arc<RunSlots> {
+        &self.slots
     }
 
     fn unconfigured() -> Self {
@@ -715,6 +728,7 @@ impl ToolHost {
             network_timeout: Duration::from_secs(NETWORK_TIMEOUT.0),
             modify_timeout: Duration::from_secs(MODIFY_TIMEOUT.0),
             environment: Environment::Agent,
+            slots: RunSlots::shared(),
         }
     }
 
@@ -971,6 +985,86 @@ pub(crate) fn remote_listing(host: &ToolHost, ls_remote: &Plan) -> Plan {
 /// a folder inside it) before any git run in it.
 pub(crate) fn toplevel_listing(host: &ToolHost, plan: &Plan) -> Plan {
     git::toplevel(host, plan)
+}
+
+/// git works only on a repository that is the binding's own: its work
+/// tree is the binding or a folder inside it, and so is its git directory
+/// (real paths), so a `.git` file (`gitdir: ../secret/.git`) or a `.git`
+/// link to another repository is refused. `GIT_CEILING_DIRECTORIES`
+/// already keeps discovery from climbing above the binding.
+///
+/// The one exception is a genuine linked worktree (`git worktree add`):
+/// its git directory is `<common>/worktrees/<name>`, which has a
+/// `commondir`, and whose own `gitdir` file points back to this work
+/// tree's `.git`. A submodule's git directory (`.git/modules/…` of the
+/// superproject) is refused: submodules are not supported as bindings yet.
+pub(crate) fn work_tree_inside(
+    tools: &ToolHost,
+    plan: &Plan,
+    deadline: Option<Instant>,
+    stop: &(dyn Fn() -> Option<Stop> + Sync),
+) -> Result<(), Denial> {
+    let listing = execute(&toplevel_listing(tools, plan), deadline, stop)?;
+    let not_a_repository = || {
+        Denial::new(
+            codes::NOT_A_REPOSITORY,
+            "the bound folder is not a git work tree",
+        )
+    };
+    let outside = |what: &str| {
+        Denial::new(
+            codes::OUTSIDE_BINDING,
+            format!("the repository's {what} is not inside the bound folder"),
+        )
+    };
+    let binding = std::fs::canonicalize(&plan.cwd).map_err(|_| not_a_repository())?;
+    if !listing.output.success() {
+        return Err(not_a_repository());
+    }
+    let lines: Vec<&str> = listing.output.stdout.lines().collect();
+    let [top, git_dir] = lines.as_slice() else {
+        return Err(not_a_repository());
+    };
+    let real = |path: &str| {
+        (!path.is_empty())
+            .then(|| std::fs::canonicalize(path).ok())
+            .flatten()
+    };
+    let (Some(top), Some(git_dir)) = (real(top), real(git_dir)) else {
+        return Err(not_a_repository());
+    };
+    if !top.starts_with(&binding) {
+        return Err(outside("work tree"));
+    }
+    if git_dir.starts_with(&binding) || linked_worktree(&git_dir, &top) {
+        Ok(())
+    } else {
+        Err(outside("git directory"))
+    }
+}
+
+/// Whether `git_dir` is the git directory of the linked worktree at
+/// `top`: `<common>/worktrees/<name>` with a `commondir`, whose `gitdir`
+/// file names `top/.git`.
+fn linked_worktree(git_dir: &std::path::Path, top: &std::path::Path) -> bool {
+    let under_worktrees = git_dir
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .is_some_and(|n| n == "worktrees");
+    let back = std::fs::read_to_string(git_dir.join("gitdir"))
+        .ok()
+        .map(|text| text.trim_end_matches(['\n', '\r']).to_owned())
+        .map(|path| {
+            let path = std::path::PathBuf::from(path);
+            if path.is_absolute() {
+                path
+            } else {
+                git_dir.join(path)
+            }
+        })
+        .and_then(|path| std::fs::canonicalize(path).ok());
+    let ours = std::fs::canonicalize(top.join(".git")).ok();
+    under_worktrees && git_dir.join("commondir").is_file() && back.is_some() && back == ours
 }
 
 /// The user's settings of the tools: what the built-in `git` and `docker`
@@ -1247,24 +1341,47 @@ fn redact_params(text: &str) -> String {
     out
 }
 
+/// The running processes per plugin (all of them and the modifying ones)
+/// that [`RunSlot`]s count. The agent has one ([`RunSlots::shared`]); a
+/// test's [`ToolHost::for_test`] has its own, so tests running side by side
+/// never wait for each other's slots.
+#[derive(Debug, Default)]
+pub(crate) struct RunSlots {
+    running: Mutex<BTreeMap<String, (u32, u32)>>,
+    released: Condvar,
+}
+
+static SHARED_SLOTS: std::sync::LazyLock<std::sync::Arc<RunSlots>> =
+    std::sync::LazyLock::new(std::sync::Arc::default);
+
+impl RunSlots {
+    /// The agent's: every plugin's processes, whichever executor starts them.
+    pub fn shared() -> std::sync::Arc<Self> {
+        SHARED_SLOTS.clone()
+    }
+}
+
 /// One of a plugin's running `tool.run` processes: at most
 /// [`MAX_CONCURRENT`] per plugin, of which at most one modifies. Released
 /// on drop.
 #[derive(Debug)]
 pub(crate) struct RunSlot {
+    slots: std::sync::Arc<RunSlots>,
     plugin: String,
     modify: bool,
 }
 
-/// Running processes per plugin: all of them and the modifying ones.
-static RUNNING: Mutex<BTreeMap<String, (u32, u32)>> = Mutex::new(BTreeMap::new());
-static RELEASED: Condvar = Condvar::new();
-
 impl RunSlot {
-    /// Waits for a slot of `plugin` (a modifying one when `modify`) while
-    /// `give_up` says no; `None` when it said yes first.
-    pub fn acquire(plugin: &str, modify: bool, give_up: &dyn Fn() -> bool) -> Option<Self> {
-        let mut running = RUNNING
+    /// Waits for a slot of `plugin` in `slots` (a modifying one when
+    /// `modify`) while `give_up` says no; `None` when it said yes first.
+    pub fn acquire(
+        slots: &std::sync::Arc<RunSlots>,
+        plugin: &str,
+        modify: bool,
+        give_up: &dyn Fn() -> bool,
+    ) -> Option<Self> {
+        let mut running = slots
+            .running
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
@@ -1272,6 +1389,7 @@ impl RunSlot {
             if all < MAX_CONCURRENT && (!modify || modifying == 0) {
                 running.insert(plugin.to_owned(), (all + 1, modifying + u32::from(modify)));
                 return Some(Self {
+                    slots: slots.clone(),
                     plugin: plugin.to_owned(),
                     modify,
                 });
@@ -1279,7 +1397,8 @@ impl RunSlot {
             if give_up() {
                 return None;
             }
-            running = RELEASED
+            running = slots
+                .released
                 .wait_timeout(running, WATCH)
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
@@ -1289,7 +1408,9 @@ impl RunSlot {
 
 impl Drop for RunSlot {
     fn drop(&mut self) {
-        let mut running = RUNNING
+        let mut running = self
+            .slots
+            .running
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((all, modifying)) = running.get_mut(&self.plugin) {
@@ -1299,6 +1420,6 @@ impl Drop for RunSlot {
                 running.remove(&self.plugin);
             }
         }
-        RELEASED.notify_all();
+        self.slots.released.notify_all();
     }
 }

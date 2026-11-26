@@ -288,7 +288,15 @@
       "summary_many": "Repozytoria: {{keys}}",
       "summary_other": "Repozytoria: {{keys}}",
       "summaryDefault": "{{key}} (domyślne)",
-      "lastWithRole": "Aby usunąć ostatnie repozytorium, najpierw usuń rolę repozytorium."
+      "lastWithRole": "Aby usunąć ostatnie repozytorium, najpierw usuń rolę repozytorium.",
+      "remotes": "Repozytoria zdalne",
+      "noRemotes": "Brak repozytoriów zdalnych.",
+      "link": "Połącz ze zdalnym…",
+      "linkFor": "Połącz ze zdalnym: {{name}}",
+      "linkNeedsSave": "Najpierw zapisz projekt, aby połączyć repozytorium zdalne.",
+      "primaryRemote": "główne",
+      "linkedRemote": "powiązane ({{id}})",
+      "linked": "Repozytorium zdalne połączone"
     }
   },
   "workSession": {

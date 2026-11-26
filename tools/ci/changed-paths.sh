@@ -9,7 +9,8 @@
 # merge commit and its base (HEAD^1..HEAD, checkout with fetch-depth 2).
 # For a merge queue group (EVENT_NAME=merge_group) they are those between
 # the group's base commit (BASE_SHA, fetched here) and its head (HEAD),
-# i.e. every pull request in the group. Any other event (e.g. a push to
+# i.e. every pull request in the group. A moved file counts at its old and
+# its new path (--no-renames). Any other event (e.g. a push to
 # main), or a diff that cannot be computed, turns every group on: when in
 # doubt, run.
 set -euo pipefail
@@ -48,12 +49,12 @@ if [ "$#" -gt 0 ]; then
 elif [ "${EVENT_NAME:-pull_request}" = merge_group ]; then
   base="${BASE_SHA:-}"
   if [ -z "$base" ] || ! git fetch --quiet --no-tags --depth=1 origin "$base" 2> /dev/null \
-    || ! changed=$(git diff --name-only "$base" HEAD 2> /dev/null); then
+    || ! changed=$(git diff --no-renames --name-only "$base" HEAD 2> /dev/null); then
     all "the changed files of the merge group cannot be determined"
   fi
 elif [ "${EVENT_NAME:-pull_request}" != pull_request ]; then
   all "event ${EVENT_NAME}"
-elif ! changed=$(git diff --name-only HEAD^1 HEAD 2>/dev/null); then
+elif ! changed=$(git diff --no-renames --name-only HEAD^1 HEAD 2>/dev/null); then
   all "the changed files cannot be determined"
 fi
 

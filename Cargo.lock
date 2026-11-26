@@ -1083,6 +1083,7 @@ dependencies = [
  "cap-std",
  "chrono",
  "deckpilot-agent",
+ "deckpilot-calls",
  "deckpilot-core",
  "deckpilot-device",
  "deckpilot-distribution",
@@ -1153,9 +1154,12 @@ dependencies = [
 name = "deckpilot-calls"
 version = "0.15.0"
 dependencies = [
+ "deckpilot-core",
+ "deckpilot-device",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
@@ -1198,6 +1202,7 @@ dependencies = [
  "deckpilot-storage",
  "deckpilot-update",
  "hkdf",
+ "interprocess",
  "minisign",
  "rcgen",
  "reqwest",

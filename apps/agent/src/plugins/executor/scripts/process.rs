@@ -617,8 +617,8 @@ impl Executor {
         };
         let deadline = Instant::now() + timeout;
         let give_up = || stop().is_some() || Instant::now() >= deadline;
-        let _slot =
-            RunSlot::acquire(plugin.as_str(), false, &give_up).ok_or_else(|| match stop() {
+        let _slot = RunSlot::acquire(self.tools.slots(), plugin.as_str(), false, &give_up)
+            .ok_or_else(|| match stop() {
                 Some(Stop::Revoked) => fault(
                     codes::NOT_GRANTED,
                     "the grant was revoked while the run waited",

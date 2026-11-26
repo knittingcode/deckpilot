@@ -636,21 +636,37 @@ fn userinfo_is_removed_from_every_url() {
 #[test]
 fn runs_per_plugin_are_bounded_and_one_modifies_at_a_time() {
     let plugin = "deckpilot.slots-test";
+    let pool = std::sync::Arc::new(RunSlots::default());
     let never = || false;
     let give_up = || true;
     let slots: Vec<RunSlot> = (0..MAX_CONCURRENT)
-        .map(|_| RunSlot::acquire(plugin, false, &never).unwrap())
+        .map(|_| RunSlot::acquire(&pool, plugin, false, &never).unwrap())
         .collect();
-    assert!(RunSlot::acquire(plugin, false, &give_up).is_none());
+    assert!(RunSlot::acquire(&pool, plugin, false, &give_up).is_none());
     drop(slots);
-    let modifying = RunSlot::acquire(plugin, true, &never).unwrap();
-    assert!(RunSlot::acquire(plugin, true, &give_up).is_none());
-    let reading = RunSlot::acquire(plugin, false, &give_up);
+    let modifying = RunSlot::acquire(&pool, plugin, true, &never).unwrap();
+    assert!(RunSlot::acquire(&pool, plugin, true, &give_up).is_none());
+    let reading = RunSlot::acquire(&pool, plugin, false, &give_up);
     assert!(reading.is_some());
     drop(modifying);
-    assert!(RunSlot::acquire(plugin, true, &give_up).is_some());
+    assert!(RunSlot::acquire(&pool, plugin, true, &give_up).is_some());
     // Another plugin is not held up.
-    assert!(RunSlot::acquire("deckpilot.slots-other", true, &give_up).is_some());
+    assert!(RunSlot::acquire(&pool, "deckpilot.slots-other", true, &give_up).is_some());
+    // Another pool is not held up either; the agent's is one for all.
+    let other = std::sync::Arc::new(RunSlots::default());
+    let busy: Vec<RunSlot> = (0..MAX_CONCURRENT)
+        .map(|_| RunSlot::acquire(&pool, "deckpilot.slots-pool", false, &never).unwrap())
+        .collect();
+    assert!(RunSlot::acquire(&other, "deckpilot.slots-pool", false, &give_up).is_some());
+    drop(busy);
+    assert!(std::sync::Arc::ptr_eq(
+        &RunSlots::shared(),
+        &RunSlots::shared()
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        ToolHost::from_agent().slots(),
+        &RunSlots::shared()
+    ));
 }
 
 #[test]

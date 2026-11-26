@@ -63,6 +63,8 @@
     "profileNameEmpty": "nazwa profilu nie może być pusta",
     "executionValueOnlyInRun": "wartości wykonania istnieją tylko podczas uruchomienia",
     "moduleDisabled": "moduł {{module}} jest wyłączony",
+    "callsAgentNotRunning": "uruchom agenta DeckPilot, aby zobaczyć Rozmowy",
+    "callsAgentTooOld": "uruchomiony agent ({{agent}}) nie obsługuje Rozmów",
     "workSessionAgentNotRunning": "uruchom agenta DeckPilot, aby zobaczyć sesję pracy",
     "workSessionAgentTooOld": "uruchomiony agent ({{agent}}) nie obsługuje sesji pracy; uruchom agenta ponownie, aby używać agenta z tej wersji",
     "workflowNameEmpty": "nazwa przepływu pracy nie może być pusta",

@@ -27,6 +27,7 @@ mod files;
 pub mod gestures;
 pub mod layouts;
 mod legacy;
+pub mod managed_layouts;
 pub mod policy;
 mod project_actions;
 pub mod provenance;
