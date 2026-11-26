@@ -17,6 +17,7 @@ mod marketplace_e2e;
 mod modules;
 mod plugin_actions;
 mod state;
+mod supervisor;
 #[cfg(test)]
 mod tests;
 mod update_provider;
@@ -156,6 +157,11 @@ fn main() {
                 // Start the agent on first launch if it is not running yet,
                 // unless a development session manages it.
                 let managed = std::env::var_os("DECKPILOT_NO_AGENT_AUTOSTART").is_some();
+                // Before the first start, so that the agent started here is
+                // supervised too.
+                if !managed {
+                    agent::spawn_supervisor(handle.clone(), paths.clone());
+                }
                 if !managed
                     && let Ok(connection) = agent::connection(&paths).await
                     && !connection.running

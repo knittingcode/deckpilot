@@ -17,6 +17,15 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- The configuration app restarts the background agent it started when the
+  agent ends unexpectedly. It restarts it at most 3 times in 10 minutes,
+  after 1, 5 and then 30 seconds. After that, Settings shows
+  "DeckPilot agent stopped" with a Restart button. The app never restarts
+  the agent after a Quit or a stop you asked for, and never restarts an
+  agent it did not start, such as one started at login: it reconnects to
+  that one, as before. A restarted agent starts locked, like any agent, and
+  is unlocked only while the app is unlocked.
+
 - Git Providers (builds with plugins, not bundled yet): the agent can make
   the server of the GitHub or GitLab plugin a Git Providers connection when
   you ask, and, only if you also choose so, use the token saved there. It
@@ -248,6 +257,9 @@ released either. 0.6.0 is the first version intended for publication.
   or duplicated one is never trusted and never runs until reviewed. A
   script can never be granted a container runtime (Docker, Podman and
   the like) in this version.
+- Calls (groundwork): the per-device "show calls on this device" setting
+  survives a restart of DeckPilot. It is kept on this computer only, and
+  no export includes it.
 - Export and import of scripts (export format 6, only when there are
   scripts): an export holds a script's code and settings, never whether
   it is trusted or what it may do. An imported script arrives untrusted
@@ -306,6 +318,11 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- Agent: a failure inside the background agent no longer leaves a menu
+  bar or tray icon whose menu does nothing. The agent writes the failure
+  to its log, closes its connection point, lets a next agent start, and
+  ends with a non-zero exit code. The same applies without a tray
+  (`--headless`).
 - Linux: the `.deb` and `.rpm` reload udev's rules when they are installed
   or removed, and after an install apply the Stream Deck rule to an
   Elgato device that is already plugged in, so it works without

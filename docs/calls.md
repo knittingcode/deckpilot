@@ -202,6 +202,11 @@ The agent's `PLUGIN_API` is not moved by this change, and the privileged
 policy has no `deckpilot.calls` entry yet: both are the owner's release
 steps. Until then no plugin can be granted `calls`, and the ops are inert.
 
+The independent reviews of the Calls work, their findings, fixes and the
+accepted residual risks are recorded in
+[the Calls security review record](marketplace/reviews/2026-11-25-calls-security-review.md)
+(C8).
+
 **The gate.** Before anything is sent, `ops::gate` checks, in this order:
 
 1. the provider is connected and the call is not `unknown`, else
@@ -239,6 +244,20 @@ them, with `^1.16`, and a plugin with `calls` has no `network`,
 `credentials`, `openUrl`, `tools`, `connections`, `resources` or `scripts`,
 and no variables. `Manifest::privileged_usages` lists
 all three, so the reviewed privileged policy pins them like the 1.9 kinds.
+
+**End to end (T-P2,
+`crates/deckpilot-plugin-registry/tests/calls_privileged.rs`).** The Calls
+plugin's own manifest (deckpilot-plugins `official/calls`) is run through
+`package --first-party`, `release sign`'s preflight and `release verify`,
+signed by two throwaway keys:
+
+- This build refuses it everywhere: the compiled policy has no Calls entry.
+- An approved test policy with its exact entry still refuses it, because
+  `deckpilot.calls` is not a privileged plugin id. Adding the id and the
+  entry is the owner's release step.
+- The public rules, another id, `calls` with a way out, and an API below
+  1.16 are refused by the manifest rules themselves.
+- No release-relevant build enables the test-only open gate (`cargo tree`).
 
 | Grant | Tier | |
 | --- | --- | --- |
@@ -620,8 +639,13 @@ pl):
   Each change is applied at once. A time out of range is shown as such and
   not saved.
 
-The per-device setting is kept by the running agent; saving it across
-restarts comes with the plugin's settings (C7). Opening the managed layouts
+The per-device setting is saved and survives an agent restart. It is
+saved machine-locally in the `settings` table under
+`calls.overlay.devices`: only the devices the user changed, by model and
+serial, and of those the first 64 by device id (model, then serial). Of the
+`settings` table an export carries only the update preferences, never this
+key. A damaged value is ignored and the defaults apply. A change made before the store is open wins over the saved
+one. Opening the managed layouts
 in the Device Editor's layout chooser is left out for now (it needs a
 non-profile load and save path, an owner decision); the preview of a call
 page is below.

@@ -180,6 +180,10 @@ pub(crate) enum Command {
     /// a reload does for them alone (tests: values that change in a storm).
     #[cfg(feature = "test-hooks")]
     ReloadVariables,
+    /// Panic in the main loop (tests: a fatal agent failure ends the
+    /// process, `crash.rs`).
+    #[cfg(feature = "test-hooks")]
+    Panic,
     /// A connection watches the live states of these actions' keys
     /// (`watchKeyStates`); none: it stopped or closed.
     WatchKeyStates {
@@ -359,6 +363,13 @@ impl AgentHandle {
     #[cfg(feature = "test-hooks")]
     pub fn reload_variables(&self) {
         let _ = self.commands.send(Command::ReloadVariables);
+    }
+
+    /// Makes the main loop panic (tests:
+    /// `crash::testing::PANIC_AFTER_START_ENV`).
+    #[cfg(feature = "test-hooks")]
+    pub fn panic_main_loop(&self) {
+        let _ = self.commands.send(Command::Panic);
     }
 
     /// How many redraws variable changes caused so far (tests).
@@ -775,7 +786,11 @@ impl DeviceSession {
 
 pub struct Agent {
     options: AgentOptions,
-    _lock: InstanceLock,
+    /// Shared with the IPC server task, which lets go of it only after its
+    /// listener: whichever goes last (a panic drops the agent first, and
+    /// the server with the runtime) releases the lock after the endpoint is
+    /// closed, so a next agent never has its socket reclaimed by this one.
+    _lock: Arc<InstanceLock>,
     /// Open while unlocked.
     store: Option<SqliteStore>,
     /// Key of the open database, handed to the configuration app on request.
@@ -950,7 +965,9 @@ impl Agent {
             work_session,
             variable_redraws: Arc::new(AtomicUsize::new(0)),
         };
-        let server = crate::server::spawn(listener, handle.clone(), token, shutdown_rx);
+        let lock = Arc::new(lock);
+        let server =
+            crate::server::spawn(listener, lock.clone(), handle.clone(), token, shutdown_rx);
         info!(endpoint = %endpoint.display(), backend = options.backend.name(), ?security, "agent started");
 
         let persisted_project = runtime.active_project_id();
@@ -1257,6 +1274,8 @@ impl Agent {
                 }
                 Flow::Continue
             }
+            #[cfg(feature = "test-hooks")]
+            Command::Panic => panic!("test hook: the agent's main loop panics"),
             Command::WatchKeyStates {
                 viewer,
                 profile,
