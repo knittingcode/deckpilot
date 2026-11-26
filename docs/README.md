@@ -18,6 +18,9 @@ led to it; where the code differs, the code and the tests win.
   key handling, locking, exports and the threat model.
 - [Updates](updates.md): update channels, signed updates, the automatic
   check and how app and agent are updated together.
+- [Stream Deck behind a USB hub](troubleshooting/usb-hub-resets.md): hub
+  resets and "USB present, HID missing" on Linux, what DeckPilot does and
+  does not do, and how to tell the causes apart.
 - [Feature modules](modules.md): how DeckPilot is built from modules and
   what enabling or disabling one does.
 - [Variables](variables.md): the unified variable registry, references and
