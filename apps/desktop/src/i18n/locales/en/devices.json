@@ -29,6 +29,19 @@
       "explanation": "The background agent handles devices and runs actions. It keeps running when this window is closed.",
       "start": "Start agent",
       "notFound": "The agent executable was not found next to this application. Start<code>deckpilot-agent</code>manually."
+    },
+    "supervision": {
+      "restartingTitle": "The agent stopped unexpectedly",
+      "restarting_one": "It ended ({{exit}}). DeckPilot starts it again in {{count}} second (restart {{restart}} of {{max}}).",
+      "restarting_other": "It ended ({{exit}}). DeckPilot starts it again in {{count}} seconds (restart {{restart}} of {{max}}).",
+      "stoppedTitle": "DeckPilot agent stopped",
+      "gaveUp_one": "It ended unexpectedly ({{exit}}) after being restarted {{count}} time in {{minutes}} minutes. It is not started again by itself.",
+      "gaveUp_other": "It ended unexpectedly ({{exit}}) after being restarted {{count}} times in {{minutes}} minutes. It is not started again by itself.",
+      "notRestarted": "It ended unexpectedly ({{exit}}) and could not be started again.",
+      "restart": "Restart",
+      "exitCode": "exit code {{code}}",
+      "exitSignal": "signal {{signal}}",
+      "exitUnknown": "no exit code"
     }
   },
   "detail": {

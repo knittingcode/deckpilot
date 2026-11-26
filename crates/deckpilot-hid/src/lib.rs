@@ -42,6 +42,44 @@ fn model_for(kind: Kind) -> Option<DeviceModel> {
         .map(|(_, model)| model())
 }
 
+/// One HID interface of an Elgato device as the operating system lists it,
+/// for diagnostics ([`elgato_hid_interfaces`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HidInterface {
+    pub vendor_id: u16,
+    pub product_id: u16,
+    /// `None` when the device reports no serial string (the adapter skips
+    /// such devices: a device is identified by its serial).
+    pub serial: Option<String>,
+}
+
+/// The HID interfaces with Elgato's vendor ID that `hidapi` lists, of any
+/// model. Enumeration only: no report is read or written (on Windows
+/// hidapi opens each device without access rights to read its
+/// attributes).
+///
+/// # Errors
+///
+/// When the HID API cannot be initialised.
+pub fn elgato_hid_interfaces() -> Result<Vec<HidInterface>, String> {
+    let api = elgato_streamdeck::new_hidapi().map_err(|e| e.to_string())?;
+    let vendor = models::stream_deck_mk2()
+        .usb
+        .map_or(0x0fd9, |usb| usb.vendor_id);
+    Ok(api
+        .device_list()
+        .filter(|info| info.vendor_id() == vendor)
+        .map(|info| HidInterface {
+            vendor_id: info.vendor_id(),
+            product_id: info.product_id(),
+            serial: info
+                .serial_number()
+                .filter(|serial| !serial.is_empty())
+                .map(str::to_owned),
+        })
+        .collect())
+}
+
 /// Models with a descriptor but no driver (reported as unsupported under
 /// their own model id).
 const DESCRIBED: [(Kind, fn() -> DeviceModel); 3] = [

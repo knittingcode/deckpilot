@@ -1667,7 +1667,27 @@ export interface AgentConnection {
   /** Protocol of the connection: the lower of the app's and the agent's. */
   protocol?: number | null
   capabilities?: AgentCapability[]
+  /** While no agent runs: an agent this app started exited unexpectedly. */
+  supervision?: AgentSupervision | null
 }
+
+/** How an agent process ended. */
+export interface AgentExit {
+  success: boolean
+  /** None if a signal ended it. */
+  code: number | null
+  /** The signal that ended it (Unix). */
+  signal: number | null
+}
+
+/**
+ * An agent this app started exited unexpectedly (supervisor.rs): it is
+ * restarted after a delay, at most `max` times in 10 minutes, then it stays
+ * stopped until the user restarts it.
+ */
+export type AgentSupervision =
+  | { state: "restarting"; restart: number; max: number; delayMs: number; exit: AgentExit }
+  | { state: "stopped"; restarts: number; windowMinutes: number; exit: AgentExit }
 
 export type UpdateMode = "notifyOnly" | "downloadAndAsk" | "installWhenIdle"
 

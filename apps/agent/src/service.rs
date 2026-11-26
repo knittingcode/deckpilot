@@ -43,6 +43,8 @@ mod folders;
 mod gestures;
 mod live_preview;
 #[cfg(feature = "plugins")]
+pub(crate) mod plugin_calls;
+#[cfg(feature = "plugins")]
 pub(crate) mod plugin_projects;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin_scripts;
@@ -180,6 +182,10 @@ pub(crate) enum Command {
     /// a reload does for them alone (tests: values that change in a storm).
     #[cfg(feature = "test-hooks")]
     ReloadVariables,
+    /// Panic in the main loop (tests: a fatal agent failure ends the
+    /// process, `crash.rs`).
+    #[cfg(feature = "test-hooks")]
+    Panic,
     /// A connection watches the live states of these actions' keys
     /// (`watchKeyStates`); none: it stopped or closed.
     WatchKeyStates {
@@ -232,6 +238,17 @@ pub(crate) enum Command {
         call: plugin_projects::ProjectCall,
         reply: std::sync::mpsc::SyncSender<plugin_projects::ProjectReply>,
     },
+    /// The Calls plugin's `call.state` or `call.control` (plugin API
+    /// 1.16), which the broker allowed, from its lane thread. A control is
+    /// answered once confirmed.
+    #[cfg(feature = "plugins")]
+    PluginCall {
+        plugin: String,
+        call: plugin_calls::CallsCall,
+        reply: std::sync::mpsc::SyncSender<plugin_calls::CallsReply>,
+        /// Whether the lane still waits, and until when.
+        pending: plugin_calls::Pending,
+    },
     /// A script run's question to the script store (plugin API 1.13),
     /// from its lane thread.
     #[cfg(feature = "plugins")]
@@ -254,7 +271,7 @@ pub(crate) enum Command {
     /// Installs Calls with the mock provider (tests).
     #[cfg(feature = "test-hooks")]
     CallsInstallMock {
-        mock: Box<deckpilot_calls::testing::MockProvider>,
+        mock: Box<dyn calls::Provider>,
         /// The parameters of "Back to work" in the templates.
         back: deckpilot_core::ActionParameters,
         /// The consent the test grants.
@@ -348,6 +365,13 @@ impl AgentHandle {
     #[cfg(feature = "test-hooks")]
     pub fn reload_variables(&self) {
         let _ = self.commands.send(Command::ReloadVariables);
+    }
+
+    /// Makes the main loop panic (tests:
+    /// `crash::testing::PANIC_AFTER_START_ENV`).
+    #[cfg(feature = "test-hooks")]
+    pub fn panic_main_loop(&self) {
+        let _ = self.commands.send(Command::Panic);
     }
 
     /// How many redraws variable changes caused so far (tests).
@@ -521,6 +545,61 @@ impl AgentHandle {
         }
     }
 
+    /// The Calls plugin's operation as its executor asks the agent (plugin
+    /// API 1.16, after the broker and the executor allowed it): `None` is
+    /// `call.state`, `Some(action)` is `call.control`. The state's JSON, or
+    /// the control's outcome as `"confirmed"` / `"alreadyThere"`, or the
+    /// refusal's code and message. Tests only.
+    #[cfg(all(feature = "test-hooks", feature = "plugins"))]
+    pub async fn plugin_call(
+        &self,
+        plugin: &str,
+        action: Option<deckpilot_plugin_abi::calls::CallAction>,
+    ) -> Result<serde_json::Value, (String, String)> {
+        use plugin_calls::{AgentCallsHost, CallsAnswer, CallsCall, CallsHost};
+        let call = action.map_or(CallsCall::State, CallsCall::Control);
+        let host = AgentCallsHost::new(self.commands.clone());
+        let plugin = plugin.to_owned();
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let answer = tokio::task::spawn_blocking(move || host.call(&plugin, call, far, &|| false))
+            .await
+            .map_err(|e| ("join".to_owned(), e.to_string()))?;
+        match answer {
+            Ok(CallsAnswer::State(state)) => Ok(serde_json::to_value(*state).unwrap_or_default()),
+            Ok(CallsAnswer::Control(outcome)) => {
+                Ok(serde_json::to_value(outcome).unwrap_or_default())
+            }
+            Err(refusal) => Err((refusal.code.to_owned(), refusal.message)),
+        }
+    }
+
+    /// A `call.control` the lane already gave up on (cancelled, or told it
+    /// failed) when the agent gets to it: the refusal's code and message.
+    /// Tests only.
+    #[cfg(all(feature = "test-hooks", feature = "plugins"))]
+    pub async fn plugin_call_given_up(
+        &self,
+        plugin: &str,
+        action: deckpilot_plugin_abi::calls::CallAction,
+    ) -> Option<(String, String)> {
+        use plugin_calls::{CallsCall, Pending};
+        let pending = Pending::new(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        pending.give_up();
+        let (reply, answer) = std::sync::mpsc::sync_channel(1);
+        self.commands
+            .send(Command::PluginCall {
+                plugin: plugin.to_owned(),
+                call: CallsCall::Control(action),
+                reply,
+                pending,
+            })
+            .ok()?;
+        let answer = tokio::task::spawn_blocking(move || answer.recv().ok())
+            .await
+            .ok()??;
+        answer.err().map(|r| (r.code.to_owned(), r.message))
+    }
+
     /// The work session as last published; changes on every transition.
     pub fn work_session(
         &self,
@@ -575,11 +654,24 @@ impl AgentHandle {
         back: deckpilot_core::ActionParameters,
         consent: deckpilot_calls::provider::ConsentState,
     ) {
+        self.install_calls_provider(mock, back, consent).await;
+    }
+
+    /// Installs Calls with `provider` (tests: the operating-system signals
+    /// provider on a fixture source, say) and the consent `consent`.
+    #[cfg(feature = "test-hooks")]
+    pub async fn install_calls_provider(
+        &self,
+        provider: impl deckpilot_calls::provider::CallProvider + 'static,
+        back: deckpilot_core::ActionParameters,
+        consent: deckpilot_calls::provider::ConsentState,
+    ) {
+        let mock: Box<dyn calls::Provider> = Box::new(provider);
         let (reply, done) = oneshot::channel();
         if self
             .commands
             .send(Command::CallsInstallMock {
-                mock: Box::new(mock),
+                mock,
                 back,
                 consent,
                 reply,
@@ -699,7 +791,11 @@ impl DeviceSession {
 
 pub struct Agent {
     options: AgentOptions,
-    _lock: InstanceLock,
+    /// Shared with the IPC server task, which lets go of it only after its
+    /// listener: whichever goes last (a panic drops the agent first, and
+    /// the server with the runtime) releases the lock after the endpoint is
+    /// closed, so a next agent never has its socket reclaimed by this one.
+    _lock: Arc<InstanceLock>,
     /// Open while unlocked.
     store: Option<SqliteStore>,
     /// Key of the open database, handed to the configuration app on request.
@@ -891,7 +987,9 @@ impl Agent {
             work_session,
             variable_redraws: Arc::new(AtomicUsize::new(0)),
         };
-        let server = crate::server::spawn(listener, handle.clone(), token, shutdown_rx);
+        let lock = Arc::new(lock);
+        let server =
+            crate::server::spawn(listener, lock.clone(), handle.clone(), token, shutdown_rx);
         info!(endpoint = %endpoint.display(), backend = options.backend.name(), ?security, "agent started");
 
         let persisted_project = runtime.active_project_id();
@@ -1221,6 +1319,8 @@ impl Agent {
                 }
                 Flow::Continue
             }
+            #[cfg(feature = "test-hooks")]
+            Command::Panic => panic!("test hook: the agent's main loop panics"),
             Command::WatchKeyStates {
                 viewer,
                 profile,
@@ -1289,6 +1389,16 @@ impl Agent {
                 reply,
             } => {
                 let _ = reply.try_send(self.plugin_project(&plugin, call));
+                Flow::Continue
+            }
+            #[cfg(feature = "plugins")]
+            Command::PluginCall {
+                plugin,
+                call,
+                reply,
+                pending,
+            } => {
+                self.plugin_call(&plugin, call, reply, &pending);
                 Flow::Continue
             }
             #[cfg(feature = "plugins")]
