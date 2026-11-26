@@ -13,6 +13,9 @@
 //! Platform notes: on Linux, non-root access requires a udev rule granting
 //! the user access to the device's `hidraw` node (see the documentation).
 
+// Linux sysfs only (its tests model sysfs paths, e.g. `1-2:1.0`, which
+// other platforms cannot create).
+#[cfg(target_os = "linux")]
 mod usb_presence;
 
 use std::fmt;
@@ -273,7 +276,7 @@ impl<D: Deck> fmt::Debug for ElgatoHandle<D> {
 
 /// Supported Stream Decks the USB bus lists (sysfs under `root`) without a
 /// HID interface, and that HID discovery did not find (`found`).
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg(target_os = "linux")]
 fn usb_without_hid(root: &std::path::Path, found: &[DiscoveredDevice]) -> Vec<UnavailableDevice> {
     let models: Vec<DeviceModel> = SUPPORTED.iter().map(|(_, model)| model()).collect();
     let products: Vec<u16> = models
@@ -649,6 +652,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn usb_without_hid_skips_devices_hid_found() {
         let root = std::env::temp_dir().join(format!("deckpilot-hid-sysfs-{}", std::process::id()));

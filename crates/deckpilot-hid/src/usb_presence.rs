@@ -11,7 +11,6 @@
 use std::path::Path;
 
 /// Where Linux lists USB devices.
-#[cfg(target_os = "linux")]
 pub const SYSFS_USB_DEVICES: &str = "/sys/bus/usb/devices";
 
 /// A USB device of `vendor` with a product of `products` that has no
