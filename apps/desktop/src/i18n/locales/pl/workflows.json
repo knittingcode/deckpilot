@@ -518,7 +518,8 @@
         "lines": "lista",
         "pairs": "wiersze",
         "code": "kod",
-        "credential": "dane uwierzytelniające"
+        "credential": "dane uwierzytelniające",
+        "script": "skrypt"
       }
     }
   },
@@ -790,7 +791,8 @@
       "boolean": "W chwili działania węzła wartość musi wynosić „true” lub „false”.",
       "choice": "Wartość musi być jedną z: {{options}}.",
       "project": "Wartość musi być kluczem projektu tego profilu.",
-      "resource": "Zasoby nie mogą pochodzić z wcześniejszych węzłów."
+      "resource": "Zasoby nie mogą pochodzić z wcześniejszych węzłów.",
+      "script": "Wartość musi być identyfikatorem skryptu tego profilu."
     },
     "problem": {
       "noSharedVariable": "nie ma zmiennej współdzielonej „{{name}}”",

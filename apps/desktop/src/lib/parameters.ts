@@ -9,6 +9,7 @@ export function initialValue(spec: ParameterSpec): ParameterValue {
     case "pairs":
     case "code":
     case "credential":
+    case "script":
       return { type: "text", value: "" }
     case "integer":
       return { type: "integer", value: spec.kind.min ?? 0 }

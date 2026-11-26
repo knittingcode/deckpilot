@@ -44,7 +44,7 @@ import {
 import { catalogSignature, missingAction } from "@/lib/action-availability"
 import { withPluginTypes } from "@/lib/plugin-actions"
 import { missingSummary, unavailableText } from "@/components/missing-action-text"
-import { WORKFLOWS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
+import { RUN_SCRIPT, WORKFLOWS_PLUGIN, useIsPluginActive } from "@/lib/plugin-features"
 import { isSystemBack, systemBackControl } from "@/lib/folder-back"
 import { isFolderControl } from "@/lib/folder-control"
 import {
@@ -85,6 +85,7 @@ import type {
   FolderCountdown,
   GestureTimings,
   ProfileView,
+  StoredScript,
   Trigger,
   Workflow,
 } from "@/lib/types"
@@ -319,7 +320,36 @@ export function LayoutEditor({
   )
   // The profile's other layouts for this model, as "Switch to …" entries.
   const switchType = typeById.get(SWITCH_LAYOUT)
-  const presets = useMemo((): PresetEntry[] => {
+  // The profile's scripts, as "Run …" entries of the Scripts plugin's
+  // run action: an entry puts an action that names the script by id (never
+  // its code) on the control, reusing the profile's action that already
+  // does exactly that.
+  const runScriptType = typeById.get(RUN_SCRIPT)
+  const [scripts, setScripts] = useState<StoredScript[]>([])
+  useEffect(() => {
+    if (!runScriptType) return
+    api.listScripts(profileId).then(setScripts, () => {
+      setScripts([])
+    })
+  }, [runScriptType, profileId])
+  const scriptPresets = useMemo((): PresetEntry[] => {
+    if (!runScriptType) return []
+    return scripts.map((s) => ({
+      key: `run-script:${s.script.id}`,
+      label: t("editor:shell.scriptPreset.label", { script: s.script.name }),
+      description:
+        s.trust === "trusted"
+          ? t("editor:shell.scriptPreset.description", { script: s.script.name })
+          : t("editor:shell.scriptPreset.needsReview", { script: s.script.name }),
+      category: runScriptType.category,
+      type: runScriptType,
+      preset: {
+        name: s.script.name,
+        parameters: { script: { type: "text", value: s.script.id } },
+      },
+    }))
+  }, [runScriptType, scripts, t])
+  const switchPresets = useMemo((): PresetEntry[] => {
     if (!switchType) return []
     return switchableLayouts(view.profile.layouts, model.id)
       .filter((l) => l.id !== saved.id)
@@ -335,6 +365,10 @@ export function LayoutEditor({
         },
       }))
   }, [switchType, view.profile.layouts, model.id, saved.id, t])
+  const presets = useMemo(
+    () => [...switchPresets, ...scriptPresets],
+    [switchPresets, scriptPresets],
+  )
   const typeOfTarget = (target: BindingTarget): ActionType | undefined => {
     if (target.type !== "action") return undefined
     const action = actions.find((a) => a.id === target.action)
@@ -1889,7 +1923,7 @@ export function LayoutEditor({
               .map((group) => ({
                 ...group,
                 entries: group.entries
-                  .filter((entry) => presets.length === 0 || entry.type.id !== SWITCH_LAYOUT)
+                  .filter((entry) => switchPresets.length === 0 || entry.type.id !== SWITCH_LAYOUT)
                   .map(withGrant),
               }))
               .filter((group) => group.entries.length > 0)}

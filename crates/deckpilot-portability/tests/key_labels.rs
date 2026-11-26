@@ -149,6 +149,6 @@ fn a_later_version_is_refused() {
     let bytes = payload::seal(&payload, &password, KdfParams::for_tests()).unwrap();
     assert!(matches!(
         payload::open(&bytes, &password),
-        Err(PortabilityError::UnsupportedVersion(6))
+        Err(PortabilityError::UnsupportedVersion(7))
     ));
 }

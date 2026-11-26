@@ -101,7 +101,10 @@
     "workflowReferencesChanged": "what uses the workflow changed since you confirmed; review it again",
     "workflowNotInProfile": "key {{key}} on page “{{page}}” starts a workflow that is not in this profile; choose one of this profile’s workflows",
     "workflowNeedsInputs": "key {{key}} on page “{{page}}” starts a workflow that needs input values; use it from a Sub-workflow node",
-    "workflowInWorkSession": "the Work Session settings use the workflow; also clear them to delete it"
+    "workflowInWorkSession": "the Work Session settings use the workflow; also clear them to delete it",
+    "notMainWindow": "scripts are changed only from the main window",
+    "scriptFolderMissing": "that folder is not on this computer",
+    "scriptProgramTwice": "that program is already granted"
   },
   "storage": {
     "database": "database error: {{detail}}",

@@ -1473,6 +1473,11 @@ impl Executor<'_> {
                 ParameterKind::Resource { .. } => {
                     return Err(format!("`{key}` refers to a resource and cannot be mapped").into());
                 }
+                // Which script runs is the user's choice, never data's: a
+                // node output or template never fills a script parameter.
+                ParameterKind::Script => {
+                    return Err(format!("`{key}` names a script and cannot be mapped").into());
+                }
             };
             parameters = parameters.with(key.clone(), value);
         }
@@ -1564,6 +1569,7 @@ fn expects(kind: &ParameterKind) -> &'static str {
         ParameterKind::Resource { .. } => "a resource",
         ParameterKind::Project => "a project",
         ParameterKind::Credential => "a credential",
+        ParameterKind::Script => "a script",
     }
 }
 

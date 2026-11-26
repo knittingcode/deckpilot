@@ -251,6 +251,7 @@ fn sample(spec: &ParameterSpec) -> ParameterValue {
             ParameterValue::Text(if language == "json" { "{}" } else { "" }.into())
         }
         ParameterKind::Credential => ParameterValue::Text(CREDENTIAL.into()),
+        ParameterKind::Script => ParameterValue::Text(deckpilot_core::ScriptId::new().to_string()),
     }
 }
 
@@ -346,6 +347,7 @@ fn frontend_kind(kind: &ParameterKind) -> &'static str {
         ParameterKind::Pairs { .. } => "pairs",
         ParameterKind::Code { .. } => "code",
         ParameterKind::Credential => "credential",
+        ParameterKind::Script => "script",
     }
 }
 

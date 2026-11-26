@@ -433,6 +433,10 @@ function ImportChoices({
   const closes = (preview.closeActions ?? []).filter(
     (c) => c.profile === null || selected.includes(c.profile),
   )
+  // Scripts come with their profile, untrusted; not with a skipped one.
+  const scripts = (preview.scripts ?? []).filter(
+    (s) => selected.includes(s.profile) && conflicts[s.profile] !== "skip",
+  )
   const [busy, setBusy] = useState(false)
   // Set synchronously, so a second click before React re-renders the busy
   // button cannot submit the same preview again.
@@ -684,6 +688,24 @@ function ImportChoices({
         </Alert>
       )}
 
+      {scripts.length > 0 && (
+        <Alert>
+          <TriangleAlert />
+          <AlertTitle>{t("settings:portability.import.scriptsTitle")}</AlertTitle>
+          <AlertDescription className="grid gap-2">
+            <p>{t("settings:portability.import.scriptsDescription")}</p>
+            <ul
+              className="list-disc pl-5 text-sm"
+              aria-label={t("settings:portability.import.scriptsList")}
+            >
+              {scripts.map((script) => (
+                <li key={`${script.profile}:${script.id}`}>{script.name}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {closes.length > 0 && (
         <Alert variant={closes.some((c) => c.force) ? "destructive" : "default"}>
           <TriangleAlert />
@@ -867,6 +889,13 @@ function ImportDone({
             ))}
           </ul>
         </div>
+      )}
+      {(summary.scripts ?? []).length > 0 && (
+        <p className="text-sm" role="note">
+          {t("settings:portability.done.scripts", {
+            scripts: format.list(summary.scripts ?? [], "unit"),
+          })}
+        </p>
       )}
       {(summary.unboundCloseActions ?? []).length > 0 && (
         <p className="text-sm" role="note">

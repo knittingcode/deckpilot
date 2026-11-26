@@ -2843,7 +2843,8 @@ impl PluginService {
         .with_dialogs(self.events.dialogs.clone())
         .with_translator(translator)
         .with_data(access)
-        .with_projects(self.events.projects.clone());
+        .with_projects(self.events.projects.clone())
+        .with_calls(self.events.calls.clone());
         Ok((
             record,
             Prepared {
@@ -2908,7 +2909,12 @@ impl PluginService {
         };
         // The Scripts bridge (plugin API 1.13): the run of the action's own
         // script, if it names one.
-        let executor = super::executor::scripts::attach(executor, id.as_str(), &params);
+        let executor = super::executor::scripts::attach(
+            executor,
+            id.as_str(),
+            &params,
+            self.events.scripts.clone(),
+        );
         let bound = connections::bound(&declaration, &params);
         // Plugin API 1.14: `records` outputs, checked against their schemas.
         let records = record
@@ -3019,7 +3025,12 @@ impl PluginService {
         let bound = connections::bound(&declaration, &params);
         let (executor, handles) =
             executor.with_resources(record.id.as_str(), &version, resource_kinds, resources);
-        let executor = super::executor::scripts::attach(executor, record.id.as_str(), &params);
+        let executor = super::executor::scripts::attach(
+            executor,
+            record.id.as_str(),
+            &params,
+            self.events.scripts.clone(),
+        );
         let executor = executor.with_connections(bound);
         params.extend(
             handles

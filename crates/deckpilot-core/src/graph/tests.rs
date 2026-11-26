@@ -193,6 +193,7 @@ impl Fixture {
                                 max: None,
                             },
                         ),
+                        parameter("script", ParameterKind::Script),
                     ],
                     requires_project: false,
                     deprecated: false,
@@ -2668,3 +2669,43 @@ fn at_most_four_nodes_run_at_the_same_time() {
 }
 
 mod references;
+
+/// Which script runs is the user's choice, never data's: a node output
+/// mapped into a script parameter is an error when the graph is checked,
+/// so it never runs.
+#[test]
+fn a_node_output_never_chooses_a_script() {
+    let mut f = Fixture::new();
+    let a = f.probe("a", &[]);
+    let mut chooser = action("b", a);
+    if let NodeKind::Action { mappings, .. } = &mut chooser.kind {
+        mappings.insert(
+            "script".into(),
+            Mapping::Output {
+                reference: Reference::parse("steps.first.output.value").unwrap(),
+                default: None,
+            },
+        );
+    }
+    let workflow = f.workflow(graph(
+        vec![
+            node("start", NodeKind::Trigger),
+            action("first", a),
+            chooser,
+        ],
+        vec![
+            edge("start", Port::Out, "first"),
+            edge("first", Port::Out, "b"),
+        ],
+    ));
+    let issues = f.issues(workflow);
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.node == Some(n("b")) && i.message.contains("names a script")),
+        "{issues:?}"
+    );
+    // The error keeps the workflow from starting at all (the executor
+    // refuses such a mapping too, for a graph that was never checked).
+    assert!(issues.iter().any(|i| i.severity == IssueSeverity::Error));
+}
