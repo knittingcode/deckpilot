@@ -54,9 +54,10 @@ closed and reopened at any time without interrupting devices.
   within 5 minutes is _flapping_: its next connections get brightness and
   key images only once they have lasted 10 s, so one that drops again was
   sent nothing, and its key presses are ignored until then (the keys show
-  nothing yet). "Refresh Devices", and a device that was not listed and is
-  listed again (replugged), try at once; the streak stays, so a failure
-  then waits longer still. The agent never resets, re-binds or power-cycles a USB
+  nothing yet). "Refresh Devices", and a device a rescan did not list and a
+  later one lists again (replugged), try at once, unless the device is
+  flapping (a hub that keeps resetting it keeps the waits); the streak
+  stays, so a failure then waits longer still. The agent never resets, re-binds or power-cycles a USB
   device, and a reconnect restores presentation only (page, layout, key
   images, brightness); input from an earlier connection is dropped and no
   action is replayed. Tests drive this with the mock backend's fault
