@@ -1337,6 +1337,7 @@ impl Agent {
                 self.plugin_call(&plugin, call, reply, &pending);
                 Flow::Continue
             }
+            #[cfg(feature = "plugins")]
             Command::PluginScript { query, reply } => {
                 let _ = reply.try_send(self.plugin_script(query));
                 Flow::Continue
