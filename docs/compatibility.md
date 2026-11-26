@@ -536,9 +536,22 @@ an optional `text` field of each control's face, which older callers
 ignore.
 
 DeckPilot 0.5.0 was never published. Its two draft prereleases (0.5.0-1
-and 0.5.0-2) have since been deleted; only the tag `v0.5.0-2` remains, as
-the compatibility baseline that `tools/compat/matrix.sh` builds. "0.5.0" in
-this page means that build.
+and 0.5.0-2) have since been deleted; only the tag `v0.5.0-2` remains. It
+was the compatibility baseline that `tools/compat/matrix.sh` built until
+0.15.0 was published and can still be built by hand (`tools/compat/matrix.sh v0.5.0-2`).
+"0.5.0" in this page means that build.
+
+The baseline is now the latest published release, named in
+`tools/release-pipeline/compat-baseline` (currently `v0.15.0`, protocol 17,
+schema 13). The Compatibility workflow, the Release workflow and
+`tools/release-readiness/check.sh --with-compat` all read that file, and
+`matrix.sh` reads the old agent's protocol from the tag's
+`PROTOCOL_VERSION` (override with `OLD_PROTOCOL`). After a release is
+published, move the file to its tag. The case "old agent given a database
+of this commit" expects a refusal, so it needs main's schema to be newer
+than the baseline's; right after a release that changed no schema, it
+fails until the next schema change, so move the baseline only once main's
+schema is ahead (or the case is adjusted).
 
 ## Protocol negotiation
 
@@ -628,8 +641,9 @@ with schema 7 and have not been recorded again for protocol 9 and schema 9.
 | agent restarted during a running workflow | agent test `runs_of_a_stopped_agent_are_recorded_as_interrupted` | run recorded as interrupted; history kept |
 | agent version changed while the app stays open | bridge reconnect (negotiates again); simulated peers per version | covered by the same negotiation; not tested end to end with a running app window |
 
-Run the real matrix locally with `tools/compat/matrix.sh [<old tag>] [<work dir>]`;
-CI runs it on Linux for changes to the IPC, storage or agent code
+Run the real matrix locally with `tools/compat/matrix.sh [<old tag>] [<work dir>]`
+(default: the baseline above); CI runs it against the baseline on Linux for
+changes to the IPC, storage or agent code
 (`.github/workflows/compatibility.yml`). It uses throwaway data protected by
 the development password, never a credential store.
 

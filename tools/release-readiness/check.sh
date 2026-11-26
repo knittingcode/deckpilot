@@ -61,10 +61,11 @@ run "frontend types" pnpm typecheck
 run "frontend tests" pnpm test
 run "hardware procedure (simulated MK.2)" \
   cargo run --locked -q -p deckpilot-dev -- hardware-test --mock --force --dir "$LOGS/hardware"
+baseline=$(cat tools/release-pipeline/compat-baseline)
 if $WITH_COMPAT; then
-  run "compatibility with v0.5.0-2 (real binaries)" tools/compat/matrix.sh v0.5.0-2 "$LOGS/compat"
+  run "compatibility with $baseline (real binaries)" tools/compat/matrix.sh "$baseline" "$LOGS/compat"
 else
-  skip "compatibility with v0.5.0-2 (real binaries)" "pass --with-compat (builds the old tag)"
+  skip "compatibility with $baseline (real binaries)" "pass --with-compat (builds the old tag)"
 fi
 case "$(uname -s)" in
   Darwin)
