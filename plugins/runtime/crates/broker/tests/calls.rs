@@ -185,6 +185,8 @@ fn a_calls_grant_never_comes_with_a_way_out() {
         r#"{"kind":"tool","tool":"git"}"#,
         r#"{"kind":"openUrlFromParams"}"#,
         r#"{"kind":"resources","open":true}"#,
+        r#"{"kind":"connection","id":"cn_01JD7Q0000000000000000000B","origin":"https://api.github.com","webOrigin":"https://github.com","methods":["GET"],"enabled":true}"#,
+        r#"{"kind":"scripts","fs":true}"#,
         r#"{"kind":"userOrigin","origin":"https://example.com","methods":["GET"]}"#,
     ] {
         let json = format!(r#"[{{"kind":"calls"}},{way_out}]"#);

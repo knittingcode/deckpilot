@@ -128,7 +128,8 @@ guest SDK has `Context::call_state` and `Context::call_control`.
 - **Grants:** `call.state` needs `calls`; `call.control` needs
   `calls:control` too. A broker grant record with `calls` together with a
   way out of the agent (`network`, a credential, `openUrl`, a user origin,
-  a tool, `openUrl:from-params`, `resources`) is refused as a whole
+  a tool, `openUrl:from-params`, `resources`, a connection, the Scripts
+  bridge) is refused as a whole
   (`CallsWithWayOut`), the manifest rule checked again (and `resources`,
   whose `resource.open` takes a path the guest chose, too).
 - **Runs:** `call.control` only in a run the user started (a key, a
