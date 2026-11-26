@@ -13,12 +13,15 @@
 //! Platform notes: on Linux, non-root access requires a udev rule granting
 //! the user access to the device's `hidraw` node (see the documentation).
 
+mod usb_presence;
+
 use std::fmt;
 use std::time::Duration;
 
 use deckpilot_device::{
-    ControlId, ControlInput, DeviceBackend, DeviceError, DeviceHandle, DeviceId, DeviceModel,
-    DiscoveredDevice, Frame, KeyStateTracker, models,
+    ControlId, ControlInput, DeviceAvailability, DeviceBackend, DeviceError, DeviceHandle,
+    DeviceId, DeviceModel, DeviceModelId, DiscoveredDevice, Frame, KeyStateTracker,
+    UnavailableDevice, models,
 };
 use elgato_streamdeck::info::Kind;
 use elgato_streamdeck::{StreamDeck, StreamDeckError, StreamDeckInput};
@@ -39,16 +42,39 @@ fn model_for(kind: Kind) -> Option<DeviceModel> {
         .map(|(_, model)| model())
 }
 
+/// Models with a descriptor but no driver (reported as unsupported under
+/// their own model id).
+const DESCRIBED: [(Kind, fn() -> DeviceModel); 2] = [
+    (Kind::Xl, models::stream_deck_xl),
+    (Kind::Plus, models::stream_deck_plus),
+];
+
+/// The model id an Elgato device of `kind` is reported under when
+/// DeckPilot has no driver for it: its descriptor's, or a name made from
+/// the kind.
+fn unsupported_model_id(kind: Kind) -> DeviceModelId {
+    DESCRIBED
+        .iter()
+        .find(|(described, _)| *described == kind)
+        .map_or_else(
+            || DeviceModelId::new(format!("elgato.streamdeck.{kind:?}").to_lowercase()),
+            |(_, model)| model().id,
+        )
+}
+
 /// Discovers and opens supported Elgato devices.
 #[derive(Default)]
 pub struct ElgatoBackend {
     api: Option<HidApi>,
+    /// What the last discovery saw but cannot open.
+    unavailable: Vec<UnavailableDevice>,
 }
 
 impl fmt::Debug for ElgatoBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ElgatoBackend")
             .field("initialised", &self.api.is_some())
+            .field("unavailable", &self.unavailable)
             .finish()
     }
 }
@@ -86,19 +112,37 @@ impl DeviceBackend for ElgatoBackend {
     fn discover(&mut self) -> Result<Vec<DiscoveredDevice>, DeviceError> {
         let api = self.api()?;
         elgato_streamdeck::refresh_device_list(api).map_err(|e| DeviceError::Io(e.to_string()))?;
-        Ok(elgato_streamdeck::list_devices(api)
-            .into_iter()
-            .filter_map(|(kind, serial)| {
-                let model = model_for(kind)?;
-                Some(DiscoveredDevice {
+        let mut found = Vec::new();
+        let mut unavailable = Vec::new();
+        for (kind, serial) in elgato_streamdeck::list_devices(api) {
+            match model_for(kind) {
+                Some(model) => found.push(DiscoveredDevice {
                     id: DeviceId {
                         model: model.id.clone(),
                         serial,
                     },
                     model: model.id,
-                })
-            })
-            .collect())
+                }),
+                None => unavailable.push(UnavailableDevice {
+                    id: DeviceId {
+                        model: unsupported_model_id(kind),
+                        serial,
+                    },
+                    availability: DeviceAvailability::Unsupported,
+                }),
+            }
+        }
+        #[cfg(target_os = "linux")]
+        unavailable.extend(usb_without_hid(
+            std::path::Path::new(usb_presence::SYSFS_USB_DEVICES),
+            &found,
+        ));
+        self.unavailable = unavailable;
+        Ok(found)
+    }
+
+    fn unavailable(&mut self) -> Vec<UnavailableDevice> {
+        self.unavailable.clone()
     }
 
     fn open(&mut self, device: &DeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError> {
@@ -108,7 +152,7 @@ impl DeviceBackend for ElgatoBackend {
             .find(|(_, model)| model.id == device.model)
             .ok_or_else(|| DeviceError::Unsupported(format!("model {}", device.model)))?;
         let api = self.api()?;
-        let deck = StreamDeck::connect(api, kind, &device.serial).map_err(map_error)?;
+        let deck = StreamDeck::connect(api, kind, &device.serial).map_err(map_open_error)?;
         Ok(Box::new(ElgatoHandle {
             deck,
             id: device.clone(),
@@ -170,6 +214,92 @@ impl<D: Deck> fmt::Debug for ElgatoHandle<D> {
         f.debug_struct("ElgatoHandle")
             .field("id", &self.id)
             .finish_non_exhaustive()
+    }
+}
+
+/// Supported Stream Decks the USB bus lists (sysfs under `root`) without a
+/// HID interface, and that HID discovery did not find (`found`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn usb_without_hid(root: &std::path::Path, found: &[DiscoveredDevice]) -> Vec<UnavailableDevice> {
+    let models: Vec<DeviceModel> = SUPPORTED.iter().map(|(_, model)| model()).collect();
+    let products: Vec<u16> = models
+        .iter()
+        .filter_map(|model| model.usb.map(|usb| usb.product_id))
+        .collect();
+    let vendor = models
+        .first()
+        .and_then(|model| model.usb)
+        .map_or(0x0fd9, |usb| usb.vendor_id);
+    usb_presence::without_hid(root, vendor, &products)
+        .into_iter()
+        .filter_map(|(product, serial)| {
+            let model = models
+                .iter()
+                .find(|model| model.usb.is_some_and(|usb| usb.product_id == product))?;
+            let id = DeviceId {
+                model: model.id.clone(),
+                serial,
+            };
+            (!found.iter().any(|device| device.id == id)).then_some(UnavailableDevice {
+                id,
+                availability: DeviceAvailability::UsbPresentHidUnavailable,
+            })
+        })
+        .collect()
+}
+
+/// Why opening a device failed, from hidapi's message. hidapi reports
+/// open failures as text only, so the platforms' wordings and codes are
+/// matched (the C backends' `hid_open`/`hid_open_path`):
+/// - Linux: `Failed to open a device with path '…': <strerror>`, in the C
+///   locale (the agent never sets another), e.g. `Permission denied`,
+///   `Device or resource busy`;
+/// - macOS: `… (0xE00002E2) … not permitted`, `(0xE00002C1)` not
+///   privileged, `(0xE00002C5)` exclusive access;
+/// - Windows: `open_device: (0x00000005) …` (access denied; the HID stack
+///   gives that when another program holds the device exclusively) or
+///   `(0x00000020)` (sharing violation), localized after the code;
+/// - every platform: `Device with requested VID/PID/(SerialNumber) not
+///   found` when it went away between discovery and open.
+fn classify_open_error(message: &str) -> DeviceError {
+    let lower = message.to_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
+    if has(&["not found", "no such file", "no such device"]) {
+        DeviceError::Disconnected
+    } else if has(&[
+        "permission denied",
+        "operation not permitted",
+        "0xe00002e2",
+        "0xe00002c1",
+    ]) {
+        DeviceError::PermissionDenied(message.to_owned())
+    } else if has(&[
+        "resource busy",
+        "0xe00002c5",
+        "exclusive access",
+        "(0x00000005)",
+        "(0x00000020)",
+    ]) {
+        DeviceError::Busy(message.to_owned())
+    } else {
+        DeviceError::Io(message.to_owned())
+    }
+}
+
+/// An error opening a device: classified, so the agent can say why.
+fn map_open_error(error: StreamDeckError) -> DeviceError {
+    match error {
+        StreamDeckError::HidError(hidapi::HidError::HidApiError { message }) => {
+            classify_open_error(&message)
+        }
+        StreamDeckError::HidError(hidapi::HidError::IoError { error }) => match error.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                DeviceError::PermissionDenied(error.to_string())
+            }
+            std::io::ErrorKind::NotFound => DeviceError::Disconnected,
+            _ => classify_open_error(&error.to_string()),
+        },
+        other => DeviceError::Io(other.to_string()),
     }
 }
 
@@ -272,6 +402,118 @@ mod tests {
         assert_eq!(image.transform.rotation, 0);
         assert!(matches!(format.mirror, ImageMirroring::Both));
         assert!(image.transform.flip_horizontal && image.transform.flip_vertical);
+    }
+
+    #[test]
+    fn open_errors_are_classified_per_platform() {
+        let cases = [
+            // Linux (hidraw, C locale).
+            (
+                "Failed to open a device with path '/dev/hidraw3': Permission denied",
+                "permission",
+            ),
+            (
+                "Failed to open a device with path '/dev/hidraw3': Device or resource busy",
+                "busy",
+            ),
+            (
+                "Failed to open a device with path '/dev/hidraw3': No such file or directory",
+                "gone",
+            ),
+            (
+                "Failed to open a device with path '/dev/hidraw3': Input/output error",
+                "io",
+            ),
+            (
+                "Device with requested VID/PID/(SerialNumber) not found",
+                "gone",
+            ),
+            // macOS.
+            (
+                "hid_open_path: failed to open IOHIDDevice from mach entry: (0xE00002C5) (iokit/common) exclusive access and device already open",
+                "busy",
+            ),
+            (
+                "hid_open_path: failed to open IOHIDDevice from mach entry: (0xE00002E2) (iokit/common) not permitted",
+                "permission",
+            ),
+            // Windows, also with a localized text after the code.
+            ("open_device: (0x00000005) Odmowa dostępu.", "busy"),
+            (
+                "open_device: (0x00000020) The process cannot access the file because it is being used by another process.",
+                "busy",
+            ),
+            (
+                "open_device: (0x0000001F) A device attached to the system is not functioning.",
+                "io",
+            ),
+        ];
+        for (message, expected) in cases {
+            let kind = match classify_open_error(message) {
+                DeviceError::PermissionDenied(_) => "permission",
+                DeviceError::Busy(_) => "busy",
+                DeviceError::Disconnected => "gone",
+                DeviceError::Io(_) => "io",
+                other => panic!("{other:?}"),
+            };
+            assert_eq!(kind, expected, "{message}");
+        }
+        let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(matches!(
+            map_open_error(StreamDeckError::HidError(hidapi::HidError::IoError {
+                error: io
+            })),
+            DeviceError::PermissionDenied(_)
+        ));
+        assert_eq!(
+            DeviceAvailability::of_open_error(&classify_open_error("x: Permission denied")),
+            DeviceAvailability::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn unsupported_kinds_have_model_ids() {
+        assert_eq!(unsupported_model_id(Kind::Xl), models::stream_deck_xl().id);
+        assert_eq!(
+            unsupported_model_id(Kind::Plus),
+            models::stream_deck_plus().id
+        );
+        assert_eq!(
+            unsupported_model_id(Kind::Mini).to_string(),
+            "elgato.streamdeck.mini"
+        );
+    }
+
+    #[test]
+    fn usb_without_hid_skips_devices_hid_found() {
+        let root = std::env::temp_dir().join(format!("deckpilot-hid-sysfs-{}", std::process::id()));
+        for (name, serial) in [("1-1", "AL1"), ("1-2", "AL2")] {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("idVendor"), "0fd9\n").unwrap();
+            std::fs::write(dir.join("idProduct"), "0080\n").unwrap();
+            std::fs::write(dir.join("serial"), format!("{serial}\n")).unwrap();
+        }
+        let mk2 = models::stream_deck_mk2();
+        let found = [DiscoveredDevice {
+            id: DeviceId {
+                model: mk2.id.clone(),
+                serial: "AL1".into(),
+            },
+            model: mk2.id.clone(),
+        }];
+        let missing = usb_without_hid(&root, &found);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            missing,
+            vec![UnavailableDevice {
+                id: DeviceId {
+                    model: mk2.id,
+                    serial: "AL2".into(),
+                },
+                availability: DeviceAvailability::UsbPresentHidUnavailable,
+            }]
+        );
     }
 
     /// XL and + have no driver, but their layout-design descriptors must

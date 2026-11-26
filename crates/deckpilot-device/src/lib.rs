@@ -23,7 +23,7 @@ pub mod mock;
 pub use appearance::{Color, DefaultAppearance, KeyBackground};
 pub use backend::{
     CombinedBackend, DeviceBackend, DeviceError, DeviceHandle, DiscoveredDevice, Frame,
-    KeyStateTracker,
+    KeyStateTracker, UnavailableDevice,
 };
 pub use capabilities::{
     Capability, DeviceCapabilities, EncoderSpec, ImageFormat, ImageSpec, ImageTransform, KeyGrid,
@@ -35,5 +35,5 @@ pub use control_capabilities::{ControlCapabilities, DisplayCapability, InputCapa
 pub use descriptor::{DeviceDescriptor, DriverInfo};
 pub use event::{DeviceEvent, DeviceId};
 pub use model::{DeviceModel, DeviceModelId, HardwareSupport, UsbIdentity};
-pub use registry::{ConnectionState, DeviceRegistry, DeviceStatus};
+pub use registry::{ConnectionState, DeviceAvailability, DeviceRegistry, DeviceStatus};
 pub use verification::{ModelVerification, Platform, PlatformVerification, VerificationLevel};

@@ -100,6 +100,23 @@ pub enum DeviceError {
     Unsupported(String),
     #[error("device I/O failed: {0}")]
     Io(String),
+    /// The operating system refused access (no udev rule on Linux, a
+    /// privacy setting on macOS).
+    #[error("no permission to open the device: {0}")]
+    PermissionDenied(String),
+    /// Another program has the device open exclusively.
+    #[error("the device is in use: {0}")]
+    Busy(String),
+}
+
+/// A device a backend sees but cannot open, and why: a model without a
+/// driver, or (Linux) a Stream Deck on the USB bus without its HID
+/// interface. Reported beside [`DeviceBackend::discover`], so such a
+/// device is shown for what it is rather than as not connected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnavailableDevice {
+    pub id: DeviceId,
+    pub availability: crate::DeviceAvailability,
 }
 
 /// A device driver (adapter): discovers and opens devices of one vendor
@@ -115,6 +132,12 @@ pub trait DeviceBackend: Send {
 
     /// Opens a previously discovered device.
     fn open(&mut self, device: &DeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError>;
+
+    /// Devices seen at the last [`DeviceBackend::discover`] that cannot be
+    /// opened, with the reason. Read-only, like discovery. None by default.
+    fn unavailable(&mut self) -> Vec<UnavailableDevice> {
+        Vec::new()
+    }
 
     /// Name of the backend that provides `device`; differs from
     /// [`DeviceBackend::name`] only for backends that combine others.
@@ -209,6 +232,14 @@ impl DeviceBackend for CombinedBackend {
     fn open(&mut self, device: &DeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError> {
         let index = *self.owners.get(device).ok_or(DeviceError::Disconnected)?;
         self.backends[index].open(device)
+    }
+
+    fn unavailable(&mut self) -> Vec<UnavailableDevice> {
+        self.backends
+            .iter_mut()
+            .flat_map(|backend| backend.unavailable())
+            .filter(|device| !self.owners.contains_key(&device.id))
+            .collect()
     }
 
     fn source(&self, device: &DeviceId) -> &'static str {
