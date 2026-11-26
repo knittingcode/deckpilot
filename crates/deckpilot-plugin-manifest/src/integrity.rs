@@ -138,6 +138,7 @@ impl Manifest {
             Some(Runtime {
                 kind: RuntimeKind::Wasm,
                 abi,
+                ..
             }) => RuntimeContract::Wasm { abi: *abi },
             None => RuntimeContract::LegacyJs,
         }

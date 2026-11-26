@@ -89,6 +89,9 @@ pub struct CallsDriver {
     locale: Locale,
     /// The frames the watchdog popped (for the log, once each).
     watchdog_pops: usize,
+    /// No device shows a call (the configuration is locked): every frame
+    /// is popped and none is pushed. The engine keeps following the calls.
+    hidden: bool,
     /// The editor's previews of a call page (no call, no provider): one
     /// per device, never at the same time as a real call's frame.
     previews: BTreeMap<DeviceId, (OverlaySession, Page)>,
@@ -118,6 +121,7 @@ impl CallsDriver {
             frames: BTreeMap::new(),
             enabled: BTreeMap::new(),
             dismissed: BTreeMap::new(),
+            hidden: false,
             previews: BTreeMap::new(),
             #[cfg(test)]
             fail_next_preview: false,
@@ -450,8 +454,45 @@ impl CallsDriver {
 
     // ---------------------------------------------------------------- sync
 
+    /// Hides every call from every device (`true`: the configuration is
+    /// locked, so a locked device shows "Locked" and never a call), or
+    /// shows them again. Hiding ends the return sessions (nothing resumes
+    /// behind the lock) and pops every Calls frame; showing again syncs, so
+    /// a call still going on is back at once.
+    pub fn set_hidden(&mut self, runtime: &mut Runtime, hidden: bool, now: Instant) {
+        self.hidden = hidden;
+        if hidden {
+            self.returns.clear();
+            let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
+            for device in devices {
+                self.pop(runtime, &device);
+            }
+            runtime.pop_overlays_of(OverlayOwner::Calls);
+        } else {
+            self.sync(runtime, now);
+        }
+    }
+
+    /// Whether every call is hidden ([`CallsDriver::set_hidden`]).
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
+    }
+
     /// Brings every device's frame in line with the engine.
     pub fn sync(&mut self, runtime: &mut Runtime, _now: Instant) {
+        // Hidden: only no frame. The no-call cleanup below (ending return
+        // sessions, forgetting dismissals, the watchdog) is skipped on
+        // purpose: `set_hidden` already ended every return session, a
+        // dismissal still holds for the call when it is shown again, and
+        // with no frame the watchdog has nothing to pop. The next sync
+        // after `set_hidden(false)` does all of it.
+        if self.hidden {
+            let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
+            for device in devices {
+                self.pop(runtime, &device);
+            }
+            return;
+        }
         let intent = self.engine.overlay();
         if matches!(intent, OverlayIntent::Shown { .. }) {
             // A real call always wins over the editor's preview.

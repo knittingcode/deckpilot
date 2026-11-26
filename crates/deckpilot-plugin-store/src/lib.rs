@@ -87,6 +87,7 @@
 //! crash interrupted (see the `recover` module). Crashes are simulated in
 //! tests through [`Failpoints`].
 
+mod connections;
 mod data;
 mod db;
 pub mod deps;
@@ -101,6 +102,13 @@ mod recover;
 mod state;
 mod store;
 
+/// The `connections` permission of a manifest: types, methods, private network.
+pub use connections::declared as declared_connections;
+pub use connections::{
+    CONNECTION_ID_BODY, CONNECTION_ID_PREFIX, ConnectionProbe, ConnectionStatus, Deployment,
+    MAX_ACCOUNT_LABEL, MAX_CAPABILITIES_BYTES, MAX_CONNECTION_NAME, MAX_CONNECTIONS, NewConnection,
+    StoredConnection, is_connection_id, looks_like_secret,
+};
 pub use data::{
     CredentialStatus, KnownPlugin, MAX_SECRET_BYTES, MAX_STORAGE_KEY_CHARS,
     MAX_STORAGE_VALUE_BYTES, PluginData, Retention, Secret, StorageError, StorageQuota,
@@ -114,8 +122,9 @@ pub use error::{Result, StoreError};
 pub use failpoint::{CrashOnce, Failpoint, Failpoints, NoFailpoints, Operation};
 pub use grants::{
     Broadened, CALLS_CONTROL_KEY, Consent, DeclaredGrant, GrantKey, GrantScope, GrantSet,
-    GrantSource, GrantStatus, PRIVATE_NETWORK_KEY, PermissionDiff, StoredGrant, Tier, host_covers,
-    missing_grants, missing_optional_grants, privileged_constructs, variable_covers,
+    GrantSource, GrantStatus, OPEN_URL_CONNECTIONS_KEY, PRIVATE_NETWORK_KEY, PermissionDiff,
+    StoredGrant, Tier, host_covers, missing_grants, missing_optional_grants, privileged_constructs,
+    variable_covers,
 };
 pub use layout::{DATABASE_FILE, Layout, PLUGINS_DIR};
 pub use manager::{

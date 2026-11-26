@@ -29,6 +29,10 @@ pub const PRIVATE_NETWORK_KEY: &str = "private-network";
 /// API 1.9, X5; no host has a name without a dot).
 pub const OPEN_URL_FROM_PARAMS_KEY: &str = "from-params";
 
+/// The key of the `openUrl.connections` grant, `openUrl:connections`
+/// (plugin API 1.14): pages on the web origin of a connection the
+/// invocation is bound to. No host has a name without a dot.
+pub const OPEN_URL_CONNECTIONS_KEY: &str = "connections";
 /// The key of the `calls:control` sub-grant (plugin API 1.16).
 pub const CALLS_CONTROL_KEY: &str = "control";
 
@@ -41,7 +45,7 @@ pub(crate) const ALL_METHODS: [HttpMethod; 6] = [
     HttpMethod::Delete,
 ];
 
-const KINDS: [PermissionKind; 15] = [
+const KINDS: [PermissionKind; 17] = [
     PermissionKind::Network,
     PermissionKind::Credentials,
     PermissionKind::Notifications,
@@ -56,6 +60,8 @@ const KINDS: [PermissionKind; 15] = [
     PermissionKind::Resources,
     PermissionKind::ProjectContext,
     PermissionKind::HostViews,
+    PermissionKind::Scripts,
+    PermissionKind::Connections,
     PermissionKind::Calls,
 ];
 
@@ -89,7 +95,8 @@ impl GrantKey {
     /// install or grant them from any other source.
     pub fn is_first_party_only(&self) -> bool {
         self.kind.is_first_party_only()
-            || (self.kind == PermissionKind::OpenUrl && self.key == OPEN_URL_FROM_PARAMS_KEY)
+            || (self.kind == PermissionKind::OpenUrl
+                && (self.key == OPEN_URL_FROM_PARAMS_KEY || self.key == OPEN_URL_CONNECTIONS_KEY))
     }
 }
 
@@ -207,6 +214,25 @@ pub enum GrantScope {
     ProjectSelect,
     /// `hostViews`: the app's own views, status items and cards (X8).
     HostViews,
+    /// `scripts` (plugin API 1.13): the Scripts bridge's ceiling; what one
+    /// script may do is that script's own grant.
+    Scripts {
+        fs: bool,
+        process: bool,
+        shell: bool,
+    },
+    /// `connections` (plugin API 1.14, first-party bundled plugins only):
+    /// the plugin may be offered connections of these types, each one
+    /// created and consented to by the user in the app, sending at most
+    /// these methods, on a private network only when `private_network`.
+    /// High tier: a credential channel, never derived.
+    #[serde(rename_all = "camelCase")]
+    Connections {
+        types: Vec<String>,
+        methods: Vec<HttpMethod>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        private_network: bool,
+    },
     /// `calls` (plugin API 1.16): the focused call's sanitised state
     /// (`call.state`), keyed `calls` and shown as `calls:observe`.
     CallsObserve,
@@ -241,6 +267,9 @@ impl GrantScope {
             | Self::ToolModify
             | Self::ResourceOpen
             | Self::ProjectSelect
+            | Self::Scripts { .. }
+            // Plugin API 1.14: every connection is a server and a secret.
+            | Self::Connections { .. }
             // Plugin API 1.16: controlling the user's calls is always
             // asked for, never derived.
             | Self::CallsControl => Tier::High,
@@ -301,6 +330,23 @@ impl GrantScope {
                         .all(|host| old_hosts.iter().any(|old| host_covers(old, host)))
             }
             (Self::Profile { read: old }, Self::Profile { read: new }) => is_subset(new, old),
+            // A new type, method or private network is an escalation.
+            (
+                Self::Connections {
+                    types: old_types,
+                    methods: old_methods,
+                    private_network: old_private,
+                },
+                Self::Connections {
+                    types: new_types,
+                    methods: new_methods,
+                    private_network: new_private,
+                },
+            ) => {
+                is_subset(new_types, old_types)
+                    && is_subset(new_methods, old_methods)
+                    && (!new_private || *old_private)
+            }
             // Every subcommand, with every option, was covered before.
             (Self::Tool { subcommands: old }, Self::Tool { subcommands: new }) => {
                 new.iter().all(|(name, options)| {
@@ -309,6 +355,21 @@ impl GrantScope {
                 })
             }
             (Self::Storage { quota_kb: old }, Self::Storage { quota_kb: new }) => new <= old,
+            // The Scripts bridge's ceiling covers a narrower one.
+            (
+                Self::Scripts {
+                    fs: old_fs,
+                    process: old_process,
+                    shell: old_shell,
+                },
+                Self::Scripts {
+                    fs: new_fs,
+                    process: new_process,
+                    shell: new_shell,
+                },
+            ) => {
+                (!new_fs || *old_fs) && (!new_process || *old_process) && (!new_shell || *old_shell)
+            }
             (
                 Self::Background {
                     min_interval_seconds: old,
@@ -413,6 +474,7 @@ fn key_covers(old: &GrantKey, new: &GrantKey) -> bool {
     let special = |key: &GrantKey| {
         key.key == PRIVATE_NETWORK_KEY
             || key.key == OPEN_URL_FROM_PARAMS_KEY
+            || key.key == OPEN_URL_CONNECTIONS_KEY
             || crate::origins::user_origin_setting(key).is_some()
             || crate::origins::open_url_user_origin_setting(key).is_some()
     };
@@ -527,6 +589,14 @@ impl GrantSet {
                             GrantScope::OpenUrl,
                         );
                     }
+                    // Pages on the web origin of a connection the
+                    // invocation is bound to (plugin API 1.14).
+                    if permission.opens_connections() {
+                        set.insert(
+                            GrantKey::new(PermissionKind::OpenUrl, OPEN_URL_CONNECTIONS_KEY),
+                            GrantScope::OpenUrl,
+                        );
+                    }
                 }
                 Permission::Background {
                     min_interval_seconds,
@@ -545,11 +615,37 @@ impl GrantSet {
                 | Permission::Resources { .. }
                 | Permission::ProjectContext { .. }
                 | Permission::HostViews { .. }
+                | Permission::Scripts { .. }
                 | Permission::Calls { .. } => set.insert_privileged(permission),
+                // Plugin API 1.14: one grant for being offered connections;
+                // each connection is then the user's own consent to its
+                // server (`plugin_connections`), passed to the broker
+                // only while this grant holds.
+                Permission::Connections { .. } => set.insert_connections(permission),
                 Permission::Device { state, icons, .. } => set.insert_device(*state, *icons),
             }
         }
         set
+    }
+
+    /// `connections` (plugin API 1.14): its types, methods and private
+    /// network.
+    fn insert_connections(&mut self, permission: &Permission) {
+        if let Permission::Connections {
+            types,
+            private_network,
+            ..
+        } = permission
+        {
+            self.insert(
+                GrantKey::new(PermissionKind::Connections, ""),
+                GrantScope::Connections {
+                    types: sorted(types),
+                    methods: sorted(&permission.connection_methods()),
+                    private_network: *private_network == Some(true),
+                },
+            );
+        }
     }
 
     /// `device:state` and `device:icons`, each when set.
@@ -612,6 +708,16 @@ impl GrantSet {
             Permission::HostViews { .. } => self.insert(
                 GrantKey::new(PermissionKind::HostViews, ""),
                 GrantScope::HostViews,
+            ),
+            Permission::Scripts {
+                fs, process, shell, ..
+            } => self.insert(
+                GrantKey::new(PermissionKind::Scripts, ""),
+                GrantScope::Scripts {
+                    fs: *fs == Some(true),
+                    process: *process == Some(true),
+                    shell: *shell == Some(true),
+                },
             ),
             Permission::Calls { control, .. } => {
                 self.insert(
@@ -1176,9 +1282,78 @@ mod tests {
         assert_eq!(scope.tier(), Tier::Medium);
     }
 
+    /// Plugin API 1.14's `connections`: one high-tier key for being
+    /// offered connections, first-party only; `openUrl.connections` its own
+    /// key. A new type, method or private network is an escalation.
+    #[test]
+    fn the_connections_permission_is_one_high_tier_grant() {
+        let manifest = Manifest::from_json(include_str!(
+            "../../deckpilot-plugin-manifest/tests/fixtures/connections-manifest.json"
+        ))
+        .unwrap();
+        let set = GrantSet::from_manifest(&manifest);
+        let key = GrantKey::new(PermissionKind::Connections, "");
+        let scope = set.get(&key).unwrap();
+        assert_eq!(
+            scope,
+            &GrantScope::Connections {
+                types: vec!["github".into(), "gitlab".into()],
+                methods: vec![HttpMethod::Get, HttpMethod::Post, HttpMethod::Put],
+                private_network: true,
+            }
+        );
+        assert_eq!(scope.tier(), Tier::High);
+        assert!(key.is_first_party_only());
+        let open = GrantKey::new(PermissionKind::OpenUrl, OPEN_URL_CONNECTIONS_KEY);
+        assert_eq!(set.get(&open), Some(&GrantScope::OpenUrl));
+        assert!(open.is_first_party_only());
+        assert_eq!(key.to_string(), "connections");
+        assert_eq!(open.to_string(), "openUrl:connections");
+        assert_eq!(parse_kind("connections"), Some(PermissionKind::Connections));
+        let narrower = GrantScope::Connections {
+            types: vec!["github".into()],
+            methods: vec![HttpMethod::Get],
+            private_network: false,
+        };
+        assert!(scope.covers(&narrower));
+        assert!(!narrower.covers(scope));
+        for wider in [
+            GrantScope::Connections {
+                types: vec!["github".into(), "bitbucket".into()],
+                methods: vec![HttpMethod::Get],
+                private_network: false,
+            },
+            GrantScope::Connections {
+                types: vec!["github".into()],
+                methods: vec![HttpMethod::Get, HttpMethod::Delete],
+                private_network: false,
+            },
+            GrantScope::Connections {
+                types: vec!["github".into()],
+                methods: vec![HttpMethod::Get],
+                private_network: true,
+            },
+        ] {
+            assert!(!narrower.covers(&wider), "{wider:?}");
+        }
+        // Stored and read back exactly.
+        let json = serde_json::to_string(scope).unwrap();
+        assert_eq!(serde_json::from_str::<GrantScope>(&json).unwrap(), *scope);
+    }
+
     /// Plugin API 1.9's privileged kinds (module-migration.md §7): one key
     /// per tool and sub-grant, the tiers of the security reviews, and all
     /// of them first-party only.
+    #[test]
+    fn a_scripts_ceiling_covers_a_narrower_one_only() {
+        let scope = |fs, process, shell| GrantScope::Scripts { fs, process, shell };
+        assert!(scope(true, true, false).covers(&scope(true, false, false)));
+        assert!(scope(true, true, false).covers(&scope(true, true, false)));
+        assert!(!scope(true, true, false).covers(&scope(true, true, true)));
+        assert!(!scope(false, true, false).covers(&scope(true, false, false)));
+        assert_eq!(scope(false, false, true).tier(), Tier::High);
+    }
+
     #[test]
     fn the_privileged_kinds_of_1_9_have_the_reviewed_keys_and_tiers() {
         let mut value: serde_json::Value =
@@ -1201,6 +1376,8 @@ mod tests {
             serde_json::json!({"kind": "hostViews", "justification": "Shows the Projects screen."}),
             serde_json::json!({"kind": "openUrl", "hosts": [], "fromParams": true,
                 "justification": "Opens the links you typed."}),
+            serde_json::json!({"kind": "scripts", "fs": true, "process": true,
+                "justification": "Runs your scripts on this computer."}),
         ]);
         let manifest = Manifest::from_json(&value.to_string()).unwrap();
         let set = GrantSet::from_manifest(&manifest);
@@ -1221,6 +1398,7 @@ mod tests {
             ("projectContext:select", Tier::High),
             ("hostViews", Tier::Low),
             ("openUrl:from-params", Tier::Medium),
+            ("scripts", Tier::High),
         ]
         .into_iter()
         .map(|(k, t)| (k.to_owned(), t))

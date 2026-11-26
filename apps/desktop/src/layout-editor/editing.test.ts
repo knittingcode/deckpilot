@@ -270,6 +270,34 @@ describe("editing controls", () => {
   })
 })
 
+describe("copying a key's labels to other keys", () => {
+  const labels = [
+    { id: "a", text: "SHOP", position: { mode: "preset" as const, at: "bottom" as const } },
+    { id: "b", text: "{{ shared.team.name }}", size: 12, color: "#ff0000" },
+  ]
+  const labelled = () =>
+    layout([{ ...press(key(0), "a"), appearance: { background: "#000000", labels } }])
+  const labelsOn = (l: DeviceLayout, control: ControlId) =>
+    bindingsFor(l, "home", control)[0]?.appearance?.labels
+
+  it("copies and pastes them with the key, onto one key or several", () => {
+    const l = labelled()
+    const clip = must(copyControls(mk2, l, "home", [key(0)]))
+    expect(labelsOn(pasteControls(mk2, l, "home", clip, [key(1)]).layout, key(1))).toEqual(labels)
+    const onTwo = pasteControls(mk2, l, "home", clip, [key(2), key(4)]).layout
+    expect(labelsOn(onTwo, key(2))).toEqual(labels)
+    expect(labelsOn(onTwo, key(4))).toEqual(labels)
+    // The copied key keeps its own.
+    expect(labelsOn(onTwo, key(0))).toEqual(labels)
+  })
+
+  it("duplicates them with the key", () => {
+    const result = duplicateControls(mk2, labelled(), "home", [key(0)])
+    expect(result.controls).toEqual([key(1)])
+    expect(labelsOn(result.layout, key(1))).toEqual(labels)
+  })
+})
+
 describe("drag and drop", () => {
   it("assigns library entries and moves controls", () => {
     const l = layout([press(key(0), "a")])

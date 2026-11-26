@@ -373,24 +373,69 @@ function Ui-WindowReport {
   return "$file ($($lines.Count) top-level windows of pid $($d.Id); titled: $($titled -join ' // '))"
 }
 
-# The Marketplace at its tabs (a plugin's details replace them).
+# A destination of the Marketplace's sidebar (0.15.0 and later, #440) by its
+# label: its text, or (a narrow window, icons only) its accessible name,
+# which adds a count in parentheses ("Installed (3)").
+function Ui-IsNav($e, [string]$Label) {
+  return (Ui-Type $e) -eq 'Button' -and ((Ui-Name $e) -eq $Label -or (Ui-Name $e).StartsWith("$Label ("))
+}
+
+# The Marketplace's own sidebar (0.15.0 and later): the group labelled
+# "Marketplace" with Discover, Installed, Updates, Categories, the
+# collections and Install from file; $null when not shown.
+function Ui-MarketplaceSidebar($Main) {
+  foreach ($g in (Ui-All $Main { (Ui-Name $_) -eq 'Marketplace' -and (Ui-Type $_) -eq 'Group' })) {
+    if (Ui-All $g { Ui-IsNav $_ 'Discover' } | Select-Object -First 1) { return $g }
+  }
+  return $null
+}
+
+# The Marketplace at its sections (a plugin's page replaces them): its
+# sidebar from 0.15.0, its tabs before. Returns 'sidebar' or 'tabs'.
 function Ui-Marketplace($Main) {
   $back = Ui-All $Main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Back to plugins' } | Select-Object -First 1
   if ($back) { [void](Ui-Invoke $back) }
-  if (-not (Ui-All $Main { (Ui-Type $_) -eq 'TabItem' -and (Ui-Name $_) -like 'Discover*' } | Select-Object -First 1)) {
+  if (-not (Ui-MarketplaceSidebar $Main) -and -not (Ui-All $Main { (Ui-Type $_) -eq 'TabItem' -and (Ui-Name $_) -like 'Discover*' } | Select-Object -First 1)) {
     [void](Ui-Invoke (Ui-Button $Main 'Marketplace'))
   }
-  return Ui-Find $Main "the Marketplace's tabs" { (Ui-Type $_) -eq 'TabItem' -and (Ui-Name $_) -like 'Discover*' }
+  return Ui-Until "the Marketplace's sidebar (from 0.15.0) or its tabs" {
+    if (Ui-MarketplaceSidebar $Main) { return 'sidebar' }
+    if (Ui-All $Main { (Ui-Type $_) -eq 'TabItem' -and (Ui-Name $_) -like 'Discover*' } | Select-Object -First 1) { return 'tabs' }
+  }
 }
 
-# Radix tabs switch on focus or mouse down, not on a click event.
+# A section of the Marketplace: the sidebar's entry from 0.15.0, else the
+# tab. Radix tabs switch on focus or mouse down, not on a click event.
 function Ui-Tab($Main, [string]$Name) {
+  $sidebar = Ui-MarketplaceSidebar $Main
+  if ($sidebar) {
+    $entry = Ui-Find $sidebar "the Marketplace sidebar's '$Name'" { Ui-IsNav $_ $Name }
+    [void](Ui-Invoke $entry)
+    Start-Sleep -Milliseconds 500
+    return $entry
+  }
   $tab = Ui-Find $Main "tab '$Name'" { (Ui-Type $_) -eq 'TabItem' -and (Ui-Name $_) -like "$Name*" }
   try { $tab.SetFocus() } catch {}
   Start-Sleep -Milliseconds 500
   $p = Ui-Pattern $tab ([System.Windows.Automation.SelectionItemPattern]::Pattern)
   if ($p -and -not $p.Current.IsSelected) { [void](Ui-Click $Main $tab) }
   return $tab
+}
+
+# What a plugin's page shows once the plugin's version is installed, or
+# $null: from 0.15.0 the version marked Installed in its Versions list (and
+# the About strip's version), before the install status "Installed <version>".
+function Ui-InstalledOnPage($Main) {
+  $versions = Ui-All $Main { (Ui-Name $_) -eq 'Versions' -and (Ui-Type $_) -eq 'List' } | Select-Object -First 1
+  if ($versions) {
+    $row = Ui-All $versions { (Ui-Type $_) -eq 'ListItem' -and (Ui-HasText $_ $script:PluginVersion) -and (Ui-HasText $_ 'Installed') } | Select-Object -First 1
+    if (-not $row) { return $null }
+    $about = Ui-All $Main { (Ui-Name $_) -eq 'About' -and (Ui-Type $_) -ne 'Button' } | Select-Object -First 1
+    return "Versions: '$(Ui-Joined $row)'; About: '$(if ($about) { Ui-Joined $about } else { 'About strip not exposed' })'"
+  }
+  $group = Ui-All $Main { (Ui-Name $_) -eq 'Install status' } | Select-Object -First 1
+  if ($group) { $t = Ui-Joined $group; if ($t.Contains("Installed $($script:PluginVersion)")) { return "install status '$t'" } }
+  return $null
 }
 
 function Ui-CheckAll($Root) {
@@ -489,32 +534,62 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
     }
     'Marketplace lists the production catalog' = {
       $main = $state.main
-      [void](Ui-Marketplace $main)
+      $shell = Ui-Marketplace $main
       [void](Ui-Tab $main 'Discover')
       $card = Ui-Until "the '$($script:PluginName)' card" { Ui-PluginCard $main } $script:UiLong
+      $cardName = Ui-Name $card
       $catalog = @(Ui-CatalogNames $script:Envs.DECKPILOT_DATA_DIR)
+      $shot = Ui-Shot 'marketplace'
       $texts = @(Ui-Texts $main)
-      $shown = @($catalog | Where-Object { $n = $_; $texts | Where-Object { $_ -eq $n -or $_ -like "$n *" } | Select-Object -First 1 })
+      $cards = @()
+      $where = 'Discover'
+      if ($shell -eq 'sidebar') {
+        # From 0.15.0 Discover shows the newest plugins not installed and
+        # "Your plugins" ("Details of <name>"); the Categories section names
+        # every plugin of each category on its card.
+        [void](Ui-Tab $main 'Categories')
+        $cards = @(Ui-Until "the Categories section's list" {
+          $list = Ui-All $main { (Ui-Name $_) -eq 'Categories' -and (Ui-Type $_) -in 'List', 'Group' -and (Ui-All $_ { (Ui-Type $_) -eq 'Button' } | Select-Object -First 1) } | Select-Object -Last 1
+          if ($list) { $names = @(Ui-All $list { (Ui-Type $_) -eq 'Button' } | ForEach-Object { Ui-Name $_ } | Where-Object { $_ }); if ($names.Count -gt 0) { , $names } }
+        })
+        $where = "Discover and Categories ($($cards -join ' | '))"
+      }
+      $shown = @($catalog | Where-Object {
+        $n = $_
+        ($texts | Where-Object { $_ -eq $n -or $_ -like "$n *" -or $_ -eq "Details of $n" } | Select-Object -First 1) -or
+        ($cards | Where-Object { $_.Contains($n) } | Select-Object -First 1)
+      })
       $absent = @($catalog | Where-Object { $shown -notcontains $_ })
-      if ($catalog.Count -gt 0 -and $absent.Count -gt 0) { throw "catalog plugins not shown: $($absent -join ', ') (shown: $($shown -join ', '))" }
-      "card '$(Ui-Name $card)'; production catalog (registry-index.json in the profile): $(if ($catalog) { $catalog -join ', ' } else { 'not readable' }); all shown; $(Ui-Shot 'marketplace')"
+      if ($catalog.Count -gt 0 -and $absent.Count -gt 0) { throw "catalog plugins not shown in ${where}: $($absent -join ', ') (shown: $($shown -join ', '))" }
+      if ($shell -eq 'sidebar') {
+        [void](Ui-Tab $main 'Discover')
+        [void](Ui-Until "the '$($script:PluginName)' card on Discover again" { Ui-PluginCard $main })
+      }
+      "Marketplace with its $(if ($shell -eq 'sidebar') { 'sidebar (0.15.0 and later)' } else { 'tabs (up to 0.14)' }); card '$cardName'; production catalog (registry-index.json in the profile): $(if ($catalog) { $catalog -join ', ' } else { 'not readable' }); all shown in $where; $shot"
     }
     "install $($script:PluginName) with consent" = {
       $main = $state.main
       [void](Ui-Invoke (Ui-PluginCard $main))
-      [void](Ui-Invoke (Ui-Button $main "Install $($script:PluginVersion)"))
+      # The plugin's page: from 0.15.0 its heading and one Install (named
+      # "Install <name>", the latest version); before, "Install <version>".
+      $install = Ui-Until "the plugin page's 'Install $($script:PluginName)' (0.15.0 and later) or 'Install $($script:PluginVersion)'" {
+        $old = Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq "Install $($script:PluginVersion)" } | Select-Object -First 1
+        if ($old) { return $old }
+        $page = (Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Back to plugins' } | Select-Object -First 1) -and
+          (Ui-All $main { (Ui-Name $_) -eq $script:PluginName -and (Ui-Type $_) -in 'Header', 'Text' -and $_.Current.AutomationId -eq 'plugin-detail-name' } | Select-Object -First 1)
+        if ($page) { Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq "Install $($script:PluginName)" } | Select-Object -First 1 }
+      }
+      $installName = Ui-Name $install
+      [void](Ui-Invoke $install)
       $confirm = Ui-Button $main 'Install'
       $consentShot = Ui-Shot 'install-consent'
       $boxes = Ui-CheckAll $main
       [void](Ui-Invoke $confirm)
       [void](Ui-Until 'the consent dialog to close' { -not (Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Install' } | Select-Object -First 1) })
-      $status = Ui-Until "'Installed $($script:PluginVersion)' in the install status" {
-        $group = Ui-All $main { (Ui-Name $_) -eq 'Install status' } | Select-Object -First 1
-        if ($group) { $t = Ui-Joined $group; if ($t.Contains("Installed $($script:PluginVersion)")) { $t } }
-      } $script:UiLong
-      "$boxes consent box(es) checked; install status '$status'; $consentShot; $(Ui-Shot 'installed')"
+      $status = Ui-Until "$($script:PluginName) $($script:PluginVersion) shown as installed on its page" { Ui-InstalledOnPage $main } $script:UiLong
+      "'$installName' on the plugin's page; $boxes consent box(es) checked; $status; $consentShot; $(Ui-Shot 'installed')"
     }
-    'Settings > Plugins lists it' = {
+    'Settings lists it' = {
       $main = $state.main
       $visibleBefore, $titledBefore = Ui-WindowCounts
       $settingsButton = Ui-Find $main 'the Settings button' { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -like 'Settings*' }
@@ -536,21 +611,42 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
         $windows = Ui-NoNewWindow $main $visibleBefore $titledBefore
         $pressed = Ui-Pressed (Ui-Gear $main)
         if ($pressed -eq 'not pressed') { throw 'the Settings button is not pressed while the settings are shown' }
-        [void](Ui-Invoke (Ui-Button $main 'Plugins'))
-        [void](Ui-Until "$($script:PluginName) v$($script:PluginVersion) in the installed list of Settings > Plugins" {
-          $list = Ui-All $main { (Ui-Name $_) -eq 'Installed plugins' -and (Ui-Type $_) -ne 'Button' } | Select-Object -First 1
-          $list -and (Ui-HasText $list $script:PluginName) -and (Ui-HasText $list "v$($script:PluginVersion)")
-        })
+        # Up to 0.14 Extensions > Plugins lists the installed plugins with
+        # their versions. 0.15.0 (#440) removed that page: Extensions >
+        # Permissions lists every installed plugin ("Permissions of
+        # installed plugins") with its state and "Open <name> in the
+        # Marketplace".
+        $entry = Ui-Until "the settings' Plugins (up to 0.14) or Permissions" {
+          $p = Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Plugins' } | Select-Object -First 1
+          if ($p) { return $p }
+          Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Permissions' } | Select-Object -First 1
+        }
+        if ((Ui-Name $entry) -eq 'Plugins') {
+          [void](Ui-Invoke $entry)
+          [void](Ui-Until "$($script:PluginName) v$($script:PluginVersion) in the installed list of Settings > Plugins" {
+            $list = Ui-All $main { (Ui-Name $_) -eq 'Installed plugins' -and (Ui-Type $_) -ne 'Button' } | Select-Object -First 1
+            $list -and (Ui-HasText $list $script:PluginName) -and (Ui-HasText $list "v$($script:PluginVersion)")
+          })
+          $listed = "Extensions > Plugins lists $($script:PluginName) v$($script:PluginVersion)"
+        } else {
+          [void](Ui-Invoke $entry)
+          $row = Ui-Until "$($script:PluginName) in Settings > Permissions' 'Permissions of installed plugins'" {
+            $list = Ui-All $main { (Ui-Name $_) -eq 'Permissions of installed plugins' -and (Ui-Type $_) -ne 'Button' } | Select-Object -First 1
+            if ($list) {
+              Ui-All $list { (Ui-Type $_) -eq 'ListItem' -and (Ui-All $_ { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq "Open $($script:PluginName) in the Marketplace" } | Select-Object -First 1) } | Select-Object -First 1
+            }
+          } $script:UiLong
+          $summary = (Ui-Joined $row)
+          if ($summary.Length -gt 160) { $summary = $summary.Substring(0, 160) }
+          $listed = "no Extensions > Plugins page (0.15.0 and later); Extensions > Permissions lists $($script:PluginName) under 'Permissions of installed plugins' ('$summary', with 'Open $($script:PluginName) in the Marketplace')"
+        }
         $shot = Ui-Shot 'settings-plugins'
         [void](Ui-Invoke (Ui-Button $main 'Marketplace'))
         [void](Ui-Until 'the settings view to close' { -not (Ui-SettingsView $main) })
-        $status = Ui-Until "the Marketplace as it was before the settings: $($script:PluginName)'s install status" {
-          $group = Ui-All $main { (Ui-Name $_) -eq 'Install status' } | Select-Object -First 1
-          if ($group) { $t = Ui-Joined $group; if ($t.Contains("Installed $($script:PluginVersion)")) { $t } }
-        }
+        $status = Ui-Until "the Marketplace as it was before the settings: $($script:PluginName)'s page, installed" { Ui-InstalledOnPage $main }
         $after = Ui-Pressed (Ui-Gear $main)
         if ($after -eq 'pressed') { throw 'the Settings button stays pressed after leaving the settings' }
-        return "new UI: the Settings button ($how; $pressedBefore before) showed the settings in the main window ($marker); $windows; Settings button $pressed; Extensions > Plugins lists $($script:PluginName) v$($script:PluginVersion); the toolbar's Marketplace left them: the Marketplace is back as it was (install status '$status'), Settings button $after; $shot; $(Ui-Shot 'settings-left')"
+        return "new UI: the Settings button ($how; $pressedBefore before) showed the settings in the main window ($marker); $windows; Settings button $pressed; $listed; the toolbar's Marketplace left them: the Marketplace is back as it was ($status), Settings button $after; $shot; $(Ui-Shot 'settings-left')"
       }
       $settings = Ui-SettingsWindow
       $state.settingsHwnd = $settings.Current.NativeWindowHandle
@@ -569,12 +665,13 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
       $main = $state.main
       [void](Ui-Marketplace $main)
       [void](Ui-Tab $main 'Installed')
+      $installedList = Ui-Find $main 'the installed list' { (Ui-Name $_) -eq 'Installed plugins' -and (Ui-Type $_) -ne 'Button' }
       # From 0.9.0 (plugin API 1.4) the install plan activates a plugin whose
       # install consent covered all its permissions: disable it here first so
       # enabling it again goes through the consent review as before.
       $enableName = "Enable $($script:PluginName)"
       $disableName = "Disable $($script:PluginName)"
-      $atInstall = Ui-Find $main "switch '$enableName' or '$disableName'" { (Ui-Name $_) -eq $enableName -or (Ui-Name $_) -eq $disableName }
+      $atInstall = Ui-Find $installedList "switch '$enableName' or '$disableName' in the installed list" { (Ui-Name $_) -eq $enableName -or (Ui-Name $_) -eq $disableName }
       $disabled = ''
       if ((Ui-Name $atInstall) -eq $disableName) {
         [void](Ui-Invoke $atInstall)
@@ -661,13 +758,18 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
         return "UI up to 0.8.1: Create a profile opened Settings > Profiles in the window 'DeckPilot Settings'; New profile '$($script:ProfileName)' saved and listed; $shot"
       }
       # The compact table (aria-label "Profiles"): each profile's name is a
-      # button that makes it the profile being edited; the toolbar has no
-      # profile selector in the settings, so a button of that name is the row.
-      [void](Ui-Until "'$($script:ProfileName)' in the table of All profiles" {
-        -not (Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Save' } | Select-Object -First 1) -and
-        (Ui-HasText $main 'All profiles') -and
-        [bool](Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq $script:ProfileName } | Select-Object -First 1)
-      })
+      # button that makes it the profile being edited (from 0.15.0, #435, one
+      # that opens its details: "Open <name>"); the toolbar has no profile
+      # selector in the settings, so a button of that name is the row. Up to
+      # 0.14 under "All profiles", from 0.15.0 the page's one table.
+      $rowButton = Ui-Until "'$($script:ProfileName)' in the table of All profiles" {
+        if (Ui-All $main { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -eq 'Save' } | Select-Object -First 1) { return $null }
+        $scope = Ui-All $main { (Ui-Name $_) -eq 'Profiles' -and (Ui-Type $_) -in 'Table', 'DataGrid' } | Select-Object -First 1
+        if (-not $scope -and (Ui-HasText $main 'All profiles')) { $scope = $main }
+        if (-not $scope) { return $null }
+        $b = Ui-All $scope { (Ui-Type $_) -eq 'Button' -and ((Ui-Name $_) -eq $script:ProfileName -or (Ui-Name $_) -eq "Open $($script:ProfileName)") } | Select-Object -First 1
+        if ($b) { Ui-Name $b }
+      }
       $table = Ui-All $main { (Ui-Name $_) -eq 'Profiles' -and (Ui-Type $_) -in 'Table', 'DataGrid' } | Select-Object -First 1
       $shot = Ui-Shot 'settings-profiles'
       # Back where Create a profile was pressed: the rail's Device Editor.
@@ -675,7 +777,7 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
       [void](Ui-Until 'the settings view to close' { -not (Ui-SettingsView $main) })
       $selector = Ui-Find $main "the Device Editor's profile selector" { (Ui-Type $_) -eq 'Button' -and (Ui-Name $_) -like 'Profile:*' }
       [void](Ui-Find $main "the Device Editor's device selector" { (Ui-Type $_) -eq 'Button' -and ((Ui-Name $_) -like 'Device:*' -or (Ui-Name $_) -eq 'Choose a device') })
-      "new UI: Create a profile showed Settings > Profiles in the main window; $windows; New profile '$($script:ProfileName)' saved and listed in All profiles ($(if ($table) { "table 'Profiles'" } else { 'table not exposed as Table' }), row button '$($script:ProfileName)'); the rail's Device Editor left the settings: back in the Device Editor (device and profile selectors, '$(Ui-Name $selector)'); $shot; $(Ui-Shot 'settings-left-editor')"
+      "new UI: Create a profile showed Settings > Profiles in the main window; $windows; New profile '$($script:ProfileName)' saved and listed in All profiles ($(if ($table) { "table 'Profiles'" } else { 'table not exposed as Table' }), row button '$rowButton'); the rail's Device Editor left the settings: back in the Device Editor (device and profile selectors, '$(Ui-Name $selector)'); $shot; $(Ui-Shot 'settings-left-editor')"
     }
     'Device Editor, Action Library and key inspector' = {
       $main = $state.main
@@ -776,11 +878,11 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
   # agent and the profile stay) and they run, so a defect of that window
   # does not hide the rest of the app.
   $needs = @{
-    'profile created in Settings' = 'Settings > Plugins lists it'
+    'profile created in Settings' = 'Settings lists it'
     'Device Editor, Action Library and key inspector' = 'profile created in Settings'
     'reopening restores the window and the profile' = 'profile created in Settings'
   }
-  $restartable = @('Settings > Plugins lists it')
+  $restartable = @('Settings lists it')
   $failed = $null
   $skipped = @{}
   $restarted = $null
@@ -804,12 +906,15 @@ function Invoke-UiFlow([string]$Exe, $Envs) {
       }
     } catch {
       $shot = Ui-Shot ("failure-" + ($name -replace '[^A-Za-z0-9]+', '-'))
-      $dump = 'no window to dump'
+      $dumps = @()
       $d = Ui-Desktop
       if ($d) {
         $i = 0
-        foreach ($w in (Ui-TopWindows $d.Id)) { $i++; $dump = Ui-Dump $w "$Label-ui-failure-tree-$i.tsv" }
+        # Every top-level window: the main window, and hidden ones such as
+        # tao's event target, which have no accessible content.
+        foreach ($w in (Ui-TopWindows $d.Id)) { $i++; $dumps += "$(Ui-Dump $w "$Label-ui-failure-tree-$i.tsv") of '$(Ui-Name $w)' (class $($w.Current.ClassName))" }
       }
+      $dump = if ($dumps) { $dumps -join ', ' } else { 'no window to dump' }
       Record $step 'fail' "$($_.Exception.Message); $shot; UIA tree: $dump; windows: $(Ui-WindowReport)"
       if ($name -notin $restartable) { $failed = $name; continue }
       $skipped[$name] = 'failed'

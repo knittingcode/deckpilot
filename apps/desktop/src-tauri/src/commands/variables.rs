@@ -12,7 +12,7 @@
 use tauri::State;
 
 use deckpilot_core::variables::{
-    CatalogEntry, CatalogFilter, PreviewItem, ReferencePreview, ResolutionContext,
+    CatalogEntry, CatalogFilter, PreviewItem, ReferencePreview, ResolutionContext, expand_members,
 };
 use deckpilot_ipc::display_templates::ResolvedDisplayTemplate;
 use deckpilot_ipc::{ClientError, MAX_PREVIEW_ITEMS, Request, Response};
@@ -42,22 +42,27 @@ fn not_supported(error: ClientError) -> CommandError {
 }
 
 /// The references available in `context` that match `filter`: metadata,
-/// never values.
+/// never values. The agent lists a structured variable once, with its
+/// shape's members and its keys; its member entries
+/// (`….repositories.cms.name`) are composed here ([`expand_members`]), so
+/// the agent's answer stays within one message however many repositories
+/// a project has (protocol 18).
 #[tauri::command]
 pub async fn list_variables(
     state: State<'_, AppState>,
     context: ResolutionContext,
     filter: Option<CatalogFilter>,
 ) -> CommandResult<Vec<CatalogEntry>> {
+    let filter = filter.unwrap_or_default();
     let request = Request::ListVariables {
         context: Box::new(context),
-        filter: Box::new(filter.unwrap_or_default()),
+        filter: Box::new(filter.clone()),
     };
     match agent::request(&state.paths, request)
         .await
         .map_err(not_supported)?
     {
-        Response::Variables { entries } => Ok(entries),
+        Response::Variables { entries } => Ok(expand_members(entries, &filter)),
         other => Err(unexpected(&other)),
     }
 }
@@ -94,22 +99,25 @@ pub async fn preview_references(
 
 /// The references a key title may use in `context` that match `filter`:
 /// display-safe sources only, metadata only (protocol 17,
-/// `deckpilot_ipc::display_templates`).
+/// `deckpilot_ipc::display_templates`). A structured variable comes for
+/// its display-safe members only; they are composed here and the variable
+/// itself is never offered ([`expand_members`], protocol 18).
 #[tauri::command]
 pub async fn list_display_variables(
     state: State<'_, AppState>,
     context: ResolutionContext,
     filter: Option<CatalogFilter>,
 ) -> CommandResult<Vec<CatalogEntry>> {
+    let filter = filter.unwrap_or_default();
     let request = Request::ListDisplayVariables {
         context: Box::new(context),
-        filter: Box::new(filter.unwrap_or_default()),
+        filter: Box::new(filter.clone()),
     };
     match agent::request(&state.paths, request)
         .await
         .map_err(not_supported)?
     {
-        Response::Variables { entries } => Ok(entries),
+        Response::Variables { entries } => Ok(expand_members(entries, &filter)),
         other => Err(unexpected(&other)),
     }
 }

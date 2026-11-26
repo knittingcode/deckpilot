@@ -44,6 +44,8 @@ test-hooks = [
 # never in the agent.
 plugins = [
     "dep:base64",
+    "dep:cap-fs-ext",
+    "dep:cap-std",
     "dep:deckpilot-plugin-abi",
     "dep:deckpilot-plugin-bundled",
     "dep:deckpilot-plugin-broker",
@@ -93,6 +95,10 @@ tray-icon.workspace = true
 # Feature `plugins` only.
 # Installed plugin icons as data URLs (`PluginDetails.icon`).
 base64 = { workspace = true, optional = true }
+# The Scripts bridge's file system operations, beneath an opened scope
+# root (plugin API 1.13, plugins/executor/scripts/fs).
+cap-fs-ext = { workspace = true, optional = true }
+cap-std = { workspace = true, optional = true }
 deckpilot-plugin-abi = { workspace = true, optional = true }
 deckpilot-plugin-broker = { workspace = true, optional = true }
 # The bundled first-party plugins: pins compiled in (DECKPILOT_BUNDLED_PINS
@@ -158,6 +164,13 @@ required-features = ["plugins"]
 # agent process and the real plugin host.
 [[test]]
 name = "plugins_bundled"
+required-features = ["plugins"]
+
+# Calls' "Back to work" followed to the end of a real plugin action, through
+# a spawned agent with the mock call provider (`--test-calls-mock`, which
+# only `test-hooks` builds have) and the bundled test fixture (C9).
+[[test]]
+name = "calls_plugin_action"
 required-features = ["plugins"]
 
 # Module migration: the fixture legacy module moved to its migration-class

@@ -863,3 +863,92 @@ async fn a_protocol_16_agent_is_never_asked_to_resolve_display_templates() {
         Ok(Response::Status { .. })
     ));
 }
+
+/// A protocol 17 agent (DeckPilot 0.15, before structured variables): the
+/// client speaks 17 with it, knows that it lists no member entries and no
+/// structured types, and everything else works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_protocol_17_agent_has_no_structured_variables() {
+    let peer = peer(17, "0.15.0");
+    let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
+        .await
+        .unwrap();
+    assert_eq!(*peer.hellos.lock().unwrap(), [20, 19, 18, 17]);
+    assert_eq!(client.protocol(), 17);
+    assert!(client.supports(Capability::DisplayTemplates));
+    assert!(!client.supports(Capability::StructuredVariables));
+    assert!(matches!(
+        client.request(Request::GetStatus).await,
+        Ok(Response::Status { .. })
+    ));
+}
+
+/// A protocol 18 agent (DeckPilot before plugin connections): the client
+/// refuses every connection request before sending it, so no token ever
+/// travels to an agent that would not keep it; the rest works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_protocol_18_agent_is_never_sent_a_connection_or_its_token() {
+    use deckpilot_ipc::connections::ConnectionDeployment;
+    use deckpilot_ipc::plugins::PluginSecret;
+    let peer = peer(18, "0.16.0");
+    let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
+        .await
+        .unwrap();
+    assert_eq!(*peer.hellos.lock().unwrap(), [20, 19, 18]);
+    assert_eq!(client.protocol(), 18);
+    assert!(!client.supports(Capability::PluginConnections));
+    let plugin = "deckpilot.git-providers".to_owned();
+    let id = "cn_01JD7Q0000000000000000000A".to_owned();
+    for request in [
+        Request::ListPluginConnections {
+            plugin: plugin.clone(),
+        },
+        Request::CreatePluginConnection {
+            plugin: plugin.clone(),
+            connection_type: "gitlab".into(),
+            deployment: ConnectionDeployment::SelfHosted,
+            url: Some("https://code.example.com".into()),
+            display_name: "Work".into(),
+            allow_changes: false,
+            private_network: false,
+            secret: Some(PluginSecret::new("dp-test-never-sent")),
+        },
+        Request::SetPluginConnectionSecret {
+            plugin: plugin.clone(),
+            connection: id.clone(),
+            secret: PluginSecret::new("dp-test-never-sent"),
+        },
+        Request::TestPluginConnection {
+            plugin: plugin.clone(),
+            connection: id.clone(),
+        },
+        Request::RemovePluginConnection {
+            plugin: plugin.clone(),
+            connection: id.clone(),
+        },
+    ] {
+        let refused = client.request(request).await;
+        assert!(
+            matches!(
+                &refused,
+                Err(ClientError::Unsupported {
+                    needs: 20,
+                    protocol: 18,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    let received = peer.received.lock().unwrap().clone();
+    assert!(
+        !serde_json::to_string(&received)
+            .unwrap()
+            .contains("dp-test-never-sent"),
+        "the token reached the agent"
+    );
+    assert!(matches!(
+        client.request(Request::GetStatus).await,
+        Ok(Response::Status { .. })
+    ));
+}

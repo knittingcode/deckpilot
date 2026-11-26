@@ -183,7 +183,8 @@
     "unsupported": "moduł `{{module}}` nie jest obsługiwany w tym systemie operacyjnym",
     "windowNamespace": "okno `{{window}}` jest poza przestrzenią nazw modułu `{{module}}`",
     "invalidConfig": "nieprawidłowa konfiguracja modułu: {{detail}}",
-    "incompatibleExport": "moduł `{{module}}` nie może odczytać wyeksportowanych danych w wersji {{found}} (obsługuje wersje do {{supported}})"
+    "incompatibleExport": "moduł `{{module}}` nie może odczytać wyeksportowanych danych w wersji {{found}} (obsługuje wersje do {{supported}})",
+    "gesturePreset": "nieprawidłowy zestaw gestów: {{detail}}"
   },
   "catalog": {
     "duplicateKey": "klucz projektu `{{key}}` jest już używany w tym profilu",

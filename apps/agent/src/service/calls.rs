@@ -341,7 +341,11 @@ impl Agent {
         let id = provider.id();
         let mut engine = Engine::default();
         engine.add_provider(id.clone(), consent, discovery.capabilities);
-        let driver = CallsDriver::new(engine);
+        let mut driver = CallsDriver::new(engine);
+        // Installed while locked: nothing is shown until unlocked.
+        if self.store.is_none() {
+            driver.set_hidden(&mut self.runtime, true, Instant::ZERO);
+        }
         if let Err(error) = provider.connect(&ProviderCx {
             consent,
             session: ProviderSession(1),
@@ -366,15 +370,20 @@ impl Agent {
     /// unedited, an edited one kept) and loads the stored one into the
     /// driver, so the user's edits are what the overlay shows. While the
     /// configuration is locked nothing is seeded; it is tried again.
-    fn calls_seed_connected(&mut self) {
+    /// Returns whether a layout was loaded: the caller then syncs the
+    /// driver, so a call already going on (Calls installed mid-call, or
+    /// while the configuration was locked) gets its overlay now that the
+    /// layout is there, not at its next change.
+    fn calls_seed_connected(&mut self) -> bool {
         let Some(now) = self.calls_now() else {
-            return;
+            return false;
         };
+        let mut loaded = false;
         let Some(service) = self.calls.service.as_mut() else {
-            return;
+            return false;
         };
         let Some(store) = self.store.as_ref() else {
-            return;
+            return false;
         };
         let models: BTreeSet<DeviceModelId> = self
             .runtime
@@ -435,6 +444,7 @@ impl Agent {
                     let used = generated.with_stored(stored.layout, stored.actions);
                     service.driver.set_layout(model.id.clone(), used);
                     self.calls.layouts = None;
+                    loaded = true;
                 }
                 // Seeded, yet not there to read: nothing to show for the
                 // model, and nothing to gain by writing it again.
@@ -474,13 +484,19 @@ impl Agent {
                 }
             }
         }
+        loaded
     }
 
     /// Handles what is due and says how long until Calls next has to be
     /// looked at (`None`: Calls is not installed).
     pub(super) fn calls_wake(&mut self) -> Option<Duration> {
         let now = self.calls_now()?;
-        self.calls_seed_connected();
+        if self.calls_seed_connected()
+            && let Some(service) = self.calls.service.as_mut()
+        {
+            service.driver.sync(&mut self.runtime, now);
+            self.render_all();
+        }
         let service = self.calls.service.as_mut()?;
         let id = service.provider.id();
         let events = service.provider.poll(now);
@@ -523,6 +539,7 @@ impl Agent {
                 parameters,
                 ..
             } => {
+                let was_back = service.driver.returns().is_suspended(device);
                 let handled = service.driver.overlay_key(
                     &mut self.runtime,
                     device,
@@ -543,6 +560,9 @@ impl Agent {
                     _ => {}
                 }
                 service.driver.sync(&mut self.runtime, now);
+                if !was_back && service.driver.returns().is_suspended(device) {
+                    info!(%device, "calls: the device went back to work");
+                }
                 true
             }
             RuntimeOutcome::OverlayDismissed { session, .. } => {
@@ -559,12 +579,31 @@ impl Agent {
         }
     }
 
+    /// The configuration locked (`true`) or unlocked: a locked device shows
+    /// "Locked" and never a call (nor anything of it: state, faces, the
+    /// call pages). The engine keeps following the call; unlocked, a call
+    /// still going on is shown again at once.
+    pub(super) fn calls_set_locked(&mut self, locked: bool) {
+        let Some(now) = self.calls_now() else {
+            return;
+        };
+        if let Some(service) = self.calls.service.as_mut()
+            && service.driver.is_hidden() != locked
+        {
+            service.driver.set_hidden(&mut self.runtime, locked, now);
+            if locked {
+                info!("calls: hidden while the configuration is locked");
+            }
+        }
+    }
+
     /// A device connected: it shows the overlay if the call needs it.
     pub(super) fn calls_device_connected(&mut self) {
         let Some(now) = self.calls_now() else {
             return;
         };
-        // A new model gets its managed layout first.
+        // A new model gets its managed layout first (`device_connected`
+        // syncs the driver, and the caller draws the device).
         self.calls_seed_connected();
         if let Some(service) = self.calls.service.as_mut() {
             service.driver.device_connected(&mut self.runtime, now);
@@ -603,9 +642,13 @@ impl Agent {
             return;
         };
         if let Some(service) = self.calls.service.as_mut() {
+            let was_back = service.driver.returns().is_suspended(&run.device);
             service
                 .driver
                 .run_finished(&mut self.runtime, &run.device, run.run, end, now);
+            if was_back && !service.driver.returns().is_suspended(&run.device) {
+                info!(device = %run.device, ?end, "calls: back on the call after a run ended");
+            }
         }
         self.render_all();
         self.calls_publish();
@@ -1151,6 +1194,7 @@ impl Agent {
             state,
             devices,
             layouts,
+            frames,
             scheduled_returns: self.calls_driver().map_or(0, |d| d.returns().scheduled()),
             layouts_reads: self.calls.layouts_reads,
             seed_attempts: self.calls.seed_attempts,

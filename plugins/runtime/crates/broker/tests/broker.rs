@@ -49,6 +49,7 @@ fn fetch(method: HttpMethod, url: &str) -> CapabilityRequest {
         headers: vec![],
         body: None,
         auth: None,
+        connection: None,
     })
 }
 
@@ -188,6 +189,7 @@ fn methods_and_headers_are_checked() {
             }],
             body: None,
             auth: None,
+            connection: None,
         });
         assert_eq!(
             s.authorize(&req).denial(),
@@ -204,6 +206,7 @@ fn methods_and_headers_are_checked() {
         }],
         body: None,
         auth: None,
+        connection: None,
     });
     assert!(s.authorize(&ok).is_allowed());
 }
@@ -473,6 +476,7 @@ fn audit_records_never_contain_values() {
         }],
         body: Some(SECRET.into()),
         auth: None,
+        connection: None,
     }));
     s.authorize(&CapabilityRequest::Notify(Notify {
         title: SECRET.into(),
@@ -521,6 +525,7 @@ fn get_with(url: &str, credential: &str, scheme: AuthScheme) -> CapabilityReques
             credential: credential.into(),
             scheme,
         }),
+        connection: None,
     })
 }
 

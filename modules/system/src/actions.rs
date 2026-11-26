@@ -9,7 +9,7 @@ use deckpilot_core::process::{ProcessLimits, minimal_environment};
 use deckpilot_core::{
     ActionHandler, ActionParameters, ActionResult, ActionType, ActionTypeId, ButtonState,
     Capability, ExecutionContext, Os, ParameterError, ParameterKind, ParameterSpec, ParameterValue,
-    RefreshPolicy, ResourceKind, StateError,
+    RefreshPolicy, ResourceKind, StateError, TargetKind, TargetKinds,
 };
 
 use deckpilot_apps::Launchable;
@@ -31,6 +31,13 @@ pub const CPU: &str = "system.cpu";
 pub const MEMORY: &str = "system.memory";
 pub const NETWORK: &str = "system.network";
 pub const DISK: &str = "system.disk";
+
+/// The icon of an Open key whose target is a file, and of one whose
+/// target is unknown or not chosen: Open's own (`docs/system-actions.md`,
+/// "The key's icon").
+pub const FILE_ICON: &str = "file";
+/// The icon of an Open key whose target is a folder: Open folder's.
+pub const FOLDER_ICON: &str = "folder-open";
 
 /// Longest time limit of a command, in seconds.
 pub const MAX_COMMAND_SECONDS: i64 = 3600;
@@ -581,7 +588,7 @@ impl OpenFile {
                  application, or a file with a chosen one.",
                 parameters,
                 opens(
-                    "file",
+                    FILE_ICON,
                     vec![OutputSpec::new("path", "Path", ValueKind::Path)],
                 ),
             ),
@@ -623,9 +630,32 @@ impl ActionHandler for OpenFile {
             Ok(ActionResult::success(format!("opened {shown}")).with_data("path", shown))
         })())
     }
+
+    /// A folder for a folder, a document for a file; Open's own icon
+    /// (`None`) when nothing is chosen or the target cannot be told
+    /// without guessing: missing, not a local file or folder, or a path
+    /// given by a variable, known only when the action runs.
+    fn automatic_symbol(
+        &self,
+        parameters: &ActionParameters,
+        targets: &dyn TargetKinds,
+    ) -> Option<String> {
+        let location = parameters.resource("location")?;
+        let path = match parameters.get("path") {
+            None => None,
+            Some(ParameterValue::Text(path)) => Some(path.as_str()),
+            Some(_) => return None,
+        };
+        match targets.kind_of(location, path) {
+            TargetKind::Directory => Some(FOLDER_ICON.into()),
+            TargetKind::File => Some(FILE_ICON.into()),
+            TargetKind::Unknown => None,
+        }
+    }
 }
 
-/// `system.open-directory`: opens a folder in the file manager.
+/// `system.open-directory`: opens a folder in the file manager. Replaced
+/// by Open for new actions (deprecated); saved ones run unchanged.
 #[derive(Debug)]
 pub struct OpenDirectory {
     definition: ActionType,
@@ -634,19 +664,24 @@ pub struct OpenDirectory {
 
 impl OpenDirectory {
     pub fn new(launcher: Arc<dyn Launcher>) -> Self {
-        Self {
+        let mut this = Self {
             definition: definition(
                 OPEN_DIRECTORY,
                 "Open folder",
                 "Opens a folder resource, or a folder inside it, in the file manager.",
                 location_parameters(true),
                 opens(
-                    "folder-open",
+                    FOLDER_ICON,
                     vec![OutputSpec::new("path", "Path", ValueKind::Path)],
                 ),
             ),
             launcher,
-        }
+        };
+        // Open opens folders too: saved actions, keys and workflow nodes
+        // of Open folder keep working (and their folder icon), but it is
+        // not offered for new ones.
+        this.definition.deprecated = true;
+        this
     }
 }
 

@@ -64,6 +64,8 @@ use super::variables::PublishedVariables;
 use super::worker::{EngineFailure, EngineReply, Events, StateReply};
 use super::{PluginSettings, platform, platform_problem};
 
+#[path = "connections.rs"]
+mod connections;
 #[path = "dependencies.rs"]
 mod dependencies;
 
@@ -89,9 +91,12 @@ const INVALID_PARAMETERS: &str = "invalid-parameters";
 /// items and dashboard cards; `docs/marketplace/module-migration.md` §7)
 /// and their capability operations: `resource` parameters and
 /// `resource.resolve` are carried out, the others refused as not
-/// implemented until their host side lands (WP-A4 to WP-A6).
+/// implemented until their host side lands (WP-A4 to WP-A6), 1.10
+/// `contributes.gesturePresets` (data only; `convert::gesture_presets`)
+/// and 1.11 `contributes.actions[].contexts` (advisory metadata,
+/// `engine::action_type`; `docs/action-contexts.md`).
 /// A plugin whose manifest asks for a higher minor is `incompatible`.
-const PLUGIN_API: ApiLevel = ApiLevel::new(1, 9);
+const PLUGIN_API: ApiLevel = ApiLevel::new(1, 11);
 /// Longest any invocation may take, whatever the manifest says.
 const MAX_INVOCATION: Duration = Duration::from_secs(600);
 /// Where the registry's verified state is kept (outside `plugins/`,
@@ -217,6 +222,27 @@ fn registry_error(error: &RegistryError) -> IpcError {
         reason::REGISTRY,
         format!("the plugin registry failed verification: {error}"),
     )
+}
+
+/// Plugin API 1.14: an internal action is the app's (its screen, pickers, a
+/// connection test), never a key's, a gesture's or a workflow node's.
+fn refuse_internal(
+    engine: bool,
+    declaration: &deckpilot_plugin_manifest::Action,
+    id: &PluginId,
+    action: &str,
+) -> Result<(), IpcError> {
+    if engine && declaration.is_internal() {
+        return Err(error(
+            ErrorCode::Failed,
+            reason::NOT_ENABLED,
+            format!(
+                "`{action}` of {id} is used by DeckPilot itself and cannot run from a key or a \
+                 workflow"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn invalid(message: impl Into<String>) -> IpcError {
@@ -436,6 +462,9 @@ struct Prepared {
     resource_kinds: BTreeMap<String, Vec<deckpilot_plugin_abi::privileged::ResourceKind>>,
     /// The active version, for the audit.
     version: String,
+    /// The action's declaration: its `connection` parameters bind the
+    /// invocation (plugin API 1.14).
+    declaration: deckpilot_plugin_manifest::Action,
 }
 
 /// Why the plugin store could not be opened.
@@ -659,6 +688,7 @@ impl PluginService {
     /// The installed plugins and whether their actions can run, for the
     /// agent's module registry. Unreadable records are left out.
     pub fn catalog(&self) -> Vec<CatalogPlugin> {
+        use deckpilot_plugin_manifest::PermissionKind::Resources;
         let store = self.manager.store();
         let Ok(records) = store.plugins() else {
             return Vec::new();
@@ -693,7 +723,11 @@ impl PluginService {
                 visual_assets: Vec::new(),
                 project_context: false,
                 resources: false,
+                resource_paths: false,
                 wrap_around: None,
+                // Not installed: nothing to offer in the library. Keys
+                // that used its presets keep their bindings.
+                gesture_presets: Vec::new(),
             });
         let graph = self.graph();
         self.locales
@@ -726,11 +760,11 @@ impl PluginService {
                     })
                     .filter(|(_, names)| !names.is_empty())
                     .collect();
-                let project_context = grants.iter().any(|g| {
-                    g.key.kind == deckpilot_plugin_manifest::PermissionKind::ProjectContext
-                        && g.key.key.is_empty()
-                        && g.status == deckpilot_plugin_store::GrantStatus::Granted
-                });
+                let project_context = granted(
+                    &grants,
+                    deckpilot_plugin_manifest::PermissionKind::ProjectContext,
+                    "",
+                );
                 let wrap_around = project_context.then(|| {
                     store
                         .settings(&record.id)
@@ -755,11 +789,9 @@ impl PluginService {
                     visual_assets: self.drawable_assets(record, &dir),
                     project_context,
                     wrap_around,
-                    resources: grants.iter().any(|g| {
-                        g.key.kind == deckpilot_plugin_manifest::PermissionKind::Resources
-                            && g.key.key.is_empty()
-                            && g.status == deckpilot_plugin_store::GrantStatus::Granted
-                    }),
+                    gesture_presets: convert::gesture_presets(manifest),
+                    resources: granted(&grants, Resources, ""),
+                    resource_paths: granted(&grants, Resources, "paths"),
                 })
             })
             .chain(gone)
@@ -1457,7 +1489,9 @@ impl PluginService {
             .effective_grants(id)
             .unwrap_or_default();
         let user_origins = self.user_origins(id, &effective);
-        let (approved, skipped) = convert::approved_with(&effective, user_origins);
+        let (mut approved, skipped) = convert::approved_with(&effective, user_origins);
+        // Plugin API 1.14: the user's connections, within the grant.
+        approved.0.extend(self.connection_grants(id, &effective));
         if !skipped.is_empty() {
             info!(plugin = %id, ?skipped, "grants the broker does not enforce are not passed on");
         }
@@ -1479,6 +1513,26 @@ impl PluginService {
                 );
             }
         }
+    }
+
+    /// The connections the broker may use now (plugin API 1.14,
+    /// `connections.rs`).
+    fn connection_grants(
+        &self,
+        id: &PluginId,
+        effective: &[(GrantKey, deckpilot_plugin_store::GrantScope)],
+    ) -> Vec<deckpilot_plugin_broker::ApprovedPermission> {
+        let store = self.manager.store();
+        let Some(manifest) = store
+            .plugin(id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.active().map(|v| v.manifest.clone()))
+        else {
+            return Vec::new();
+        };
+        let rows = store.connections(id).unwrap_or_default();
+        connections::approved(&manifest, effective, &rows)
     }
 
     /// The consents to user-entered origins (G2) the broker may use now:
@@ -1772,6 +1826,12 @@ impl PluginService {
                 self.revoke_user_origin(&plugin_id(&plugin)?, &setting)
             }
             Request::ListPluginCredentials { plugin } => self.credentials(&plugin_id(&plugin)?),
+            // Plugin API 1.14 (`connections.rs`).
+            request @ (Request::ListPluginConnections { .. }
+            | Request::CreatePluginConnection { .. }
+            | Request::SetPluginConnectionSecret { .. }
+            | Request::UpdatePluginConnection { .. }
+            | Request::RemovePluginConnection { .. }) => self.handle_connections(request),
             Request::SetPluginCredential {
                 plugin,
                 key,
@@ -2313,7 +2373,8 @@ impl PluginService {
             .actions()
             .iter()
             .map(|a| a.id.clone());
-        let config = host_config(&self.host, Arc::from(module.as_slice()), actions);
+        let mut config = host_config(&self.host, Arc::from(module.as_slice()), actions);
+        config.limits = guest_limits(verified.manifest());
         let mut supervisor = Supervisor::new(
             config,
             self.broker.clone(),
@@ -2649,7 +2710,8 @@ impl PluginService {
                 .actions()
                 .iter()
                 .map(|a| a.id.clone());
-            let config = host_config(&self.host, Arc::from(module), actions);
+            let mut config = host_config(&self.host, Arc::from(module), actions);
+            config.limits = guest_limits(&active.manifest);
             let broker_id = deckpilot_plugin_broker::PluginId::new(record.id.as_str())
                 .map_err(|_| invalid("the plugin id is not valid for the broker"))?;
             let supervisor = Supervisor::new(
@@ -2674,6 +2736,10 @@ impl PluginService {
     /// Checks that `action` of `id` may run now and prepares it. With
     /// `engine`, every declared permission must be granted too (the
     /// catalog's rule for keys and workflows).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "every check before an invocation, in the order they apply"
+    )]
     fn prepare(
         &mut self,
         id: &PluginId,
@@ -2731,6 +2797,7 @@ impl PluginService {
         if let Some(why) = missing.or_else(|| unmet.get(action).cloned()) {
             return Err(error(ErrorCode::Failed, reason::NOT_ENABLED, why));
         }
+        refuse_internal(engine, &declaration, id, action)?;
         let node = declaration.node.clone().unwrap_or_default();
         let timeout = Duration::from_millis(node.timeout_ms()).min(MAX_INVOCATION);
         let outputs = super::lane::declared_outputs(&declaration);
@@ -2780,6 +2847,7 @@ impl PluginService {
                 definition,
                 resource_kinds,
                 version,
+                declaration,
             },
         ))
     }
@@ -2811,6 +2879,7 @@ impl PluginService {
             outputs,
             executor,
             definition,
+            declaration,
             ..
         } = prepared;
         // Checked against the manifest before the host sees anything. A
@@ -2831,12 +2900,24 @@ impl PluginService {
                 return;
             }
         };
+        // The Scripts bridge (plugin API 1.13): the run of the action's own
+        // script, if it names one.
+        let executor = super::executor::scripts::attach(executor, id.as_str(), &params);
+        let bound = connections::bound(&declaration, &params);
+        // Plugin API 1.14: `records` outputs, checked against their schemas.
+        let records = record
+            .active()
+            .map(|a| connections::record_outputs(&a.manifest, &declaration))
+            .unwrap_or_default();
         let plugin = id.to_string();
         let name = action.to_owned();
         let done: Done = Box::new(move |result| {
             let answer = match result {
                 Ok(outcome) => Ok(Response::PluginActionResult {
-                    outcome: convert::outcome(outcome, &outputs),
+                    outcome: connections::checked_records(
+                        convert::outcome(outcome, &outputs),
+                        &records,
+                    ),
                 }),
                 Err(e) => {
                     warn!(plugin, action = name, error = ?e, "plugin invocation failed");
@@ -2851,8 +2932,11 @@ impl PluginService {
                 action: action.to_owned(),
                 params,
                 timeout,
-                // Tried from the plugin's own page in the app (G8).
-                executor: executor.with_run(RunContext::direct(RunTrigger::Test)),
+                // Tried from the plugin's own page in the app (G8), bound to
+                // the connections its parameters name (plugin API 1.14).
+                executor: executor
+                    .with_run(RunContext::direct(RunTrigger::Test))
+                    .with_connections(bound),
                 abort: AbortSignal::new(),
                 reply: Reply::Action(done),
             }),
@@ -2901,6 +2985,7 @@ impl PluginService {
             definition,
             resource_kinds,
             version,
+            declaration,
         } = prepared;
         let mut params =
             match data::missing_resource(&definition, |key| resources.params.contains_key(key))
@@ -2923,8 +3008,13 @@ impl PluginService {
         } else {
             resources.without_projects()
         };
+        // Bound to the connections its parameters name (plugin API 1.14),
+        // before resource handles join the parameters.
+        let bound = connections::bound(&declaration, &params);
         let (executor, handles) =
             executor.with_resources(record.id.as_str(), &version, resource_kinds, resources);
+        let executor = super::executor::scripts::attach(executor, record.id.as_str(), &params);
+        let executor = executor.with_connections(bound);
         params.extend(
             handles
                 .into_iter()
@@ -3181,6 +3271,7 @@ fn declares_privileged_kind<'a>(
         PermissionKind::Resources,
         PermissionKind::ProjectContext,
         PermissionKind::HostViews,
+        PermissionKind::Connections,
         PermissionKind::Calls,
     ]
     .into_iter()
@@ -3317,6 +3408,39 @@ fn host_config(
     config
 }
 
+/// The guest limits of a plugin's host: the defaults, but for
+/// `deckpilot.scripts` (plugin API 1.13), whose privileged
+/// `runtime.limits.continuousMs` and `runtime.hostCalls` set the
+/// continuous deadline and the call budget, with the poll budget always
+/// beside it (the host answers a spent budget itself only for a budgeted
+/// guest, whose replies carry the script detail). No other plugin ever
+/// gets a budget, whatever its manifest says (the validator refuses it
+/// too).
+pub(crate) fn guest_limits(
+    manifest: &deckpilot_plugin_manifest::Manifest,
+) -> deckpilot_plugin_abi::protocol::GuestLimits {
+    use deckpilot_plugin_abi::limits::MAX_SCRIPT_POLLS;
+    use deckpilot_plugin_abi::protocol::GuestLimits;
+    let mut limits = GuestLimits::default();
+    if manifest.id.as_str() != deckpilot_plugin_broker::SCRIPTS_PLUGIN {
+        return limits;
+    }
+    let Some(runtime) = &manifest.runtime else {
+        return limits;
+    };
+    if let Some(l) = runtime.limits {
+        limits.deadline_ms = l.continuous_ms.clamp(
+            deckpilot_plugin_manifest::MIN_CONTINUOUS_MS,
+            deckpilot_plugin_manifest::MAX_CONTINUOUS_MS,
+        );
+    }
+    if let Some(calls) = runtime.host_calls {
+        limits.host_calls = Some(calls.clamp(1, deckpilot_plugin_manifest::MAX_RUNTIME_HOST_CALLS));
+        limits.polls = Some(MAX_SCRIPT_POLLS);
+    }
+    limits
+}
+
 /// Why a host with a weaker sandbox than full was refused, for the user.
 fn sandbox_refusal(report: &SandboxReport) -> String {
     let mechanism = if report.mechanism.is_empty() {
@@ -3413,6 +3537,20 @@ fn module_matches_record(
         .map_err(|e| e.to_string())
 }
 
+/// Whether `grants` hold the granted grant `kind:key` (`key` empty for the
+/// permission itself, `paths` for `resources:paths`).
+fn granted(
+    grants: &[deckpilot_plugin_store::StoredGrant],
+    kind: deckpilot_plugin_manifest::PermissionKind,
+    key: &str,
+) -> bool {
+    grants.iter().any(|g| {
+        g.key.kind == kind
+            && g.key.key == key
+            && g.status == deckpilot_plugin_store::GrantStatus::Granted
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3494,6 +3632,23 @@ mod tests {
         assert_eq!(
             package_error(&js).reason.as_deref(),
             Some(reason::UNSUPPORTED_RUNTIME)
+        );
+    }
+
+    #[test]
+    fn only_the_scripts_plugin_gets_a_call_budget() {
+        let mut manifest: deckpilot_plugin_manifest::Manifest = serde_json::from_str(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/scripts-manifest.json"
+        ))
+        .unwrap();
+        let limits = guest_limits(&manifest);
+        assert_eq!(limits.deadline_ms, 2000);
+        assert_eq!(limits.host_calls, Some(4096));
+        assert_eq!(limits.polls, Some(8192), "always together");
+        manifest.id = deckpilot_plugin_manifest::PluginId::parse("deckpilot.other").unwrap();
+        assert_eq!(
+            guest_limits(&manifest),
+            deckpilot_plugin_abi::protocol::GuestLimits::default()
         );
     }
 

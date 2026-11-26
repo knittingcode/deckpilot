@@ -131,12 +131,21 @@ export function assignable(type: VariableType, kind: ParameterKind): boolean {
       return kind.type === "resource" && (!type.kind || !kind.kind || type.kind === kind.kind)
     case "json":
       return (kind.type === "code" && kind.language === "json") || kind.type === "text"
+    case "object":
+    case "map":
+      // Structured values pass whole only where JSON is expected.
+      return kind.type === "code" && kind.language === "json"
   }
 }
 
-/** Values that never become text: credential names and resources. */
+/** Values that never become text: credential names, resources and structured values. */
 export function rendersAsText(type: VariableType): boolean {
-  return type.type !== "secretRef" && type.type !== "resource"
+  return (
+    type.type !== "secretRef" &&
+    type.type !== "resource" &&
+    type.type !== "object" &&
+    type.type !== "map"
+  )
 }
 
 /** What a parameter expects, for messages. */

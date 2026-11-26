@@ -635,3 +635,37 @@ fn a_refused_preview_keeps_the_previous_one() {
     assert_eq!(w.driver.preview_page(&mk2), Some(Page::Incoming));
     assert!(w.shows(&mk2));
 }
+
+/// Hidden (the configuration locked): every frame goes at once, no
+/// device shows any call while hidden, whatever the call does, a device
+/// that went back to work does not come back behind the lock, and shown
+/// again the call still going on is back at once.
+#[test]
+fn hidden_calls_are_on_no_device_until_shown_again() {
+    let mut w = World::new();
+    let (mk2, plus) = (w.mk2.clone(), w.plus.clone());
+    w.active("m");
+    let back = w.control_of(&mk2, "return-to-work");
+    w.tap(&mk2, back);
+    assert!(!w.shows(&mk2) && w.shows(&plus));
+    let now = w.now;
+    w.driver.set_hidden(&mut w.runtime, true, now);
+    assert!(w.driver.is_hidden());
+    assert_eq!(w.runtime.all_overlays().len(), 0, "no frame at all");
+    // The call goes on and changes; time passes beyond the return's max.
+    w.see("m", ObservedPhase::Connected, Tri::Known(true));
+    w.at(120);
+    w.see("second", ObservedPhase::Ringing, Tri::Unknown);
+    w.at(125);
+    assert!(!w.shows(&mk2) && !w.shows(&plus));
+    assert_eq!(w.runtime.all_overlays().len(), 0);
+    assert_eq!(
+        w.driver.returns().scheduled(),
+        0,
+        "nothing resumes behind it"
+    );
+    // Shown again: the calls are back at once, on every device.
+    let now = w.now;
+    w.driver.set_hidden(&mut w.runtime, false, now);
+    assert!(w.shows(&mk2) && w.shows(&plus));
+}

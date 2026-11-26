@@ -23,6 +23,7 @@ pub mod face;
 pub mod folder;
 pub mod folder_control;
 pub mod gesture;
+pub mod gesture_preset;
 pub mod graph;
 pub mod history;
 pub mod i18n;
@@ -42,8 +43,10 @@ pub mod registry;
 pub mod resolution;
 pub mod resource;
 pub mod runtime;
+pub mod script_grants;
 pub mod shared_layouts;
 pub mod stateful;
+pub mod target_kind;
 pub mod trigger;
 pub mod variables;
 pub mod work_session;
@@ -117,6 +120,10 @@ pub use folder_control::{
     FOLDER_CONTROL_TRIGGER, NormalizedFolderControl, NormalizedFolderLabel, RecoveredBindings,
     RecoveredError, RecoveryReason,
 };
+pub use gesture_preset::{
+    GestureAssignment, GesturePreset, GesturePresetId, PresetGesture, PresetIssue, PresetPlan,
+    PresetRefusal,
+};
 pub use history::{
     ExecutionRecord, ExecutionState, ExecutionSummary, ExecutionTrigger, ProjectOutcome,
     safe_event, safe_report,
@@ -151,6 +158,7 @@ pub use runtime::{Engine, EngineError, StepReport, WorkflowReport, declared_outp
 pub use shared_layouts::{
     HistoryMode, LayoutCompatibility, LayoutHistory, LayoutRequirements, ModelFit, Unavailable,
 };
+pub use target_kind::{MachineTargets, NoTargets, TargetCache, TargetKind, TargetKinds};
 pub use trigger::{
     EventField, LifecycleEvent, Schedule, Scheduler, TriggerEvent, TriggerKind, TriggerValue,
     WallTime, WorkflowTrigger,
