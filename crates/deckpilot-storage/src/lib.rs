@@ -27,11 +27,13 @@ mod files;
 pub mod gestures;
 pub mod layouts;
 mod legacy;
+pub mod managed_layouts;
 pub mod policy;
 mod project_actions;
 pub mod provenance;
 pub mod references;
 mod repositories;
+pub mod scripts;
 mod sqlite;
 #[cfg(all(test, feature = "sqlcipher"))]
 mod upgrade_tests;
@@ -152,6 +154,19 @@ pub enum StorageError {
     /// was supplied.
     #[error("the {0} is needed to open the database")]
     CredentialsRequired(&'static str),
+    #[error("there is no such script")]
+    UnknownScript,
+    #[error("a script named “{0}” already exists in this profile")]
+    ScriptNameTaken(String),
+    /// The editor saved an older revision; the stored one is this.
+    #[error("the script was changed elsewhere (now revision {0}); reload it")]
+    ScriptRevision(u64),
+    /// Trusting a source that is not the stored one (it changed after the
+    /// review).
+    #[error("the script changed after it was reviewed; review it again")]
+    ScriptChanged,
+    #[error("the script is not trusted; review it first")]
+    ScriptNotTrusted,
     #[error("project {0} belongs to another profile")]
     ProjectOfAnotherProfile(ProjectId),
     #[error("project key `{0}` is already used in this profile")]

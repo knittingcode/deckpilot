@@ -35,7 +35,7 @@ use crate::snapshot::{CallSnapshot, CallState, EndCause, FailureCode};
 
 #[cfg(test)]
 #[path = "engine/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 #[path = "engine/proptests.rs"]
@@ -224,8 +224,10 @@ struct Track {
 }
 
 /// What is remembered of an ended call: its last observation's time and
-/// when it ended. An observation made before either is late; one made at
-/// the same instant or after is a new call.
+/// when it ended. An observation made before the last one, or at or
+/// before the end, is late (a stale "connected" stamped at the end instant
+/// would otherwise show the overlay again for a day); only one made after
+/// the end is a new call.
 #[derive(Debug, Clone, Copy)]
 struct EndMark {
     observed: Instant,
@@ -234,7 +236,7 @@ struct EndMark {
 
 impl EndMark {
     fn is_late(self, obs: &CallObservation) -> bool {
-        obs.observed_at < self.observed || obs.observed_at < self.at
+        obs.observed_at < self.observed || obs.observed_at <= self.at
     }
 }
 

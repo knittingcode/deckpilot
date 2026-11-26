@@ -272,6 +272,9 @@ impl Agent {
         if let Some(hold) = self.hold_folder_for_run() {
             self.folder_runs.executions.insert(id, hold);
         }
+        // From a key of a device that went back to work: its return
+        // session waits for the run's end (`calls.rs`).
+        self.calls_execution_started(id);
         let _ = self.handle.events.send(AgentEvent::ExecutionStarted {
             execution: summary.clone(),
         });
@@ -464,6 +467,7 @@ impl Agent {
         // Whatever its end (succeeded, failed, cancelled), the run is over:
         // its folder goes on or is left.
         self.execution_left_folder(execution);
+        self.calls_execution_finished(execution, summary.state);
         self.after_change();
     }
 
@@ -589,6 +593,7 @@ impl Agent {
             });
             self.switch_run_ended(&run.record.summary);
             self.execution_left_folder(id);
+            self.calls_execution_finished(id, run.record.summary.state);
             if let Some(purpose) = run.purpose {
                 self.work_session_run_ended(purpose, &RunEnd::cancelled());
             }

@@ -33,6 +33,8 @@ pub const VARIABLES_EVENT: &str = "agent-variables";
 /// Event with the work session's snapshot whenever it changes. Agents
 /// before protocol 8 send none.
 pub const WORK_SESSION_EVENT: &str = "agent-work-session";
+/// Calls changed (protocol 19): the new `CallsStatus`.
+pub const CALLS_EVENT: &str = "agent-calls";
 /// Event with a plugin operation's progress or a plugin's new state: the
 /// agent's `pluginEvent` payload as it is (`progress`, `changed`,
 /// `migrationChanged`; `dialogOpened` and `dialogClosed` to the main
@@ -480,6 +482,10 @@ async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result
             }
             AgentEvent::WorkSessionChanged { snapshot } => {
                 let _ = app.emit(WORK_SESSION_EVENT, snapshot);
+            }
+            // Settings is in the main window only.
+            AgentEvent::CallsChanged { status } => {
+                let _ = app.emit_to(crate::windows::MAIN, CALLS_EVENT, status);
             }
         }
     }

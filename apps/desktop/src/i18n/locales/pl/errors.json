@@ -63,6 +63,8 @@
     "profileNameEmpty": "nazwa profilu nie może być pusta",
     "executionValueOnlyInRun": "wartości wykonania istnieją tylko podczas uruchomienia",
     "moduleDisabled": "moduł {{module}} jest wyłączony",
+    "callsAgentNotRunning": "uruchom agenta DeckPilot, aby zobaczyć Rozmowy",
+    "callsAgentTooOld": "uruchomiony agent ({{agent}}) nie obsługuje Rozmów",
     "workSessionAgentNotRunning": "uruchom agenta DeckPilot, aby zobaczyć sesję pracy",
     "workSessionAgentTooOld": "uruchomiony agent ({{agent}}) nie obsługuje sesji pracy; uruchom agenta ponownie, aby używać agenta z tej wersji",
     "workflowNameEmpty": "nazwa przepływu pracy nie może być pusta",
@@ -154,7 +156,12 @@
     "actionInUse_one": "akcja jest nadal używana w {{count}} miejscu; najpierw je zastąp lub odłącz",
     "actionInUse_few": "akcja jest nadal używana w {{count}} miejscach; najpierw je zastąp lub odłącz",
     "actionInUse_many": "akcja jest nadal używana w {{count}} miejscach; najpierw je zastąp lub odłącz",
-    "actionInUse_other": "akcja jest nadal używana w {{count}} miejsca; najpierw je zastąp lub odłącz"
+    "actionInUse_other": "akcja jest nadal używana w {{count}} miejsca; najpierw je zastąp lub odłącz",
+    "unknownScript": "nie ma takiego skryptu",
+    "scriptNameTaken": "skrypt o nazwie „{{name}}” już istnieje w tym profilu",
+    "scriptRevision": "skrypt został zmieniony gdzie indziej (teraz wersja {{revision}}); wczytaj go ponownie",
+    "scriptChanged": "skrypt zmienił się po sprawdzeniu; sprawdź go ponownie",
+    "scriptNotTrusted": "skrypt nie jest zaufany; najpierw go sprawdź"
   },
   "registry": {
     "duplicate": "typ akcji `{{actionType}}` jest już zarejestrowany",

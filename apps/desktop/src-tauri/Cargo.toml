@@ -70,6 +70,8 @@ deckpilot-plugin-bundled.workspace = true
 deckpilot-plugin-registry = { workspace = true, features = ["publish"] }
 deckpilot-plugin-store.workspace = true
 hkdf.workspace = true
+# A stand-in agent on the IPC endpoint (src/tests.rs `StubAgent`).
+interprocess.workspace = true
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 sha2.workspace = true

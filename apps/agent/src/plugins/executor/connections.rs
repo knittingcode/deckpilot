@@ -480,7 +480,16 @@ mod tests {
                 &mut executor,
                 &fetch(&format!("{PROJECTS}?{target}"), GITLAB),
             );
-            assert!(message(&result).contains("redirect-refused"), "{result:?}");
+            // The code comes first, as plugins read it.
+            match &result {
+                CallResult::Error(error) => {
+                    assert!(
+                        error.message.starts_with("redirect-refused: "),
+                        "{result:?}"
+                    );
+                }
+                other @ CallResult::Ok(_) => panic!("{other:?}"),
+            }
         }
         let sent = f.sent();
         assert!(
@@ -524,6 +533,56 @@ mod tests {
         let result = f.call(&mut executor, &fetch(PROJECTS, GITLAB));
         assert!(message(&result).contains("no token"), "{result:?}");
         assert_eq!(f.sent(), "");
+    }
+
+    /// A connection's responses carry its token's scopes and expiry; a
+    /// fetch that is not through a connection never does, even from the
+    /// same server (least privilege).
+    #[test]
+    fn scope_headers_reach_the_plugin_on_a_connection_only() {
+        let f = fixture(true);
+        f.broker
+            .set_grants(
+                &f.plugin,
+                &ApprovedPermissions::from_json(
+                    r#"[{"kind":"network","origin":"https://api.github.com","methods":["GET"]},
+                    {"kind":"connection","id":"cn_01JD7Q0000000000000000000B",
+                     "origin":"https://api.github.com","webOrigin":"https://github.com",
+                     "methods":["GET"],"enabled":true}]"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let routes = json!([{"url": "https://api.github.com/user", "status": 200,
+            "headers": [["x-oauth-scopes", "repo, read:org"],
+                        ["X-Accepted-OAuth-Scopes", "repo"],
+                        ["github-authentication-token-expiration", "2026-12-31 00:00:00 UTC"],
+                        ["x-ratelimit-remaining", "4999"]],
+            "body": "{}"}]);
+        let names = |result: &CallResult| -> Vec<String> {
+            ok(result)["headers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|h| h["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let mut executor = f.executor(&routes, &[GITHUB]);
+        let on_connection = f.call(&mut executor, &fetch("https://api.github.com/user", GITHUB));
+        assert_eq!(
+            names(&on_connection),
+            [
+                "x-oauth-scopes",
+                "x-accepted-oauth-scopes",
+                "github-authentication-token-expiration",
+                "x-ratelimit-remaining"
+            ]
+        );
+        let plain = f.call(
+            &mut executor,
+            &json!({"op": "http.fetch", "args": {"method": "GET", "url": "https://api.github.com/user"}}),
+        );
+        assert_eq!(names(&plain), ["x-ratelimit-remaining"]);
     }
 
     /// The token goes only to the server stored with the connection now:

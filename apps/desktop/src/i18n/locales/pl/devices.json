@@ -199,5 +199,41 @@
     "saved": "Zapisano czas gestów",
     "restore": "Przywróć domyślne",
     "save": "Zapisz"
+  },
+  "calls": {
+    "title": "Rozmowy",
+    "description": "Pokazuje stan rozmów na urządzeniach i, jeśli aplikacja do rozmów na to pozwala, steruje nimi.",
+    "state": "Rozmowa",
+    "controlsTitle": "Sterowanie",
+    "controlsNone": "Nieobsługiwane",
+    "detectionOnly": "Microsoft Teams można tylko wykrywać: odbieranie, kończenie, wyciszanie i kamera nie są obsługiwane, bo Microsoft wycofał interfejs dla urządzeń zewnętrznych 30.06.2026.",
+    "noControls": "Tę aplikację do rozmów można tylko wykrywać: DeckPilot nie może w niej odbierać, kończyć, wyciszać ani włączać kamery.",
+    "overlay": "Pokazuj rozmowy na tym urządzeniu",
+    "overlayDescription": "Podczas rozmowy urządzenie pokazuje układ Rozmów; Twój układ zostaje bez zmian.",
+    "shown": "Pokazuje teraz rozmowę.",
+    "suspended": "Powrót do pracy: pokazuje Twój układ, dopóki rozmowa nie wróci.",
+    "overlayFailed": "Nie udało się zmienić ustawienia",
+    "layoutDescription": "Zarządzany przez wtyczkę Rozmowy, dla {{model}}.",
+    "edited": "Zmieniony",
+    "restore": "Przywróć domyślne",
+    "restoreTitle": "Przywrócić domyślny układ Rozmów?",
+    "restoreKeeps": "Najpierw Twoja wersja zostanie zachowana jako układ „{{copy}}”, którego nie używa żaden profil. Potem domyślny układ zostanie wygenerowany od nowa.",
+    "restoreUnedited": "Układ nie był zmieniany; zostanie wygenerowany od nowa.",
+    "restoreConfirm": "Przywróć domyślne",
+    "restored": "Przywrócono układ Rozmów.",
+    "restoredKept": "Przywrócono układ Rozmów; Twoja wersja to „{{copy}}”.",
+    "restoreFailed": "Nie udało się przywrócić układu Rozmów",
+    "copyName": "Rozmowy (moja wersja, {{date}})",
+    "states": {
+      "idle": "Brak rozmowy",
+      "incoming": "Rozmowa przychodząca",
+      "outgoing": "Połączenie wychodzące",
+      "connecting": "Łączenie",
+      "active": "W rozmowie",
+      "ending": "Kończenie",
+      "ended": "Zakończona",
+      "failed": "Błąd",
+      "unknown": "Status nieznany"
+    }
   }
 }

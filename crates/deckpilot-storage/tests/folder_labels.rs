@@ -73,14 +73,23 @@ fn the_upgrade_makes_the_folder_name_the_key_title_and_keeps_differing_titles() 
     store.save_profile(&work).unwrap();
     store
         .connection_for_tests()
-        .execute_batch("DELETE FROM migration_history; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 12;")
+        .execute_batch("DELETE FROM migration_history; DROP TABLE script_trust; DROP TABLE scripts; ALTER TABLE projects DROP COLUMN default_repository; ALTER TABLE projects DROP COLUMN repositories; PRAGMA user_version = 12;")
         .unwrap();
     drop(store);
 
     let store = SqliteStore::open(&path, &encryption).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        deckpilot_storage::SqliteStore::supported_schema_version()
+    );
     let history = store.migration_history().unwrap();
-    assert_eq!((history[0].from_version, history[0].to_version), (12, 14));
+    assert_eq!(
+        (history[0].from_version, history[0].to_version),
+        (
+            12,
+            deckpilot_storage::SqliteStore::supported_schema_version()
+        )
+    );
     assert!(
         history[0]
             .backup

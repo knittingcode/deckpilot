@@ -143,6 +143,10 @@ pub mod feature {
     /// plugins' server and token as a Git Providers connection, on the
     /// user's request.
     pub const LEGACY_IMPORT: &str = "legacyImport";
+    /// `listRepositoryRemotes` (protocol 20): the agent reads a project
+    /// repository's git remotes for "Link remote". The app suggests them
+    /// only when the agent lists it.
+    pub const REPOSITORY_REMOTES: &str = "repositoryRemotes";
 }
 
 /// What a plugin's visual asset is.
