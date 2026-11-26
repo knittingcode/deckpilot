@@ -228,7 +228,7 @@ its own.
   - macOS: `~/Library/LaunchAgents/DeckPilot Agent.plist`;
   - Linux: `~/.config/autostart/DeckPilot Agent.desktop`;
   - Windows: the `DeckPilot Agent` value under
-    `HKEY_CURRENT_USER\…\Run`.
+    `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`.
 
   To avoid it, turn start at login off (Settings, or
   `deckpilot-agent autostart disable`) before uninstalling. An entry that
@@ -236,8 +236,10 @@ its own.
 - **The udev rule goes with the `.deb` and `.rpm`**: it belongs to the
   package. A copy installed by hand in `/etc/udev/rules.d` (AppImage,
   Flatpak) stays until you delete it.
-- To remove everything, quit the agent and delete the data directory
-  after uninstalling. This deletes the configuration for good.
+- To remove the configuration as well, quit the agent and delete the data
+  directory after uninstalling. This deletes it for good. The key in the
+  credential store, a left-behind autostart entry and a hand-installed
+  udev rule are separate and stay until you delete them.
 
 ## Storage ownership
 
@@ -393,8 +395,7 @@ such hardware exists yet.
   `/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules`; nothing has to be
   copied by hand. The packages of 0.15.0 and earlier do not reload udev, so
   a Stream Deck that was plugged in during the installation needs to be
-  unplugged and plugged in again once; packages that reload udev on
-  installation apply the rule at once (only to Elgato's devices). The
+  unplugged and plugged in again once. The
   AppImage and the Flatpak cannot install the rule: install it once on the
   host, as the [installation guide](../website/src/content/docs/en/installation.md#appimage)
   and [packaging/flatpak/udev.md](../packaging/flatpak/udev.md) describe.

@@ -1,6 +1,6 @@
 # Stream Deck behind a USB hub: resets and "USB present, HID missing"
 
-The case this page is about (DP-USB-03): a Stream Deck MK.2 (`0fd9:0080`)
+The case this page is about: a Stream Deck MK.2 (`0fd9:0080`)
 connected through a monitor's or dock's USB hub on Linux. The hub resets
 the device, the kernel logs errors such as `-28`, and afterwards the
 device shows up in `lsusb` while DeckPilot does not see it. Only
@@ -26,16 +26,18 @@ as of 0.15.0.
    or sent. Today DeckPilot also cannot tell you so: it has no state for
    "USB present, HID missing".
 3. **DeckPilot does not reset USB devices.** It has no code that resets,
-   re-binds or power-cycles a USB device, or sends it control transfers.
-   It does not use libusb or `USBDEVFS_RESET`.
-4. **Opening sends nothing.** Opening the device is an `open()` of
+   re-binds or power-cycles a USB device. It does not use libusb or
+   `USBDEVFS_RESET`. Its only USB traffic is HID reports through
+   `/dev/hidrawN`: feature reports (such as brightness) go out as HID
+   SET_REPORT/GET_REPORT control requests, key images as output reports.
+4. **Opening itself sends nothing.** Opening the device is an `open()` of
    `/dev/hidrawN`. Right after a successful open the agent sends one
    brightness report, then images for all 15 keys.
 5. **Reading does not busy-poll.** Each device has one thread that waits in
    `hid_read_timeout` with a 100 ms timeout (30 ms while key titles
    scroll).
-6. **Any HID error counts as a disconnect.** The device is closed, and its
-   keys keep their images.
+6. **Any HID error counts as a disconnect.** The device is closed, and the
+   deck keeps showing the last images.
 7. **Reconnecting has no back-off.** The next rescan, within 2 seconds,
    opens the device again if it is still listed. There is no limit on the
    number of attempts and no flap detection.
@@ -97,6 +99,7 @@ their timestamps.
      line, or happen while the log shows no reconnects.
    - **H2:** "device connected" and "device connection lost" pairs about
      2 seconds apart, which line up with the kernel's resets.
+   - H3 and H4 are checked in steps 7 and 6.
 4. **Run with the agent stopped.** Quit the agent from the tray (or with
    **Stop agent** in Settings), check that it is gone with
    `pgrep -x deckpilot-agent`, and use the computer normally for a while.
@@ -109,20 +112,23 @@ their timestamps.
    lsusb -d 0fd9:                  # the USB device is there
    ls /dev/hidraw*                 # is there a node for it?
    for d in /sys/class/hidraw/*; do
-     echo "$d: $(cat "$d/device/uevent" | grep HID_ID)"
+     echo "$d: $(grep HID_ID "$d/device/uevent")"
    done                            # 0FD9 means an Elgato HID interface
    lsusb -t                        # which driver each interface has (usbhid?)
    ```
 
    If `lsusb` lists the deck but no `hidraw` node has `HID_ID=0003:00000FD9:…`,
-   the HID interface is missing. Agents that have the
-   `deckpilot-agent diagnose` command report this as
-   `usb-present-hid-missing`.
+   the HID interface is missing.
 6. **Look for other users of the deck** (H4):
    `sudo fuser -v /dev/hidraw*` while DeckPilot is stopped.
 7. **Check autosuspend** (H3):
-   `cat /sys/bus/usb/devices/*/power/control` for the deck's port. `auto`
-   means autosuspend is on.
+   ```sh
+   for d in /sys/bus/usb/devices/*; do
+     [ "$(cat "$d/idVendor" 2>/dev/null)" = 0fd9 ] && echo "$d: $(cat "$d/power/control")"
+   done
+   ```
+
+   `auto` means autosuspend is on.
 
 ## What helps
 

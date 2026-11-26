@@ -147,7 +147,7 @@ stable channel. Every update is signed, and the app verifies the signature befor
 On Linux, the `.deb` and `.rpm` install the udev rule
 [`70-deckpilot-streamdeck.rules`](packaging/linux/70-deckpilot-streamdeck.rules) that lets the
 Stream Deck be used without root; nothing has to be copied by hand. With 0.15.0 and earlier, unplug
-and replug a Stream Deck that was connected during the installation once. The AppImage cannot
+and replug once a Stream Deck that was connected during installation. The AppImage cannot
 install the rule: install it once yourself, as the
 [installation guide](website/src/content/docs/en/installation.md#appimage) describes.
 
