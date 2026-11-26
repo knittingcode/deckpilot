@@ -610,3 +610,48 @@ fn ordinary_text_stays_readable() {
         assert!(redactor.line(input) == input, "changed: {label}");
     }
 }
+
+/// Windows shapes: the agent's pipe is kept; home directories in every
+/// spelling, the user name and the computer name go.
+#[test]
+fn windows_shapes() {
+    let root = root();
+    let mut env = fixture(root.path());
+    env.platform = "windows";
+    env.home = Some(PathBuf::from(r"C:\Users\Alice"));
+    env.user = Some("Alice".into());
+    env.hostname = Some("DESKTOP-AB12CD3".into());
+    let redactor = LogRedactor::new(&env);
+    // The endpoint is the same in every report (a hash of the data
+    // directory), not personal: kept.
+    let pipe = r"\\.\pipe\deckpilot-agent-0123456789abcdef";
+    assert!(redactor.line(pipe) == pipe, "the agent's pipe was changed");
+    assert!(
+        redactor.line(r"\\?\GLOBALROOT\x") == r"\\?\GLOBALROOT\x",
+        "a device path was changed"
+    );
+    for (label, input, secret) in [
+        (
+            "drive-letter home",
+            r"C:\Users\Alice\AppData\Roaming\x",
+            "Users\\Alice",
+        ),
+        ("lower case", r"c:\users\alice\AppData", "alice"),
+        ("forward slashes", "C:/Users/Alice/AppData", "Alice"),
+        ("mixed separators", r"C:\Users/Alice\AppData", "Alice"),
+        ("escaped", r"C:\\Users\\Alice\\AppData", "Alice"),
+        ("verbatim", r"\\?\C:\Users\Alice\AppData", "Alice"),
+        ("verbatim unc", r"\\?\UNC\fileserver\share\x", "fileserver"),
+        ("another user", r"C:\Users\Bob\Desktop", "Bob"),
+        ("unc", r"\\fileserver\share\x", "fileserver"),
+        ("user name", "signed in as ALICE", "alice"),
+        (
+            "computer name",
+            "host desktop-ab12cd3 up",
+            "desktop-ab12cd3",
+        ),
+    ] {
+        let output = redactor.line(input).to_lowercase();
+        assert!(!output.contains(&secret.to_lowercase()), "left: {label}");
+    }
+}

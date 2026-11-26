@@ -298,6 +298,16 @@ static UNC_SERVER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(^|[\s"'=(\[])(\\{2,})([A-Za-z0-9._-]+)(\\+)"#).expect("valid regex")
 });
 
+/// A verbatim UNC path's server: `\\?\UNC\server\share`.
+static VERBATIM_UNC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(\\{2,}\?\\+UNC\\+)([A-Za-z0-9._-]+)(\\+)").expect("valid regex")
+});
+
+/// The agent's own Windows pipe (`\\.\pipe\deckpilot-agent-<hash of the
+/// data directory>`): the same in every report, not a secret.
+static AGENT_PIPE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^deckpilot-agent-[0-9a-f]{16}$").expect("valid regex"));
+
 /// Tokens of well-known services and JSON web tokens.
 static KNOWN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
@@ -524,7 +534,18 @@ impl LogRedactor {
         let mut text = URL.replace_all(line, url).into_owned();
         text = UNC_SERVER
             .replace_all(&text, |c: &Captures<'_>| {
-                format!("{}{}<host>{}", &c[1], &c[2], &c[4])
+                // `\\.\` is the local device namespace (the agent's pipe),
+                // not a server; `\\?\UNC\server` names one after `UNC`.
+                if &c[3] == "." {
+                    c[0].to_owned()
+                } else {
+                    format!("{}{}<host>{}", &c[1], &c[2], &c[4])
+                }
+            })
+            .into_owned();
+        text = VERBATIM_UNC
+            .replace_all(&text, |c: &Captures<'_>| {
+                format!("{}<host>{}", &c[1], &c[3])
             })
             .into_owned();
         text = KNOWN_TOKEN.replace_all(&text, REDACTED).into_owned();
@@ -667,7 +688,7 @@ impl LogRedactor {
                 let run = &c[0];
                 let digits = run.chars().any(|ch| ch.is_ascii_digit());
                 let letters = run.chars().any(|ch| ch.is_ascii_alphabetic());
-                if digits && letters {
+                if digits && letters && !AGENT_PIPE.is_match(run) {
                     REDACTED.to_owned()
                 } else {
                     run.to_owned()

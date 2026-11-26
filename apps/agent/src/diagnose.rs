@@ -186,6 +186,13 @@ struct Redactor {
 
 impl Redactor {
     fn path(&self, path: &Path) -> String {
+        // A verbatim path (`\\?\C:\…`, Windows) compares like `C:\…`.
+        let plain = path
+            .to_str()
+            .and_then(|text| text.strip_prefix(r"\\?\"))
+            .filter(|rest| !rest.starts_with(r"UNC\"))
+            .map(PathBuf::from);
+        let path = plain.as_deref().unwrap_or(path);
         let text = match &self.home {
             Some(home) => match strip_home(path, home, self.fold_case) {
                 Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),

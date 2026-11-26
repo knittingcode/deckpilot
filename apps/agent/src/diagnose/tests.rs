@@ -861,3 +861,39 @@ fn a_flatpak_reports_no_udev_rules() {
     assert_eq!(report["udevRules"], Value::Null);
     conforms(&schema_v1(), &report, "flatpak report").unwrap();
 }
+
+/// Windows shapes of the report's paths and names (#515's redaction):
+/// drive letters, case, separators and verbatim paths.
+#[cfg(windows)]
+#[test]
+fn windows_paths_and_names_are_redacted() {
+    let redactor = Redactor {
+        home: Some(PathBuf::from(r"C:\Users\Alice")),
+        user: Some("Alice".into()),
+        fold_case: true,
+    };
+    for (label, path) in [
+        ("drive-letter home", r"C:\Users\Alice\AppData\Roaming\x"),
+        ("lower case", r"c:\users\alice\AppData\Roaming\x"),
+        ("forward slashes", "C:/Users/Alice/AppData/Roaming/x"),
+        ("mixed separators", r"C:\Users/Alice\AppData/Roaming\x"),
+        ("verbatim", r"\\?\C:\Users\Alice\AppData\Roaming\x"),
+    ] {
+        let text = redactor.path(Path::new(path));
+        assert!(text.starts_with('~'), "not below ~: {label}");
+        assert!(
+            !text.to_lowercase().contains("alice"),
+            "the user name is left: {label}"
+        );
+    }
+    // Outside the home directory the user name still goes.
+    let other = redactor.path(Path::new(r"D:\Data\ALICE\x"));
+    assert!(
+        !other.to_lowercase().contains("alice"),
+        "the user name is left: other drive"
+    );
+    assert!(
+        !redactor.text("signed in as alice").contains("alice"),
+        "the user name is left: message"
+    );
+}
