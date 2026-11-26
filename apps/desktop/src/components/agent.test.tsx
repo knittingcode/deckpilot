@@ -10,9 +10,10 @@ import {
   AgentIndicator,
   AgentStopped,
   DeviceRow,
+  TrayFallbackNotice,
 } from "@/components/agent"
 import { i18n } from "@/i18n"
-import type { AgentCompatibility, DeviceInfo } from "@/lib/types"
+import type { AgentCompatibility, DeviceInfo, TrayState } from "@/lib/types"
 import { api, resetApi } from "@/test/api-mock"
 import { installDomStubs } from "@/test/dom"
 import { agentConnection, agentStatus } from "@/test/fixtures"
@@ -306,5 +307,72 @@ describe("device rows", () => {
     cleanup()
     renderWithApp(<DeviceRow device={device({})} />)
     expect(screen.getByText("Disconnected")).toBeInTheDocument()
+  })
+})
+
+describe("tray fallback notice", () => {
+  const withTray = (tray: TrayState | undefined, running = true) =>
+    agentConnection({
+      running,
+      status: running ? agentStatus({ protocol: 22, tray }) : null,
+    })
+
+  it("explains a missing system tray and stops the agent from the app", async () => {
+    const stopped = agentConnection({ running: false })
+    api.stopAgent.mockResolvedValue(null)
+    api.agentStatus.mockResolvedValue(stopped)
+    const { user, context } = renderWithApp(<TrayFallbackNotice />, { agent: withTray("noHost") })
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent("The tray icon is not available")
+    expect(alert).toHaveTextContent("DeckPilot found no system tray to show its icon in.")
+    expect(alert).toHaveTextContent("DeckPilot does not install one.")
+    expect(alert).toHaveTextContent("no Quit DeckPilot there")
+    expect(alert).toHaveTextContent("Troubleshooting › No tray icon")
+    await user.click(screen.getByRole("button", { name: "Stop background agent" }))
+    expect(api.stopAgent).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(context.setAgent).toHaveBeenCalledWith(stopped)
+    })
+    expect(toast.success).toHaveBeenCalledWith("The background agent was stopped")
+  })
+
+  it("explains a tray that could not be created, in Polish too", async () => {
+    renderWithApp(<TrayFallbackNotice />, { agent: withTray("unavailable") })
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "the AppIndicator library is missing or could not be loaded",
+    )
+    cleanup()
+    await i18n.changeLanguage("pl")
+    try {
+      renderWithApp(<TrayFallbackNotice />, { agent: withTray("noHost") })
+      expect(screen.getByRole("alert")).toHaveTextContent("Ikona w zasobniku jest niedostępna")
+      expect(screen.getByRole("button", { name: "Zatrzymaj agenta w tle" })).toBeInTheDocument()
+    } finally {
+      await i18n.changeLanguage("en")
+    }
+  })
+
+  it("reports a failed stop", async () => {
+    api.stopAgent.mockRejectedValue(new Error("busy"))
+    const { user } = renderWithApp(<TrayFallbackNotice />, { agent: withTray("noHost") })
+    await user.click(screen.getByRole("button", { name: "Stop background agent" }))
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "The background agent was not stopped",
+        expect.anything(),
+      )
+    })
+  })
+
+  it.each<[string, TrayState | undefined, boolean]>([
+    ["shown", "shown", true],
+    ["not known to be missing", "hostUnknown", true],
+    ["off on purpose (--headless)", "disabled", true],
+    ["from a newer agent", "unknown", true],
+    ["not reported (an agent before protocol 22)", undefined, true],
+    ["missing while the agent is stopped", "noHost", false],
+  ])("is not shown when the tray is %s", (_, tray, running) => {
+    renderWithApp(<TrayFallbackNotice />, { agent: withTray(tray, running) })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 })

@@ -15,7 +15,9 @@
 # Those sources are therefore set aside for the rest of the job.
 set -euo pipefail
 
-PACKAGES=(libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libudev-dev)
+# Arguments add packages a job needs besides these (e.g. Xvfb for the
+# tray test).
+PACKAGES=(libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libudev-dev "$@")
 MIRRORS=(http://mirrors.edge.kernel.org/ubuntu http://mirrors.mit.edu/ubuntu)
 
 printf '%s\n' \

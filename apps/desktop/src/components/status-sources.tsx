@@ -16,6 +16,7 @@ import { useAppContext } from "@/lib/app-context"
 import { DEVICE_STATE_LABEL, deviceAvailability } from "@/lib/device-state"
 import { formatTimestamp } from "@/lib/format"
 import { useSecurity } from "@/lib/security-context"
+import { TRAY_STATE_LABEL, trayMissing } from "@/lib/tray-state"
 import {
   agentLabel,
   agentState,
@@ -61,6 +62,12 @@ function AgentDetail() {
             <dd title={t("devices:agent.startedAt", { time: formatTimestamp(status.startedAt) })}>
               {formatDuration(now - status.startedAt)}
             </dd>
+            {status.tray && trayMissing(agent) && (
+              <>
+                <dt className="text-muted-foreground">{t("devices:agent.tray.label")}</dt>
+                <dd>{t(TRAY_STATE_LABEL[status.tray])}</dd>
+              </>
+            )}
           </>
         )}
         {agent?.compatibility && agent.compatibility.type !== "compatible" && (
@@ -254,6 +261,15 @@ function AgentEvents({ agent }: { agent: AgentConnection | null }) {
         severity: "warning",
         title: i18n.t("notifications:agent.stopped.title"),
         message: i18n.t("notifications:agent.stopped.message"),
+      })
+    }
+    // Once per agent run: the tray's menu (and its Quit) is missing.
+    if (trayMissing(agent) && (!trayMissing(before) || before?.status?.pid !== agent.status?.pid)) {
+      notifications.notify({
+        key: "agent.noTray",
+        severity: "info",
+        title: i18n.t("notifications:agent.noTray.title"),
+        message: i18n.t("notifications:agent.noTray.message"),
       })
     }
     const compatibility = agent.compatibility

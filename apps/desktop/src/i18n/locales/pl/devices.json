@@ -46,6 +46,27 @@
       "exitCode": "kod wyjścia {{code}}",
       "exitSignal": "sygnał {{signal}}",
       "exitUnknown": "brak kodu wyjścia"
+    },
+    "tray": {
+      "label": "Ikona w zasobniku",
+      "state": {
+        "shown": "Widoczna",
+        "noHost": "Niewidoczna: nie znaleziono zasobnika systemowego",
+        "hostUnknown": "Utworzona; nie wiadomo, czy jest widoczna",
+        "unavailable": "Niedostępna",
+        "disabled": "Wyłączona (uruchomiono bez zasobnika)",
+        "unknown": "Nieznany"
+      },
+      "notice": {
+        "title": "Ikona w zasobniku jest niedostępna",
+        "noHost": "DeckPilot nie znalazł zasobnika systemowego, w którym mógłby pokazać swoją ikonę. W GNOME zasobnik wymaga rozszerzenia AppIndicator; DeckPilot go nie instaluje.",
+        "unavailable": "Nie udało się utworzyć ikony w zasobniku, ponieważ brakuje biblioteki AppIndicator lub nie można jej załadować.",
+        "stillRunning": "Agent w tle działa dalej: urządzenia i akcje działają jak zwykle. Bez zasobnika nie ma menu zasobnika ani polecenia Zakończ DeckPilot. Otwieraj DeckPilot z menu aplikacji, a agenta w tle zatrzymuj tutaj. Zamknięcie tego okna go nie zatrzymuje.",
+        "docs": "Więcej w dokumentacji: Rozwiązywanie problemów › Brak ikony w zasobniku.",
+        "stop": "Zatrzymaj agenta w tle",
+        "stopped": "Agent w tle został zatrzymany",
+        "notStopped": "Nie zatrzymano agenta w tle"
+      }
     }
   },
   "detail": {

@@ -237,3 +237,33 @@ async fn a_killed_agents_leftovers_let_exactly_one_next_agent_run() {
     assert_eq!(stopped.code(), Some(0), "{stopped:?}");
     assert!(InstanceLock::is_free(&paths.lock_file).unwrap());
 }
+
+/// The tray status (DP-TRAY-01, protocol 22): an agent without a tray (as
+/// a library here, as with `--headless`) says so, and what the tray
+/// reports reaches `getStatus` and a `state` event.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_status_says_whether_the_tray_is_shown() {
+    use deckpilot_agent::TrayCommand;
+    use deckpilot_ipc::{AgentEvent, TrayState};
+
+    let dir = TempDir::new("deckpilot-lifecycle-tray");
+    let paths = data_dir(&dir);
+    let key = create_database(&paths);
+    let agent = TestAgent::start(&paths, &key, &MockBackend::new(), None);
+    assert_eq!(agent.status().await.tray, Some(TrayState::Disabled));
+
+    let mut events = agent.events().await;
+    for state in [TrayState::NoHost, TrayState::Shown] {
+        agent.handle.tray(TrayCommand::Presence(state));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(left, events.next_event()).await {
+                Ok(Ok(AgentEvent::State { status })) if status.tray == Some(state) => break,
+                Ok(Ok(_)) => {}
+                other => panic!("no state event with the tray {state:?}: {other:?}"),
+            }
+        }
+        assert_eq!(agent.status().await.tray, Some(state));
+    }
+}

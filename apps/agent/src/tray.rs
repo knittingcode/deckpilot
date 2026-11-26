@@ -7,7 +7,7 @@
 
 use deckpilot_core::i18n::{Language, SystemText};
 use deckpilot_device::{ConnectionState, DeviceAvailability};
-use deckpilot_ipc::{AgentEvent, AgentStatus, LockReason, SecurityState};
+use deckpilot_ipc::{AgentEvent, AgentStatus, LockReason, SecurityState, TrayState};
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tracing::{error, warn};
@@ -19,11 +19,17 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use crate::InstanceLock;
 use crate::service::{Agent, AgentHandle, AgentOptions, TrayCommand, VERSION};
 
+#[cfg(any(target_os = "linux", test))]
+mod presence;
+
 #[derive(Debug)]
 enum UserEvent {
     Ready(AgentHandle),
     State(Box<AgentStatus>),
     Menu(MenuEvent),
+    /// Whether the tray icon is shown, as checked since (Linux).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Presence(TrayState),
     /// The agent stopped: the process exits with this code
     /// (`crash::Outcome::exit_code`).
     Exit(u8),
@@ -80,6 +86,8 @@ fn run_loop(
 ) {
     let proxy = event_loop.create_proxy();
     let menu_proxy = proxy.clone();
+    #[cfg(target_os = "linux")]
+    let presence_proxy = proxy.clone();
     MenuEvent::set_event_handler(Some(move |event| {
         let _ = menu_proxy.send_event(UserEvent::Menu(event));
     }));
@@ -87,12 +95,35 @@ fn run_loop(
 
     let mut tray: Option<TrayIcon> = None;
     let mut handle: Option<AgentHandle> = None;
+    // What the agent is told about the tray icon (`AgentStatus.tray`).
+    let mut presence: Option<TrayState> = None;
     let mut guard = guard;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::NewEvents(StartCause::Init) => tray = create_tray(),
-            Event::UserEvent(UserEvent::Ready(agent)) => handle = Some(agent),
+            Event::NewEvents(StartCause::Init) => {
+                tray = create_tray();
+                let state = initial_presence(tray.is_some());
+                #[cfg(target_os = "linux")]
+                if tray.is_some() {
+                    let proxy = presence_proxy.clone();
+                    presence::watch(move |state| {
+                        proxy.send_event(UserEvent::Presence(state)).is_ok()
+                    });
+                }
+                report(&mut presence, handle.as_ref(), state);
+            }
+            Event::UserEvent(UserEvent::Ready(agent)) => {
+                if let Some(state) = presence {
+                    agent.tray(TrayCommand::Presence(state));
+                }
+                handle = Some(agent);
+            }
+            Event::UserEvent(UserEvent::Presence(state)) => {
+                if tray.is_some() {
+                    report(&mut presence, handle.as_ref(), state);
+                }
+            }
             Event::UserEvent(UserEvent::State(status)) => {
                 if let Some(tray) = &tray {
                     tray.set_menu(Some(Box::new(build_menu(Some(&status)))));
@@ -140,7 +171,10 @@ fn spawn_agent(
         let agent_proxy = proxy.clone();
         let outcome = crate::crash::run_agent(runtime, async move {
             let proxy = agent_proxy;
-            let agent = Agent::start(options, lock)?.with_plugins(plugins);
+            // Until the tray reports (right after the event loop starts).
+            let agent = Agent::start(options, lock)?
+                .with_plugins(plugins)
+                .with_tray(TrayState::HostUnknown);
             #[cfg(feature = "test-hooks")]
             crate::crash::testing::arm(&agent.handle());
             let handle = agent.handle();
@@ -192,6 +226,27 @@ fn command_for(id: &str) -> Option<TrayCommand> {
             .parse()
             .ok()
             .map(TrayCommand::SelectProfile),
+    }
+}
+
+/// Tells the agent (once it runs) whether the tray icon is shown.
+fn report(presence: &mut Option<TrayState>, handle: Option<&AgentHandle>, state: TrayState) {
+    *presence = Some(state);
+    if let Some(handle) = handle {
+        handle.tray(TrayCommand::Presence(state));
+    }
+}
+
+/// What the agent says about a tray icon that was (or was not) just
+/// created: on Linux, whether a host shows it is checked next
+/// (`presence::watch`); macOS and Windows show every icon they create.
+fn initial_presence(created: bool) -> TrayState {
+    if !created {
+        TrayState::Unavailable
+    } else if cfg!(target_os = "linux") {
+        TrayState::HostUnknown
+    } else {
+        TrayState::Shown
     }
 }
 
@@ -553,6 +608,17 @@ mod tests {
         ] {
             let text = device_state_text(ConnectionState::Disconnected, Some(availability));
             assert!(!text.text(Language::En).is_empty() && !text.text(Language::Pl).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_tray_that_could_not_be_made_is_unavailable() {
+        assert_eq!(initial_presence(false), TrayState::Unavailable);
+        let created = initial_presence(true);
+        if cfg!(target_os = "linux") {
+            assert_eq!(created, TrayState::HostUnknown);
+        } else {
+            assert_eq!(created, TrayState::Shown);
         }
     }
 

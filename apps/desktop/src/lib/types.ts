@@ -1524,7 +1524,19 @@ export interface AgentStatus {
   lastInputAt: number | null
   /** The agent build's distribution record; absent from 0.6.0-alpha.3 and older agents. */
   distribution?: DistributionRecord
+  /** Whether the agent's tray icon exists and is shown; absent before protocol 22. */
+  tray?: TrayState
 }
+
+/**
+ * Whether the agent's tray icon (macOS: its menu bar item) exists and is
+ * shown (IPC protocol 22, DP-TRAY-01). `noHost`: Linux, created but no
+ * StatusNotifier host on the session bus (GNOME without an AppIndicator
+ * extension). `hostUnknown`: Linux, created, not known whether shown.
+ * `unavailable`: could not be created. `disabled`: started `--headless`.
+ * A value from a newer agent arrives as `unknown`.
+ */
+export type TrayState = "shown" | "noHost" | "hostUnknown" | "unavailable" | "disabled" | "unknown"
 
 /** Who delivered a build, its version and target (docs/distribution/README.md, section 1). */
 export interface DistributionRecord {
@@ -1574,6 +1586,8 @@ export type AgentCapability =
   | "calls"
   /** `DeviceInfo.availability` and devices present but never opened (protocol 21). */
   | "deviceStates"
+  /** `AgentStatus.tray` (protocol 22). */
+  | "trayStatus"
 
 /**
  * Calls as the agent reports it (protocol 19, `deckpilot_ipc::calls`):

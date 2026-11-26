@@ -18,6 +18,9 @@ led to it; where the code differs, the code and the tests win.
   key handling, locking, exports and the threat model.
 - [Updates](updates.md): update channels, signed updates, the automatic
   check and how app and agent are updated together.
+- [No tray icon](troubleshooting/no-tray-icon.md): what DeckPilot does
+  when there is no system tray (GNOME without an AppIndicator extension),
+  and how to open and stop it then.
 - [Stream Deck behind a USB hub](troubleshooting/usb-hub-resets.md): hub
   resets and "USB present, HID missing" on Linux, what DeckPilot does and
   does not do, and how to tell the causes apart.

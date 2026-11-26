@@ -19,7 +19,7 @@ use deckpilot_device::{
 use deckpilot_ipc::{
     AgentEvent, AgentPaths, AgentStatus, DeviceInfo, DistributionRecord, ErrorCode, IpcError,
     LockReason, PROTOCOL_VERSION, ProfileInfo, ProtectionMode, Request, Response, SecurityState,
-    ShutdownReason, token,
+    ShutdownReason, TrayState, token,
 };
 use deckpilot_keystore::KeyStore;
 use deckpilot_storage::policy::AutoLock;
@@ -142,13 +142,16 @@ pub enum AgentError {
     Endpoint(#[source] std::io::Error),
 }
 
-/// Commands issued by the tray menu.
+/// Commands issued by the tray menu, and what the tray learnt about
+/// itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayCommand {
     OpenWindow,
     SelectProfile(ProfileId),
     RefreshDevices,
     Quit,
+    /// Whether the tray icon exists and is shown (`AgentStatus.tray`).
+    Presence(TrayState),
 }
 
 /// The first-party plugin that provides the project context once the
@@ -903,6 +906,10 @@ pub struct Agent {
     /// texts the agent draws on keys and in the tray, and plugin texts,
     /// are in it. `None`: English.
     locale: Option<String>,
+    /// Whether the tray icon exists and is shown: [`TrayState::Disabled`]
+    /// without a tray (`--headless`, an agent used as a library), else
+    /// what the tray reports ([`TrayCommand::Presence`]).
+    tray: TrayState,
     /// Detached actions (plugin actions from keys and `runAction`) running
     /// on their own threads.
     detached: Arc<AtomicUsize>,
@@ -1054,6 +1061,7 @@ impl Agent {
             session_faces: work_session_faces::WorkSessionFaces::default(),
             plugins: crate::plugins::PluginRuntime::default(),
             locale: None,
+            tray: TrayState::Disabled,
             detached: Arc::default(),
             folder_runs: folders::FolderRuns::default(),
             calls: Box::default(),
@@ -1101,6 +1109,14 @@ impl Agent {
         clock: impl Fn() -> std::time::Instant + Send + Sync + 'static,
     ) -> Self {
         self.runtime.set_clock(clock);
+        self
+    }
+
+    /// What the status says about the tray icon until the tray reports
+    /// ([`TrayCommand::Presence`]); for an agent that runs with a tray.
+    #[must_use]
+    pub fn with_tray(mut self, state: TrayState) -> Self {
+        self.tray = state;
         self
     }
 
@@ -1563,6 +1579,14 @@ impl Agent {
             }
             Command::Tray(TrayCommand::RefreshDevices) => {
                 self.refresh_devices();
+                Flow::Continue
+            }
+            Command::Tray(TrayCommand::Presence(state)) => {
+                if self.tray != state {
+                    info!(?state, "tray icon");
+                    self.tray = state;
+                    self.publish();
+                }
                 Flow::Continue
             }
         }
@@ -2929,6 +2953,7 @@ impl Agent {
             ),
             distribution: Some(DistributionRecord::current()),
             locale: self.locale.clone(),
+            tray: Some(self.tray),
         }
     }
 
