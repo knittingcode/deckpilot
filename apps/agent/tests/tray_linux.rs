@@ -116,7 +116,8 @@ impl TrayAgent {
         // XDG_RUNTIME_DIR stays the test's: the endpoint's socket is
         // there, and the test connects to it.
         let child = Command::new(env!("CARGO_BIN_EXE_deckpilot-agent"))
-            .arg("--no-usb")
+            .args(["--no-usb", "--disable-plugins"])
+            .env_remove("DECKPILOT_TEST_AGENT_ARGS")
             .env("HOME", dir.path().join("home"))
             .env("XDG_DATA_HOME", dir.path().join("xdg-data"))
             .env("XDG_CONFIG_HOME", dir.path().join("xdg-config"))

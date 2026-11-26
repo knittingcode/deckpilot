@@ -324,7 +324,7 @@ describe("tray fallback notice", () => {
     const { user, context } = renderWithApp(<TrayFallbackNotice />, { agent: withTray("noHost") })
     const alert = screen.getByRole("alert")
     expect(alert).toHaveTextContent("The tray icon is not available")
-    expect(alert).toHaveTextContent("DeckPilot found no system tray to show its icon in.")
+    expect(alert).toHaveTextContent("DeckPilot found no StatusNotifier tray to show its icon in")
     expect(alert).toHaveTextContent("DeckPilot does not install one.")
     expect(alert).toHaveTextContent("no Quit DeckPilot there")
     expect(alert).toHaveTextContent("Troubleshooting › No tray icon")

@@ -24,7 +24,7 @@ The agent reports its tray to the app (`AgentStatus.tray`, IPC protocol 22):
 
 For `noHost` and `unavailable`, the app shows a notice in Settings ›
 Background Agent and Settings › Devices, and one status bar notification
-per agent run. The notice has **Stop background agent**, which stops the
+per agent run each time the app is opened. The notice has **Stop background agent**, which stops the
 agent as Settings › Background Agent › Stop agent does. Settings ›
 Background Agent also lists the tray's state.
 
@@ -41,6 +41,10 @@ The agent therefore asks the session bus, read-only, whether
 every second for 10 seconds, every 3 seconds until a minute, then every 15
 seconds, so a desktop shell that starts later, or an extension switched on
 or off, is noticed.
+
+Inside a sandbox with its own process id namespace (Flatpak) the agent cannot
+match its icon to its process, so it reports `hostUnknown` there, never
+`shown`.
 
 A desktop with only a legacy XEmbed system tray and no StatusNotifier host
 is reported as `noHost`, although libayatana-appindicator may still show

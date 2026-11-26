@@ -263,7 +263,8 @@ function AgentEvents({ agent }: { agent: AgentConnection | null }) {
         message: i18n.t("notifications:agent.stopped.message"),
       })
     }
-    // Once per agent run: the tray's menu (and its Quit) is missing.
+    // Once per agent run while this window is open (again when it is
+    // reopened): the tray's menu (and its Quit) is missing.
     if (trayMissing(agent) && (!trayMissing(before) || before?.status?.pid !== agent.status?.pid)) {
       notifications.notify({
         key: "agent.noTray",

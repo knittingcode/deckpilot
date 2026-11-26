@@ -99,7 +99,8 @@ closed and reopened at any time without interrupting devices.
   then every 3 and later every 15 seconds. When there is no host, or the
   icon could not be created, the app shows a notice in Settings ›
   Background Agent and Settings › Devices, with **Stop background agent**,
-  and a status bar notification once per agent run; see
+  and a status bar notification once per agent run each time the app
+  is opened; see
   [troubleshooting/no-tray-icon.md](troubleshooting/no-tray-icon.md).
 
 ### Tray menu

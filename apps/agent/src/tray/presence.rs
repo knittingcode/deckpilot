@@ -45,10 +45,15 @@ pub(crate) trait StatusNotifierBus {
 
 /// Whether a `StatusNotifier` host shows the icon of process `pid`.
 ///
+/// The agent's icon is told by the process id behind its bus name. In a
+/// sandbox with a process id namespace of its own (Flatpak) the two never
+/// match, so the answer there is never shown, only no host or unknown.
+///
 /// - no watcher, or a watcher without a host: [`TrayState::NoHost`];
 /// - a host that lists an item of `pid`: [`TrayState::Shown`];
 /// - otherwise (the bus failed, or the host does not list the icon yet):
 ///   [`TrayState::HostUnknown`].
+#[cfg(test)]
 pub(crate) fn check(bus: &mut dyn StatusNotifierBus, pid: u32) -> TrayState {
     match check_inner(bus, pid) {
         Ok(state) => state,
@@ -173,9 +178,18 @@ pub(crate) fn watch(report: impl Fn(TrayState) -> bool + Send + 'static) {
                         Err(error) => debug!(%error, "no session bus for the tray check"),
                     }
                 }
-                let state = bus
-                    .as_mut()
-                    .map_or(TrayState::HostUnknown, |bus| check(bus, pid));
+                let checked = bus.as_mut().map(|bus| check_inner(bus, pid));
+                let state = match checked {
+                    Some(Ok(state)) => state,
+                    Some(Err(error)) => {
+                        debug!(%error, "cannot tell whether a StatusNotifier host shows the tray icon");
+                        // Connected again for the next check, in case the
+                        // connection itself is what failed.
+                        bus = None;
+                        TrayState::HostUnknown
+                    }
+                    None => TrayState::HostUnknown,
+                };
                 if last != Some(state) {
                     if !report(state) {
                         return;

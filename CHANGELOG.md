@@ -24,7 +24,7 @@ released either. 0.6.0 is the first version intended for publication.
   the app says so in Settings › Background Agent and Settings › Devices,
   explains that the agent keeps running, and offers **Stop background
   agent**, since the tray's Quit is missing. It shows one notification per
-  agent run. DeckPilot does not install or enable any desktop extension.
+  agent run each time the app is opened. DeckPilot does not install or enable any desktop extension.
 
 - The configuration app restarts the background agent it started when the
   agent ends unexpectedly. It restarts it at most 3 times in 10 minutes,
