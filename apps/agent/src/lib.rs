@@ -12,6 +12,7 @@ pub mod instance;
 pub mod launcher;
 pub mod marquee;
 pub mod notifications;
+pub mod output;
 pub mod plugin_dialogs;
 pub mod plugins;
 pub mod render;

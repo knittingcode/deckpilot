@@ -1083,6 +1083,7 @@ dependencies = [
  "cap-std",
  "chrono",
  "deckpilot-agent",
+ "deckpilot-apps",
  "deckpilot-calls",
  "deckpilot-core",
  "deckpilot-device",
