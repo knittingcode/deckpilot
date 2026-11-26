@@ -295,8 +295,14 @@ jobs:
             diff -r -x plugin.wasm "$dir" "plugins/first-party/contracts/$id"
           done
           [ "$(ls plugins/first-party/contracts | wc -l | tr -d ' ')" = "$(jq '.plugins | length' plugins/first-party/bundled.json | tr -d '\r')" ]
+          # Each build pins every plugin of both lists (build.sh checks it
+          # too; this also covers a shell that ends with status 0 from
+          # outside, before build.sh's own check runs).
+          want=$(jq -s '[.[].plugins[]] | length' plugins/first-party/bundled.json plugins/first-party/test-fixtures/bundled.json | tr -d '\r')
           for run in a b; do
             plugins/first-party/build.sh --test-fixtures --out "$RUNNER_TEMP/bundle-$run" --target-dir "$RUNNER_TEMP/first-party-$run" "${artifacts[@]}"
+            got=$(jq '.plugins | length' "$RUNNER_TEMP/bundle-$run/bundled/pins.json" | tr -d '\r')
+            [ "$got" = "$want" ] || { echo "::error::bundle-$run pins $got plugins, the lists name $want"; exit 1; }
           done
           # bundled/ only: the artifacts' audit log next to it records times.
           diff -r "$RUNNER_TEMP/bundle-a/bundled" "$RUNNER_TEMP/bundle-b/bundled"
