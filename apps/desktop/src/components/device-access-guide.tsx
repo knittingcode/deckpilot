@@ -18,6 +18,13 @@ import {
   writeDismissed,
 } from "@/lib/device-access"
 
+/** The text before the commands, by how the rule gets installed. */
+const RULE_TEXT = {
+  deb: "devices:accessGuide.rule.deb",
+  rpm: "devices:accessGuide.rule.rpm",
+  manual: "devices:accessGuide.rule.manual",
+} as const satisfies Record<RuleSource, string>
+
 /** What the open guide shows: kept while it is open. */
 interface Shown {
   issue: DeviceAccessIssue
@@ -109,7 +116,7 @@ export function DeviceAccessDialog({
       <div className="flex min-w-0 flex-col gap-3 text-sm">
         {permission ? (
           <>
-            <p>{t(`devices:accessGuide.rule.${source}`)}</p>
+            <p>{t(RULE_TEXT[source])}</p>
             <CopyBlock
               text={udevCommands(source, version, target, channel)}
               label={t("devices:accessGuide.commands")}
