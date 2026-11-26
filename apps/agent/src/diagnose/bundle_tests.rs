@@ -501,6 +501,22 @@ fn secrets_in_urls_addresses_and_serials_are_removed() {
             "ZZ99XX77",
         ),
         ("unc server", r"opened \\fileserver\share\x", "fileserver"),
+    ] {
+        let output = redactor.line(input).to_lowercase();
+        assert!(
+            !output.contains(&secret.to_lowercase()),
+            "a secret is left: {label}"
+        );
+    }
+}
+
+/// Base64, PEM-like runs and keys in other forms.
+#[test]
+fn opaque_runs_in_other_forms_are_removed() {
+    let root = root();
+    let env = fixture(root.path());
+    let redactor = LogRedactor::new(&env);
+    for (label, input, secret) in [
         (
             "base64 after a bracket",
             "msg=<aB3/dE5fG7hI9/jK1lM3nO5pQ7/rS9tU1vW3xY5zA7bC9=>",
