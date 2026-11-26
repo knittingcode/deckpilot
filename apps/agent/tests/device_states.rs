@@ -308,3 +308,42 @@ async fn a_protocol_20_client_gets_the_device_list_it_always_did() {
     assert!(info(&status, &no_hid).is_none());
     agent.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn when_one_driver_fails_its_devices_are_unknown_not_disconnected() {
+    let dir = TempDir::new("deckpilot-states");
+    let (paths, key) = data_dir(&dir);
+    let usb = MockBackend::new();
+    let simulated = MockBackend::new();
+    let lost = usb.plug(&models::stream_deck_mk2(), "USB");
+    let other = simulated.plug(&models::stream_deck_mk2(), "SIM");
+    let failing = Arc::new(AtomicBool::new(false));
+    let backend = deckpilot_device::CombinedBackend::default()
+        .with(Box::new(FlakyDiscovery {
+            mock: usb.clone(),
+            failing: failing.clone(),
+        }))
+        .with(Box::new(simulated.clone()));
+    let agent =
+        TestAgent::start_with_backend(&paths, &key, &simulated, Box::new(backend), None, None);
+    agent.unlock().await;
+    wait_availability(&agent, &lost, DeviceAvailability::Connected).await;
+    wait_availability(&agent, &other, DeviceAvailability::Connected).await;
+    // The USB driver cannot enumerate; the simulated one still can.
+    failing.store(true, Ordering::SeqCst);
+    let status = wait_status(&agent, |s| {
+        info(s, &lost).is_some_and(|d| d.state == ConnectionState::Disconnected)
+    })
+    .await;
+    assert_eq!(
+        availability(&status, &lost),
+        Some(DeviceAvailability::Unknown)
+    );
+    assert_eq!(
+        availability(&status, &other),
+        Some(DeviceAvailability::Connected)
+    );
+    failing.store(false, Ordering::SeqCst);
+    wait_availability(&agent, &lost, DeviceAvailability::Connected).await;
+    agent.shutdown().await;
+}

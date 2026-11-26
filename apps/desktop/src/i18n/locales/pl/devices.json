@@ -58,7 +58,7 @@
     "busy": "Inny program ma otwarte to urządzenie. Zamknij go, a potem odśwież urządzenia.",
     "communicationError": "Urządzenie się otwiera, ale ciągle zawodzi. DeckPilot ponawia próby rzadziej; sprawdź kabel lub hub.",
     "reconnecting": "Połączenie zostało utracone. DeckPilot wkrótce ponownie otworzy urządzenie.",
-    "unknown": "Nie udało się wyświetlić listy urządzeń. DeckPilot próbuje dalej."
+    "unknown": "Nie udało się pobrać listy urządzeń. DeckPilot próbuje dalej."
   },
   "summary": {
     "none": "Brak urządzeń",

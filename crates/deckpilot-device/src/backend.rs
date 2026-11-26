@@ -139,6 +139,14 @@ pub trait DeviceBackend: Send {
         Vec::new()
     }
 
+    /// Whether the last [`DeviceBackend::discover`] heard from every
+    /// driver. A backend combining others succeeds while one of them
+    /// fails; devices of the failing one are then of unknown state, not
+    /// gone.
+    fn discovery_complete(&self) -> bool {
+        true
+    }
+
     /// Name of the backend that provides `device`; differs from
     /// [`DeviceBackend::name`] only for backends that combine others.
     fn source(&self, _device: &DeviceId) -> &'static str {
@@ -174,6 +182,8 @@ pub trait DeviceBackend: Send {
 pub struct CombinedBackend {
     backends: Vec<Box<dyn DeviceBackend>>,
     owners: std::collections::BTreeMap<DeviceId, usize>,
+    /// A backend failed at the last discovery.
+    partial: bool,
 }
 
 impl fmt::Debug for CombinedBackend {
@@ -182,6 +192,7 @@ impl fmt::Debug for CombinedBackend {
         f.debug_struct("CombinedBackend")
             .field("backends", &names)
             .field("owners", &self.owners)
+            .field("partial", &self.partial)
             .finish()
     }
 }
@@ -223,10 +234,15 @@ impl DeviceBackend for CombinedBackend {
                 }
             }
         }
+        self.partial = first_error.is_some();
         match first_error {
             Some(error) if !succeeded => Err(error),
             _ => Ok(found),
         }
+    }
+
+    fn discovery_complete(&self) -> bool {
+        !self.partial && self.backends.iter().all(|b| b.discovery_complete())
     }
 
     fn open(&mut self, device: &DeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError> {
@@ -366,6 +382,7 @@ mod tests {
             .with(Box::new(mock));
         let found = combined.discover().unwrap();
         assert_eq!(found.len(), 1, "a failing backend does not hide the others");
+        assert!(!combined.discovery_complete(), "but it is told");
         assert_eq!(combined.source(&id), "mock");
         let driver = combined.driver(&id);
         assert_eq!(driver.id, "mock");

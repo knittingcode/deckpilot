@@ -2397,7 +2397,11 @@ impl Agent {
             self.device_problems.clone(),
             std::mem::take(&mut self.unavailable_devices),
             std::mem::take(&mut self.discovery_failed),
+            self.listed_devices.clone(),
         );
+        // One driver failed while another listed devices: the failing
+        // one's devices are not known to be gone.
+        self.discovery_failed = !self.options.backend.discovery_complete();
         self.unavailable_devices = self
             .options
             .backend
@@ -2440,6 +2444,7 @@ impl Agent {
                 self.device_problems.clone(),
                 self.unavailable_devices.clone(),
                 self.discovery_failed,
+                self.listed_devices.clone(),
             )
         {
             self.publish();
@@ -2491,6 +2496,8 @@ impl Agent {
             Err(error) => {
                 self.device_retry
                     .open_failed(&device, (self.device_clock)());
+                self.device_problems
+                    .insert(device.clone(), DeviceAvailability::CommunicationError);
                 warn!(%device, %error, "cannot start device thread");
                 return;
             }

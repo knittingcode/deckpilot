@@ -44,8 +44,9 @@ fn model_for(kind: Kind) -> Option<DeviceModel> {
 
 /// Models with a descriptor but no driver (reported as unsupported under
 /// their own model id).
-const DESCRIBED: [(Kind, fn() -> DeviceModel); 2] = [
+const DESCRIBED: [(Kind, fn() -> DeviceModel); 3] = [
     (Kind::Xl, models::stream_deck_xl),
+    (Kind::XlV2, models::stream_deck_xl),
     (Kind::Plus, models::stream_deck_plus),
 ];
 
@@ -68,6 +69,11 @@ pub struct ElgatoBackend {
     api: Option<HidApi>,
     /// What the last discovery saw but cannot open.
     unavailable: Vec<UnavailableDevice>,
+    /// Stream Decks the last scan saw on USB without HID: reported only
+    /// when the next scan sees them so too, since sysfs lists a device
+    /// briefly before its `hidraw` node is bound after a plug-in.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    without_hid: Vec<UnavailableDevice>,
 }
 
 impl fmt::Debug for ElgatoBackend {
@@ -75,6 +81,7 @@ impl fmt::Debug for ElgatoBackend {
         f.debug_struct("ElgatoBackend")
             .field("initialised", &self.api.is_some())
             .field("unavailable", &self.unavailable)
+            .field("without_hid", &self.without_hid)
             .finish()
     }
 }
@@ -133,10 +140,19 @@ impl DeviceBackend for ElgatoBackend {
             }
         }
         #[cfg(target_os = "linux")]
-        unavailable.extend(usb_without_hid(
-            std::path::Path::new(usb_presence::SYSFS_USB_DEVICES),
-            &found,
-        ));
+        {
+            let without_hid = usb_without_hid(
+                std::path::Path::new(usb_presence::SYSFS_USB_DEVICES),
+                &found,
+            );
+            unavailable.extend(
+                without_hid
+                    .iter()
+                    .filter(|device| self.without_hid.contains(device))
+                    .cloned(),
+            );
+            self.without_hid = without_hid;
+        }
         self.unavailable = unavailable;
         Ok(found)
     }
@@ -251,35 +267,104 @@ fn usb_without_hid(root: &std::path::Path, found: &[DiscoveredDevice]) -> Vec<Un
 /// Why opening a device failed, from hidapi's message. hidapi reports
 /// open failures as text only, so the platforms' wordings and codes are
 /// matched (the C backends' `hid_open`/`hid_open_path`):
-/// - Linux: `Failed to open a device with path '…': <strerror>`, in the C
-///   locale (the agent never sets another), e.g. `Permission denied`,
-///   `Device or resource busy`;
+/// - Linux: `Failed to open a device with path '…': <strerror>`. The text
+///   follows the locale (GTK sets it from the desktop's language in tray
+///   mode: `Brak dostępu` in Polish), so it is compared with this
+///   process's own `strerror` of `EACCES`, `EPERM`, `EBUSY`, `ENOENT`,
+///   `ENODEV` and `ENXIO` as well as the English words;
 /// - macOS: `… (0xE00002E2) … not permitted`, `(0xE00002C1)` not
 ///   privileged, `(0xE00002C5)` exclusive access;
 /// - Windows: `open_device: (0x00000005) …` (access denied; the HID stack
 ///   gives that when another program holds the device exclusively) or
 ///   `(0x00000020)` (sharing violation), localized after the code;
 /// - every platform: `Device with requested VID/PID/(SerialNumber) not
-///   found` when it went away between discovery and open.
+///   found` when it went away between discovery and open (also macOS
+///   `0xE00002C0`, no device, and Windows `0x00000002` / `0x0000048F`).
 fn classify_open_error(message: &str) -> DeviceError {
+    classify_open_error_in(message, &local_errno_texts())
+}
+
+/// Linux errno values whose `strerror` text names an open failure: what
+/// each means for the device.
+#[cfg(target_os = "linux")]
+const OPEN_ERRNOS: [(i32, OpenFailure); 6] = [
+    (13, OpenFailure::Permission), // EACCES
+    (1, OpenFailure::Permission),  // EPERM
+    (16, OpenFailure::Busy),       // EBUSY
+    (2, OpenFailure::Gone),        // ENOENT
+    (19, OpenFailure::Gone),       // ENODEV
+    (6, OpenFailure::Gone),        // ENXIO
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenFailure {
+    Permission,
+    Busy,
+    Gone,
+}
+
+/// This process's `strerror` texts of `OPEN_ERRNOS`, in its locale
+/// (Linux; elsewhere hidapi's messages carry codes).
+fn local_errno_texts() -> Vec<(String, OpenFailure)> {
+    #[cfg(target_os = "linux")]
+    {
+        OPEN_ERRNOS
+            .iter()
+            .map(|(errno, failure)| {
+                let text = std::io::Error::from_raw_os_error(*errno).to_string();
+                // `<strerror> (os error N)`.
+                let text = text
+                    .rsplit_once(" (os error ")
+                    .map_or(text.as_str(), |(text, _)| text)
+                    .to_lowercase();
+                (text, *failure)
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Vec::new()
+    }
+}
+
+/// [`classify_open_error`] with the locale's `strerror` texts given.
+fn classify_open_error_in(message: &str, errno_texts: &[(String, OpenFailure)]) -> DeviceError {
     let lower = message.to_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
-    if has(&["not found", "no such file", "no such device"]) {
+    // Linux puts strerror after the path: `…'/dev/hidraw3': <text>`.
+    let local = errno_texts
+        .iter()
+        .find(|(text, _)| !text.is_empty() && lower.ends_with(&format!(": {text}")))
+        .map(|(_, failure)| *failure);
+    if local == Some(OpenFailure::Gone)
+        || has(&[
+            "not found",
+            "no such file",
+            "no such device",
+            "0xe00002c0",
+            "(0x00000002)",
+            "(0x0000048f)",
+        ])
+    {
         DeviceError::Disconnected
-    } else if has(&[
-        "permission denied",
-        "operation not permitted",
-        "0xe00002e2",
-        "0xe00002c1",
-    ]) {
+    } else if local == Some(OpenFailure::Permission)
+        || has(&[
+            "permission denied",
+            "operation not permitted",
+            "0xe00002e2",
+            "0xe00002c1",
+        ])
+    {
         DeviceError::PermissionDenied(message.to_owned())
-    } else if has(&[
-        "resource busy",
-        "0xe00002c5",
-        "exclusive access",
-        "(0x00000005)",
-        "(0x00000020)",
-    ]) {
+    } else if local == Some(OpenFailure::Busy)
+        || has(&[
+            "resource busy",
+            "0xe00002c5",
+            "exclusive access",
+            "(0x00000005)",
+            "(0x00000020)",
+        ])
+    {
         DeviceError::Busy(message.to_owned())
     } else {
         DeviceError::Io(message.to_owned())
@@ -447,6 +532,14 @@ mod tests {
                 "open_device: (0x0000001F) A device attached to the system is not functioning.",
                 "io",
             ),
+            (
+                "open_device: (0x00000002) Nie można odnaleźć pliku.",
+                "gone",
+            ),
+            (
+                "hid_open_path: failed to open IOHIDDevice from mach entry: (0xE00002C0) (iokit/common) no such device",
+                "gone",
+            ),
         ];
         for (message, expected) in cases {
             let kind = match classify_open_error(message) {
@@ -458,6 +551,36 @@ mod tests {
             };
             assert_eq!(kind, expected, "{message}");
         }
+        // Linux in another locale (tray mode: GTK sets it): compared with
+        // the process's own strerror texts.
+        let polish = [
+            ("brak dostępu".to_owned(), OpenFailure::Permission),
+            ("urządzenie lub zasoby zajęte".to_owned(), OpenFailure::Busy),
+            (
+                "nie ma takiego pliku ani katalogu".to_owned(),
+                OpenFailure::Gone,
+            ),
+        ];
+        let path = "Failed to open a device with path '/dev/hidraw3'";
+        assert!(matches!(
+            classify_open_error_in(&format!("{path}: Brak dostępu"), &polish),
+            DeviceError::PermissionDenied(_)
+        ));
+        assert!(matches!(
+            classify_open_error_in(&format!("{path}: Urządzenie lub zasoby zajęte"), &polish),
+            DeviceError::Busy(_)
+        ));
+        assert_eq!(
+            classify_open_error_in(
+                &format!("{path}: Nie ma takiego pliku ani katalogu"),
+                &polish
+            ),
+            DeviceError::Disconnected
+        );
+        assert!(matches!(
+            classify_open_error_in(&format!("{path}: Błąd wejścia/wyjścia"), &polish),
+            DeviceError::Io(_)
+        ));
         let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
         assert!(matches!(
             map_open_error(StreamDeckError::HidError(hidapi::HidError::IoError {
@@ -474,6 +597,10 @@ mod tests {
     #[test]
     fn unsupported_kinds_have_model_ids() {
         assert_eq!(unsupported_model_id(Kind::Xl), models::stream_deck_xl().id);
+        assert_eq!(
+            unsupported_model_id(Kind::XlV2),
+            models::stream_deck_xl().id
+        );
         assert_eq!(
             unsupported_model_id(Kind::Plus),
             models::stream_deck_plus().id

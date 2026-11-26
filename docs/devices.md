@@ -203,7 +203,13 @@ why a device is or is not usable:
 | `unknown` | discovery fails, so devices not open cannot be told apart; also a newer state in an older client | the agent |
 
 hidapi reports open errors only as text; `deckpilot-hid` classifies the
-platforms' wordings and codes (`classify_open_error`). A device that is
+platforms' wordings and codes (`classify_open_error`). On Linux the text is
+in the desktop's language once GTK has set the locale (tray mode), so it is
+also compared with the process's own `strerror` of `EACCES`, `EPERM`,
+`EBUSY`, `ENOENT`, `ENODEV` and `ENXIO`. "USB present, HID unavailable" is
+reported only when two scans in a row see it, since sysfs lists a device
+briefly before its `hidraw` node is bound. While one driver fails to
+enumerate and another succeeds, devices not open are `unknown`. A device that is
 present is never `notConnected`: one that is listed but cannot be opened,
 or that the USB bus lists without HID, appears in the device list with its
 reason even though it never connected (`DeviceInfo::never_opened`, kept in
