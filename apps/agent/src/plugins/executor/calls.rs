@@ -70,6 +70,13 @@ impl Executor {
                 codes::CONSENT,
                 "only the Calls plugin may use calls",
             ))
+        } else if control && !self.run.is_user_initiated() {
+            // The broker refuses it already: checked again so that nothing
+            // but a run the user started controls a call.
+            Err(CallsRefusal::new(
+                codes::NOT_USER_STARTED,
+                DenyReason::PrivilegedNotUserInitiated.to_string(),
+            ))
         } else if control
             && self
                 .call_controls
@@ -77,15 +84,8 @@ impl Executor {
                 >= MAX_CONTROLS
         {
             Err(CallsRefusal::new(
-                codes::CONSENT,
+                codes::THROTTLED,
                 format!("at most {MAX_CONTROLS} call actions per run"),
-            ))
-        } else if control && !self.run.is_user_initiated() {
-            // The broker refuses it already: checked again so that nothing
-            // but a run the user started controls a call.
-            Err(CallsRefusal::new(
-                codes::CONSENT,
-                DenyReason::PrivilegedNotUserInitiated.to_string(),
             ))
         } else {
             match &self.calls {
@@ -122,7 +122,8 @@ impl Executor {
 /// The ABI code of a refusal's reason code.
 fn code(reason: &str) -> CallErrorCode {
     match reason {
-        codes::CONSENT => CallErrorCode::NotPermitted,
+        codes::CONSENT | codes::NOT_USER_STARTED => CallErrorCode::NotPermitted,
+        codes::THROTTLED => CallErrorCode::Throttled,
         codes::PROVIDER_OFFLINE | codes::LOCKED => CallErrorCode::Unavailable,
         _ => CallErrorCode::Failed,
     }

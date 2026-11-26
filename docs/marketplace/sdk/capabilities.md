@@ -604,7 +604,8 @@ For every other plugin both are denied, whatever it was granted. The
 answer to a control comes only once the call app confirmed it; a refusal
 starts with its code (`calls-not-in-call`, `calls-unsupported: <reason>`,
 `calls-unconfirmed`, `calls-provider-offline`, `calls-consent`,
-`calls-locked`). See [Calls](../../calls.md#plugin-operations-who-may-ask-and-how-c9).
+`calls-locked`, `calls-not-user-started` for a run the user did not
+start, `calls-throttled` for too many controls). See [Calls](../../calls.md#plugin-operations-who-may-ask-and-how-c9).
 
 ## What there is not (ABI 1)
 

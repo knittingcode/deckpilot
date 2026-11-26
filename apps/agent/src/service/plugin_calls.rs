@@ -315,7 +315,7 @@ impl Agent {
     ) {
         if self.calls.waiting.len() >= MAX_WAITING {
             let _ = reply.try_send(Err(CallsRefusal::new(
-                codes::UNCONFIRMED,
+                codes::THROTTLED,
                 "too many call actions wait for their confirmation",
             )));
             return;

@@ -269,8 +269,9 @@ released either. 0.6.0 is the first version intended for publication.
   never together with network, credentials, opening pages or tools. A
   control is answered only once the call app confirmed it. Your consents
   to observe and to control calls apply as for the call pages, and
-  detection-only Teams refuses every control with the reason. The agent's
-  plugin API is not raised yet.
+  detection-only Teams refuses every control with the reason. A control
+  from a run you did not start, or one too many, is refused with its own
+  code. The agent's plugin API is not raised yet.
 - Calls: the operating-system signals provider reports its connection, so
   a Teams control is refused with its reason (no supported API) instead of
   "not connected".

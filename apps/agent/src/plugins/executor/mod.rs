@@ -108,8 +108,8 @@ use tracing::{debug, info, warn};
 
 use super::variables::{PublishedVariables, typed};
 
-mod connections;
 pub(super) mod calls;
+mod connections;
 mod open;
 pub(super) mod project;
 pub(super) mod resources;

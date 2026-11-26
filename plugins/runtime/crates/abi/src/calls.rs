@@ -157,6 +157,11 @@ pub mod codes {
     pub const CONSENT: &str = "calls-consent";
     /// DeckPilot is locked.
     pub const LOCKED: &str = "calls-locked";
+    /// A control in a run the user did not start (a schedule, an event,
+    /// the agent's start).
+    pub const NOT_USER_STARTED: &str = "calls-not-user-started";
+    /// Too many controls: in one run, or waiting at once.
+    pub const THROTTLED: &str = "calls-throttled";
 }
 
 #[cfg(test)]

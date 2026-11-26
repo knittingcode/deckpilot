@@ -170,8 +170,13 @@ guest SDK has `Context::call_state` and `Context::call_control`.
   outcome and a control's action kind; never the state, a title or anything
   of the call.
 - **Refusals** start with their code (`calls-unsupported: …`), which the
-  plugin's `errorCodes` translate. ABI codes: `calls-consent` is
-  `not-permitted`, `calls-provider-offline` and `calls-locked` are
+  plugin's `errorCodes` translate. A run the user did not start is
+  `calls-not-user-started` (the executor's re-check; it uses none of the
+  run's controls), and more than 2 controls in a run, or too many waiting
+  at once, is `calls-throttled`. Neither is `calls-consent`, which is the
+  user's consent only. ABI codes: `calls-consent` and
+  `calls-not-user-started` are `not-permitted`, `calls-throttled` is
+  `throttled`, `calls-provider-offline` and `calls-locked` are
   `unavailable`, the others `failed`.
 
 The agent's `PLUGIN_API` is not moved by this change, and the privileged

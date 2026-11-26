@@ -25,10 +25,10 @@ use serde_json::Value;
 use crate::definition::is_camel_key;
 use crate::output::{PluginError, codes};
 
-#[path = "connections.rs"]
-mod connections;
 #[path = "calls.rs"]
 mod calls;
+#[path = "connections.rs"]
+mod connections;
 #[path = "privileged.rs"]
 mod privileged;
 

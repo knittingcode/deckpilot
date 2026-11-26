@@ -279,9 +279,46 @@ fn one_run_controls_at_most_twice() {
     assert_eq!(answers[0], "calls-unsupported: provider-has-no-api");
     assert_eq!(answers[1], "calls-unsupported: provider-has-no-api");
     assert!(
-        answers[2].starts_with("calls-consent: at most 2"),
+        answers[2].starts_with("calls-throttled: at most 2"),
         "{}",
         answers[2]
     );
     assert_eq!(f.reached(), 2, "the third never reached the agent");
+}
+
+/// The executor's own re-check of the run (the broker refuses it first):
+/// a control in a run the user did not start is `calls-not-user-started`,
+/// never the consent, and nothing reaches the agent.
+#[test]
+fn the_executor_refuses_a_run_the_user_did_not_start_by_its_code() {
+    let f = Fixture::new(r#"[{"kind":"calls","control":true}]"#);
+    for run in [
+        RunContext::workflow(RunCause::Schedule, None),
+        RunContext::workflow(RunCause::Event, None),
+        RunContext::unknown(),
+    ] {
+        let mut executor = f.executor(run.clone(), true);
+        // As if the broker had let it through.
+        let allowed = deckpilot_plugin_broker::Allowed::CallControl {
+            action: CallAction::End,
+        };
+        let (code, message) = refused(&executor.execute(&f.plugin, &allowed));
+        assert_eq!(code, CallErrorCode::NotPermitted, "{run:?}");
+        assert!(message.starts_with("calls-not-user-started: "), "{message}");
+    }
+    assert_eq!(f.reached(), 0);
+}
+
+/// A run the user did not start uses none of the run's controls.
+#[test]
+fn a_refused_run_uses_no_control() {
+    let f = Fixture::new(r#"[{"kind":"calls","control":true}]"#);
+    let mut executor = f.executor(RunContext::unknown(), true);
+    let allowed = deckpilot_plugin_broker::Allowed::CallControl {
+        action: CallAction::End,
+    };
+    for _ in 0..3 {
+        let (_, message) = refused(&executor.execute(&f.plugin, &allowed));
+        assert!(message.starts_with("calls-not-user-started: "), "{message}");
+    }
 }
