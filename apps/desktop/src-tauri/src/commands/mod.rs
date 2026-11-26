@@ -28,6 +28,7 @@ pub(crate) mod plugins;
 pub(crate) mod portability;
 mod profiles;
 pub(crate) mod reload;
+pub mod repositories;
 pub(crate) mod security;
 mod shared_layouts;
 mod shared_variables;
@@ -235,6 +236,15 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         plugins::list_plugin_credentials,
         plugins::set_plugin_credential,
         plugins::delete_plugin_credential,
+        repositories::set_repository_remotes,
+        repositories::link_repository_remote,
+        repositories::list_repository_remotes,
+        plugins::list_plugin_connections,
+        plugins::create_plugin_connection,
+        plugins::set_plugin_connection_secret,
+        plugins::update_plugin_connection,
+        plugins::test_plugin_connection,
+        plugins::remove_plugin_connection,
         plugins::list_module_migrations,
         plugins::decide_module_migration,
         plugins::retry_module_migration,

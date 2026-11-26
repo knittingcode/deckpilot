@@ -278,7 +278,15 @@
       "summary_one": "Repository: {{keys}}",
       "summary_other": "Repositories: {{keys}}",
       "summaryDefault": "{{key}} (default)",
-      "lastWithRole": "Remove the repository role first to remove the last repository."
+      "lastWithRole": "Remove the repository role first to remove the last repository.",
+      "remotes": "Remotes",
+      "noRemotes": "No remotes yet.",
+      "link": "Link remote…",
+      "linkFor": "Link remote for {{name}}",
+      "linkNeedsSave": "Save the project first to link a remote.",
+      "primaryRemote": "primary",
+      "linkedRemote": "linked ({{id}})",
+      "linked": "Remote linked"
     }
   },
   "workSession": {

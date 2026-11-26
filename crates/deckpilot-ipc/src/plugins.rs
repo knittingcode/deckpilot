@@ -139,6 +139,10 @@ pub mod feature {
     /// An agent without it knows no storefront; the app then shows the
     /// catalog only.
     pub const STOREFRONT: &str = "storefront";
+    /// `listRepositoryRemotes` (protocol 20): the agent reads a project
+    /// repository's git remotes for "Link remote". The app suggests them
+    /// only when the agent lists it.
+    pub const REPOSITORY_REMOTES: &str = "repositoryRemotes";
 }
 
 /// What a plugin's visual asset is.

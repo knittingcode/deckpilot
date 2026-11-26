@@ -367,5 +367,101 @@
     "credentialsOf": "Credentials of {{name}}",
     "nothing": "This version declares no settings and no credentials.",
     "saved": "Settings saved"
+  },
+  "connections": {
+    "intro": "Servers this plugin is connected to. Each has its own address and token; the plugin reaches only the connection an action names.",
+    "add": "Add connection",
+    "none": "No installed plugin connects to servers.",
+    "empty": "No connections yet.",
+    "notGranted": "This plugin is not allowed to use connections. Allow it on the plugin's page in the Marketplace first.",
+    "default": "Default",
+    "readOnly": "Read-only",
+    "canChange": "Can make changes",
+    "privateNetwork": "Private network",
+    "cloud": "Public service",
+    "token": "Token",
+    "replaceToken": "Replace token",
+    "tokenReplaced": "The new token is saved. Test the connection to check it.",
+    "turnOff": "Turn off",
+    "turnOn": "Turn on",
+    "state": {
+      "ok": "Connected",
+      "unauthorized": "Token rejected",
+      "insufficientScope": "Missing permission",
+      "unreachable": "Can't reach the server",
+      "tlsFailed": "Certificate not trusted",
+      "needsReconnect": "Needs a token",
+      "untested": "Not tested",
+      "disabled": "Turned off",
+      "other": "Unknown"
+    },
+    "test": {
+      "action": "Test",
+      "ok": "The connection works.",
+      "okAs": "The connection works, signed in as {{account}}.",
+      "failed": "The connection does not work: {{reason}}"
+    },
+    "remove": {
+      "action": "Remove",
+      "title": "Remove {{name}}?",
+      "description": "Its token is deleted from this computer. Keys and workflows that use it stay as they are and show the connection as removed.",
+      "confirm": "Remove"
+    },
+    "tokenDialog": {
+      "title": "New token for {{name}}",
+      "description": "The token is sent to DeckPilot's background agent and kept encrypted on this computer. The connection stays on {{host}}.",
+      "save": "Save token"
+    },
+    "addDialog": {
+      "title": "Add a connection",
+      "description": "Connect this plugin to a server with a token you create there.",
+      "create": "Add and test",
+      "provider": "Provider",
+      "where": "Where",
+      "ownServer": "My company's server",
+      "server": "Server address",
+      "serverHint": "The address you open in the browser, starting with https://. A port or a path is fine, such as https://code.example.com:8443/gitlab.",
+      "privateNetwork": "This server is on my company or home network",
+      "privateNetworkHint": "Only for a server on a private network (an internal address or name). DeckPilot never connects to this computer or to link-local addresses.",
+      "allowChanges": "Allow changes",
+      "allowChangesHint": "Off: the plugin can only read. On: it can also create pull or merge requests and start pipelines.",
+      "tokenPage": "Create the token at:",
+      "tokenKept": "The token is kept encrypted on this computer and is never shown again, exported or given to the plugin.",
+      "name": "Name",
+      "tls": "DeckPilot connects directly, over https only, and trusts the certificates your system trusts. A server with a self-signed certificate works once your company's certificate is added to the system."
+    },
+    "scopes": {
+      "github": {
+        "read": "A fine-grained token with read access to Metadata, Contents, Pull requests, Actions, Commit statuses and Issues (a classic token: repo).",
+        "write": "As for reading, plus write access to Pull requests and Actions."
+      },
+      "gitlab": {
+        "read": "A personal, project or group access token with the read_api scope.",
+        "write": "A personal, project or group access token with the api scope."
+      },
+      "generic": "A token with the least permissions the plugin needs."
+    },
+    "turnOffDialog": {
+      "title": "Turn off {{name}}?",
+      "description": "Keys and workflows that use it stop working until you turn it on again, including actions that are running now. Its token stays on this computer."
+    },
+    "link": {
+      "title": "Link {{repository}} to a remote repository",
+      "description": "Choose the connection and the repository there. The link uses the provider's own id, so a rename on the server keeps it.",
+      "confirm": "Link",
+      "noConnections": "No connection can be used yet. Add one in Settings › Connections.",
+      "connection": "Connection",
+      "search": "Find a repository",
+      "find": "Find",
+      "nothingFound": "No repository found.",
+      "results": "Repositories found",
+      "summary": "{{path}} ({{id}}) on {{connection}} will be linked.",
+      "remoteName": "Git remote name",
+      "primary": "The primary remote",
+      "replaces": "This replaces the remote “{{name}}” stored now.",
+      "detected": "In the repository's folder",
+      "findOn": "Find {{remote}} on {{connection}}",
+      "notFoundOn": "{{remote}} was not found on {{connection}}. Search for it below."
+    }
   }
 }

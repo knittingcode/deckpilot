@@ -159,6 +159,27 @@ pub struct PluginConnections {
     pub connections: Vec<PluginConnection>,
 }
 
+/// Most remotes `listRepositoryRemotes` answers with.
+pub const MAX_DETECTED_REMOTES: usize = 16;
+
+/// A git remote of a repository's folder, as `git remote -v` lists it
+/// (`listRepositoryRemotes`). Its URLs carry no credentials: the agent
+/// removes the user name and password of an `https` URL, the password of
+/// an `ssh` one, and any query or fragment, and leaves out a URL that is
+/// still not a remote URL a project may store
+/// (`RepositoryRemote::check`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedRemote {
+    /// The git remote name (`origin`).
+    pub name: String,
+    /// Where it fetches from.
+    pub url: String,
+    /// Where it pushes to, when that is another URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_url: Option<String>,
+}
+
 /// What a test of a connection found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -172,14 +193,19 @@ pub struct ConnectionTestOutcome {
     pub message: Option<String>,
 }
 
-pub(crate) fn check_connection_id(id: &str) -> Result<(), String> {
-    let ok = id.strip_prefix("cn_").is_some_and(|body| {
+/// Whether `id` is a connection id: `cn_` and 26 characters of Crockford
+/// base32 (digits and upper-case letters without `I`, `L`, `O`, `U`).
+pub fn is_connection_id(id: &str) -> bool {
+    id.strip_prefix("cn_").is_some_and(|body| {
         body.len() == 26
             && body
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b.is_ascii_uppercase() && !b"ILOU".contains(&b)))
-    });
-    if ok {
+    })
+}
+
+pub(crate) fn check_connection_id(id: &str) -> Result<(), String> {
+    if is_connection_id(id) {
         Ok(())
     } else {
         Err("connection must be a connection id".into())

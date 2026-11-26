@@ -291,8 +291,21 @@ Merge queue (prepared, not enabled): `ci.yml` and `signing-check.yml` also
 run for `merge_group` events, so the required checks would report for queue
 groups under their usual names. The optional jobs then compare the group's
 base commit with its head (every pull request in the group). The signing
-job holds no secret and runs the group's own scripts. GitHub offers merge queues only for repositories owned by an
-organization, so this needs the repository to move to one first.
+job holds no secret and runs the group's own scripts. `packaging.yml` runs
+for merge groups too, with the same comparison (`tools/ci/changed-paths.sh`,
+group `packaging`), and its "Packaging result" job always reports: success
+when every package job passed or was skipped. The path-filtered workflows
+(`desktop-e2e.yml`, `plugins-agent.yml`, `compatibility.yml`,
+`plugin-runtime.yml`, `release-tests.yml`, `advisories.yml`,
+`website.yml`) run for merge groups as well. GitHub applies no `paths`
+filter to `merge_group` events, so each starts a "Changed paths (merge
+group)" job that applies the workflow's own `on.pull_request.paths` to the
+group's files (`tools/ci/merge-group-paths.sh`, tested by
+`tools/ci/test-merge-group-paths.sh`); the workflow's jobs report as skipped
+when none matches, and run when in doubt. `release-smoke.yml` does not: it
+tests a published release, not the group's commit. GitHub offers merge
+queues only for repositories owned by an organization, so this needs the
+repository to move to one first.
 
 Runs and caches:
 

@@ -17,6 +17,36 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Projects (builds with plugins): a project repository can be linked to a
+  repository on one of your connections. Choose the connection, find the
+  repository there, check what will be linked and confirm; the link keeps
+  the provider's own id (`gh:…`, `gl:…`), so a rename on the server keeps
+  it, and only the app writes it. In the project editor, each saved
+  repository lists its remotes and has a "Link remote…" button; the link is
+  saved at once, not with the project form.
+- Link remote suggests the remotes of the repository's folder: DeckPilot
+  reads them with `git remote -v` (read-only; it never fetches, pulls or
+  writes, and leaves out any user name, password or token in a URL), and
+  for a connection on the same server "Find origin on …" asks the
+  provider for exactly that repository. You still confirm the link; when
+  the provider does not know it, you search by its path.
+- Settings › Connections (builds with plugins): the servers plugins connect
+  to, per plugin that declares them, with their state (connected, token
+  rejected, missing permission, can't reach the server, certificate not
+  trusted, turned off), the account, Default and Read-only. Add a
+  connection to GitHub.com or GitLab.com, or to GitHub Enterprise Server or
+  a self-managed GitLab at the address you open in the browser (a port or
+  a path is fine), with the token's permissions explained in plain words,
+  read-only unless you allow changes, and a private network only when you
+  say so; it is tested at once. Test, Replace token, Turn off and Remove
+  are on each connection. The token is typed once and never shown again.
+  In English and Polish.
+- Plugins: a connection's HTTP answers carry GitHub's `x-oauth-scopes`,
+  `x-accepted-oauth-scopes` and `github-authentication-token-expiration`
+  (scope names and a date), so a connection's test can name a missing
+  permission or an expiring token; no other plugin request gets them. A
+  connection's refusals always start with their code (`redirect-refused:
+  …`).
 - Plugins: connections (plugin API 1.14, host side). A plugin that
   declares connection types (DeckPilot's own bundled plugins only) can be
   connected to several servers, each with its own address, consent, token
