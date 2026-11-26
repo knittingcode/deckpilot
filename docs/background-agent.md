@@ -597,6 +597,51 @@ The report hides personal data:
   messages;
 - environment values and tokens are never included.
 
+### Support bundle
+
+Settings › Logs & Diagnostics › **Export diagnostics…** saves a support
+bundle: one JSON file (`"schema": "deckpilot.support-bundle"`,
+`"schemaVersion": 1`) for a support request. The app runs
+`deckpilot-agent diagnose --bundle` from its own bundle, which prints the
+bundle and, like `diagnose`, starts, opens and writes nothing. The app shows
+the whole bundle and what it contains, and writes it only to the file the
+user picks in a save dialog. Nothing is uploaded.
+
+The bundle contains:
+
+- `report`: the diagnose report above;
+- `logs`: the end of the newest three agent logs (`agent.*.log`, newest
+  first) and of the app's `updates.log`. At most 512 KiB of the agent logs
+  and 64 KiB of the update log are read, 5000 lines in all, each line cut
+  at 2000 characters. A log that is a link is not read;
+- `app`, added by the app: its version, its update channel (`null` while
+  the configuration is locked) and whether it is a debug build;
+- `redaction`: the rules applied.
+
+Every log line, and every string of the report again, goes through one
+redaction filter (`apps/agent/src/diagnose/bundle.rs`):
+
+- secret values: the value of a field whose name contains `token`,
+  `password`, `secret`, `credential`, `api_key`, `private_key`,
+  `access_key`, `auth`, `cookie`, `session` or `signature`; the credential
+  after `Bearer`, `Basic` and `Digest`; user and password in URLs; tokens
+  with a known prefix (`ghp_`, `github_pat_`, `glpat-`, `xox?-`, `sk-`,
+  `AKIA`), JSON web tokens, and any run of 32 or more letters, digits and
+  `+=_-` that mixes letters and digits;
+- serial numbers become the report's pseudonyms, so a device in the logs
+  matches the report: after a device ID (`elgato.streamdeck.mk2#…`), after
+  `serial=`, and every serial of a device the report sees. The machine ID
+  becomes `<machine-id>`;
+- the home directory becomes `~`, other users' home directories
+  (`/home/…`, `/Users/…`, `C:\Users\…`, `/media/…`) `/home/<user>`, the
+  user name `<user>`, this computer's name `<host>`, e-mail addresses
+  `<email>`, IPv4 addresses other than loopback `<ip>`, and the host of a
+  URL `<host>`, except GitHub's and loopback.
+
+Redaction is a filter over text: a secret in a form it does not know can
+pass. That is why the app shows the whole bundle before it is saved, and
+says so.
+
 ## Testing
 
 Automated tests never need hardware:

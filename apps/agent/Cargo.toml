@@ -87,6 +87,8 @@ serde_json.workspace = true
 # Serial pseudonyms of `diagnose` (already in every build through
 # deckpilot-core); also the plugin packages' digests.
 sha2.workspace = true
+# The support bundle's log redaction (diagnose/bundle.rs).
+regex = "1"
 tao.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -130,7 +132,7 @@ zeroize = { workspace = true, optional = true }
 [target.'cfg(unix)'.dependencies]
 # `diagnose`: access(2) on a hidraw node, which opens nothing (the same
 # rustix 1 as deckpilot-ipc's).
-rustix = { version = "1", default-features = false, features = ["fs", "std"] }
+rustix = { version = "1", default-features = false, features = ["fs", "std", "system"] }
 
 [dev-dependencies]
 deckpilot-agent = { path = ".", features = ["test-hooks"] }

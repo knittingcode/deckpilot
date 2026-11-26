@@ -266,7 +266,7 @@ enum ExportStep {
 /// opened, so a sibling that happens to look like a staging file is never
 /// written or removed, and concurrent exports never share a staging file.
 /// On every error the staging file, and only it, is removed.
-fn write_export(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_export(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     write_export_failing_at(path, bytes, None)
 }
 

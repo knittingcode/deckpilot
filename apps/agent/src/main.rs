@@ -17,7 +17,10 @@ the agent runs, the Elgato devices the system sees, e.g. a Stream Deck
 whose USB device is present but whose HID interface is missing). It starts
 and changes nothing, works while the configuration is locked, and replaces
 serial numbers with pseudonyms and the home directory and the user name
-with placeholders. --json prints the versioned JSON report.";
+with placeholders. --json prints the versioned JSON report. --bundle prints
+a support bundle: that report and the end of the recent logs, with secrets,
+serial numbers, paths, user and host names removed (what the app's Export
+diagnostics saves).";
 
 const USAGE: &str = "\
 DeckPilot background agent
@@ -29,7 +32,7 @@ Usage:
                   [--plugin-registry-releases-url <https url>]
                   [--plugin-registry-roots <roots.json>]
   deckpilot-agent autostart <enable|disable|status>
-  deckpilot-agent diagnose [--json]
+  deckpilot-agent diagnose [--json | --bundle]
 
 Options:
   --headless          Run without a tray icon (servers, CI, debugging)
@@ -253,17 +256,23 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
     Ok(Ok(parsed))
 }
 
-/// `deckpilot-agent diagnose [--json]` (`deckpilot_agent::diagnose`).
+/// `deckpilot-agent diagnose [--json | --bundle]` (`deckpilot_agent::diagnose`).
 fn diagnose_command(options: &[String]) -> ExitCode {
-    let json = match options {
-        [] => false,
-        [flag] if flag == "--json" => true,
+    enum Output {
+        Summary,
+        Json,
+        Bundle,
+    }
+    let output = match options {
+        [] => Output::Summary,
+        [flag] if flag == "--json" => Output::Json,
+        [flag] if flag == "--bundle" => Output::Bundle,
         [flag] if flag == "--help" || flag == "-h" => {
-            println!("usage: deckpilot-agent diagnose [--json]\n\n{DIAGNOSE_HELP}");
+            println!("usage: deckpilot-agent diagnose [--json | --bundle]\n\n{DIAGNOSE_HELP}");
             return ExitCode::SUCCESS;
         }
         _ => {
-            eprintln!("usage: deckpilot-agent diagnose [--json]");
+            eprintln!("usage: deckpilot-agent diagnose [--json | --bundle]");
             return ExitCode::from(2);
         }
     };
@@ -274,8 +283,17 @@ fn diagnose_command(options: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let report = deckpilot_agent::diagnose::collect(&environment);
-    if json {
+    let report = match output {
+        Output::Bundle => deckpilot_agent::diagnose::bundle::bundle(
+            &environment,
+            &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            deckpilot_agent::diagnose::bundle::Limits::default(),
+        ),
+        Output::Summary | Output::Json => deckpilot_agent::diagnose::collect(&environment),
+    };
+    if matches!(output, Output::Summary) {
+        println!("{}", deckpilot_agent::diagnose::summary(&report));
+    } else {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{text}"),
             Err(error) => {
@@ -283,8 +301,6 @@ fn diagnose_command(options: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-    } else {
-        println!("{}", deckpilot_agent::diagnose::summary(&report));
     }
     ExitCode::SUCCESS
 }

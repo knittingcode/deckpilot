@@ -256,6 +256,12 @@ fn preferences(state: &AppState) -> UpdatePreferences {
         .sanitized()
 }
 
+/// The stored update channel (the default while the configuration is
+/// locked: check that it is open first).
+pub(crate) fn stored_channel(state: &AppState) -> Channel {
+    preferences(state).channel
+}
+
 fn save_preferences(state: &AppState, preferences: &UpdatePreferences) -> CommandResult<()> {
     let text =
         serde_json::to_string(preferences).map_err(|e| CommandError::Invalid(e.to_string()))?;

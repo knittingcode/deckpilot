@@ -181,6 +181,7 @@ fn linux_fixture(root: &Path) -> Environment {
         home: Some(home),
         user: Some("alice".into()),
         machine_id: Some(MACHINE_ID.into()),
+        hostname: Some("alice-laptop".into()),
         hid: HidSource::Sysfs,
     }
 }
@@ -574,6 +575,7 @@ fn listed_hid_interfaces_without_usb() {
         home: None,
         user: None,
         machine_id: None,
+        hostname: None,
         hid: HidSource::Listed(Ok(vec![
             deckpilot_hid::HidInterface {
                 vendor_id: 0x0fd9,

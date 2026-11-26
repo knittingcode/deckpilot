@@ -94,6 +94,9 @@ pub struct Environment {
     pub user: Option<String>,
     /// Linux `/etc/machine-id`: keys the serial pseudonyms. Never reported.
     pub machine_id: Option<String>,
+    /// This computer's name: never reported, and replaced with `<host>` in
+    /// the logs of a support bundle ([`bundle`]).
+    pub hostname: Option<String>,
     pub hid: HidSource,
 }
 
@@ -124,9 +127,46 @@ impl Environment {
                 .ok()
                 .filter(|user| !user.is_empty()),
             machine_id: read_trimmed(Path::new("/etc/machine-id")).filter(|id| !id.is_empty()),
+            hostname: hostname(),
             hid,
         })
     }
+
+    /// The serial numbers of the Elgato devices this report sees, unredacted,
+    /// so that a support bundle can replace them wherever they appear in a
+    /// log. Never reported.
+    pub(crate) fn known_serials(&self) -> Vec<String> {
+        let mut serials: Vec<String> = match &self.hid {
+            HidSource::Sysfs => usb_devices(&self.root)
+                .into_iter()
+                .filter_map(|device| device.serial)
+                .collect(),
+            HidSource::Listed(Ok(interfaces)) => interfaces
+                .iter()
+                .filter(|interface| interface.vendor_id == ELGATO_VENDOR)
+                .filter_map(|interface| interface.serial.clone())
+                .collect(),
+            HidSource::Listed(Err(_)) => Vec::new(),
+        };
+        serials.sort();
+        serials.dedup();
+        serials
+    }
+}
+
+/// This computer's name (`uname -n`; `COMPUTERNAME` on Windows).
+fn hostname() -> Option<String> {
+    #[cfg(unix)]
+    let name = Some(
+        rustix::system::uname()
+            .nodename()
+            .to_string_lossy()
+            .into_owned(),
+    );
+    #[cfg(not(unix))]
+    let name = std::env::var("COMPUTERNAME").ok();
+    name.map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
 }
 
 fn dirs_home() -> Option<PathBuf> {
@@ -160,40 +200,50 @@ impl Redactor {
     /// The user name wherever it stands as a word of its own (between
     /// characters that are not letters or digits), in any text.
     fn text(&self, text: &str) -> String {
-        let Some(user) = self.user.as_deref().filter(|user| user.chars().count() > 1) else {
-            return text.to_owned();
-        };
-        let fold = |c: char| {
-            if self.fold_case {
-                c.to_lowercase().next().unwrap_or(c)
-            } else {
-                c
-            }
-        };
-        let chars: Vec<char> = text.chars().collect();
-        let name: Vec<char> = user.chars().map(fold).collect();
-        let mut out = String::with_capacity(text.len());
-        let mut i = 0;
-        while i < chars.len() {
-            let matches = chars.len() - i >= name.len()
-                && chars[i..i + name.len()]
-                    .iter()
-                    .map(|c| fold(*c))
-                    .eq(name.iter().copied())
-                && (i == 0 || !chars[i - 1].is_alphanumeric())
-                && chars
-                    .get(i + name.len())
-                    .is_none_or(|c| !c.is_alphanumeric());
-            if matches {
-                out.push_str("<user>");
-                i += name.len();
-            } else {
-                out.push(chars[i]);
-                i += 1;
-            }
+        match self.user.as_deref() {
+            Some(user) => replace_word(text, user, "<user>", self.fold_case),
+            None => text.to_owned(),
         }
-        out
     }
+}
+
+/// `word` (of at least two characters) replaced with `replacement`
+/// wherever it stands as a word of its own: between characters that are
+/// not letters or digits. `fold_case` compares without case.
+pub(crate) fn replace_word(text: &str, word: &str, replacement: &str, fold_case: bool) -> String {
+    if word.chars().count() < 2 {
+        return text.to_owned();
+    }
+    let fold = |c: char| {
+        if fold_case {
+            c.to_lowercase().next().unwrap_or(c)
+        } else {
+            c
+        }
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let name: Vec<char> = word.chars().map(fold).collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let matches = chars.len() - i >= name.len()
+            && chars[i..i + name.len()]
+                .iter()
+                .map(|c| fold(*c))
+                .eq(name.iter().copied())
+            && (i == 0 || !chars[i - 1].is_alphanumeric())
+            && chars
+                .get(i + name.len())
+                .is_none_or(|c| !c.is_alphanumeric());
+        if matches {
+            out.push_str(replacement);
+            i += name.len();
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// `path` below `home`, component by component (so a trailing separator
@@ -862,6 +912,9 @@ pub fn summary(report: &Value) -> String {
     lines.push("Run with --json for the full report.".to_owned());
     lines.join("\n")
 }
+
+#[path = "diagnose/bundle.rs"]
+pub mod bundle;
 
 #[cfg(test)]
 #[path = "diagnose/tests.rs"]
