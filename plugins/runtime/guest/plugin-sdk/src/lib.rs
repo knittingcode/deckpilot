@@ -110,6 +110,11 @@ pub use definition::{
 };
 pub use output::{ActionResult, IntoValue, Output, PluginError, codes};
 
+/// The types of plugin API 1.16's operations ([`Context::call_state`],
+/// [`Context::call_control`]).
+pub use deckpilot_plugin_abi::calls::{
+    CallAction, CallControlReply, CallStateReply, ControlSupport, codes as call_codes,
+};
 pub use deckpilot_plugin_abi::capability::{AuthScheme, Header, LogLevel, NotifySeverity};
 /// The types of plugin API 1.14's connections ([`Context::connection`],
 /// [`Context::report_connection_status`], [`Request::connection`]).

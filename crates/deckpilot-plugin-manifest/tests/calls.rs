@@ -219,6 +219,11 @@ fn a_calls_plugin_has_no_way_out_but_the_host() {
             "connections",
             json!({"kind": "connections", "types": ["github"], "justification": "x"}),
         ),
+        (
+            "resources",
+            json!({"kind": "resources", "open": true, "justification": "x"}),
+        ),
+        ("scripts", json!({"kind": "scripts", "justification": "x"})),
     ] {
         let mut value = calls();
         value["permissions"]
@@ -233,6 +238,24 @@ fn a_calls_plugin_has_no_way_out_but_the_host() {
             "{kind}: {issues:?}"
         );
     }
+}
+
+/// Its own variables could carry what it learns of a call into other
+/// actions' parameters: a Calls plugin declares none.
+#[test]
+fn a_calls_plugin_declares_no_variables() {
+    refused(
+        |v| {
+            v["contributes"]["variables"] = json!([{
+                "id": "state",
+                "name": "Call state",
+                "valueType": {"type": "string"},
+                "scope": "machine"
+            }]);
+        },
+        "contributes.variables",
+        IssueCode::Conflict,
+    );
 }
 
 #[test]
