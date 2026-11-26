@@ -2385,7 +2385,7 @@ impl Agent {
         let now = (self.device_clock)();
         // Replugged, or back under another path: one open at once.
         for device in present.difference(&self.listed_devices) {
-            self.device_retry.listed_again(device);
+            self.device_retry.listed_again(device, now);
         }
         self.device_retry.prune(&present, now);
         self.listed_devices.clone_from(&present);

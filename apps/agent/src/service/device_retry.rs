@@ -7,9 +7,9 @@
 //! [`RetryPolicy::initial`] up to [`RetryPolicy::max`], with a jitter of
 //! up to ±20% (never above `max`) so several devices (or agents) do not
 //! retry in step. A session that stays healthy for `stable_after` ends the
-//! streak. A device that was not listed and is listed again (replugged,
-//! or back under a new path) gets one open at once; its streak stays, so
-//! a failure then waits longer still.
+//! streak. A device that a rescan did not list and a later one lists
+//! again (replugged) gets one open at once, unless it is flapping; its
+//! streak stays, so a failure then waits longer still.
 //!
 //! The flap guard: a device whose sessions keep ending soon after they
 //! opened ([`RetryPolicy::flap_threshold`] times within
@@ -275,12 +275,18 @@ impl DeviceRetry {
     }
 
     /// `device` was not listed at the last rescan and is now: its next
-    /// open comes at once, once (the streak stays).
-    pub fn listed_again(&mut self, device: &DeviceId) {
+    /// open comes at once, once (the streak stays). Not for a flapping
+    /// device: one that drops off the bus and comes back on its own (a
+    /// hub that keeps resetting) keeps its waits.
+    pub fn listed_again(&mut self, device: &DeviceId, now: Instant) {
+        let policy = self.policy;
         if let Some(entry) = self.entries.get_mut(device)
             && entry.opened_at.is_none()
         {
-            entry.bypass = true;
+            prune(&mut entry.short_sessions, now, policy.flap_window);
+            if entry.short_sessions.len() < policy.flap_threshold {
+                entry.bypass = true;
+            }
         }
     }
 
@@ -532,14 +538,39 @@ mod tests {
             retry.open_failed(&a, now);
         }
         assert!(!retry.may_open(&a, now));
-        retry.listed_again(&a);
+        retry.listed_again(&a, now);
         assert!(retry.may_open(&a, now));
         let delay = retry.open_failed(&a, now);
         assert!(within_jitter(delay, secs(60), policy.max), "{delay:?}");
         assert!(!retry.may_open(&a, now));
         // A device never seen failing has nothing to bypass.
-        retry.listed_again(&device("B"));
+        retry.listed_again(&device("B"), now);
         assert!(retry.may_open(&device("B"), now));
+    }
+
+    #[test]
+    fn a_flapping_device_listed_again_keeps_waiting() {
+        let policy = RetryPolicy::default();
+        let mut retry = DeviceRetry::with_seed(policy, 4);
+        let a = device("A");
+        let mut now = Instant::now();
+        for _ in 0..3 {
+            retry.opened(&a, now);
+            now += secs(1);
+            let SessionEnd::Short { delay, .. } = retry.closed(&a, now) else {
+                panic!("short");
+            };
+            now += delay;
+        }
+        let failed_at = now;
+        retry.opened(&a, now);
+        now += secs(1);
+        retry.closed(&a, now);
+        assert!(!retry.may_open(&a, now));
+        // It dropped off the bus and came back by itself (a hub reset).
+        retry.listed_again(&a, now);
+        assert!(!retry.may_open(&a, now), "the backoff holds");
+        assert!(retry.is_flapping(&a, failed_at));
     }
 
     #[test]
