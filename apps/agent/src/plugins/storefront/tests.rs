@@ -1199,15 +1199,34 @@ fn export_compatibility_site() {
     std::fs::copy(site.work().join("roots.json"), out.join("roots.json")).unwrap();
 }
 
-/// A source whose image fetches are slow.
+/// A registry whose images are slow, and which records every image request
+/// it gets: whether a refresh waited for an image is told by the request
+/// log, never by the clock (a loaded runner makes any time bound flaky).
 struct SlowMedia<'a> {
     inner: &'a HttpsSource,
     delay: std::time::Duration,
+    media: std::sync::Mutex<Vec<String>>,
+}
+
+impl<'a> SlowMedia<'a> {
+    fn new(inner: &'a HttpsSource, delay: std::time::Duration) -> Self {
+        Self {
+            inner,
+            delay,
+            media: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The image paths asked for since the last call.
+    fn take_media_requests(&self) -> Vec<String> {
+        std::mem::take(&mut *self.media.lock().unwrap())
+    }
 }
 
 impl RegistrySource for SlowMedia<'_> {
     fn fetch(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
         if path.starts_with("media/") {
+            self.media.lock().unwrap().push(path.to_owned());
             std::thread::sleep(self.delay);
         }
         self.inner.fetch(path, max_bytes)
@@ -1219,20 +1238,18 @@ fn a_refresh_never_waits_for_images() {
     let site = Site::new("slow");
     let server = HttpsServer::start(&site.work());
     let https = source(&server);
-    let slow = SlowMedia {
-        inner: &https,
-        delay: std::time::Duration::from_secs(2),
-    };
+    let slow = SlowMedia::new(&https, std::time::Duration::from_secs(2));
     let mut agent = Agent::new(&site);
-    let started = std::time::Instant::now();
     let refresh = agent.client.refresh(&slow, at(1)).unwrap();
     agent.storefronts.sync(&mut agent.client, &slow, &refresh);
-    let elapsed = started.elapsed();
     assert_eq!(refresh, Refresh::Updated { seq: 1 });
     assert!(agent.storefronts.current().is_some());
-    assert!(
-        elapsed < std::time::Duration::from_secs(2),
-        "the refresh took {elapsed:?}"
+    // The refresh and the sync never asked for an image, so neither waited
+    // for one: the storefront is current with its icon only queued.
+    assert_eq!(
+        slow.take_media_requests(),
+        Vec::<String>::new(),
+        "the refresh asked for images"
     );
     assert_eq!(
         agent.cached_media(),
@@ -1242,11 +1259,14 @@ fn a_refresh_never_waits_for_images() {
     assert_eq!(agent.storefronts.queued(), 1);
     // The deferred prefetch is bounded by time (no fetch starts after the
     // budget) and by count; the queue is gone either way.
-    let started = std::time::Instant::now();
     agent
         .storefronts
         .prefetch(&slow, Some(1), MAX_PREFETCH, std::time::Duration::ZERO);
-    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    assert_eq!(
+        slow.take_media_requests(),
+        Vec::<String>::new(),
+        "a fetch started after the budget"
+    );
     assert_eq!(agent.storefronts.queued(), 0);
     assert_eq!(agent.cached_media(), Vec::<String>::new());
     let mut other = Agent::open(&site, site.scratch.0.join("other-state"));
@@ -1256,6 +1276,7 @@ fn a_refresh_never_waits_for_images() {
     other
         .storefronts
         .prefetch(&slow, Some(1), 0, PREFETCH_BUDGET);
+    assert_eq!(slow.take_media_requests(), Vec::<String>::new());
     assert_eq!(other.storefronts.queued(), 0);
     assert_eq!(other.cached_media(), Vec::<String>::new());
     // Within both bounds it is fetched ahead.
@@ -1265,6 +1286,7 @@ fn a_refresh_never_waits_for_images() {
     third
         .storefronts
         .prefetch(&slow, Some(1), MAX_PREFETCH, PREFETCH_BUDGET);
+    assert_eq!(slow.take_media_requests().len(), 1);
     assert_eq!(third.cached_media(), vec![site.icon().sha256.to_string()]);
     // On demand it is fetched all the same.
     let icon = site.icon().sha256.to_string();

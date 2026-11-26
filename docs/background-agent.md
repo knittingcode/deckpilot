@@ -125,6 +125,7 @@ exist yet.
 | -------------------------------- | ---------------------------------------------------------------- |
 | Agent starts                     | Takes an exclusive lock on `agent.lock`; a second instance exits (after waiting up to 5 s, see below) |
 | Configuration app starts         | Connects to the running agent, or starts it if it is not running |
+| Configuration app starts again   | The running app comes to the front; the second one ends (see "One configuration app" below) |
 | Configuration app closes         | Agent keeps running                                              |
 | Quit from the tray               | Agent stops (`shuttingDown` with reason `quit`); on macOS open configuration apps close too |
 | Device unplugged                 | Device marked disconnected; agent keeps running                  |
@@ -171,6 +172,37 @@ instance lock keeps a single agent and tray icon.
 - On macOS the application menu's Quit reads "Quit DeckPilot UI", so it is
   not mistaken for the tray's "Quit DeckPilot".
 
+### One configuration app
+
+Launching the configuration app while it runs brings the running app to the
+front instead of starting a second one (`apps/desktop/src-tauri/src/single_instance.rs`):
+its main window, the password prompt while the configuration is locked, or
+a new main window if the old one was closed while another window kept the
+app open. The second process ends with exit code 0.
+
+- **Windows and Linux** use `tauri-plugin-single-instance`: a named mutex
+  and a message window in the user's session (Windows), and the name
+  `io.github.knittingcode.deckpilot.SingleInstance` on the user's session
+  bus (Linux). Without a session bus the app starts as before. A first
+  app that hangs is waited for: up to 10 s on Windows, after which the
+  second launch ends; up to about 25 s on Linux (the D-Bus call timeout),
+  after which the second launch fails with an error.
+- A second launch while the first app is still starting is ignored; the
+  starting app shows its window or the prompt anyway.
+- **macOS** relies on LaunchServices, which keeps one process per
+  application (see above). The plugin is not used there, because it would
+  listen on a socket at a fixed path in the shared `/tmp`. A start of the
+  executable itself, not through LaunchServices, is not guarded. The
+  agent's launcher starts it that way, but only when no app is connected.
+- Not guarded: debug builds (so a development build does not hand over to
+  an installed DeckPilot), a process started for one window (`--window <id>`, the
+  agent's password prompt while no app runs), which ends with its window,
+  and any data directory other than the default one (`DECKPILOT_DATA_DIR`:
+  development sessions and the tests), because the plugin knows one app
+  identity only.
+- The app registers no URL scheme, so there are no deep links to forward,
+  and the second launch's arguments are not used.
+
 **macOS only.** Closing the main window to the menu bar, the activation
 policy, closing the apps on the tray's Quit, creating the main window for
 `showWindow` in a single-window app, and the "Quit DeckPilot UI" label
@@ -196,9 +228,9 @@ A panic in the agent's main loop ends the agent's process, with or without
 the tray (`apps/agent/src/crash.rs`). The agent used to keep its tray, with
 a menu that did nothing, after such a panic. Now:
 
-1. The panic is written to the agent's log. Every panic is, because the
-   configuration app starts the agent with its standard error going
-   nowhere.
+1. The panic is written to the agent's log. Every panic is. An agent the
+   configuration app started also writes it to `logs/output.log`, as one
+   line with the same text (see "Logs" below).
 2. The runtime is shut down. Its blocking threads get 2 seconds, as after
    any stop, so a stuck one (a credential store prompt, a plugin host call)
    cannot keep the process alive.
@@ -519,9 +551,32 @@ DECKPILOT_DATA_DIR=/tmp/deckpilot-dev cargo run -p deckpilot-agent -- --mock-dev
 ```
 
 Logs go to stderr and to `<data dir>/logs/agent.YYYY-MM-DD.log` (seven files
-are kept). Use `--log-level debug` for request and input details. Action
-results are logged by name and status only; result messages are not logged
-because they may contain machine-specific paths.
+are kept). With `--quiet-stderr` they go to the files only. Use
+`--log-level debug` for request and input details. Action results are
+logged by name and status only; result messages are not logged because
+they may contain machine-specific paths.
+
+The configuration app starts the agent with `--quiet-stderr` and sends its
+standard output and error to `<data dir>/logs/output.log`, readable by the
+user only. That file keeps what the log files cannot hold: what the agent
+prints before its logging starts, a panic as one line (thread, location,
+and the message escaped and shortened as in the log), and what the Rust
+runtime or a system library prints, for example as the process aborts.
+Text from system libraries is written as they print it, so DeckPilot
+cannot filter it. When the app starts an agent and the file has reached
+1 MiB, it is renamed to `output.1.log`, replacing the one before, and a new
+file is started. While the agent runs, it checks the file every 30 seconds
+and empties it once it holds more than 1 MiB, then writes a line saying
+so; the newest output stays. Every writer appends to the file, so an agent
+that is still stopping and the next one never write over each other. So
+the two files hold about 2 MiB at most. On Windows the agent's standard handles are not inherited by the programs it
+starts, so a program launched from a key does not hold the file open. An
+agent started at login, or from a terminal, writes its standard error
+wherever that start sends it.
+
+The flag needs an agent from the same build as the app: an older agent
+refuses the unknown argument and exits with code 2, which `output.log`
+records. Installed apps always start the agent of their own bundle.
 
 The configuration app starts `deckpilot-agent` from the same directory as its
 own executable when no agent is running. Debug builds of the app accept
