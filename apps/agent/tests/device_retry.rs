@@ -173,17 +173,34 @@ async fn a_device_that_cannot_be_opened_is_retried_with_growing_waits() {
     clock.advance(Duration::from_secs(2));
     wait_until("third open", || mock.open_attempts(&device) == 3).await;
 
-    // Ten simulated minutes in steps of 30 s: the waits grow to 60 s, so
-    // far fewer opens than the 300 a fixed 2 s retry would make.
-    for _ in 0..20 {
-        clock.advance(Duration::from_secs(30));
-        tokio::time::sleep(Duration::from_millis(120)).await;
+    // Ten simulated minutes, one wait at a time: after the n-th failed
+    // open the next comes no sooner than 0.8 and no later than 1.2 times
+    // its base wait (2 s doubling, at most 60 s). Each step moves the
+    // clock to just before the earliest time (no open), then to the
+    // latest (exactly one open, waited for), so the count never depends
+    // on how fast the runner is.
+    let mut elapsed = Duration::ZERO;
+    let mut attempts = 3;
+    while elapsed < Duration::from_secs(600) {
+        let base = policy.base_delay(u32::try_from(attempts).unwrap());
+        let earliest = base.mul_f64(0.8).saturating_sub(Duration::from_millis(1));
+        // A millisecond of slack each side for float rounding.
+        let latest = (base.mul_f64(1.2) + Duration::from_millis(1)).min(policy.max);
+        clock.advance(earliest);
+        assert_eq!(
+            settled_attempts(&mock, &device).await,
+            attempts,
+            "no open before {earliest:?} after failure {attempts}"
+        );
+        clock.advance(latest.saturating_sub(earliest));
+        elapsed += latest;
+        attempts += 1;
+        wait_until("the next open", || mock.open_attempts(&device) == attempts).await;
     }
+    // The waits grew to 60 s: far fewer opens than the 300 a fixed 2 s
+    // retry would make (3 + 3 waits up to 38.4 s + 9 of 60 s).
     let attempts = settled_attempts(&mock, &device).await;
-    assert!(
-        (8..=16).contains(&attempts),
-        "bounded opens over 10 minutes: {attempts}"
-    );
+    assert_eq!(attempts, 15, "bounded opens over 10 minutes");
     assert!(!connected(&status(&agent).await, &device));
 
     // Fixed: the device connects at the next attempt and is drawn.
