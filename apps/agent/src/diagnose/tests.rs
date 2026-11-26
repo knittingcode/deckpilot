@@ -897,3 +897,32 @@ fn windows_paths_and_names_are_redacted() {
         "the user name is left: message"
     );
 }
+
+/// The endpoint's id is a hash of the data directory's path (with the
+/// user name in it): the report hides it.
+#[test]
+fn the_endpoint_id_is_hidden() {
+    assert_eq!(
+        hide_endpoint_id(r"\\.\pipe\deckpilot-agent-0123456789abcdef"),
+        r"\\.\pipe\deckpilot-agent-<id>"
+    );
+    assert_eq!(
+        hide_endpoint_id("/tmp/deckpilot-501/agent-a4ae57efd340dc75.sock"),
+        "/tmp/deckpilot-501/agent-<id>.sock"
+    );
+    // Anything else stays.
+    assert_eq!(
+        hide_endpoint_id("~/agent-notes/agent-12"),
+        "~/agent-notes/agent-12"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_report_hides_the_endpoint_id() {
+    let root = root();
+    let env = linux_fixture(root.path());
+    let report = collect(&env);
+    let endpoint = report["agent"]["endpoint"].as_str().unwrap();
+    assert!(endpoint.contains("agent-<id>"), "the endpoint keeps its id");
+}

@@ -464,10 +464,33 @@ fn agent(env: &Environment, redactor: &Redactor) -> Value {
         "dataDirectoryOverridden": env.data_dir_overridden,
         "dataDirectoryExists": env.paths.data_dir.is_dir(),
         "lock": lock,
-        "endpoint": redactor.path(Path::new(&endpoint.display())),
+        "endpoint": hide_endpoint_id(&redactor.path(Path::new(&endpoint.display()))),
         "endpointFile": socket,
         "running": running,
     })
+}
+
+/// The endpoint's name without its id: `agent-<16 hex>` is an FNV hash of
+/// the data directory's path, which contains the user name, and a hash
+/// that is not preimage-resistant lets a guessed name be checked. It
+/// becomes `agent-<id>` (`\\.\pipe\deckpilot-agent-<id>`,
+/// `…/agent-<id>.sock`).
+fn hide_endpoint_id(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("agent-") {
+        let (head, tail) = rest.split_at(at + "agent-".len());
+        out.push_str(head);
+        let hex = tail.chars().take_while(char::is_ascii_hexdigit).count();
+        if hex == 16 {
+            out.push_str("<id>");
+            rest = &tail[16..];
+        } else {
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Whether an agent holds the instance lock: `held`, `free`, `absent` (no

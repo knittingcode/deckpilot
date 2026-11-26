@@ -622,10 +622,16 @@ fn windows_shapes() {
     env.user = Some("Alice".into());
     env.hostname = Some("DESKTOP-AB12CD3".into());
     let redactor = LogRedactor::new(&env);
-    // The endpoint is the same in every report (a hash of the data
-    // directory), not personal: kept.
-    let pipe = r"\\.\pipe\deckpilot-agent-0123456789abcdef";
+    // The report's endpoint (its id hidden) passes unchanged; a pipe name
+    // with its hash in a log loses the hash.
+    let pipe = r"\\.\pipe\deckpilot-agent-<id>";
     assert!(redactor.line(pipe) == pipe, "the agent's pipe was changed");
+    assert!(
+        !redactor
+            .line(r"\\.\pipe\deckpilot-agent-0123456789abcdef")
+            .contains("0123456789abcdef"),
+        "the pipe's hash is left"
+    );
     assert!(
         redactor.line(r"\\?\GLOBALROOT\x") == r"\\?\GLOBALROOT\x",
         "a device path was changed"

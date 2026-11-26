@@ -303,11 +303,6 @@ static VERBATIM_UNC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(\\{2,}\?\\+UNC\\+)([A-Za-z0-9._-]+)(\\+)").expect("valid regex")
 });
 
-/// The agent's own Windows pipe (`\\.\pipe\deckpilot-agent-<hash of the
-/// data directory>`): the same in every report, not a secret.
-static AGENT_PIPE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^deckpilot-agent-[0-9a-f]{16}$").expect("valid regex"));
-
 /// Tokens of well-known services and JSON web tokens.
 static KNOWN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
@@ -688,7 +683,7 @@ impl LogRedactor {
                 let run = &c[0];
                 let digits = run.chars().any(|ch| ch.is_ascii_digit());
                 let letters = run.chars().any(|ch| ch.is_ascii_alphabetic());
-                if digits && letters && !AGENT_PIPE.is_match(run) {
+                if digits && letters {
                     REDACTED.to_owned()
                 } else {
                     run.to_owned()

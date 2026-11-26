@@ -650,6 +650,10 @@ The report hides personal data:
 - the home directory becomes `~`, and the user name (of two or more
   characters) becomes `<user>` wherever it stands as a word, in paths and
   messages;
+- the endpoint's id (`agent-<16 hex>`, a hash of the data directory's
+  path, which contains the user name) becomes `agent-<id>`: the hash is
+  not preimage-resistant, so a guessed user name could be checked against
+  it;
 - environment values and tokens are never included.
 
 ### Support bundle
