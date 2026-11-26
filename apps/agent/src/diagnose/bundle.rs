@@ -39,7 +39,7 @@ use std::sync::LazyLock;
 use regex::{Captures, Regex};
 use serde_json::{Value, json};
 
-use super::{Environment, collect, replace_word, serial_pseudonym};
+use super::{Environment, collect, hide_endpoint_id, replace_word, serial_pseudonym};
 
 /// The bundle's schema name.
 pub const SCHEMA: &str = "deckpilot.support-bundle";
@@ -517,7 +517,7 @@ impl LogRedactor {
 
     /// `line` without what may identify the user.
     pub fn line(&self, line: &str) -> String {
-        let text = Self::credentials(line);
+        let text = Self::credentials(&hide_endpoint_id(line));
         let text = self.serials(text);
         let text = self.names(text);
         Self::opaque(&text)

@@ -633,6 +633,11 @@ fn windows_shapes() {
         "the pipe's hash is left"
     );
     assert!(
+        redactor.line("listening on /tmp/deckpilot-501/agent-a4ae57efd340dc75.sock")
+            == "listening on /tmp/deckpilot-501/agent-<id>.sock",
+        "the socket's hash is left"
+    );
+    assert!(
         redactor.line(r"\\?\GLOBALROOT\x") == r"\\?\GLOBALROOT\x",
         "a device path was changed"
     );

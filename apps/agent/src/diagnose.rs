@@ -475,7 +475,7 @@ fn agent(env: &Environment, redactor: &Redactor) -> Value {
 /// that is not preimage-resistant lets a guessed name be checked. It
 /// becomes `agent-<id>` (`\\.\pipe\deckpilot-agent-<id>`,
 /// `…/agent-<id>.sock`).
-fn hide_endpoint_id(text: &str) -> String {
+pub(crate) fn hide_endpoint_id(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find("agent-") {
