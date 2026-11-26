@@ -32,9 +32,9 @@
 #
 # The udev rule and the maintainer scripts that reload udev
 # (packaging/linux): `deb` and `rpm` check that the installed rule and
-# scripts are the repository's; `deb-lifecycle` then reinstalls, removes
-# and purges the installed .deb on the runner, where udev runs, so the
-# scripts really reload and trigger; `rpm` reinstalls and removes the
+# scripts are the repository's; `deb-lifecycle` then checks that the
+# installed postinst reloads udev on the runner, where udev runs, and
+# reinstalls, removes and purges the .deb there; `rpm` reinstalls and removes the
 # .rpm in a container with udevadm but no running udev, and
 # `deb-container` installs, reinstalls, removes and purges the .deb in a
 # container without udev. Each step must succeed, the rule must be there
@@ -142,7 +142,17 @@ case "${1-}" in
   deb-lifecycle)
     package="${2:?usage: check-linux-install.sh deb-lifecycle <package.deb>}"
     package="$(cd "$(dirname "$package")" && pwd)/$(basename "$package")"
-    [ -S /run/udev/control ] && echo "udev runs here: the scripts reload and trigger" || echo "::warning::udev does not run here"
+    name=$(dpkg-deb -f "$package" Package)
+    if [ -S /run/udev/control ]; then
+      # With udev running, the installed postinst gets as far as the
+      # reload (and the scoped trigger loop; this runner has no Elgato
+      # device, test-udev-scripts.sh covers the trigger).
+      trace=$(sudo sh -x "/var/lib/dpkg/info/$name.postinst" configure 2>&1) || fail "the postinst failed: $trace"
+      grep -q -F -- '--reload-rules' <<< "$trace" || fail "the postinst did not reload udev with udev running: $trace"
+      echo "with udev running, the postinst reloads its rules"
+    else
+      echo "::warning::udev does not run on this runner: the postinst's reload is not exercised"
+    fi
     deb_lifecycle "$package" sudo
     ;;
   deb-container)
@@ -153,10 +163,10 @@ case "${1-}" in
     docker run --rm -v "$dir:/packages:ro" -v "$root:/repo:ro" "$image" bash -euo pipefail -c "
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -q -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 > /dev/null
-      apt-get install -y -q --no-install-recommends -o Acquire::Retries=3 /packages/$name > /dev/null
+      apt-get install -y -q --no-install-recommends -o Acquire::Retries=3 \"/packages/\$1\" > /dev/null
       if command -v udevadm > /dev/null; then echo 'udevadm is installed, udev does not run'; else echo 'no udevadm'; fi
-      /repo/tools/ci/check-linux-install.sh deb-installed /packages/$name
-    "
+      /repo/tools/ci/check-linux-install.sh deb-installed \"/packages/\$1\"
+    " _ "$name"
     ;;
   deb-installed)
     # Inside deb-container, as root.
@@ -215,24 +225,23 @@ case "${1-}" in
     image="${FEDORA_IMAGE:-fedora:42}"
     docker run --rm -v "$dir:/packages:ro" -v "$root:/repo:ro" "$image" bash -euo pipefail -c "
       rpm -qp --requires /packages/$name | sed 's/^/Requires: /'
-      # udevadm, but no running udev (a container): the scriptlets must
-      # find that and do nothing.
-      dnf -y -q install systemd-udev
       dnf -y -q install /packages/$name
       ldconfig -p | grep -q 'libayatana-appindicator3\.so\.1 ' \
         || { echo '::error::libayatana-appindicator3.so.1 is not installed after installing $name with its dependencies'; exit 1; }
-      # The test's own tools (not dependencies of the package).
-      dnf -y -q install xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon procps-ng which diffutils
-      /repo/tools/ci/check-linux-install.sh rpm-installed /packages/$name
-    "
+      # The test's own tools (not dependencies of the package), and
+      # udevadm without a running udev (a container): the reinstall's and
+      # removal's scriptlets must find that and do nothing.
+      dnf -y -q install xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon procps-ng which diffutils systemd-udev
+      /repo/tools/ci/check-linux-install.sh rpm-installed \"/packages/\$1\"
+    " _ "$name"
     ;;
   rpm-installed)
     # Inside the rpm container, as root.
     package="${2:?}"
     pkgname=$(rpm -qp --queryformat '%{NAME}' "$package")
     installed_rule
-    rpm -q --queryformat '%{POSTIN}' "$pkgname" | grep -q -F 'udevadm control --reload-rules' || fail "$pkgname has no %post reloading udev"
-    rpm -q --queryformat '%{POSTUN}' "$pkgname" | grep -q -F 'udevadm control --reload-rules' || fail "$pkgname has no %postun reloading udev"
+    grep -q -F -- '--reload-rules' <<< "$(rpm -q --queryformat '%{POSTIN}' "$pkgname")" || fail "$pkgname has no %post reloading udev"
+    grep -q -F -- '--reload-rules' <<< "$(rpm -q --queryformat '%{POSTUN}' "$pkgname")" || fail "$pkgname has no %postun reloading udev"
     "$here/check-linux-install.sh" agent /usr/bin/deckpilot-agent
     dnf -y -q reinstall "$package" || fail "reinstalling $package failed"
     installed_rule

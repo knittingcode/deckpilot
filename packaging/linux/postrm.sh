@@ -21,5 +21,5 @@ if command -v systemd-detect-virt > /dev/null 2>&1 && systemd-detect-virt --quie
   exit 0
 fi
 [ -S "$udev_control" ] || exit 0
-udevadm control --reload-rules > /dev/null 2>&1 || true
+udevadm control --timeout=10 --reload-rules > /dev/null 2>&1 || true
 exit 0

@@ -267,10 +267,13 @@ mod tests {
             };
             let id = |part: &str, key: &str| {
                 let hex = value(part, key);
-                assert_eq!(
-                    hex.len(),
-                    4,
-                    "udev rule line {line:?}: {key} is not 4 hex digits"
+                // udev compares the text with sysfs's: four lowercase hex digits.
+                assert!(
+                    hex.len() == 4
+                        && hex
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    "udev rule line {line:?}: {key} is not 4 lowercase hex digits"
                 );
                 u16::from_str_radix(&hex, 16)
                     .unwrap_or_else(|_| panic!("udev rule line {line:?}: {key} is not hex"))
@@ -323,11 +326,13 @@ mod tests {
     }
 
     #[test]
-    fn udev_rule_parser_refuses_broad_access() {
+    fn udev_rule_parser_refuses_broad_access_and_unmatchable_ids() {
         for line in [
             "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0fd9\", ATTRS{idProduct}==\"0080\", MODE=\"0666\"",
             "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0fd9\", TAG+=\"uaccess\"",
             "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0fd9\", ATTRS{idProduct}==\"0080\", TAG+=\"uaccess\", GROUP=\"plugdev\"",
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0FD9\", ATTRS{idProduct}==\"0080\", TAG+=\"uaccess\"",
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"+fd9\", ATTRS{idProduct}==\"0080\", TAG+=\"uaccess\"",
         ] {
             assert!(
                 std::panic::catch_unwind(|| udev_rule_grants(line)).is_err(),

@@ -70,7 +70,7 @@ run() {
 
 calls() { cat "$work/case/calls"; }
 
-expected_postinst="udevadm control --reload-rules
+expected_postinst="udevadm control --timeout=10 --reload-rules
 udevadm trigger --action=change --subsystem-match=usb --subsystem-match=hidraw --parent-match=$work/case/sys/1-1"
 
 echo "== postinst"
@@ -100,7 +100,7 @@ unscoped=$(echo "$triggers" | grep -v -E -e '--subsystem-match=usb --subsystem-m
 fixture
 rm "$work/case/sys/1-1/idVendor"
 run postinst configure
-[ "$(calls)" = "udevadm control --reload-rules" ] && ok "postinst without an Elgato device: reload only" || bad "postinst without an Elgato device: $(calls)"
+[ "$(calls)" = "udevadm control --timeout=10 --reload-rules" ] && ok "postinst without an Elgato device: reload only" || bad "postinst without an Elgato device: $(calls)"
 
 fixture
 rm "$work/case/run/control"
@@ -113,7 +113,7 @@ CHROOT_STATUS=0 run postinst configure && status=0 || status=$?
 
 fixture
 UDEVADM_STATUS=1 run postinst configure && status=0 || status=$?
-[ "$status" -eq 0 ] && [ "$(calls)" = "udevadm control --reload-rules" ] \
+[ "$status" -eq 0 ] && [ "$(calls)" = "udevadm control --timeout=10 --reload-rules" ] \
   && ok "postinst with a failing reload: no trigger, status 0" || bad "postinst with a failing reload: status $status, $(calls)"
 
 fixture
@@ -125,7 +125,7 @@ echo "== postrm"
 for args in remove purge upgrade 0 1; do
   fixture
   run postrm "$args" && status=0 || status=$?
-  [ "$status" -eq 0 ] && [ "$(calls)" = "udevadm control --reload-rules" ] \
+  [ "$status" -eq 0 ] && [ "$(calls)" = "udevadm control --timeout=10 --reload-rules" ] \
     && ok "postrm $args: reload only" || bad "postrm $args: status $status, calls: $(calls)"
 done
 
