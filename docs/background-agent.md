@@ -170,6 +170,30 @@ app's "restart agent", an update) starts the next agent as soon as the
 endpoint is gone. After a crash the new agent replaces the stale socket
 file and token; the old token is no longer accepted.
 
+A panic in the agent's main loop ends the agent's process, with or without
+the tray (`apps/agent/src/crash.rs`). The agent used to keep its tray, with
+a menu that did nothing, after such a panic. Now:
+
+1. The panic is written to the agent's log. Every panic is, because the
+   configuration app starts the agent with its standard error going
+   nowhere.
+2. The runtime is shut down. Its blocking threads get 2 seconds, as after
+   any stop, so a stuck one (a credential store prompt, a plugin host call)
+   cannot keep the process alive.
+3. The IPC endpoint closes, and on Unix its socket file is removed.
+4. Only then is the instance lock released. The IPC server holds the lock
+   too, and lets go of it after its listener. So a next agent that takes
+   the lock never has its socket removed by the old one.
+5. The tray icon is removed, and the process exits with code 101 (Rust's
+   exit code for a panic). An agent that stops with an error, or cannot
+   start, exits with code 1. One that stops as asked exits with code 0.
+
+The keys are not blanked after a panic, because the device threads end
+with the process. The token file stays, and the next agent replaces it.
+Nothing restarts the agent here. Panics that are caught on purpose are
+logged but do not stop the agent. Examples are a tray icon that cannot be
+created, and a single IPC connection or plugin task.
+
 ### Start at login
 
 The agent can register itself to start at login using per-user mechanisms

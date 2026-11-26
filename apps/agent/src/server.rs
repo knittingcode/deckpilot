@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
+use crate::instance::InstanceLock;
 use crate::service::{AgentHandle, VERSION};
 use deckpilot_ipc::plugins::PluginEvent;
 
@@ -26,21 +27,35 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long connections may take to close when the agent stops.
 const CLOSE_GRACE: Duration = Duration::from_millis(500);
 
+/// The listener and the agent's instance lock, dropped in this order (the
+/// fields' order): the endpoint is closed, and on Unix its socket file
+/// removed, before the lock can be released. A next agent that takes the
+/// lock creates its own socket, which this listener must not remove.
+struct Listening {
+    listener: Listener,
+    _lock: Arc<InstanceLock>,
+}
+
 pub(crate) fn spawn(
     listener: Listener,
+    lock: Arc<InstanceLock>,
     handle: AgentHandle,
     token: String,
     mut shutdown: watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<()> {
     let token: Arc<str> = token.into();
     tokio::spawn(async move {
+        let listening = Listening {
+            listener,
+            _lock: lock,
+        };
         // Connections are tracked so that stopping closes all of them: on
         // Windows the pipe name stays taken while any instance is open, and
         // an agent started right after must be able to listen again.
         let mut connections = JoinSet::new();
         loop {
             tokio::select! {
-                connection = listener.accept() => match connection {
+                connection = listening.listener.accept() => match connection {
                     Ok(stream) => {
                         connections.spawn(serve(stream, handle.clone(), token.clone(), shutdown.clone()));
                     }
@@ -53,7 +68,7 @@ pub(crate) fn spawn(
                 _ = shutdown.changed() => break,
             }
         }
-        drop(listener);
+        drop(listening);
         // Connections deliver their last events and close; any still busy
         // (e.g. waiting for an answer the stopped agent will not give) are
         // closed after a short grace period.
