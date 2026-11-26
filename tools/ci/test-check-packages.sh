@@ -191,11 +191,12 @@ if command -v dpkg-deb > /dev/null; then
     app "$tree/usr/bin/deckpilot-desktop" "$version" "$token" "$channel"
     host "$tree/usr/bin/deckpilot-plugin-host"
     bundled "$tree/usr/lib/DeckPilot/bundled"
-    [ -z "${DEB_OMIT-}" ] || rm -rf "${tree:?}/$DEB_OMIT"
     cp "$root/packaging/linux/70-deckpilot-streamdeck.rules" "$tree/usr/lib/udev/rules.d/"
     install -m 0755 "$root/packaging/linux/postinst.sh" "$tree/DEBIAN/postinst"
     install -m 0755 "$root/packaging/linux/postrm.sh" "$tree/DEBIAN/postrm"
     [ -z "${DEB_EDIT-}" ] || echo "$DEB_EDIT" >> "$tree/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules"
+    # Last, so that nothing above puts an omitted file back.
+    [ -z "${DEB_OMIT-}" ] || rm -rf "${tree:?}/$DEB_OMIT"
     : > "$tree/usr/share/applications/DeckPilot.desktop"
     dpkg-deb --root-owner-group --build "$tree" "$bundle/deb/DeckPilot_${version}_amd64.deb" > /dev/null
     sign "$version" "$bundle/deb/DeckPilot_${version}_amd64.deb"

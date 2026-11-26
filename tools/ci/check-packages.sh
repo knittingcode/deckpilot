@@ -404,13 +404,23 @@ case "$platform" in
       [ "$rpm_version" = "$version" ] || fail "$rpm has version $rpm_version, expected $version"
       extracted=$(fresh_dir rpm)
       extract_rpm "$rpm" "$extracted"
-      # The scriptlets as rpm stores them (run by /bin/sh), compared with
-      # the scripts, both with exactly one final newline.
+      # The scriptlets as rpm stores them, compared with the scripts, both
+      # with exactly one final newline. The bundler's rpm crate writes no
+      # interpreter tag for them (%{POSTINPROG} is "(none)"), and rpm then
+      # runs them with its default, /bin/sh; any other interpreter is
+      # refused, and a missing scriptlet fails the comparison.
       for tag in POSTIN POSTUN; do
         prog=$(rpm -qp --queryformat "%{${tag}PROG}" "$rpm")
-        [ "$prog" = /bin/sh ] || fail "$rpm: its %{$tag} scriptlet runs with '$prog', expected /bin/sh"
+        case "$prog" in
+          /bin/sh | "(none)") ;;
+          *) fail "$rpm: its %{$tag} scriptlet runs with '$prog', expected /bin/sh (or rpm's default)" ;;
+        esac
+        [ -n "$(rpm -qp --queryformat "%{$tag}" "$rpm" | tr -d '[:space:]')" ] \
+          && [ "$(rpm -qp --queryformat "%{$tag}" "$rpm")" != "(none)" ] \
+          || fail "$rpm: it has no %{$tag} scriptlet"
         printf '%s\n' "$(rpm -qp --queryformat "%{$tag}" "$rpm")" > "$extracted.$tag"
       done
+      rpm -qp --scripts "$rpm" | grep -E 'scriptlet' | sed "s#^#$rpm: #"
       udev_files "$rpm" "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" "$extracted.POSTIN" "$extracted.POSTUN"
       rm -f "$extracted.POSTIN" "$extracted.POSTUN"
       distribution_record "$extracted/usr/bin/deckpilot-desktop" rpm
