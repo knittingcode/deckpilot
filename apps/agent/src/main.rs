@@ -21,6 +21,7 @@ Usage:
                   [--plugin-registry-releases-url <https url>]
                   [--plugin-registry-roots <roots.json>]
   deckpilot-agent autostart <enable|disable|status>
+  deckpilot-agent diagnose [--json]
 
 Options:
   --headless          Run without a tray icon (servers, CI, debugging)
@@ -59,6 +60,13 @@ Options:
                       registry is used
   --version           Print the version
   --help              Print this help
+
+diagnose: a read-only report for support (versions, installation, whether
+the agent runs, the Elgato devices the system sees, e.g. a Stream Deck
+whose USB device is present but whose HID interface is missing). It starts
+and opens nothing, works while the configuration is locked, and hides
+serial numbers, the home directory and the user name. --json prints the
+versioned JSON report.
 
 Environment:
   DECKPILOT_DATA_DIR    Use a different data directory
@@ -237,10 +245,43 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
                 Err(message) => return Ok(Err(message)),
             },
             "autostart" => return Err(autostart_command(args.next().as_deref())),
+            "diagnose" => return Err(diagnose_command(&args.by_ref().collect::<Vec<_>>())),
             other => return Ok(Err(format!("unknown argument `{other}`"))),
         }
     }
     Ok(Ok(parsed))
+}
+
+/// `deckpilot-agent diagnose [--json]` (`deckpilot_agent::diagnose`).
+fn diagnose_command(options: &[String]) -> ExitCode {
+    let json = match options {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => {
+            eprintln!("usage: deckpilot-agent diagnose [--json]");
+            return ExitCode::from(2);
+        }
+    };
+    let environment = match deckpilot_agent::diagnose::Environment::current() {
+        Ok(environment) => environment,
+        Err(error) => {
+            eprintln!("cannot find the data directory: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = deckpilot_agent::diagnose::collect(&environment);
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(text) => println!("{text}"),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        println!("{}", deckpilot_agent::diagnose::summary(&report));
+    }
+    ExitCode::SUCCESS
 }
 
 fn autostart_command(action: Option<&str>) -> ExitCode {

@@ -270,6 +270,14 @@ released either. 0.6.0 is the first version intended for publication.
   (Docker, Podman and the like) and programs that act as another user
   are not available. The Action Library lists a "Run …" entry for every
   script, which puts the script on a key by reference.
+- Agent: `deckpilot-agent diagnose [--json]`, a read-only report for
+  support. It shows the versions, the installation, whether the agent
+  runs, the udev rule on Linux, and the Elgato devices the system sees. On
+  Linux it says when a Stream Deck's USB device is present but its HID
+  interface is missing (for example behind a monitor's hub) or when the
+  device cannot be opened. It starts, opens and changes nothing, works
+  while the configuration is locked, and hides serial numbers, the home
+  directory and the user name. The JSON report is versioned (schema 1).
 
 ### Changed
 

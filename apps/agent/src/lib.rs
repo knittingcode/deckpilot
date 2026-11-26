@@ -6,6 +6,7 @@
 
 pub mod autostart;
 mod devices;
+pub mod diagnose;
 pub mod instance;
 pub mod launcher;
 pub mod marquee;

@@ -394,6 +394,56 @@ cargo build -p deckpilot-agent
 pnpm dev
 ```
 
+## Diagnostics
+
+`deckpilot-agent diagnose` prints a short summary, and
+`deckpilot-agent diagnose --json` prints a versioned JSON report
+(`"schema": "deckpilot.diagnose"`, `"schemaVersion": 1`) for a support
+request. Its schema is `apps/agent/src/diagnose/schema-v1.json`. New fields
+can be added within a version. A field that changes type or goes away
+needs a new version.
+
+The report contains:
+
+- the versions of the agent, and of the app and plugin host found next to
+  it (they ship in one package);
+- the operating system, the distribution channel, the install type (deb,
+  rpm, AppImage, app, MSI, NSIS or development) and the IPC protocol range;
+- whether an agent runs, from its instance lock and socket file;
+- on Linux, whether the udev rule is installed, and the Elgato USB devices
+  in `/sys/bus/usb/devices` with their `hidraw` nodes and this user's
+  access to them;
+- on macOS and Windows, the Elgato HID interfaces `hidapi` lists.
+
+A device's `state` is one of:
+
+- `ok`;
+- `usb-present-hid-missing`: the USB device exists but the kernel bound no
+  HID interface, so nothing can see it (see
+  [troubleshooting/usb-hub-resets.md](troubleshooting/usb-hub-resets.md));
+- `hid-without-serial`: the agent identifies devices by serial and skips
+  this one;
+- `no-permission`: the udev rule did not apply.
+
+Each state other than `ok` is also listed under `findings` with a hint.
+
+The command is read-only, and works while the configuration is locked:
+
+- it never starts or connects to an agent;
+- it never opens the database, never reads the IPC token and opens no
+  device. Permissions come from `access(2)`;
+- it writes, creates and resets nothing, and runs no other program;
+- the lock is probed with a shared lock on the existing file, released at
+  once. A starting agent waits for it.
+
+The report hides personal data:
+
+- serial numbers become pseudonyms (`sha256:` and 16 hex digits of a
+  SHA-256 over a fixed prefix and the serial), so the same device can be
+  recognised across reports;
+- the home directory becomes `~` and the user name `<user>` in paths;
+- environment values and tokens are never included.
+
 ## Testing
 
 Automated tests never need hardware:
