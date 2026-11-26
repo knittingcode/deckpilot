@@ -280,15 +280,18 @@ never installs an older version than the running one.
 | Update intent and start-up recovery: atomic writing, a damaged intent, completion, an update interrupted before installing (the previous agent is started again), a new agent that does not start (reported and kept), and when rolling back is called safe | `deckpilot-update` `intent` tests; `updates_tests.rs` (`recovery`, on every platform) | automated |
 | The lock probe: a held lock is seen, a free one is released again at once | `deckpilot-ipc` `instance` tests | automated |
 | `DECKPILOT_AGENT_BIN` absent from and ignored by a release build, honoured by a debug build | `crates/deckpilot-distribution/tests/release_build.rs` | automated |
-| Update between two published releases | needs two public releases | not verified |
+| Update between two published releases | an installation of one published release updated to the next (not yet done) | not verified |
 
 - Update discovery, manifest validation, signature verification, policy
   decisions and the agent stop/restart sequence are covered by automated
   tests.
 - **An actual signed update has not yet been installed end to end between
-  two published releases.** No release has been published yet; see
-  [releasing.md](releasing.md). Until it has been verified, the default mode
-  stays "Notify me".
+  two published releases.** Releases have been published since 0.6.0 (the
+  latest is 0.15.0, see [releasing.md](releasing.md)), but no installation
+  of one has been updated to the next and checked afterwards; the release
+  smoke test only downloads the update and verifies its checksum and
+  signature. Until it has been verified, the default mode stays "Notify
+  me".
 - Keychain continuity across a signed update has been verified on
   `v0.6.0-alpha.2` by the *Update continuity* workflow
   ([run 43606772522](https://github.com/knittingcode/deckpilot/actions/runs/43606772522)):

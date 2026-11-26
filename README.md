@@ -144,9 +144,16 @@ The latest stable release is on the
 Pre-releases are marked as such on GitHub and are never offered to installations that follow the
 stable channel. Every update is signed, and the app verifies the signature before installing it.
 
-On Linux with the AppImage, install
-[`packaging/linux/70-deckpilot-streamdeck.rules`](packaging/linux/70-deckpilot-streamdeck.rules)
-so the Stream Deck can be used without root.
+On Linux, the `.deb` and `.rpm` install the udev rule
+[`70-deckpilot-streamdeck.rules`](packaging/linux/70-deckpilot-streamdeck.rules) that lets the
+Stream Deck be used without root; nothing has to be copied by hand. With 0.15.0 and earlier, unplug
+a Stream Deck that was connected during installation and plug it in again once. The AppImage cannot
+install the rule: install it once yourself, as the
+[installation guide](website/src/content/docs/en/installation.md#appimage) describes.
+
+Uninstalling keeps your configuration, its key and the logs, and a start-at-login entry if you
+turned it on: see
+[what uninstalling leaves behind](docs/background-agent.md#what-uninstalling-leaves-behind).
 
 ## Getting started
 
@@ -233,8 +240,10 @@ real configuration. `pnpm dev` runs the same session in the foreground. All comm
 ## Known limitations
 
 - Only the Stream Deck MK.2 is supported, and it has been tried on hardware on macOS only.
-- Only one pre-release has been published; automatic installation of updates stays off by default
-  until an update between two real releases has been tested.
+- Releases are published (the latest is
+  [`v0.15.0`](https://github.com/knittingcode/deckpilot/releases/tag/v0.15.0)), but an update from
+  one published release to the next has not yet been installed and verified end to end, so
+  automatic installation of updates stays off by default.
 - Windows installers are not code-signed yet.
 - Device discovery rescans every two seconds instead of using hotplug notifications.
 - On Linux desktops without AppIndicator support the tray icon is not shown (the agent keeps
