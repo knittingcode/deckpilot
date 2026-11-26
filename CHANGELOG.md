@@ -303,6 +303,18 @@ released either. 0.6.0 is the first version intended for publication.
   keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
   nudge starts from the last one. Escape or a click on the key lets go of
   the label, and the arrows move between keys again.
+- Devices: a Stream Deck that is listed but cannot be opened, or that
+  disconnects soon after it connects, is no longer retried every 2 s.
+  Each failure in a row doubles the wait, from 2 s up to 60 s, with some
+  jitter, and a connection that lasts 30 s ends the streak. A device that
+  keeps dropping (3 short connections within 5 minutes) also gets its
+  brightness and key images only once a connection has lasted 10 s, so a
+  marginal USB link is not sent a full redraw on every attempt; its key
+  presses are ignored until then. Refresh Devices, and replugging the
+  device, still try at once. DeckPilot never resets or re-binds a USB
+  device, and a reconnect restores the page, layout, key images and
+  brightness, never actions. Verified with simulated devices only; not yet
+  on a physical device.
 
 - Calls (groundwork, inert until the plugin and its policy entry exist):
   the plugin operations `call.state` and `call.control` of plugin API

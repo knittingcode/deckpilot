@@ -44,6 +44,25 @@ closed and reopened at any time without interrupting devices.
   "Refresh Devices"). Newly found devices are opened; devices that disappeared
   or whose I/O failed are closed and reopened on a later scan, which handles
   temporary disconnects.
+- **Retries and the flap guard** (`service/device_retry.rs`). A device that
+  is listed but fails to open, or whose connection ends within 30 s of
+  opening, is not tried on every scan: each failure in a row doubles the
+  wait (2, 4, 8, 16, 32, then 60 s, with up to ±20% jitter, never above
+  60 s), per device identity (model and serial, so a new hidraw path keeps
+  the state). A connection that lasts 30 s ends the streak; a streak with
+  no failure for 5 minutes is forgotten. A device with 3 short connections
+  within 5 minutes is _flapping_: its next connections get brightness and
+  key images only once they have lasted 10 s, so one that drops again was
+  sent nothing, and its key presses are ignored until then (the keys show
+  nothing yet). "Refresh Devices", and a device a rescan did not list and a
+  later one lists again (replugged), try at once, unless the device is
+  flapping (a hub that keeps resetting it keeps the waits); the streak
+  stays, so a failure then waits longer still. The agent never resets, re-binds or power-cycles a USB
+  device, and a reconnect restores presentation only (page, layout, key
+  images, brightness); input from an earlier connection is dropped and no
+  action is replayed. Tests drive this with the mock backend's fault
+  injection (`fail_open`, `fail_after_writes`, `reenumerate`) and a moved
+  clock (`tests/device_retry.rs`).
 - **Rendering.** `Runtime::faces` describes each key in a device-independent
   way (`KeyFace`: style, title, detail, highlight). The agent renders faces to
   RGB frames at the size the model reports, and the driver converts them to

@@ -256,6 +256,27 @@ impl TestAgent {
         )
     }
 
+    /// [`TestAgent::start`] with devices retried by `policy` on `clock`, a
+    /// clock that moves only when the test moves it.
+    pub fn start_with_device_retry(
+        paths: &AgentPaths,
+        key: &DatabaseKey,
+        mock: &MockBackend,
+        policy: deckpilot_agent::RetryPolicy,
+        clock: &FakeInstant,
+    ) -> Self {
+        let clock = clock.clone();
+        Self::start_configured(
+            paths,
+            key,
+            mock,
+            Box::new(mock.clone()),
+            None,
+            None,
+            move |agent| agent.with_device_retry(policy, move || clock.now()),
+        )
+    }
+
     fn start_configured(
         paths: &AgentPaths,
         key: &DatabaseKey,
