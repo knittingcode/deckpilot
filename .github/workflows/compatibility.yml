@@ -1,4 +1,6 @@
-# Compatibility with the previous release, using its real binaries: each
+# Compatibility with the previous release, using its real binaries (the
+# baseline tag in tools/release-pipeline/compat-baseline, the latest
+# published release; the Release workflow uses the same file): each
 # agent with each client, the previous agent given a newer database, and
 # the upgrade of the previous release's database (tools/compat/matrix.sh,
 # docs/compatibility.md). Throwaway data with the development password;
@@ -16,6 +18,7 @@ on:
       - apps/agent/**
       - tools/dev/**
       - tools/compat/**
+      - tools/release-pipeline/compat-baseline
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
@@ -32,6 +35,7 @@ on:
       - apps/agent/**
       - tools/dev/**
       - tools/compat/**
+      - tools/release-pipeline/compat-baseline
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
@@ -81,7 +85,7 @@ jobs:
         run: tools/ci/merge-group-paths.sh .github/workflows/compatibility.yml
 
   matrix:
-    name: Previous release (v0.5.0-2) with this commit
+    name: Previous release with this commit
     needs: merge-group-paths
     if: ${{ !cancelled() && (needs.merge-group-paths.result != 'success' || needs.merge-group-paths.outputs.run == 'true') }}
     runs-on: ubuntu-latest
@@ -103,11 +107,14 @@ jobs:
         run: tools/ci/rust-pinned-toolchain.sh
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: compatibility
+          # Per baseline: the old tree of another tag is of no use.
+          key: compatibility-${{ hashFiles('tools/release-pipeline/compat-baseline') }}
           workspaces: |
             . -> target
             ${{ runner.temp }}/compat/old-tree -> target
           # Saved by main only (about 1 GB): per-pull-request copies filled
           # the repository's 10 GB cache storage and evicted main's caches.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: tools/compat/matrix.sh v0.5.0-2 "$RUNNER_TEMP/compat"
+      - name: The baseline release
+        run: echo "baseline $(cat tools/release-pipeline/compat-baseline)"
+      - run: tools/compat/matrix.sh "$(cat tools/release-pipeline/compat-baseline)" "$RUNNER_TEMP/compat"
