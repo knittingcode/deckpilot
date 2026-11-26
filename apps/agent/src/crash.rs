@@ -209,9 +209,11 @@ mod tests {
             r#"panic: thread="agent" location="src/x.rs:1" message="two\nlines \u{1b}[31m""#
         );
         assert!(!line.contains('\n'));
-        // As shortened as the log's.
+        // As shortened as the log's: the hook gives both the same text.
         let long = message(&"x".repeat(MAX_MESSAGE + 10));
         assert_eq!(long.chars().count(), MAX_MESSAGE + 1);
+        let line = summary("agent", "src/x.rs:1", &long);
+        assert!(line.ends_with(&format!("message=\"{}…\"", "x".repeat(MAX_MESSAGE))));
     }
 
     #[test]

@@ -382,7 +382,8 @@ pub fn start_agent_by_user() -> Result<(), String> {
 pub(crate) fn spawn_agent_process() -> Result<std::process::Child, String> {
     let executable = agent_executable().ok_or("the DeckPilot agent executable was not found")?;
     let (path, args) = agent_command(deckpilot_ipc::paths::appimage(), executable);
-    let (stdout, stderr) = output_streams();
+    let (stdout, stderr) =
+        crate::agent_output::streams(AgentPaths::resolve(), crate::agent_output::MAX_OUTPUT_BYTES);
     let mut command = Command::new(&path);
     command
         .args(args)
@@ -404,21 +405,6 @@ pub(crate) fn spawn_agent_process() -> Result<std::process::Child, String> {
     command
         .spawn()
         .map_err(|e| format!("cannot start {}: {e}", path.display()))
-}
-
-/// The agent's standard output and error: both the output file, or nowhere
-/// if it cannot be opened (the agent starts in any case).
-fn output_streams() -> (Stdio, Stdio) {
-    let file = AgentPaths::resolve()
-        .and_then(|paths| crate::agent_output::open(&paths, crate::agent_output::MAX_OUTPUT_BYTES))
-        .and_then(|file| Ok((file.try_clone()?, file)));
-    match file {
-        Ok((stdout, stderr)) => (stdout.into(), stderr.into()),
-        Err(error) => {
-            eprintln!("the agent's output is not kept: {error}");
-            (Stdio::null(), Stdio::null())
-        }
-    }
 }
 
 /// Waits until a freshly started agent accepts connections.

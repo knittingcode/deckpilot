@@ -390,6 +390,10 @@ fn main() -> ExitCode {
     } else {
         deckpilot_agent::crash::PanicStderr::Default
     });
+    // The output file stays bounded during the run too.
+    if args.quiet_stderr {
+        deckpilot_agent::output::spawn_cap();
+    }
 
     // A previous agent may still be finishing its shutdown (a restart or an
     // update starts the next one as soon as the endpoint closes).

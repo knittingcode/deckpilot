@@ -192,7 +192,10 @@ async fn with_quiet_stderr_a_panic_leaves_a_summary_line_on_stderr() {
         .filter(|line| line.starts_with("panic: thread="))
         .collect();
     assert_eq!(summaries.len(), 1, "{stderr}");
-    assert!(summaries[0].contains("message=\""), "{stderr}");
+    assert!(
+        summaries[0].contains(r#"message="test hook: the agent's main loop panics""#),
+        "{stderr}"
+    );
     assert!(
         !stderr.contains("panicked at"),
         "no default panic text: {stderr}"

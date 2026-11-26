@@ -8,11 +8,18 @@
 //!
 //! The file is bounded: when the app starts an agent and the file has
 //! reached [`MAX_OUTPUT_BYTES`], it becomes `output.1.log` (replacing the
-//! one before) and a new one is begun. The file is readable by the user
-//! only (on Unix, mode 0600; the data directory is 0700 as well).
+//! one before) and a new one is begun. While it runs, the agent empties the
+//! file once it passes 1 MiB (`deckpilot_agent::output`). The file is
+//! readable by the user only (on Unix, mode 0600; the data directory is
+//! 0700 as well).
+//!
+//! On Unix the file is opened for appending. On Windows it is opened for
+//! writing at its end instead, because a handle opened for appending
+//! cannot empty the file.
 
 use std::fs::{File, OpenOptions};
 use std::io;
+use std::process::Stdio;
 
 use deckpilot_ipc::AgentPaths;
 
@@ -35,13 +42,43 @@ pub fn open(paths: &AgentPaths, max_bytes: u64) -> io::Result<File> {
         }
     }
     let mut options = OpenOptions::new();
-    options.create(true).append(true);
+    options.create(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.append(true).mode(0o600);
     }
-    options.open(&current)
+    #[cfg(not(unix))]
+    options.write(true);
+    #[cfg_attr(unix, allow(unused_mut))]
+    let mut file = options.open(&current)?;
+    #[cfg(unix)]
+    {
+        // Also for a file that existed with another mode.
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::{Seek, SeekFrom};
+        file.seek(SeekFrom::End(0))?;
+    }
+    Ok(file)
+}
+
+/// The agent's standard output and error: both the output file, or nowhere
+/// if it cannot be opened (the agent starts in any case).
+pub fn streams(paths: io::Result<AgentPaths>, max_bytes: u64) -> (Stdio, Stdio) {
+    let file = paths
+        .and_then(|paths| open(&paths, max_bytes))
+        .and_then(|file| Ok((file.try_clone()?, file)));
+    match file {
+        Ok((stdout, stderr)) => (stdout.into(), stderr.into()),
+        Err(error) => {
+            eprintln!("the agent's output is not kept: {error}");
+            (Stdio::null(), Stdio::null())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -103,6 +140,57 @@ mod tests {
             std::fs::read_to_string(paths.output_log()).unwrap(),
             "new run\nagain\n"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_file_becomes_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, paths) = temp_paths("mode");
+        paths.create_dirs().unwrap();
+        std::fs::write(paths.output_log(), "").unwrap();
+        std::fs::set_permissions(paths.output_log(), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        drop(open(&paths, 1024).unwrap());
+        let mode = std::fs::metadata(paths.output_log())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A child's standard output and error both land in the file, and one
+    /// that cannot be opened (a directory in its place) still lets the
+    /// child start, with its output going nowhere.
+    #[cfg(unix)]
+    #[test]
+    fn a_started_program_writes_both_streams_to_the_file() {
+        let (dir, paths) = temp_paths("streams");
+        let (stdout, stderr) = streams(Ok(paths.clone()), 1024);
+        let status = std::process::Command::new("sh")
+            .args(["-c", "echo out; echo err >&2"])
+            .stdout(stdout)
+            .stderr(stderr)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(paths.output_log()).unwrap(),
+            "out\nerr\n"
+        );
+
+        std::fs::remove_file(paths.output_log()).unwrap();
+        std::fs::create_dir(paths.output_log()).unwrap();
+        let (stdout, stderr) = streams(Ok(paths.clone()), 1024);
+        let status = std::process::Command::new("sh")
+            .args(["-c", "echo out; echo err >&2"])
+            .stdout(stdout)
+            .stderr(stderr)
+            .status()
+            .unwrap();
+        assert!(status.success());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -519,7 +519,10 @@ DECKPILOT_DATA_DIR=/tmp/deckpilot-dev cargo run -p deckpilot-agent -- --mock-dev
 ```
 
 Logs go to stderr and to `<data dir>/logs/agent.YYYY-MM-DD.log` (seven files
-are kept). With `--quiet-stderr` they go to the files only.
+are kept). With `--quiet-stderr` they go to the files only. Use
+`--log-level debug` for request and input details. Action results are
+logged by name and status only; result messages are not logged because
+they may contain machine-specific paths.
 
 The configuration app starts the agent with `--quiet-stderr` and sends its
 standard output and error to `<data dir>/logs/output.log`, readable by the
@@ -530,11 +533,17 @@ runtime or a system library prints, for example as the process aborts.
 Text from system libraries is written as they print it, so DeckPilot
 cannot filter it. When the app starts an agent and the file has reached
 1 MiB, it is renamed to `output.1.log`, replacing the one before, and a new
-file is started. So at most these two files are kept, plus whatever a
-single run adds. An agent started at login, or from a terminal, writes its
-standard error wherever that start sends it. Use `--log-level debug` for request and input details. Action
-results are logged by name and status only; result messages are not logged
-because they may contain machine-specific paths.
+file is started. While the agent runs, it checks the file every 30 seconds
+and empties it once it holds more than 1 MiB, with a first line saying so;
+the newest output stays. So the two files hold about 2 MiB at most. On
+Windows the agent's standard handles are not inherited by the programs it
+starts, so a program launched from a key does not hold the file open. An
+agent started at login, or from a terminal, writes its standard error
+wherever that start sends it.
+
+The flag needs an agent from the same build as the app: an older agent
+refuses the unknown argument and exits with code 2, which `output.log`
+records. Installed apps always start the agent of their own bundle.
 
 The configuration app starts `deckpilot-agent` from the same directory as its
 own executable when no agent is running. Debug builds of the app accept
