@@ -1,10 +1,20 @@
-# DeckPilot: give the logged-in user access to supported Elgato Stream Deck
-# devices without root privileges.
+# DeckPilot: give the user of the active seat access to the Stream Deck
+# models DeckPilot drives, without root and without a group: TAG+="uaccess"
+# makes systemd-logind put an ACL for that user on the device node. No MODE,
+# no GROUP. The 70- prefix runs it before 73-seat-late.rules applies the tag.
 #
-# Install:
-#   sudo cp 70-deckpilot-streamdeck.rules /etc/udev/rules.d/
-#   sudo udevadm control --reload-rules && sudo udevadm trigger
-# Then unplug and replug the device.
+# The .deb and .rpm install this file as
+# /usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules and reload udev when
+# they are installed or removed: nothing to do by hand.
+#
+# The AppImage and the Flatpak cannot install it. For those, install it
+# once on the host (see the installation guide):
+#   sudo install -m 0644 70-deckpilot-streamdeck.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+# then unplug the Stream Deck and plug it in again.
+#
+# One pair of lines per model with a driver (crates/deckpilot-hid,
+# SUPPORTED); a test there checks that this file and the drivers agree.
 
 # Elgato Stream Deck MK.2 (USB 0fd9:0080)
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0080", TAG+="uaccess"

@@ -216,7 +216,7 @@ signature. Manual checks on real machines:
 | Windows | First start creates the configuration with the key in Credential Manager (`DeckPilot` entries, local persistence); restart and sign-in open it without a prompt |
 | Windows | The agent starts at sign-in (autostart registry entry) and the tray icon appears |
 | Windows | An update stops the agent before the installer replaces the executables, and DeckPilot starts again afterwards |
-| Linux | `.deb`/`.rpm` install the app, the agent and `/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules`; the device works without root after replugging |
+| Linux | `.deb`/`.rpm` install the app, the agent and `/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules`; a Stream Deck plugged in before the installation works without root and without replugging (the postinst reloads udev and triggers Elgato devices only) |
 | Linux | With GNOME Keyring or KWallet: the key is stored in the login collection; without a Secret Service, setup explains it and offers a password |
 | Linux | The agent starts at login (XDG autostart); the tray icon needs AppIndicator support |
 | Linux | AppImage updates in place; `.deb`/`.rpm` updates ask for administrator authorization |

@@ -191,8 +191,13 @@ if command -v dpkg-deb > /dev/null; then
     app "$tree/usr/bin/deckpilot-desktop" "$version" "$token" "$channel"
     host "$tree/usr/bin/deckpilot-plugin-host"
     bundled "$tree/usr/lib/DeckPilot/bundled"
+    cp "$root/packaging/linux/70-deckpilot-streamdeck.rules" "$tree/usr/lib/udev/rules.d/"
+    install -m 0755 "$root/packaging/linux/postinst.sh" "$tree/DEBIAN/postinst"
+    install -m 0755 "$root/packaging/linux/postrm.sh" "$tree/DEBIAN/postrm"
+    [ -z "${DEB_EDIT-}" ] || echo "$DEB_EDIT" >> "$tree/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules"
+    [ -z "${DEB_EXTRA-}" ] || install -m 0755 /dev/null "$tree/DEBIAN/$DEB_EXTRA"
+    # Last, so that nothing above puts an omitted file back.
     [ -z "${DEB_OMIT-}" ] || rm -rf "${tree:?}/$DEB_OMIT"
-    : > "$tree/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules"
     : > "$tree/usr/share/applications/DeckPilot.desktop"
     dpkg-deb --root-owner-group --build "$tree" "$bundle/deb/DeckPilot_${version}_amd64.deb" > /dev/null
     sign "$version" "$bundle/deb/DeckPilot_${version}_amd64.deb"
@@ -271,6 +276,18 @@ if command -v dpkg-deb > /dev/null; then
   check linux fail "lacks usr/lib/DeckPilot/bundled/pins.json" "a .deb without the bundled plugins fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
   DEB_OMIT=usr/lib/DeckPilot/bundled/deckpilot.jira/plugin.wasm linux 0.6.0-alpha.1
   check linux fail "pinned plugin.wasm is missing" "a .deb with a bundled plugin's module missing fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
+
+  echo "== the udev rule and the maintainer scripts in the .deb"
+  DEB_OMIT=DEBIAN/postinst linux 0.6.0-alpha.1
+  check linux fail "lacks an executable postinst" "a .deb without its postinst fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
+  DEB_OMIT=DEBIAN/postrm linux 0.6.0-alpha.1
+  check linux fail "lacks an executable postrm" "a .deb without its postrm fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
+  for extra in preinst prerm config triggers conffiles ..x .hidden; do
+    DEB_EXTRA=$extra linux 0.6.0-alpha.1
+    check linux fail "has the control file $extra" "a .deb with a $extra fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
+  done
+  DEB_EDIT='SUBSYSTEM=="hidraw", MODE="0666"' linux 0.6.0-alpha.1
+  check linux fail "its udev rule is not packaging/linux/70-deckpilot-streamdeck.rules" "a .deb with another udev rule fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
 else
   echo "== Linux packages: skipped (no dpkg-deb)"
 fi

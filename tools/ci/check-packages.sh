@@ -11,7 +11,8 @@
 # - the package version (.deb, .rpm), the application's version (.exe) and
 #   the bundle's version and identifier (macOS Info.plist);
 # - the layout: the application, the bundled agent, which reports the same
-#   version, on Linux the udev rule (.deb, .rpm), the desktop entry (.deb,
+#   version, on Linux the udev rule and the maintainer scripts that reload
+#   udev (.deb, .rpm; packaging/linux), the desktop entry (.deb,
 #   AppImage) and AppRun (AppImage), on macOS the bundle executable, icon
 #   and, in the disk image, the Applications link;
 # - the plugin runtime, an application component of every package
@@ -255,6 +256,19 @@ fresh_dir() {
   echo "$dir"
 }
 
+# udev_files <package> <rule> <postinst> <postrm>: the installed udev
+# rule and the maintainer scripts (deb postinst/postrm, rpm %post/%postun)
+# are exactly the repository's packaging/linux files: the rule grants
+# access through uaccess only, the scripts reload udev after an install or
+# removal and trigger only Elgato's devices (tools/ci/test-udev-scripts.sh).
+udev_files() {
+  local package="$1" rule="$2" postinst="$3" postrm="$4" source=packaging/linux
+  cmp -s "$rule" "$source/70-deckpilot-streamdeck.rules" \
+    || fail "$package: its udev rule is not $source/70-deckpilot-streamdeck.rules"
+  cmp -s "$postinst" "$source/postinst.sh" || fail "$package: its post-install script is not $source/postinst.sh"
+  cmp -s "$postrm" "$source/postrm.sh" || fail "$package: its post-remove script is not $source/postrm.sh"
+}
+
 # plist_value <Info.plist> <key>
 plist_value() {
   python3 -I -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb")).get(sys.argv[2], ""))' "$1" "$2"
@@ -343,11 +357,26 @@ case "$platform" in
     extracted=$(fresh_dir deb)
     dpkg-deb -x "$deb" "$extracted"
     agent_reports_version "$extracted/usr/bin/deckpilot-agent"
+    control=$(fresh_dir deb-control)
+    dpkg-deb -e "$deb" "$control"
+    for script in postinst postrm; do
+      [ -x "$control/$script" ] || fail "$deb lacks an executable $script"
+    done
+    # Exactly these control files: no preinst, prerm, config, triggers or
+    # anything else dpkg would run or act on as root.
+    # Every entry, at any depth and whatever its name (dot files too).
+    while IFS= read -r -d '' file; do
+      case "${file#"$control"/}" in
+        control | md5sums | postinst | postrm) ;;
+        *) fail "$deb has the control file ${file#"$control"/}; only control, md5sums, postinst and postrm are allowed" ;;
+      esac
+    done < <(find "$control" -mindepth 1 -print0)
+    udev_files "$deb" "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" "$control/postinst" "$control/postrm"
     distribution_record "$extracted/usr/bin/deckpilot-desktop" deb
     distribution_record "$extracted/usr/bin/deckpilot-agent" none optional
     plugin_runtime "$extracted/usr/bin/deckpilot-plugin-host" "$extracted/usr/lib/DeckPilot/bundled" \
       "$extracted/usr/bin/deckpilot-agent" "$deb"
-    echo "$deb: version $version, app, agent, plugin host, bundled plugins, udev rule and desktop entry"
+    echo "$deb: version $version, app, agent, plugin host, bundled plugins, udev rule and its postinst/postrm, desktop entry"
     signed_for_version "$deb"
 
     # The AppImage extracts itself (no FUSE needed): AppRun, the desktop
@@ -384,10 +413,17 @@ case "$platform" in
       [ "$rpm_version" = "$version" ] || fail "$rpm has version $rpm_version, expected $version"
       extracted=$(fresh_dir rpm)
       extract_rpm "$rpm" "$extracted"
+      # The udev rule, and exactly the repository's %post and %postun
+      # with /bin/sh and no other scriptlet (check-rpm-scriptlets.sh).
+      cmp -s "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" packaging/linux/70-deckpilot-streamdeck.rules \
+        || fail "$rpm: its udev rule is not packaging/linux/70-deckpilot-streamdeck.rules"
+      rpm -qp --scripts "$rpm" | grep -E 'scriptlet' | sed "s#^#$rpm: #"
+      "$root/tools/ci/check-rpm-scriptlets.sh" "$rpm" packaging/linux/postinst.sh packaging/linux/postrm.sh \
+        || fail "$rpm: its scriptlets are not exactly packaging/linux's"
       distribution_record "$extracted/usr/bin/deckpilot-desktop" rpm
       plugin_runtime "$extracted/usr/bin/deckpilot-plugin-host" "$extracted/usr/lib/DeckPilot/bundled" \
         "$extracted/usr/bin/deckpilot-agent" "$rpm"
-      echo "$rpm: version $version, app, agent, plugin host, bundled plugins and udev rule"
+      echo "$rpm: version $version, app, agent, plugin host, bundled plugins, udev rule and its %post/%postun"
       signed_for_version "$rpm"
     fi
     ;;
