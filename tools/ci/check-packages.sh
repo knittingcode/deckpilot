@@ -362,6 +362,15 @@ case "$platform" in
     for script in postinst postrm; do
       [ -x "$control/$script" ] || fail "$deb lacks an executable $script"
     done
+    # Exactly these control files: no preinst, prerm, config, triggers or
+    # anything else dpkg would run or act on as root.
+    for file in "$control"/* "$control"/.[!.]*; do
+      [ -e "$file" ] || continue
+      case "${file##*/}" in
+        control | md5sums | postinst | postrm) ;;
+        *) fail "$deb has the control file ${file##*/}; only control, md5sums, postinst and postrm are allowed" ;;
+      esac
+    done
     udev_files "$deb" "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" "$control/postinst" "$control/postrm"
     distribution_record "$extracted/usr/bin/deckpilot-desktop" deb
     distribution_record "$extracted/usr/bin/deckpilot-agent" none optional
@@ -404,25 +413,13 @@ case "$platform" in
       [ "$rpm_version" = "$version" ] || fail "$rpm has version $rpm_version, expected $version"
       extracted=$(fresh_dir rpm)
       extract_rpm "$rpm" "$extracted"
-      # The scriptlets as rpm stores them, compared with the scripts, both
-      # with exactly one final newline. The bundler's rpm crate writes no
-      # interpreter tag for them (%{POSTINPROG} is "(none)"), and rpm then
-      # runs them with its default, /bin/sh; any other interpreter is
-      # refused, and a missing scriptlet fails the comparison.
-      for tag in POSTIN POSTUN; do
-        prog=$(rpm -qp --queryformat "%{${tag}PROG}" "$rpm")
-        case "$prog" in
-          /bin/sh | "(none)") ;;
-          *) fail "$rpm: its %{$tag} scriptlet runs with '$prog', expected /bin/sh (or rpm's default)" ;;
-        esac
-        [ -n "$(rpm -qp --queryformat "%{$tag}" "$rpm" | tr -d '[:space:]')" ] \
-          && [ "$(rpm -qp --queryformat "%{$tag}" "$rpm")" != "(none)" ] \
-          || fail "$rpm: it has no %{$tag} scriptlet"
-        printf '%s\n' "$(rpm -qp --queryformat "%{$tag}" "$rpm")" > "$extracted.$tag"
-      done
+      # The udev rule, and exactly the repository's %post and %postun
+      # with /bin/sh and no other scriptlet (check-rpm-scriptlets.sh).
+      cmp -s "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" packaging/linux/70-deckpilot-streamdeck.rules \
+        || fail "$rpm: its udev rule is not packaging/linux/70-deckpilot-streamdeck.rules"
       rpm -qp --scripts "$rpm" | grep -E 'scriptlet' | sed "s#^#$rpm: #"
-      udev_files "$rpm" "$extracted/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules" "$extracted.POSTIN" "$extracted.POSTUN"
-      rm -f "$extracted.POSTIN" "$extracted.POSTUN"
+      "$root/tools/ci/check-rpm-scriptlets.sh" "$rpm" packaging/linux/postinst.sh packaging/linux/postrm.sh \
+        || fail "$rpm: its scriptlets are not exactly packaging/linux's"
       distribution_record "$extracted/usr/bin/deckpilot-desktop" rpm
       plugin_runtime "$extracted/usr/bin/deckpilot-plugin-host" "$extracted/usr/lib/DeckPilot/bundled" \
         "$extracted/usr/bin/deckpilot-agent" "$rpm"

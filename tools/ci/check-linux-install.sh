@@ -240,8 +240,9 @@ case "${1-}" in
     package="${2:?}"
     pkgname=$(rpm -qp --queryformat '%{NAME}' "$package")
     installed_rule
-    grep -q -F -- '--reload-rules' <<< "$(rpm -q --queryformat '%{POSTIN}' "$pkgname")" || fail "$pkgname has no %post reloading udev"
-    grep -q -F -- '--reload-rules' <<< "$(rpm -q --queryformat '%{POSTUN}' "$pkgname")" || fail "$pkgname has no %postun reloading udev"
+    # With this rpm, which knows every scriptlet tag: exactly the
+    # repository's %post and %postun, nothing else.
+    "$here/check-rpm-scriptlets.sh" "$package" "$root/packaging/linux/postinst.sh" "$root/packaging/linux/postrm.sh"
     "$here/check-linux-install.sh" agent /usr/bin/deckpilot-agent
     dnf -y -q reinstall "$package" || fail "reinstalling $package failed"
     installed_rule

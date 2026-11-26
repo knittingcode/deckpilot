@@ -195,6 +195,7 @@ if command -v dpkg-deb > /dev/null; then
     install -m 0755 "$root/packaging/linux/postinst.sh" "$tree/DEBIAN/postinst"
     install -m 0755 "$root/packaging/linux/postrm.sh" "$tree/DEBIAN/postrm"
     [ -z "${DEB_EDIT-}" ] || echo "$DEB_EDIT" >> "$tree/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules"
+    [ -z "${DEB_EXTRA-}" ] || install -m 0755 /dev/null "$tree/DEBIAN/$DEB_EXTRA"
     # Last, so that nothing above puts an omitted file back.
     [ -z "${DEB_OMIT-}" ] || rm -rf "${tree:?}/$DEB_OMIT"
     : > "$tree/usr/share/applications/DeckPilot.desktop"
@@ -281,6 +282,10 @@ if command -v dpkg-deb > /dev/null; then
   check linux fail "lacks an executable postinst" "a .deb without its postinst fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
   DEB_OMIT=DEBIAN/postrm linux 0.6.0-alpha.1
   check linux fail "lacks an executable postrm" "a .deb without its postrm fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
+  for extra in preinst prerm config triggers conffiles; do
+    DEB_EXTRA=$extra linux 0.6.0-alpha.1
+    check linux fail "has the control file $extra" "a .deb with a $extra fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
+  done
   DEB_EDIT='SUBSYSTEM=="hidraw", MODE="0666"' linux 0.6.0-alpha.1
   check linux fail "its udev rule is not packaging/linux/70-deckpilot-streamdeck.rules" "a .deb with another udev rule fails" PRERELEASE=true PACKAGE_VERSION=0.6.0-alpha.1
 else
