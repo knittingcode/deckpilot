@@ -208,6 +208,37 @@ Those are not implemented yet, so a Mac App Store, Microsoft Store or
 Flathub build reports start at login as off, refuses to turn it on with a
 message saying so, and writes nothing (`autostart::Strategy`).
 
+### What uninstalling leaves behind
+
+This is what the packages do today; none of them has uninstall hooks of
+its own.
+
+- **User data stays.** No package type removes the data directory:
+  - on Linux, `~/.local/share/io.github.knittingcode.deckpilot`;
+  - on macOS, `~/Library/Application Support/io.github.knittingcode.deckpilot`;
+  - on Windows, `%APPDATA%\io.github.knittingcode.deckpilot`.
+
+  It holds the encrypted configuration (`deckpilot.db`), its backups, the
+  plugins and their data, and the logs. A database key kept in the
+  system's credential store (Keychain, Credential Manager or the Secret
+  Service) stays there too. A later installation opens the same
+  configuration again.
+- **The autostart entry stays**, if start at login was turned on. It
+  points at an agent that is no longer there:
+  - macOS: `~/Library/LaunchAgents/DeckPilot Agent.plist`;
+  - Linux: `~/.config/autostart/DeckPilot Agent.desktop`;
+  - Windows: the `DeckPilot Agent` value under
+    `HKEY_CURRENT_USER\…\Run`.
+
+  To avoid it, turn start at login off (Settings, or
+  `deckpilot-agent autostart disable`) before uninstalling. An entry that
+  was left behind can be deleted by hand: the file, or the registry value.
+- **The udev rule goes with the `.deb` and `.rpm`**: it belongs to the
+  package. A copy installed by hand in `/etc/udev/rules.d` (AppImage,
+  Flatpak) stays until you delete it.
+- To remove everything, quit the agent and delete the data directory
+  after uninstalling. This deletes the configuration for good.
+
 ## Storage ownership
 
 The agent and the configuration app open the same SQLite database (WAL mode
@@ -355,9 +386,19 @@ such hardware exists yet.
 
 ### Platform requirements
 
-- **Linux**: access to `hidraw` devices. Install
-  `packaging/linux/70-deckpilot-streamdeck.rules` (see the file for the
-  commands) and replug the device. Building requires `libudev-dev`.
+- **Linux**: access to `hidraw` devices, granted by the udev rule
+  `70-deckpilot-streamdeck.rules` (`TAG+="uaccess"`: the user of the
+  active seat gets an ACL on the device node; no group and no `MODE`). The
+  `.deb` and `.rpm` install it as
+  `/usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules`; nothing has to be
+  copied by hand. The packages of 0.15.0 and earlier do not reload udev, so
+  a Stream Deck that was plugged in during the installation needs to be
+  unplugged and plugged in again once; packages that reload udev on
+  installation apply the rule at once (only to Elgato's devices). The
+  AppImage and the Flatpak cannot install the rule: install it once on the
+  host, as the [installation guide](../website/src/content/docs/en/installation.md#appimage)
+  and [packaging/flatpak/udev.md](../packaging/flatpak/udev.md) describe.
+  Building requires `libudev-dev`.
 - **macOS**: no extra setup expected. If macOS asks for Input Monitoring
   permission, grant it to the agent.
 - **Windows**: no driver installation expected; the device uses the built-in
