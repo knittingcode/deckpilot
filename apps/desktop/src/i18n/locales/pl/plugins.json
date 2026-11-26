@@ -389,5 +389,101 @@
     "credentialsOf": "Poświadczenia wtyczki {{name}}",
     "nothing": "Ta wersja nie deklaruje żadnych ustawień ani poświadczeń.",
     "saved": "Zapisano ustawienia"
+  },
+  "connections": {
+    "intro": "Serwery, z którymi ta wtyczka jest połączona. Każdy ma własny adres i token; wtyczka sięga tylko do połączenia wskazanego przez akcję.",
+    "add": "Dodaj połączenie",
+    "none": "Żadna zainstalowana wtyczka nie łączy się z serwerami.",
+    "empty": "Brak połączeń.",
+    "notGranted": "Ta wtyczka nie ma zgody na używanie połączeń. Najpierw udziel jej zgody na jej stronie w Marketplace.",
+    "default": "Domyślne",
+    "readOnly": "Tylko odczyt",
+    "canChange": "Może wprowadzać zmiany",
+    "privateNetwork": "Sieć prywatna",
+    "cloud": "Usługa publiczna",
+    "token": "Token",
+    "replaceToken": "Zmień token",
+    "tokenReplaced": "Nowy token został zapisany. Przetestuj połączenie, aby go sprawdzić.",
+    "turnOff": "Wyłącz",
+    "turnOn": "Włącz",
+    "state": {
+      "ok": "Połączono",
+      "unauthorized": "Token odrzucony",
+      "insufficientScope": "Brak uprawnienia",
+      "unreachable": "Brak połączenia z serwerem",
+      "tlsFailed": "Niezaufany certyfikat",
+      "needsReconnect": "Potrzebny token",
+      "untested": "Nie przetestowano",
+      "disabled": "Wyłączone",
+      "other": "Nieznany"
+    },
+    "test": {
+      "action": "Testuj",
+      "ok": "Połączenie działa.",
+      "okAs": "Połączenie działa, zalogowano jako {{account}}.",
+      "failed": "Połączenie nie działa: {{reason}}"
+    },
+    "remove": {
+      "action": "Usuń",
+      "title": "Usunąć {{name}}?",
+      "description": "Jego token zostanie usunięty z tego komputera. Klawisze i przepływy, które go używają, pozostaną bez zmian i pokażą połączenie jako usunięte.",
+      "confirm": "Usuń"
+    },
+    "tokenDialog": {
+      "title": "Nowy token dla {{name}}",
+      "description": "Token trafia do agenta DeckPilot działającego w tle i jest przechowywany zaszyfrowany na tym komputerze. Połączenie pozostaje z {{host}}.",
+      "save": "Zapisz token"
+    },
+    "addDialog": {
+      "title": "Dodaj połączenie",
+      "description": "Połącz tę wtyczkę z serwerem za pomocą tokenu utworzonego na tym serwerze.",
+      "create": "Dodaj i przetestuj",
+      "provider": "Dostawca",
+      "where": "Gdzie",
+      "ownServer": "Serwer mojej firmy",
+      "server": "Adres serwera",
+      "serverHint": "Adres otwierany w przeglądarce, zaczynający się od https://. Port lub ścieżka są dozwolone, na przykład https://code.example.com:8443/gitlab.",
+      "privateNetwork": "Ten serwer jest w sieci mojej firmy lub w sieci domowej",
+      "privateNetworkHint": "Tylko dla serwera w sieci prywatnej (adres lub nazwa wewnętrzna). DeckPilot nigdy nie łączy się z tym komputerem ani z adresami link-local.",
+      "allowChanges": "Zezwól na zmiany",
+      "allowChangesHint": "Wyłączone: wtyczka może tylko odczytywać. Włączone: może też tworzyć pull requesty lub merge requesty i uruchamiać potoki.",
+      "tokenPage": "Utwórz token pod adresem:",
+      "tokenKept": "Token jest przechowywany zaszyfrowany na tym komputerze i nigdy nie jest ponownie wyświetlany, eksportowany ani przekazywany wtyczce.",
+      "name": "Nazwa",
+      "tls": "DeckPilot łączy się bezpośrednio, wyłącznie przez https, i ufa certyfikatom, którym ufa system. Serwer z certyfikatem z podpisem własnym zadziała po dodaniu certyfikatu firmy do systemu."
+    },
+    "scopes": {
+      "github": {
+        "read": "Token szczegółowy z dostępem do odczytu: Metadata, Contents, Pull requests, Actions, Commit statuses i Issues (token klasyczny: repo).",
+        "write": "Jak do odczytu oraz dostęp do zapisu: Pull requests i Actions."
+      },
+      "gitlab": {
+        "read": "Osobisty token dostępu, token projektu lub grupy z zakresem read_api.",
+        "write": "Osobisty token dostępu, token projektu lub grupy z zakresem api."
+      },
+      "generic": "Token z najmniejszymi uprawnieniami, których potrzebuje wtyczka."
+    },
+    "turnOffDialog": {
+      "title": "Wyłączyć {{name}}?",
+      "description": "Klawisze i przepływy, które go używają, przestaną działać do ponownego włączenia, także akcje uruchomione teraz. Jego token pozostaje na tym komputerze."
+    },
+    "link": {
+      "title": "Połącz {{repository}} z repozytorium zdalnym",
+      "description": "Wybierz połączenie i repozytorium na tym serwerze. Powiązanie używa własnego identyfikatora dostawcy, więc zmiana nazwy na serwerze go nie zrywa.",
+      "confirm": "Połącz",
+      "noConnections": "Nie ma jeszcze połączenia, którego można użyć. Dodaj je w Ustawieniach › Połączenia.",
+      "connection": "Połączenie",
+      "search": "Znajdź repozytorium",
+      "find": "Znajdź",
+      "nothingFound": "Nie znaleziono repozytorium.",
+      "results": "Znalezione repozytoria",
+      "summary": "{{path}} ({{id}}) w połączeniu {{connection}} zostanie powiązane.",
+      "remoteName": "Nazwa zdalnego repozytorium git",
+      "primary": "Główne zdalne repozytorium",
+      "replaces": "To zastąpi zapisane repozytorium zdalne „{{name}}”.",
+      "detected": "W folderze repozytorium",
+      "findOn": "Znajdź {{remote}} w połączeniu {{connection}}",
+      "notFoundOn": "Nie znaleziono {{remote}} w połączeniu {{connection}}. Wyszukaj je poniżej."
+    }
   }
 }

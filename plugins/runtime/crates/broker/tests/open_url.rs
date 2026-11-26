@@ -220,6 +220,7 @@ fn open_url_and_network_grants_do_not_imply_each_other() {
         headers: vec![],
         body: None,
         auth: None,
+        connection: None,
     });
     assert_eq!(
         s.authorize(&fetch).denial(),
@@ -458,6 +459,7 @@ fn pages_of_a_server_the_user_allowed_are_opened_by_origin() {
         headers: vec![],
         body: None,
         auth: None,
+        connection: None,
     }));
     assert_eq!(d.denial(), Some(DenyReason::PathNotGranted));
     // Only in a run the user started, like every `url.open`.

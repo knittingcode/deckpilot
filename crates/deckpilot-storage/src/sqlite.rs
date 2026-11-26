@@ -101,35 +101,51 @@ const MIGRATIONS: &[&str] = &[
     // `repository` role stands for (`repositories::migrate`). Additive:
     // roles, resources and bindings are not rewritten.
     crate::repositories::SCHEMA,
-    // 15 is the Calls work's (managed layouts, #457), ahead of this one
-    // in the merge queue: its migration takes this place when it lands.
-    "",
+    // Schema 15. Managed layouts (the Calls plugin's, `managed_layouts.rs`): a new,
+    // empty table. Additive: no layout is adopted or rewritten.
+    crate::managed_layouts::SCHEMA,
     // Scripts: two new, empty tables (`scripts::SCHEMA`), the portable
     // scripts of a profile and their machine-local trust. Additive.
     crate::scripts::SCHEMA,
 ];
 
-/// The place of migration 15, held empty until the Calls work's migration
-/// takes it (`MIGRATIONS`). A database this build upgrades is at 16 and
-/// would never run a migration put into 15 later, so no release may be
-/// built while it is empty: a release build fails here.
+/// A release build does not compile while a migration place is held
+/// empty for another change ([`EMPTY_PLACES`]). A database such a build
+/// upgrades would pass the place and never run the migration put there
+/// later. Place 15 was held this way until the Calls work's migration
+/// (#457) took it.
 #[cfg(not(debug_assertions))]
 const _: () = assert!(
-    !MIGRATIONS[14].is_empty(),
-    "migration 15 is still an empty placeholder: merge the Calls work's migration (#457) first"
+    EMPTY_PLACES.is_empty(),
+    "a migration place is held empty (EMPTY_PLACES), so no release may be built: merge the change \
+     that takes it first. To hold a place for a change that lands before yours, put \"\" at its \
+     index in MIGRATIONS and its number in EMPTY_PLACES; remove it from EMPTY_PLACES when that \
+     migration takes the place"
 );
-
 /// Migration places held empty for a change that lands before this one
-/// (`MIGRATIONS`); none once it has.
-const EMPTY_PLACES: &[u32] = &[15];
+/// (`MIGRATIONS`). None now: place 15, held for the Calls work's managed
+/// layouts, was taken by its migration (#457).
+const EMPTY_PLACES: &[u32] = &[];
 
 /// The empty migration place an upgrade from `current` to `supported`
 /// would pass, for a database that is not a throwaway one. A database
 /// upgraded past an empty place never runs the migration put there
-/// later, so a (debug) build that holds one refuses to upgrade any
+/// later, so a (debug) build that held one refused to upgrade any
 /// database on disk outside the temporary folder, whatever its data
-/// directory; release builds holding one do not compile at all.
+/// directory; release builds holding one did not compile at all. With
+/// no place held ([`EMPTY_PLACES`]) nothing is refused.
 fn empty_place_passed(current: u32, supported: u32, path: Option<&Path>) -> Option<u32> {
+    empty_place_in(EMPTY_PLACES, MIGRATIONS, current, supported, path)
+}
+
+/// [`empty_place_passed`] over the given held places and migrations.
+fn empty_place_in(
+    places: &[u32],
+    migrations: &[&str],
+    current: u32,
+    supported: u32,
+    path: Option<&Path>,
+) -> Option<u32> {
     // A temporary folder that is empty or a root (a broken `TMPDIR`)
     // counts for nothing.
     let temp = std::env::temp_dir();
@@ -138,8 +154,12 @@ fn empty_place_passed(current: u32, supported: u32, path: Option<&Path>) -> Opti
     if throwaway {
         return None;
     }
-    EMPTY_PLACES.iter().copied().find(|&slot| {
-        current < slot && slot <= supported && MIGRATIONS[slot as usize - 1].is_empty()
+    places.iter().copied().find(|&slot| {
+        current < slot
+            && slot <= supported
+            && migrations
+                .get(slot as usize - 1)
+                .is_some_and(|sql| sql.is_empty())
     })
 }
 
@@ -2185,23 +2205,49 @@ impl ConfigStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use super::empty_place_passed;
+    use super::{EMPTY_PLACES, MIGRATIONS, empty_place_in, empty_place_passed};
 
     #[test]
     fn a_database_on_disk_is_never_upgraded_past_an_empty_place() {
+        // A build holding place 15 empty, as before the Calls work's
+        // migration took it.
+        let mut held = vec!["CREATE TABLE t (x)"; 16];
+        held[14] = "";
         let real = std::path::Path::new("/srv/deckpilot/deckpilot.db");
-        assert_eq!(empty_place_passed(14, 16, Some(real)), Some(15));
-        assert_eq!(empty_place_passed(3, 16, Some(real)), Some(15));
+        assert_eq!(empty_place_in(&[15], &held, 14, 16, Some(real)), Some(15));
+        assert_eq!(empty_place_in(&[15], &held, 3, 16, Some(real)), Some(15));
         assert_eq!(
-            empty_place_passed(0, 16, Some(real)),
+            empty_place_in(&[15], &held, 0, 16, Some(real)),
             Some(15),
             "a new one too"
         );
         // Already past it, in memory, or a throwaway database: no refusal.
-        assert_eq!(empty_place_passed(15, 16, Some(real)), None);
-        assert_eq!(empty_place_passed(14, 16, None), None);
+        assert_eq!(empty_place_in(&[15], &held, 15, 16, Some(real)), None);
+        assert_eq!(empty_place_in(&[15], &held, 14, 16, None), None);
         let scratch = std::env::temp_dir().join("deckpilot-test.db");
-        assert_eq!(empty_place_passed(14, 16, Some(&scratch)), None);
+        assert_eq!(empty_place_in(&[15], &held, 14, 16, Some(&scratch)), None);
+        // Once its migration takes the place, nothing is refused.
+        let filled = vec!["CREATE TABLE t (x)"; 16];
+        assert_eq!(empty_place_in(&[15], &filled, 14, 16, Some(real)), None);
+    }
+
+    #[test]
+    fn this_build_holds_no_place_and_refuses_no_upgrade() {
+        // Every place listed as held is empty in MIGRATIONS. With a place
+        // held, the loop below would refuse upgrades past it (debug builds).
+        for &slot in EMPTY_PLACES {
+            assert!(
+                MIGRATIONS[slot as usize - 1].is_empty(),
+                "{slot} is held but filled"
+            );
+        }
+        let real = std::path::Path::new("/srv/deckpilot/deckpilot.db");
+        let supported = u32::try_from(MIGRATIONS.len()).unwrap();
+        for current in 0..supported {
+            assert_eq!(empty_place_passed(current, supported, Some(real)), None);
+        }
+        assert_eq!(MIGRATIONS[14], crate::managed_layouts::SCHEMA);
+        assert_eq!(MIGRATIONS[15], crate::scripts::SCHEMA);
     }
 
     use super::*;
@@ -3060,6 +3106,7 @@ mod tests {
                      DROP TABLE script_trust; DROP TABLE scripts;
                      ALTER TABLE projects DROP COLUMN default_repository;
                      ALTER TABLE projects DROP COLUMN repositories;
+                     DROP TABLE managed_layouts;
                      PRAGMA user_version = 4;",
                 )
                 .unwrap();

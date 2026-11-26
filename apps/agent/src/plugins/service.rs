@@ -64,6 +64,8 @@ use super::variables::PublishedVariables;
 use super::worker::{EngineFailure, EngineReply, Events, StateReply};
 use super::{PluginSettings, platform, platform_problem};
 
+#[path = "connections.rs"]
+mod connections;
 #[path = "dependencies.rs"]
 mod dependencies;
 
@@ -220,6 +222,27 @@ fn registry_error(error: &RegistryError) -> IpcError {
         reason::REGISTRY,
         format!("the plugin registry failed verification: {error}"),
     )
+}
+
+/// Plugin API 1.14: an internal action is the app's (its screen, pickers, a
+/// connection test), never a key's, a gesture's or a workflow node's.
+fn refuse_internal(
+    engine: bool,
+    declaration: &deckpilot_plugin_manifest::Action,
+    id: &PluginId,
+    action: &str,
+) -> Result<(), IpcError> {
+    if engine && declaration.is_internal() {
+        return Err(error(
+            ErrorCode::Failed,
+            reason::NOT_ENABLED,
+            format!(
+                "`{action}` of {id} is used by DeckPilot itself and cannot run from a key or a \
+                 workflow"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn invalid(message: impl Into<String>) -> IpcError {
@@ -439,6 +462,9 @@ struct Prepared {
     resource_kinds: BTreeMap<String, Vec<deckpilot_plugin_abi::privileged::ResourceKind>>,
     /// The active version, for the audit.
     version: String,
+    /// The action's declaration: its `connection` parameters bind the
+    /// invocation (plugin API 1.14).
+    declaration: deckpilot_plugin_manifest::Action,
 }
 
 /// Why the plugin store could not be opened.
@@ -1463,7 +1489,9 @@ impl PluginService {
             .effective_grants(id)
             .unwrap_or_default();
         let user_origins = self.user_origins(id, &effective);
-        let (approved, skipped) = convert::approved_with(&effective, user_origins);
+        let (mut approved, skipped) = convert::approved_with(&effective, user_origins);
+        // Plugin API 1.14: the user's connections, within the grant.
+        approved.0.extend(self.connection_grants(id, &effective));
         if !skipped.is_empty() {
             info!(plugin = %id, ?skipped, "grants the broker does not enforce are not passed on");
         }
@@ -1485,6 +1513,26 @@ impl PluginService {
                 );
             }
         }
+    }
+
+    /// The connections the broker may use now (plugin API 1.14,
+    /// `connections.rs`).
+    fn connection_grants(
+        &self,
+        id: &PluginId,
+        effective: &[(GrantKey, deckpilot_plugin_store::GrantScope)],
+    ) -> Vec<deckpilot_plugin_broker::ApprovedPermission> {
+        let store = self.manager.store();
+        let Some(manifest) = store
+            .plugin(id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.active().map(|v| v.manifest.clone()))
+        else {
+            return Vec::new();
+        };
+        let rows = store.connections(id).unwrap_or_default();
+        connections::approved(&manifest, effective, &rows)
     }
 
     /// The consents to user-entered origins (G2) the broker may use now:
@@ -1778,6 +1826,12 @@ impl PluginService {
                 self.revoke_user_origin(&plugin_id(&plugin)?, &setting)
             }
             Request::ListPluginCredentials { plugin } => self.credentials(&plugin_id(&plugin)?),
+            // Plugin API 1.14 (`connections.rs`).
+            request @ (Request::ListPluginConnections { .. }
+            | Request::CreatePluginConnection { .. }
+            | Request::SetPluginConnectionSecret { .. }
+            | Request::UpdatePluginConnection { .. }
+            | Request::RemovePluginConnection { .. }) => self.handle_connections(request),
             Request::SetPluginCredential {
                 plugin,
                 key,
@@ -2682,6 +2736,10 @@ impl PluginService {
     /// Checks that `action` of `id` may run now and prepares it. With
     /// `engine`, every declared permission must be granted too (the
     /// catalog's rule for keys and workflows).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "every check before an invocation, in the order they apply"
+    )]
     fn prepare(
         &mut self,
         id: &PluginId,
@@ -2739,6 +2797,7 @@ impl PluginService {
         if let Some(why) = missing.or_else(|| unmet.get(action).cloned()) {
             return Err(error(ErrorCode::Failed, reason::NOT_ENABLED, why));
         }
+        refuse_internal(engine, &declaration, id, action)?;
         let node = declaration.node.clone().unwrap_or_default();
         let timeout = Duration::from_millis(node.timeout_ms()).min(MAX_INVOCATION);
         let outputs = super::lane::declared_outputs(&declaration);
@@ -2788,6 +2847,7 @@ impl PluginService {
                 definition,
                 resource_kinds,
                 version,
+                declaration,
             },
         ))
     }
@@ -2819,6 +2879,7 @@ impl PluginService {
             outputs,
             executor,
             definition,
+            declaration,
             ..
         } = prepared;
         // Checked against the manifest before the host sees anything. A
@@ -2847,12 +2908,21 @@ impl PluginService {
             &params,
             self.events.scripts.clone(),
         );
+        let bound = connections::bound(&declaration, &params);
+        // Plugin API 1.14: `records` outputs, checked against their schemas.
+        let records = record
+            .active()
+            .map(|a| connections::record_outputs(&a.manifest, &declaration))
+            .unwrap_or_default();
         let plugin = id.to_string();
         let name = action.to_owned();
         let done: Done = Box::new(move |result| {
             let answer = match result {
                 Ok(outcome) => Ok(Response::PluginActionResult {
-                    outcome: convert::outcome(outcome, &outputs),
+                    outcome: connections::checked_records(
+                        convert::outcome(outcome, &outputs),
+                        &records,
+                    ),
                 }),
                 Err(e) => {
                     warn!(plugin, action = name, error = ?e, "plugin invocation failed");
@@ -2867,8 +2937,11 @@ impl PluginService {
                 action: action.to_owned(),
                 params,
                 timeout,
-                // Tried from the plugin's own page in the app (G8).
-                executor: executor.with_run(RunContext::direct(RunTrigger::Test)),
+                // Tried from the plugin's own page in the app (G8), bound to
+                // the connections its parameters name (plugin API 1.14).
+                executor: executor
+                    .with_run(RunContext::direct(RunTrigger::Test))
+                    .with_connections(bound),
                 abort: AbortSignal::new(),
                 reply: Reply::Action(done),
             }),
@@ -2917,6 +2990,7 @@ impl PluginService {
             definition,
             resource_kinds,
             version,
+            declaration,
         } = prepared;
         let mut params =
             match data::missing_resource(&definition, |key| resources.params.contains_key(key))
@@ -2939,6 +3013,9 @@ impl PluginService {
         } else {
             resources.without_projects()
         };
+        // Bound to the connections its parameters name (plugin API 1.14),
+        // before resource handles join the parameters.
+        let bound = connections::bound(&declaration, &params);
         let (executor, handles) =
             executor.with_resources(record.id.as_str(), &version, resource_kinds, resources);
         let executor = super::executor::scripts::attach(
@@ -2947,6 +3024,7 @@ impl PluginService {
             &params,
             self.events.scripts.clone(),
         );
+        let executor = executor.with_connections(bound);
         params.extend(
             handles
                 .into_iter()
@@ -3203,6 +3281,8 @@ fn declares_privileged_kind<'a>(
         PermissionKind::Resources,
         PermissionKind::ProjectContext,
         PermissionKind::HostViews,
+        PermissionKind::Connections,
+        PermissionKind::Calls,
     ]
     .into_iter()
     .filter(|k| k.is_first_party_only())
@@ -3535,6 +3615,18 @@ mod tests {
             [tools.as_slice()].into_iter()
         ));
         assert!(!declares_privileged_kind(&git, std::iter::empty()));
+        // Plugin API 1.16's `calls` is a privileged kind: a bundled id that
+        // declares it is bundled-only. (`deckpilot.calls` joins the bundled
+        // ids with the Calls bundle; until then no copy of it is accepted.)
+        let calls = vec![serde_json::json!({ "kind": "calls", "justification": "x" })];
+        assert!(declares_privileged_kind(
+            &git,
+            [calls.as_slice()].into_iter()
+        ));
+        assert!(!declares_privileged_kind(
+            &PluginId::parse("deckpilot.calls").unwrap(),
+            [calls.as_slice()].into_iter()
+        ));
     }
 
     #[test]

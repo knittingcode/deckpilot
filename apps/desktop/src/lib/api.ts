@@ -78,6 +78,8 @@ import type {
   WorkSessionSettings,
   WorkSessionSnapshot,
   WorkSessionSummary,
+  CallsStatus,
+  DeviceId,
 } from "./types"
 
 export interface ActionInput {
@@ -93,6 +95,19 @@ export interface ProjectInput {
   key: string
   name: string
   resources: Record<string, string>
+  /** Left out: the stored repositories are kept as they are. */
+  repositories?: RepositoryInput[]
+  defaultRepository?: string | null
+}
+
+/** A repository as the form saves it; remotes are kept by the backend. */
+export interface RepositoryInput {
+  id?: string
+  key: string
+  name: string
+  /** Left out for a new one: the backend makes a key no binding uses. */
+  resource?: string
+  description?: string
 }
 
 /** Typed wrappers around the backend commands. */
@@ -362,6 +377,9 @@ export const api = {
     invoke<null>("move_project", { profileId, projectId, index }),
   deleteProject: (profileId: string, projectId: string) =>
     invoke<null>("delete_project", { profileId, projectId }),
+  /** Marks the default repository and points the `repository` role at it (R2). */
+  setDefaultRepository: (profileId: string, projectId: string, repositoryId: string | null) =>
+    invoke<Project>("set_default_repository", { profileId, projectId, repositoryId }),
   copyProject: (profileId: string, projectId: string, targetProfileId: string) =>
     invoke<Project>("copy_project", { profileId, projectId, targetProfileId }),
   cycleProject: (profileId: string, direction: "next" | "previous") =>
@@ -588,6 +606,15 @@ export const api = {
   /** Validates the workflows against their contracts before it writes. */
   saveWorkSessionSettings: (profileId: string, settings: WorkSessionSettings) =>
     invoke<WorkSessionSettings>("save_work_session_settings", { profileId, settings }),
+
+  // Calls (protocol 19, docs/calls.md). The agent owns Calls; with an agent
+  // below protocol 19 they reject with "callsAgentTooOld".
+  getCallsStatus: () => invoke<CallsStatus>("get_calls_status"),
+  setCallsOverlay: (device: DeviceId, on: boolean) =>
+    invoke<CallsStatus>("set_calls_overlay", { device, on }),
+  /** Keeps the user's version as `copyName` first; answers the copy's id. */
+  restoreCallsLayout: (model: string, copyName: string) =>
+    invoke<string | null>("restore_calls_layout", { model, copyName }),
 }
 
 /** Backend event carrying the latest {@link AgentConnection}. */

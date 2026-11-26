@@ -60,6 +60,10 @@ fn broker() -> Broker {
         project_switch: plenty,
         scripts: plenty,
         open_url_param: plenty,
+        connection_http: plenty,
+        connections_http: plenty,
+        sleep: plenty,
+        connection_report: plenty,
     };
     let b = Broker::new(
         Arc::new(MemoryAudit::new(10)),

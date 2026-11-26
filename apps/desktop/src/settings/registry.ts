@@ -7,6 +7,7 @@ import {
   KeyRound,
   Languages,
   LayoutTemplate,
+  Link2,
   MonitorSmartphone,
   Puzzle,
   RefreshCw,
@@ -238,6 +239,34 @@ const CORE_PAGES: PageDefinition[] = [
       import("./pages/permissions").then((m) => ({ default: m.PermissionsSettings })),
     ),
   },
+  // Builds with plugins only: the servers plugins connect to (plugin API
+  // 1.14), loaded only when the page opens.
+  ...(import.meta.env.VITE_DECKPILOT_PLUGINS === "1"
+    ? [
+        {
+          id: "connections",
+          title: "settings:pages.connections.title",
+          description: "settings:pages.connections.description",
+          category: "extensions",
+          icon: Link2,
+          keywords: [
+            "connections",
+            "github",
+            "gitlab",
+            "enterprise",
+            "self-managed",
+            "token",
+            "server",
+            "połączenia",
+          ],
+          view: view(() =>
+            import("@/plugins/connections/connections-settings").then((m) => ({
+              default: m.ConnectionsSettings,
+            })),
+          ),
+        } satisfies PageDefinition,
+      ]
+    : []),
   {
     id: "diagnostics",
     title: "settings:pages.diagnostics.title",

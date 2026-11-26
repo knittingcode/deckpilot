@@ -314,6 +314,11 @@ pub enum Permission {
         /// names the URL. `hosts` may then be empty.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from_params: Option<bool>,
+        /// Plugin API 1.14, with the `connections` permission: pages on the
+        /// web origin of a connection the invocation is bound to may be
+        /// opened too. `hosts` may then be empty.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connections: Option<bool>,
         justification: String,
     },
     /// Timers while the plugin is active.
@@ -382,6 +387,91 @@ pub enum Permission {
         shell: Option<bool>,
         justification: String,
     },
+    /// Plugin API 1.16, the bundled Calls plugin (`deckpilot.calls`) only
+    /// (`docs/calls.md`): the state of the user's calls and meetings as the
+    /// host's providers observe it (`call.state`, `calls:observe`, medium),
+    /// and with `control` asking the host to answer, reject, end, mute or
+    /// switch the camera of the focused call (`call.control`,
+    /// `calls:control`, high, asked for on its own). The plugin never sees
+    /// provider traffic, process names or tokens; a meeting title only with
+    /// the user's opt-in.
+    Calls {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control: Option<bool>,
+        justification: String,
+    },
+    /// Plugin API 1.14, first-party bundled plugins only (connections):
+    /// the plugin may be offered connections of the listed
+    /// `contributes.connectionTypes`, each one created, consented to and
+    /// signed in by the user in the app, with its own server, secret and
+    /// status. The host makes every request; the secret never reaches the
+    /// plugin. High tier, never derived.
+    #[serde(rename_all = "camelCase")]
+    Connections {
+        /// Ids of `contributes.connectionTypes`, every declared type.
+        types: Vec<String>,
+        /// The most a connection may be allowed; a new connection gets
+        /// `GET` only until the user allows changes. Absent: `GET`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        methods: Option<Vec<HttpMethod>>,
+        /// Whether the user may connect a server on a private network
+        /// (each such connection consented to on its own); loopback and
+        /// link-local addresses are never reachable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_network: Option<bool>,
+        justification: String,
+    },
+}
+
+impl Permission {
+    /// The methods of a `connections` permission (`GET` when absent);
+    /// empty for every other kind.
+    pub fn connection_methods(&self) -> Vec<HttpMethod> {
+        match self {
+            Self::Connections { methods, .. } => {
+                methods.clone().unwrap_or_else(|| vec![HttpMethod::Get])
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether an `openUrl` permission names `connections` at all (`true`
+    /// or `false`): a plugin API 1.14 field, gated like the other
+    /// constructs of the level.
+    pub fn names_connections(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                connections: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Whether an `openUrl` permission names `fromParams` at all: a plugin
+    /// API 1.9 field, gated like the other privileged constructs.
+    pub fn names_from_params(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                from_params: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Whether an `openUrl` permission declares `connections` (plugin API
+    /// 1.14): pages on the web origin of a connection the invocation is
+    /// bound to.
+    pub fn opens_connections(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenUrl {
+                connections: Some(true),
+                ..
+            }
+        )
+    }
 }
 
 /// One executable of the `tools` permission, with the subcommands and
@@ -587,6 +677,8 @@ pub enum PermissionKind {
     ProjectContext,
     HostViews,
     Scripts,
+    Connections,
+    Calls,
 }
 
 impl PermissionKind {
@@ -608,15 +700,24 @@ impl PermissionKind {
             Self::ProjectContext => "projectContext",
             Self::HostViews => "hostViews",
             Self::Scripts => "scripts",
+            Self::Connections => "connections",
+            Self::Calls => "calls",
         }
     }
 
-    /// Whether the kind is one of plugin API 1.9's privileged kinds, which
-    /// only first-party bundled plugins may declare (X12).
+    /// Whether the kind is one of the privileged kinds only first-party
+    /// bundled plugins may declare: plugin API 1.9's (X12), 1.14's
+    /// `connections` and 1.16's `calls`.
     pub fn is_first_party_only(self) -> bool {
         matches!(
             self,
-            Self::Tools | Self::Resources | Self::ProjectContext | Self::HostViews | Self::Scripts
+            Self::Tools
+                | Self::Resources
+                | Self::ProjectContext
+                | Self::HostViews
+                | Self::Scripts
+                | Self::Connections
+                | Self::Calls
         )
     }
 }
@@ -639,6 +740,8 @@ impl Permission {
             Self::ProjectContext { .. } => PermissionKind::ProjectContext,
             Self::HostViews { .. } => PermissionKind::HostViews,
             Self::Scripts { .. } => PermissionKind::Scripts,
+            Self::Connections { .. } => PermissionKind::Connections,
+            Self::Calls { .. } => PermissionKind::Calls,
         }
     }
 
@@ -665,6 +768,8 @@ impl Permission {
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
             | Self::Scripts { justification, .. }
+            | Self::Connections { justification, .. }
+            | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -686,6 +791,8 @@ impl Permission {
             | Self::Resources { justification, .. }
             | Self::ProjectContext { justification, .. }
             | Self::Scripts { justification, .. }
+            | Self::Connections { justification, .. }
+            | Self::Calls { justification, .. }
             | Self::Dialogs { justification }
             | Self::HostViews { justification } => justification,
         }
@@ -752,6 +859,23 @@ pub struct Contributes {
     /// first-party bundled plugins with `hostViews` only, X8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard_cards: Option<Vec<DashboardCard>>,
+    /// The Calls presentation overlay (plugin API 1.16, the bundled Calls
+    /// plugin with the `calls` permission only): the pages the host shows
+    /// on a device during a call. Placement only: the host decides when.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_overlay: Option<crate::calls::CallOverlay>,
+    /// The managed Calls layouts, per device capability class (plugin API
+    /// 1.16, with `callOverlay`). Data only: the host generates one layout
+    /// per connected model from them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_templates: Option<Vec<crate::calls::LayoutTemplate>>,
+    /// The kinds of server the user can connect (plugin API 1.14,
+    /// first-party bundled plugins with `connections` only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_types: Option<Vec<crate::connections::ConnectionType>>,
+    /// The shapes of the plugin's `records` outputs (plugin API 1.14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_schemas: Option<Vec<crate::connections::RecordSchema>>,
     /// Gesture presets (plugin API 1.10): several of the plugin's own
     /// actions on the gestures of one control at once. Data only: a preset
     /// grants nothing, and each action keeps its own permissions.
@@ -888,6 +1012,16 @@ impl Contributes {
     pub fn credentials(&self) -> &[Credential] {
         self.credentials.as_deref().unwrap_or_default()
     }
+
+    /// `connectionTypes`, empty when absent.
+    pub fn connection_types(&self) -> &[crate::connections::ConnectionType] {
+        self.connection_types.as_deref().unwrap_or_default()
+    }
+
+    /// `recordSchemas`, empty when absent.
+    pub fn record_schemas(&self) -> &[crate::connections::RecordSchema] {
+        self.record_schemas.as_deref().unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -975,6 +1109,18 @@ pub enum ParameterKind {
         language: CodeLanguage,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_length: Option<u64>,
+    },
+    /// Plugin API 1.14, first-party bundled plugins with `connections`
+    /// only: one of the user's connections of one of `types`, picked in
+    /// the app. The stored value is the connection's id, never a URL or a
+    /// secret, and never a dynamic reference; the host binds the
+    /// invocation to exactly that connection.
+    Connection {
+        types: Vec<String>,
+        /// Only connections whose last test found this capability (a key
+        /// of what the plugin reports for the connection) are offered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability: Option<String>,
     },
 }
 
@@ -1073,6 +1219,10 @@ pub struct Parameter {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<ParameterValue>,
+    /// Plugin API 1.14: a picker of values one of the plugin's read-only
+    /// internal actions lists (text parameters only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<crate::connections::ParameterOptions>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1119,6 +1269,11 @@ pub enum OutputKind {
     Path,
     Url,
     ProjectKey,
+    /// Plugin API 1.14: a list of records of `schema` (at most
+    /// [`MAX_RECORDS`](crate::MAX_RECORDS) and
+    /// [`MAX_RECORDS_BYTES`](crate::MAX_RECORDS_BYTES)). Never shown on a
+    /// key.
+    Records,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1132,6 +1287,10 @@ pub struct Output {
     pub always: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensitive: Option<bool>,
+    /// For a `records` output (plugin API 1.14): the id of one of
+    /// `contributes.recordSchemas`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1262,6 +1421,19 @@ pub struct Action {
     /// where it belongs, and a use elsewhere is reported, never refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contexts: Option<Vec<String>>,
+    /// Plugin API 1.14: not in the Action Library, never on a key or a
+    /// workflow node. The app (the plugin's screen, its pickers, a
+    /// connection test) and the plugin's own parameter `options` invoke
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internal: Option<bool>,
+}
+
+impl Action {
+    /// `internal` (plugin API 1.14).
+    pub fn is_internal(&self) -> bool {
+        self.internal == Some(true)
+    }
 }
 
 /// The plugin API level that introduced `contributes.actions[].contexts`.

@@ -352,7 +352,16 @@ fn a_run_loads_only_its_own_trusted_script_once() {
 #[test]
 fn the_grant_summary_names_no_path() {
     let f = Fixture::new();
-    f.grant(ScriptGrants {
+    // An absolute program path on this platform: a Unix path such as
+    // `/opt/tools/bin/make` is not absolute on Windows (no drive), so the
+    // record would fail `validate` and grant nothing at all (shown as no
+    // grants: the product refuses an invalid record whole, on every OS).
+    let program = if cfg!(windows) {
+        r"C:\opt\tools\bin\make"
+    } else {
+        "/opt/tools/bin/make"
+    };
+    let grants = ScriptGrants {
         fs: vec![FsScope {
             root: FsRoot::Directory {
                 path: f.path("secret-place"),
@@ -362,7 +371,7 @@ fn the_grant_summary_names_no_path() {
             root_destructive: false,
         }],
         process: vec![deckpilot_core::script_grants::ProcessGrant {
-            command: "/opt/tools/bin/make".into(),
+            command: program.into(),
             cwd: deckpilot_core::script_grants::ProcessCwd::Any,
             env: deckpilot_core::script_grants::ProcessEnv::None,
             unrestricted_args: false,
@@ -371,7 +380,10 @@ fn the_grant_summary_names_no_path() {
             shells: vec!["sh".into()],
         }),
         ..ScriptGrants::default()
-    });
+    };
+    // A valid record, so every grant below must be in the summary.
+    assert_eq!(grants.validate(), Ok(()));
+    f.grant(grants);
     let mut e = f.executor(RunContext::direct(RunTrigger::Key));
     let loaded = ok(&call(
         &mut e,
@@ -379,7 +391,7 @@ fn the_grant_summary_names_no_path() {
     ));
     let text = loaded["grants"].to_string();
     assert!(
-        !text.contains("secret-place") && !text.contains("/opt"),
+        !text.contains("secret-place") && !text.contains("opt") && !text.contains("tools"),
         "{text}"
     );
     assert_eq!(loaded["grants"]["shell"], json!(["sh"]));

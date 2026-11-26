@@ -226,6 +226,26 @@ agent. In system-key mode they are a barrier in the user interface, not a
 cryptographic one: a process running as the same user can read the key from
 the credential store or ask the agent (next section).
 
+### Plugin connections
+
+Tokens of plugin connections (plugin API 1.14: a GitHub, a GitHub
+Enterprise Server, a GitLab the user connects a plugin to) are stored only
+in the plugin database (`plugins.db`), which is encrypted (SQLCipher) with
+a key derived from the configuration database's key, so it is protected
+exactly like the configuration (the operating system's credential store,
+or the password); never in a setting, a profile, a
+workflow, a script, a log, an export, a key title or a device image. The
+app sends a token once, over the authenticated local IPC, and no answer
+carries it back (only whether one is stored, and since when). The agent
+injects it only into requests to that connection's own server and path,
+redacts it from everything the plugin receives, refuses a redirect off the
+server, verifies certificates against the operating system's trust store
+(there is no option to skip verification or to trust a certificate
+automatically), and reaches a private network only with the connection's
+own consent; this computer, link-local and metadata addresses are never
+reachable. A plugin can use only the connections an action's parameters
+name. Removing a connection deletes its token at once.
+
 ## Trust boundary between the app and the agent
 
 The agent reads the system key, or receives the key that the configuration

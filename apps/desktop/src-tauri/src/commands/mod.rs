@@ -13,6 +13,7 @@
 mod actions;
 pub(crate) mod agent;
 pub(crate) mod assets;
+mod calls;
 mod credentials;
 mod icons;
 mod key_labels;
@@ -27,6 +28,7 @@ pub(crate) mod plugins;
 pub(crate) mod portability;
 mod profiles;
 pub(crate) mod reload;
+pub mod repositories;
 pub(crate) mod security;
 mod shared_layouts;
 mod shared_variables;
@@ -206,6 +208,9 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         work_session::clear_work_session_notices,
         work_session::get_work_session_settings,
         work_session::save_work_session_settings,
+        calls::get_calls_status,
+        calls::set_calls_overlay,
+        calls::restore_calls_layout,
         plugins::get_plugin_runtime,
         plugins::list_plugins,
         plugins::list_plugin_navigation,
@@ -239,6 +244,15 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         plugins::list_plugin_credentials,
         plugins::set_plugin_credential,
         plugins::delete_plugin_credential,
+        repositories::set_repository_remotes,
+        repositories::link_repository_remote,
+        repositories::list_repository_remotes,
+        plugins::list_plugin_connections,
+        plugins::create_plugin_connection,
+        plugins::set_plugin_connection_secret,
+        plugins::update_plugin_connection,
+        plugins::test_plugin_connection,
+        plugins::remove_plugin_connection,
         plugins::list_module_migrations,
         plugins::decide_module_migration,
         plugins::retry_module_migration,

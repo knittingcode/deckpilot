@@ -213,6 +213,22 @@ pub enum CapabilityRequest {
     ShellRun(crate::scripts::ShellRun),
     #[serde(rename = "shell.available")]
     ShellAvailable(NoArgs),
+    /// One connection the invocation is bound to, without its secret
+    /// ([`ConnectionRef`](crate::connections::ConnectionRef),
+    /// [`ConnectionInfo`](crate::connections::ConnectionInfo); plugin API
+    /// 1.14). Needs `connections`. First-party bundled plugins only.
+    #[serde(rename = "connections.get")]
+    ConnectionGet(crate::connections::ConnectionRef),
+    /// What a request found about a bound connection
+    /// ([`ConnectionStatusReport`](crate::connections::ConnectionStatusReport);
+    /// plugin API 1.14). Needs `connections`; only the reportable statuses.
+    #[serde(rename = "connections.reportStatus")]
+    ConnectionReportStatus(crate::connections::ConnectionStatusReport),
+    /// Waits at most [`MAX_SLEEP_MS`](crate::connections::MAX_SLEEP_MS),
+    /// woken when the invocation is cancelled
+    /// ([`Sleep`](crate::connections::Sleep); plugin API 1.14).
+    #[serde(rename = "time.sleep")]
+    TimeSleep(crate::connections::Sleep),
 }
 
 /// The `ok` value of `time.now`. Unknown fields are **ignored** (host to
@@ -511,6 +527,13 @@ pub struct HttpFetch {
     /// without it are byte-identical to the original ABI 1 form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<HttpAuth>,
+    /// A connection the invocation is bound to (plugin API 1.14), instead
+    /// of `auth`: the host checks the URL against that connection's
+    /// origin, path prefix and methods and injects its secret. Optional and
+    /// omitted from the JSON when absent, so requests without it are
+    /// byte-identical to the earlier form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
 }
 
 /// How a credential handle is attached to a request.
@@ -586,8 +609,28 @@ pub const RESPONSE_HEADERS: &[&str] = &[
     "ratelimit-observed",
 ];
 
-/// Whether a response header (any case) is handed to plugins
-/// ([`RESPONSE_HEADERS`]).
+/// Response headers handed to plugins **on a connection's responses only**
+/// (plugin API 1.14), besides [`RESPONSE_HEADERS`]: what the connection's
+/// token may do and when it expires (GitHub), so a plugin can name a
+/// missing permission or warn about an over-privileged or expiring token.
+/// Scope names and a date, never a secret. A fetch with a credential slot
+/// never receives them (least privilege).
+pub const CONNECTION_RESPONSE_HEADERS: &[&str] = &[
+    "x-oauth-scopes",
+    "x-accepted-oauth-scopes",
+    "github-authentication-token-expiration",
+];
+
+/// Whether a response header (any case) is handed to plugins on a
+/// connection's responses only ([`CONNECTION_RESPONSE_HEADERS`]).
+pub fn is_connection_response_header(name: &str) -> bool {
+    CONNECTION_RESPONSE_HEADERS
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(name))
+}
+
+/// Whether a response header (any case) is handed to plugins on every
+/// response ([`RESPONSE_HEADERS`]).
 pub fn is_response_header(name: &str) -> bool {
     RESPONSE_HEADERS
         .iter()
@@ -812,6 +855,9 @@ impl CapabilityRequest {
             Self::ProcessRun(_) => "process.run",
             Self::ShellRun(_) => "shell.run",
             Self::ShellAvailable(_) => "shell.available",
+            Self::ConnectionGet(_) => "connections.get",
+            Self::ConnectionReportStatus(_) => "connections.reportStatus",
+            Self::TimeSleep(_) => "time.sleep",
         }
     }
 
@@ -841,6 +887,15 @@ impl CapabilityRequest {
                     .is_some_and(|a| !is_credential_key(&a.credential))
                 {
                     return Err(RequestError::TooLarge("credential"));
+                }
+                if let Some(connection) = &f.connection {
+                    if !crate::connections::is_connection_id(connection) {
+                        return Err(RequestError::Invalid("connection"));
+                    }
+                    // A connection brings its own secret: never a slot too.
+                    if f.auth.is_some() {
+                        return Err(RequestError::Invalid("auth"));
+                    }
                 }
             }
             Self::Notify(n) => {
@@ -940,6 +995,9 @@ impl CapabilityRequest {
             | Self::ProcessRun(_)
             | Self::ShellRun(_)
             | Self::ShellAvailable(_) => crate::scripts::validate(self)?,
+            Self::ConnectionGet(c) => c.validate()?,
+            Self::ConnectionReportStatus(r) => r.validate()?,
+            Self::TimeSleep(t) => t.validate()?,
         }
         Ok(())
     }
@@ -1762,6 +1820,26 @@ mod tests {
         ] {
             assert!(!is_response_header(name), "{name}");
         }
+        // A token's scopes and expiry: on a connection's responses only
+        // (plugin API 1.14), never on every fetch.
+        for name in [
+            "x-oauth-scopes",
+            "X-Accepted-OAuth-Scopes",
+            "github-authentication-token-expiration",
+        ] {
+            assert!(is_connection_response_header(name), "{name}");
+            assert!(!is_response_header(name), "{name}");
+        }
+        for name in ["authorization", "private-token", "x-oauth-scope", ""] {
+            assert!(!is_connection_response_header(name), "{name}");
+        }
+        let unique: std::collections::BTreeSet<_> = CONNECTION_RESPONSE_HEADERS.iter().collect();
+        assert_eq!(unique.len(), CONNECTION_RESPONSE_HEADERS.len());
+        assert!(
+            CONNECTION_RESPONSE_HEADERS
+                .iter()
+                .all(|name| !is_response_header(name))
+        );
         let unique: std::collections::BTreeSet<_> = RESPONSE_HEADERS.iter().collect();
         assert_eq!(unique.len(), RESPONSE_HEADERS.len());
         assert!(RESPONSE_HEADERS.len() <= MAX_HEADERS);

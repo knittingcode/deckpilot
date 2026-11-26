@@ -414,6 +414,29 @@ export interface Project {
   key: string
   name: string
   resources: Record<string, string>
+  /** In order; left out when there are none (docs/data-model.md, "Repositories"). */
+  repositories?: Repository[]
+  defaultRepository?: string
+}
+
+/** A repository of a project; its folder is the machine binding of `resource`. */
+export interface Repository {
+  id: string
+  key: string
+  name: string
+  resource: string
+  description?: string
+  /** Written only by the app (Git Providers); kept by every save. */
+  remotes?: RepositoryRemote[]
+}
+
+export interface RepositoryRemote {
+  name: string
+  primary?: boolean
+  connectionId?: string
+  remoteRepositoryId?: string
+  remoteUrl?: string
+  defaultBranch?: string
 }
 
 export type TouchGesture = "tap" | "longPress" | "swipe"
@@ -1530,6 +1553,38 @@ export type AgentCapability =
   | "keyLabels"
   /** `object`/`map` value types, member entries, `structured` previews (protocol 18). */
   | "structuredVariables"
+  | "calls"
+
+/**
+ * Calls as the agent reports it (protocol 19, `deckpilot_ipc::calls`):
+ * never a meeting title, participant or process name.
+ */
+export interface CallsStatus {
+  /** A provider is installed with the user's consent. */
+  installed: boolean
+  /** `idle`, `incoming`, `outgoing`, `connecting`, `active`, `ending`, `ended`, `failed`, `unknown`. */
+  state: string
+  provider?: string
+  /** Whether any control is possible (false for detection-only Teams). */
+  controls: boolean
+  devices: CallsDevice[]
+  layouts: CallsLayout[]
+}
+
+export interface CallsDevice {
+  device: DeviceId
+  overlay: boolean
+  shown: boolean
+  suspended: boolean
+}
+
+export interface CallsLayout {
+  model: string
+  layout: string
+  name: string
+  edited: boolean
+  templateVersion: string
+}
 
 /** What became of the agent's reload after a save (`commands/reload.rs`). */
 export type AgentReload =

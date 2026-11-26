@@ -122,13 +122,21 @@ fn counts(outcome: &ActionOutcome) -> (i64, i64) {
     (int("ok"), int("err"))
 }
 
+/// Work between two calls of the deadline tests: about 4–5 ms on a fast
+/// laptop (about 0.8 ns an iteration), so the 200 ms continuous deadline
+/// comes after some 50 calls, and the 4096-call budget would take more than
+/// 15 s of work even on hardware several times faster, or with an epoch
+/// ticker that lags under load. With 300 000 (about 0.2 ms) a fast runner
+/// spent the budget first (main at 113c7f35, macOS).
+const DEADLINE_SPIN: i64 = 6_000_000;
+
 /// A busy loop that polls between bursts of work still meets the deadline:
 /// polls never give it back the time it used.
 #[test]
 fn a_poll_loop_traps_at_the_continuous_deadline() {
     let (mut p, seen, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
     let started = Instant::now();
-    let r = p.invoke(1, "raw_loop", &raw_loop(POLL, 0, 300_000));
+    let r = p.invoke(1, "raw_loop", &raw_loop(POLL, 0, DEADLINE_SPIN));
     let took = started.elapsed();
     assert!(matches!(r, Err(Fault::Deadline)), "{r:?}");
     assert!(
@@ -137,14 +145,17 @@ fn a_poll_loop_traps_at_the_continuous_deadline() {
     );
     assert!(seen.borrow().iter().all(|op| *op == "script.poll"));
     assert!(!seen.borrow().is_empty(), "the polls reached the agent");
+    assert!(seen.borrow().len() < 1024, "{}", seen.borrow().len());
 }
 
 #[test]
 fn a_log_loop_traps_at_the_continuous_deadline() {
     let (mut p, seen, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
-    let r = p.invoke(1, "raw_loop", &raw_loop(LOG, 0, 300_000));
+    let r = p.invoke(1, "raw_loop", &raw_loop(LOG, 0, DEADLINE_SPIN));
     assert!(matches!(r, Err(Fault::Deadline)), "{r:?}");
     assert!(seen.borrow().iter().all(|op| *op == "script.log"));
+    // The deadline, well before the call budget could matter.
+    assert!(seen.borrow().len() < 1024, "{}", seen.borrow().len());
 }
 
 /// A malformed poll is answered by the host itself and gives no time back
@@ -153,7 +164,7 @@ fn a_log_loop_traps_at_the_continuous_deadline() {
 fn a_malformed_poll_does_not_reset_the_deadline() {
     let (mut p, seen, _e) = load(scripts_limits(Some(4096), Some(8192)), Duration::ZERO);
     let bad = r#"{"op":"script.poll","args":{"reset":true}}"#;
-    let r = p.invoke(1, "raw_loop", &raw_loop(bad, 0, 300_000));
+    let r = p.invoke(1, "raw_loop", &raw_loop(bad, 0, DEADLINE_SPIN));
     assert!(matches!(r, Err(Fault::Deadline)), "{r:?}");
     assert!(seen.borrow().is_empty(), "never relayed");
 }

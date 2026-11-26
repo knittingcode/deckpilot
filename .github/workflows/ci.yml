@@ -59,6 +59,9 @@ jobs:
           fetch-depth: 2
       - name: The path rules work
         run: tools/ci/test-changed-paths.sh
+      # The merge queue path check of the path-filtered workflows.
+      - name: The merge group path rules work
+        run: tools/ci/test-merge-group-paths.sh
       - id: paths
         env:
           EVENT_NAME: ${{ github.event_name }}
