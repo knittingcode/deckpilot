@@ -225,9 +225,12 @@ impl FeatureModule for PluginModule {
         // Keys of a plugin whose actions cannot run show no state: they
         // fall back to how the user designed them.
         let runs = self.plugin.unavailable.is_none();
+        // Plugin API 1.14: internal actions are never in the Action
+        // Library, on a key or a workflow node.
         self.plugin
             .actions
             .iter()
+            .filter(|action| !action.is_internal())
             .filter_map(|action| {
                 match PluginActionHandler::new(&self.plugin.id, action, self.invoker.clone()) {
                     Ok(handler) => {
@@ -284,9 +287,22 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
             if let deckpilot_plugin_manifest::ParameterKind::Resource { kinds } = &parameter.kind {
                 return Ok(resource_spec(parameter, kinds));
             }
+            // Plugin API 1.14: a connection is stored as its id, plain text
+            // for the core; the app draws its picker from the manifest.
+            if let deckpilot_plugin_manifest::ParameterKind::Connection { .. } = &parameter.kind {
+                return Ok(connection_spec(parameter));
+            }
             // Through `core_spec`: the kind's constraints (`maxLength`, …)
             // are camel case in the manifest and snake case in the core.
+            // A parameter's `options` (plugin API 1.14) are the app's: the
+            // stored value stays plain text.
             serde_json::to_value(parameter)
+                .map(|mut json| {
+                    if let Some(map) = json.as_object_mut() {
+                        map.remove("options");
+                    }
+                    json
+                })
                 .map_err(|e| e.to_string())
                 .and_then(super::data::core_spec)
                 .map_err(|e| format!("parameter {e}"))
@@ -294,6 +310,7 @@ pub(crate) fn action_type(plugin: &str, action: &Action) -> Result<ActionType, S
         .collect::<Result<Vec<_>, _>>()?;
     let mut node: NodeSpec = match &action.node {
         Some(node) => serde_json::to_value(node)
+            .map(core_outputs)
             .and_then(serde_json::from_value)
             .map_err(|e| format!("node: {e}"))?,
         None => NodeSpec::default(),
@@ -360,6 +377,47 @@ fn action_contexts(names: &[String]) -> Result<deckpilot_core::ActionContexts, S
         })
         .collect::<Result<Vec<_>, _>>()
         .map(deckpilot_core::ActionContexts::of)
+}
+
+/// A `connection` parameter (plugin API 1.14) as the core's: text, the
+/// connection's id, without a default (the app offers the type's default
+/// connection when the key is set up).
+fn connection_spec(
+    parameter: &deckpilot_plugin_manifest::Parameter,
+) -> deckpilot_core::ParameterSpec {
+    deckpilot_core::ParameterSpec {
+        key: parameter.key.clone(),
+        label: parameter.label.clone(),
+        description: parameter.description.clone(),
+        kind: deckpilot_core::ParameterKind::Text {
+            multiline: false,
+            max_length: Some(64),
+        },
+        required: parameter.required,
+        default: None,
+    }
+}
+
+/// A node's outputs as the core's: a `records` output (plugin API 1.14)
+/// is text the core never keeps (`sensitive`), without its schema, which
+/// the agent checks the records against itself.
+fn core_outputs(mut node: serde_json::Value) -> serde_json::Value {
+    if let Some(outputs) = node
+        .get_mut("outputs")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for output in outputs
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            if output.get("kind").and_then(serde_json::Value::as_str) == Some("records") {
+                output.insert("kind".into(), "text".into());
+                output.insert("sensitive".into(), true.into());
+            }
+            output.remove("schema");
+        }
+    }
+    node
 }
 
 /// A `resource` parameter as the core's: one kind for the editor when the
@@ -481,6 +539,11 @@ pub(crate) struct PluginActionHandler {
     /// names is missing or disabled. It then fails at once, never reaching
     /// the plugin.
     unmet: Option<String>,
+    /// The keys of its `connection` parameters (plugin API 1.14): their
+    /// values must be what the user chose, never a mapped or referenced
+    /// value, so no workflow input or other plugin's value can steer the
+    /// action onto another of the user's connections.
+    connections: Vec<String>,
 }
 
 impl PluginActionHandler {
@@ -495,6 +558,17 @@ impl PluginActionHandler {
             invoker,
             state: None,
             unmet: None,
+            connections: action
+                .parameters
+                .iter()
+                .filter(|p| {
+                    matches!(
+                        p.kind,
+                        deckpilot_plugin_manifest::ParameterKind::Connection { .. }
+                    )
+                })
+                .map(|p| p.key.clone())
+                .collect(),
         })
     }
 
@@ -618,6 +692,18 @@ impl PluginActionHandler {
     }
 
     fn run(&self, parameters: &ActionParameters, context: &ExecutionContext<'_>) -> ActionResult {
+        if let Some(key) = self.connections.iter().find(|key| {
+            parameters.get(key).is_some()
+                && !context.provenance().is_some_and(|p| p.is_literal(key))
+        }) {
+            return ActionResult::error(
+                "invalid-parameters",
+                format!(
+                    "`{key}` must be a connection chosen in the action's settings, never a \
+                     mapped or referenced value"
+                ),
+            );
+        }
         let params = match params(parameters) {
             Ok(params) => params,
             Err(problem) => return ActionResult::error("invalid-parameters", problem),
@@ -1280,6 +1366,67 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// Plugin API 1.14: a `connection` parameter takes only the value the
+    /// user chose (T8): a mapped, referenced or templated value, or one of
+    /// unknown origin, never reaches the plugin.
+    #[test]
+    fn a_connection_is_never_a_mapped_or_referenced_value() {
+        use deckpilot_core::resolution::{Provenance, Provenances};
+        use deckpilot_core::{MachineConfig, ParameterValue, Profile};
+        let manifest = deckpilot_plugin_manifest::Manifest::from_json(include_str!(
+            "../../../../crates/deckpilot-plugin-manifest/tests/fixtures/connections-manifest.json"
+        ))
+        .unwrap();
+        let action = manifest
+            .contributes
+            .actions()
+            .iter()
+            .find(|a| a.id == "pipeline-status")
+            .unwrap();
+        let handler = PluginActionHandler::new(
+            manifest.id.as_str(),
+            action,
+            super::super::worker::Invoker::detached(),
+        )
+        .unwrap();
+        let parameters = ActionParameters::new()
+            .with(
+                "connection",
+                ParameterValue::Text("cn_01JD7Q0000000000000000000A".into()),
+            )
+            .with("repository", ParameterValue::Text("gl:4711".into()));
+        let profile = Profile::new("P");
+        let machine = MachineConfig::new(deckpilot_core::Os::Linux);
+        let base = ExecutionContext::new(&profile, None, &machine);
+        let code = |provenance: Option<Provenance>| {
+            let provenances =
+                Provenances::from_entries(provenance.map(|p| ("connection".to_owned(), p)));
+            let context = match provenance {
+                Some(_) => base.with_provenance(&provenances),
+                None => base,
+            };
+            handler.run(&parameters, &context).code
+        };
+        // A literal one passes the check (the worker is gone here).
+        assert_eq!(
+            code(Some(Provenance::Literal)).as_deref(),
+            Some("plugin-unavailable")
+        );
+        for provenance in [
+            None,
+            Some(Provenance::Mapped),
+            Some(Provenance::Reference),
+            Some(Provenance::Template),
+            Some(Provenance::Default),
+        ] {
+            assert_eq!(
+                code(provenance).as_deref(),
+                Some("invalid-parameters"),
+                "{provenance:?}"
+            );
+        }
     }
 
     #[test]

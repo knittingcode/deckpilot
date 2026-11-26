@@ -716,6 +716,9 @@ const KNOWN_OPS: &[&str] = &[
     "dialog.open",
     "locale.get",
     "locale.translate",
+    "connections.get",
+    "connections.reportStatus",
+    "time.sleep",
 ];
 
 /// Whether a malformed request of `op` is `bad-request` (rather than

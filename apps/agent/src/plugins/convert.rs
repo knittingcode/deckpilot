@@ -822,7 +822,7 @@ pub fn params(values: &BTreeMap<String, serde_json::Value>) -> Result<Params, St
         .collect()
 }
 
-fn json(value: &ParamValue) -> serde_json::Value {
+pub(super) fn json(value: &ParamValue) -> serde_json::Value {
     match value {
         ParamValue::Bool(b) => serde_json::Value::Bool(*b),
         ParamValue::Integer(i) => serde_json::Value::from(*i),
@@ -925,10 +925,15 @@ pub fn approved_with(
                 | PermissionKind::Resources
                 | PermissionKind::ProjectContext
                 | PermissionKind::Profile
-                | PermissionKind::Scripts,
+                | PermissionKind::Scripts
+                // Plugin API 1.14: passed as the user's connections
+                // themselves (`connections.rs`), each within these grants.
+                | PermissionKind::Connections,
                 _,
             )
             | (PermissionKind::OpenUrl, GrantScope::OpenUrlFromParams) => {}
+            (PermissionKind::OpenUrl, GrantScope::OpenUrl)
+                if key.key == deckpilot_plugin_store::OPEN_URL_CONNECTIONS_KEY => {}
             (PermissionKind::Network, GrantScope::Host { methods }) => match origin_of(&key.key) {
                 Some(origin) => out.push(ApprovedPermission::Network {
                     origin,
@@ -1473,5 +1478,19 @@ mod tests {
         );
         assert_eq!(skipped, ["hostViews"]);
         deckpilot_plugin_broker::Grants::derive(&approved).unwrap();
+    }
+
+    /// Plugin API 1.16's `calls` and `calls:control` approve nothing in the
+    /// broker: no operation exists for them yet (the Calls bundle adds
+    /// them, pinned to `deckpilot.calls`).
+    #[test]
+    fn calls_grants_approve_nothing_in_the_broker() {
+        let key = |text: &str| text.parse::<GrantKey>().unwrap();
+        let (approved, skipped) = approved(&[
+            (key("calls"), GrantScope::CallsObserve),
+            (key("calls:control"), GrantScope::CallsControl),
+        ]);
+        assert!(approved.0.is_empty(), "{:?}", approved.0);
+        assert_eq!(skipped, ["calls", "calls:control"]);
     }
 }

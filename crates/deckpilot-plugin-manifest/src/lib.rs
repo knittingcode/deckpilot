@@ -31,7 +31,9 @@
 //! grantable in plugin API 1 (file system, processes, clipboard…) have no
 //! representation at all.
 
+mod calls;
 mod compat;
+mod connections;
 mod dependency;
 mod error;
 mod icon;
@@ -46,10 +48,15 @@ mod unique_map;
 mod validate;
 mod visual;
 
+pub use calls::{
+    CALLS_API, CALLS_PLUGIN_ID, CallOverlay, CallPage, LayoutTemplate, MAX_LAYOUT_TEMPLATES,
+    MAX_TEMPLATE_CONTROLS, TemplateControl, TemplateControlKind, TemplatePage, TemplateShape,
+};
 pub use compat::{
     ApiLevel, ApiRequirement, HostEnvironment, Incompatibility, MAX_RANGE_LEN, Platform,
     RangeError, VersionRange,
 };
+pub use connections::*;
 pub use dependency::{
     DEPENDENCIES_API, Dependency, DependencyTarget, MAX_BUILTIN_ID_LEN, MAX_DEPENDENCIES,
     MAX_DEPENDENCY_JUSTIFICATION,

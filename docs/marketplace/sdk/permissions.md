@@ -171,6 +171,128 @@ never seeded with a bundled plugin (which seeds low tiers only).
 - A plugin with `tools` declares no `network`, `credentials` or `openUrl`
   (no exfiltration channel next to process authority).
 
+## Plugin API 1.14: connections (first-party bundled plugins only)
+
+A **connection** is a server the user connects in the app: GitHub.com,
+a company's GitHub Enterprise Server, GitLab.com, a self-managed GitLab
+on its own port or path. Each connection the user creates has its own
+origin consent, private-network consent, secret and status; the plugin
+names it by an opaque id (`cn_` and 26 characters) and never sees its
+secret, its auth header or another connection's server. This replaces,
+for these plugins, the single server and token a `userOrigins` slot
+allows.
+
+The `connections` permission, `openUrl.connections`,
+`contributes.connectionTypes` and `connection` parameters need
+`"engines": { "pluginApi": "^1.14" }` and, like plugin API 1.9's kinds,
+pass only the rules for a plugin shipped inside the app
+(`Manifest::validate_bundled`); they are privileged usages, so a signed
+release of such a plugin is admitted only with a reviewed privileged
+policy that names them. The other additions of the level (parameter
+`options`, internal actions, `records` outputs and
+`contributes.recordSchemas`, [manifest.md](manifest.md#plugin-api-114-connections))
+are first-party only too in 1.14, without being privileged.
+
+**Status:** the manifest model and its validation, the JSON Schema, the
+ABI operations, the SDK and the host side are in place: connections in the
+plugin store (`plugins.db` schema 7), one high-tier grant `connections`
+(and `openUrl:connections`, medium) that a new type, method or private
+network escalates, a broker grant per connection, the binding of each
+invocation, the stricter redirect rule, per-connection rate limits and the
+app's connection requests (IPC protocol 20). The agent's `PLUGIN_API`
+reports the level it fully provides (1.11 today), so it still reports a
+`^1.14` plugin as `incompatible` until plugin API 1.12 and 1.13 are
+provided too.
+
+| Kind | Fields | Grant | Allows |
+| --- | --- | --- | --- |
+| `connections` | `types`: 1-8 ids of `contributes.connectionTypes`, every declared type; `methods` (must include `GET`; absent: `GET`), the most a connection may get; `privateNetwork` (boolean) | **high**, never derived by a migration and never seeded; each connection is then consented to by the user creating it | `http.fetch` with `connection`, `connections.get`, `connections.reportStatus` for connections the invocation is bound to |
+| `openUrl` with `connections: true` | `hosts` may then be empty; needs the `connections` permission | follows each connection's consent | `url.open` of `https` pages on the web origin of a bound connection |
+
+The rules the host enforces once it carries connections out:
+
+- A request goes only to the bound connection's exact origin (scheme,
+  host, port), inside its path prefix segment by segment (`/api/v4`,
+  never `/api/v40`), with one of the connection's methods. A new
+  connection gets `GET` only until the user allows changes.
+- An invocation is bound to the connections its parameters name (a
+  `connection` parameter, or the connection of a repository reference),
+  or the one the app names for its own screens. A plugin cannot list
+  connections and use them freely; an id outside the binding is
+  `not-permitted`.
+- A redirect off the connection's origin or prefix is refused outright
+  (`redirect-refused`), never followed without the secret.
+- `https` only; the operating system's trust store, with no option to
+  skip verification. Private-network servers only with the connection's
+  own consent; loopback and link-local addresses never.
+- The secret is injected by the host in the type's scheme (`bearer` or
+  `header`, never in a URL), and redacted from every reply, header and
+  error. A guest-set header named like the type's `headerName`
+  (`PRIVATE-TOKEN`) is refused (`forbidden-header`), as are
+  `Authorization`, `Cookie` and the other forbidden headers. `basic` is
+  refused for connections until a user name is stored with them.
+- Rate limits: 60 requests a minute on each connection and 180 a minute on
+  all of a plugin's connections together, apart from the plugin's other
+  `http.fetch` (60 a minute); `connections.reportStatus` 12 a minute.
+- A `connection` parameter takes only the value the user chose for the
+  saved action: a key, gesture or workflow run whose value for it is mapped
+  from another node, a reference, a template or a workflow node's override
+  fails with `invalid-parameters` before the plugin runs, so no workflow
+  input or other plugin's value can move an action onto another of the
+  user's connections.
+- Internal actions (`"internal": true`) are never in the Action Library,
+  on a key, a gesture or a workflow node: the agent leaves them out of the
+  engine and refuses them from it. The app invokes them (a connection's
+  test runs the plugin's internal `probe` action, bound to exactly that
+  connection).
+- A `records` output reaches the app as a list of objects, each checked
+  against its schema (only declared fields, each of its kind, at most 200
+  records and 64 KiB); one that does not fit fails the outcome with
+  `invalid-output`.
+
+**Connections in the app.** The user creates a connection in the app
+(`createPluginConnection`): GitHub.com or GitLab.com at the manifest's own
+addresses, or a server they run, entered as the address they open in the
+browser (`https` only, a port and a path prefix allowed; the type's
+`apiPath` is added for the API). Creating it is the consent to exactly that
+server; a server named by an IP literal or a local name needs the separate
+private-network consent, and `localhost`, loopback, link-local and
+metadata addresses are refused whatever the user says. The token travels
+to the agent once and is kept in the encrypted plugin database (its key
+derived from the configuration database's, protected by the operating
+system's credential store or the password); no answer, log, export, key title or
+device image carries it, and a connection's name is refused when it looks
+like a token. Changing the server is a new connection. Removing one
+deletes its token in the same transaction; uninstalling the plugin keeps or
+deletes connections together with its credentials.
+
+## Plugin API 1.16: the bundled Calls plugin only
+
+`calls`, `contributes.callOverlay` and `contributes.layoutTemplates`
+([calls.md](../../calls.md)) need `"engines": { "pluginApi": "^1.16" }`,
+pass only `Manifest::validate_bundled` like the 1.9 kinds above, and only
+for the plugin `deckpilot.calls`. The manifest rules know the level; no
+DeckPilot provides it yet (the agent's plugin API stays at its current
+level until the Calls bundle lands), so no such plugin can be installed
+today.
+
+| Kind | Fields | Grant keys and tiers | Allows |
+| --- | --- | --- | --- |
+| `calls` | `control` (boolean) | `calls` (medium, shown as `calls:observe`); `calls:control` (**high**, optional when actions name it in `requiresPermissions`) | `call.state`: the focused call's sanitised state (no participants, numbers, meeting links or ids; a title only with the user's opt-in); with `control`, `call.control`: one action on the focused call, after the host's gate, answered with the **confirmed** outcome |
+
+- `callOverlay` (`{"pages": ["incoming", "outgoing", "active"]}`, 1 to 3
+  unique) and `layoutTemplates` (one per device shape: `grid-small`,
+  `grid`, `grid-large`, `keys-dials`, `no-display`) are data: the host
+  decides when a device shows the overlay, generates one layout per
+  connected model from the template of its shape, and draws every face.
+  Both need `calls`; the templates need `callOverlay`, and their pages
+  are pages of it.
+- A template control places one of the plugin's own actions on a key,
+  dial or touch zone the shape has, with parameters the action declares.
+- A plugin with `calls` declares no `network`, `credentials`, `openUrl`,
+  `tools` or `connections`: what it learns about calls leaves it only
+  through the host's faces.
+
 ## Always allowed (no permission)
 
 For an **enabled** plugin whose grants the broker accepted:

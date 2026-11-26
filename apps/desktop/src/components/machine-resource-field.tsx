@@ -296,14 +296,19 @@ export function MachineResourceField({
   )
 }
 
-/** A chosen file or folder: its name, its path, and the native dialogs. */
-function LocationRow({
+/**
+ * A chosen file or folder: its name, its path, the native dialogs, and
+ * whether a bound one is still there (`resource_status`). Also the folder
+ * field of a project's repositories.
+ */
+export function LocationRow({
   id,
   resource,
   path,
   folder,
   files,
   busy,
+  showGone = true,
   onBrowse,
 }: {
   id: string
@@ -317,6 +322,8 @@ function LocationRow({
    */
   files: boolean
   busy: boolean
+  /** Alert when the bound file or folder is gone (off where the caller says so itself). */
+  showGone?: boolean
   onBrowse: (directory: boolean) => void
 }) {
   const { t } = useTranslation()
@@ -393,7 +400,7 @@ function LocationRow({
           {t("actions:system.picker.fileOrFolder")}
         </p>
       )}
-      {gone && (
+      {gone && showGone && (
         <p className="text-xs text-destructive" role="alert">
           {t("actions:system.picker.locationGone")}
         </p>

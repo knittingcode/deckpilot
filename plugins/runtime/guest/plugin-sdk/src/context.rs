@@ -25,6 +25,8 @@ use serde_json::Value;
 use crate::definition::is_camel_key;
 use crate::output::{PluginError, codes};
 
+#[path = "connections.rs"]
+mod connections;
 #[path = "privileged.rs"]
 mod privileged;
 
@@ -204,6 +206,7 @@ impl<'a> Context<'a> {
             headers: request.headers,
             body: request.body,
             auth: request.auth,
+            connection: request.connection,
         });
         let value = self
             .call("http.fetch", &req)
@@ -1157,6 +1160,7 @@ pub struct Request {
     headers: Vec<Header>,
     body: Option<String>,
     auth: Option<HttpAuth>,
+    connection: Option<String>,
 }
 
 impl Request {
@@ -1167,6 +1171,7 @@ impl Request {
             headers: Vec::new(),
             body: None,
             auth: None,
+            connection: None,
         }
     }
 
@@ -1239,6 +1244,17 @@ impl Request {
     /// `credential(handle, AuthScheme::Bearer)`.
     pub fn bearer(self, handle: &SecretHandle) -> Self {
         self.credential(handle, AuthScheme::Bearer)
+    }
+
+    /// Sends the request through the connection `id` (plugin API 1.14):
+    /// the agent checks the URL against that connection's origin, path
+    /// prefix and methods and adds its secret in the scheme its type
+    /// declares. Replaces a [`Request::credential`]: a request names one
+    /// or the other.
+    pub fn connection(mut self, id: impl Into<String>) -> Self {
+        self.auth = None;
+        self.connection = Some(id.into());
+        self
     }
 }
 

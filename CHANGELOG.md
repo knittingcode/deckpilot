@@ -17,6 +17,40 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Plugins: connections (plugin API 1.14, host side). A plugin that
+  declares connection types (DeckPilot's own bundled plugins only) can be
+  connected to several servers, each with its own address, consent, token
+  and status: GitHub.com and GitLab.com at their own addresses, GitHub
+  Enterprise Server and self-managed GitLab at the address the user opens
+  in the browser (`https` only, with a port or a path). Tokens are kept in
+  the encrypted plugin database, protected like the configuration (its key
+  derives from the configuration's), are never sent back to the app, logged, exported or handed to
+  the plugin, and are injected by the agent only into requests to their
+  own server, and only to a connection the user chose for the action (never
+  one a workflow maps in); a redirect off that server ends the request, certificates
+  are checked against the system's trust store with no way to skip it,
+  and a server on a private network needs its own consent (this computer
+  and link-local addresses never). A plugin reaches only the connections
+  an action's parameters name. The app's requests to list, create, test,
+  rename, turn off and remove connections are IPC protocol 20; the plugin
+  store goes to schema 7. No plugin uses them yet.
+- Calls (groundwork, nothing user-visible yet): the provider contract
+  with capability discovery, where every capability a provider does not
+  offer is explicitly unsupported with a reason; the sanitised call state;
+  the `call.state` and `call.control` operations and the gate a control
+  passes (no success without the call app's confirmation); and the plugin
+  manifest's `calls` permission, `callOverlay` and `layoutTemplates` for
+  plugin API 1.16, accepted only for the bundled Calls plugin. No
+  DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
+  detected, not controlled: Microsoft retired its device API on
+  2026-06-30 (`docs/calls.md`).
+- Calls (groundwork): the call state engine (incoming, outgoing,
+  connecting, active, ending, ended, failed, unknown) with a timeout on
+  every live state, missed, rejected and remote hang-up, provider and app
+  restarts, meeting-to-meeting moves and simultaneous calls; and the
+  "Back to work" return sessions (timer, real completion, or whichever
+  comes first, 60 s by default), one per device. Tested on a virtual clock;
+  nothing user-visible yet.
 - System actions: an Open key shows what it opens, the document icon for
   a file and the open folder for a folder, on the Canvas, in the key
   preview, in layout previews and on the Stream Deck alike. Nothing chosen,
@@ -35,7 +69,15 @@ released either. 0.6.0 is the first version intended for publication.
   repository also points the `repository` role at it. Removing a
   repository never removes its folder binding, and a missing folder is
   shown, never removed. An export carries the repositories (format 5)
-  only when a project has more than that one. The editor for them follows.
+  only when a project has more than that one.
+- Projects: the project editor has a Repositories section. Add a
+  repository by choosing its folder in the system's folder dialog (its key
+  and name are proposed from the folder name), then rename, describe,
+  reorder, choose another folder, mark the default or remove it. A
+  removal asks first and lists what else uses the folder. Keys are checked
+  as they are typed, a folder that is gone is marked "Folder not found",
+  and folders are set on this computer when the project is saved. The
+  resource role pairs move into a collapsed advanced part.
 - Action Library: **gesture presets**, one entry that puts several actions
   on the gestures of a key at once. *Brightness Control* (Device) dims by
   10% on a single press, sets 100% on a double click and 50% on a long
