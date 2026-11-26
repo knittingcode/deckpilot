@@ -11,6 +11,14 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+const DIAGNOSE_HELP: &str = "\
+diagnose: a read-only report for support (versions, installation, whether
+the agent runs, the Elgato devices the system sees, e.g. a Stream Deck
+whose USB device is present but whose HID interface is missing). It starts
+and changes nothing, works while the configuration is locked, and replaces
+serial numbers with pseudonyms and the home directory and the user name
+with placeholders. --json prints the versioned JSON report.";
+
 const USAGE: &str = "\
 DeckPilot background agent
 
@@ -21,6 +29,7 @@ Usage:
                   [--plugin-registry-releases-url <https url>]
                   [--plugin-registry-roots <roots.json>]
   deckpilot-agent autostart <enable|disable|status>
+  deckpilot-agent diagnose [--json]
 
 Options:
   --headless          Run without a tray icon (servers, CI, debugging)
@@ -228,7 +237,7 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
                 return Err(ExitCode::SUCCESS);
             }
             "--help" | "-h" => {
-                println!("{USAGE}");
+                println!("{USAGE}\n\n{DIAGNOSE_HELP}");
                 return Err(ExitCode::SUCCESS);
             }
             #[cfg(feature = "test-hooks")]
@@ -237,10 +246,47 @@ fn parse_args() -> Result<Result<Args, String>, ExitCode> {
                 Err(message) => return Ok(Err(message)),
             },
             "autostart" => return Err(autostart_command(args.next().as_deref())),
+            "diagnose" => return Err(diagnose_command(&args.by_ref().collect::<Vec<_>>())),
             other => return Ok(Err(format!("unknown argument `{other}`"))),
         }
     }
     Ok(Ok(parsed))
+}
+
+/// `deckpilot-agent diagnose [--json]` (`deckpilot_agent::diagnose`).
+fn diagnose_command(options: &[String]) -> ExitCode {
+    let json = match options {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        [flag] if flag == "--help" || flag == "-h" => {
+            println!("usage: deckpilot-agent diagnose [--json]\n\n{DIAGNOSE_HELP}");
+            return ExitCode::SUCCESS;
+        }
+        _ => {
+            eprintln!("usage: deckpilot-agent diagnose [--json]");
+            return ExitCode::from(2);
+        }
+    };
+    let environment = match deckpilot_agent::diagnose::Environment::current() {
+        Ok(environment) => environment,
+        Err(error) => {
+            eprintln!("cannot find the data directory: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = deckpilot_agent::diagnose::collect(&environment);
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(text) => println!("{text}"),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        println!("{}", deckpilot_agent::diagnose::summary(&report));
+    }
+    ExitCode::SUCCESS
 }
 
 fn autostart_command(action: Option<&str>) -> ExitCode {

@@ -1,0 +1,98 @@
+{
+  "$comment": "deckpilot.diagnose schema version 1 (apps/agent/src/diagnose.rs). Types: string, number, boolean, null, alternatives with |; [x] is an array of x; {\"$nullable\": x} is x or null. Every object has exactly these keys. Adding a key keeps the version; removing, renaming or retyping one needs schema version 2.",
+  "agent": {
+    "dataDirectory": "string",
+    "dataDirectoryExists": "boolean",
+    "dataDirectoryOverridden": "boolean",
+    "endpoint": "string",
+    "endpointFile": "string",
+    "lock": "string",
+    "running": "boolean|null"
+  },
+  "devices": {
+    "findings": [
+      {
+        "code": "string",
+        "hint": "string",
+        "port": "string|null",
+        "productId": "string",
+        "serial": "string|null"
+      }
+    ],
+    "hid": {
+      "$nullable": [
+        {
+          "driver": "boolean",
+          "model": "string|null",
+          "name": "string|null",
+          "node": "string|null",
+          "productId": "string",
+          "serial": "string|null",
+          "vendorId": "string"
+        }
+      ]
+    },
+    "hidError": "string|null",
+    "source": "string",
+    "usb": {
+      "$nullable": [
+        {
+          "driver": "boolean",
+          "hidraw": [
+            {
+              "access": "string",
+              "node": "string"
+            }
+          ],
+          "model": "string|null",
+          "name": "string|null",
+          "port": "string",
+          "productId": "string",
+          "serial": "string|null",
+          "state": "string",
+          "vendorId": "string"
+        }
+      ]
+    }
+  },
+  "install": {
+    "distributionChannel": "string",
+    "executable": "string|null",
+    "packageFormat": "string|null",
+    "type": "string"
+  },
+  "ipc": {
+    "minimumCompatibleAgentProtocol": "number",
+    "minimumProtocol": "number",
+    "protocol": "number"
+  },
+  "os": {
+    "arch": "string",
+    "kernel": "string|null",
+    "name": "string|null",
+    "platform": "string"
+  },
+  "schema": "string",
+  "schemaVersion": "number",
+  "udevRules": {
+    "$nullable": [
+      {
+        "path": "string",
+        "present": "boolean"
+      }
+    ]
+  },
+  "versions": {
+    "agent": "string",
+    "desktop": {
+      "present": "boolean",
+      "version": "string|null",
+      "versionSource": "string|null"
+    },
+    "pluginHost": {
+      "present": "boolean",
+      "version": "string|null",
+      "versionSource": "string|null"
+    }
+  }
+}

@@ -27,6 +27,23 @@ struct MockDevice {
     /// left alone.
     writes: BTreeMap<ControlId, usize>,
     brightness: Option<u8>,
+    /// Calls to [`DeviceBackend::open`], failed ones included.
+    open_attempts: usize,
+    /// Injected faults ([`MockBackend::fail_open`] and others).
+    faults: Faults,
+}
+
+/// Faults injected into one simulated device, to test how the agent
+/// copes with hardware that misbehaves.
+#[derive(Debug, Default)]
+struct Faults {
+    /// Opens fail with this error...
+    open: Option<DeviceError>,
+    /// ...this many more times (`None`: until cleared).
+    open_times: Option<usize>,
+    /// Each opened handle fails with this error once it has written this
+    /// many reports (an image or a brightness each), and from then on.
+    after_writes: Option<(usize, DeviceError)>,
 }
 
 #[derive(Debug, Default)]
@@ -73,6 +90,58 @@ impl MockBackend {
         drop(devices);
         self.shared.changed.notify_all();
         id
+    }
+
+    /// The device re-enumerates without being unplugged, as after a USB
+    /// reset or when it comes back under another path: open handles
+    /// fail, it is listed again under the same serial, blank and at its
+    /// default brightness. Faults stay.
+    pub fn reenumerate(&self, id: &DeviceId) {
+        let model = self.lock().get(id).and_then(|device| device.model.clone());
+        if let Some(model) = model {
+            self.plug(&model, &id.serial);
+        }
+    }
+
+    /// Every open of `id` fails with `error` until [`MockBackend::clear_faults`].
+    /// The device stays listed, like one the user may not open.
+    pub fn fail_open(&self, id: &DeviceId, error: DeviceError) {
+        self.with_faults(id, |faults| {
+            faults.open = Some(error);
+            faults.open_times = None;
+        });
+    }
+
+    /// The next `times` opens of `id` fail with `error`; later ones work.
+    pub fn fail_open_times(&self, id: &DeviceId, error: DeviceError, times: usize) {
+        self.with_faults(id, |faults| {
+            faults.open = Some(error);
+            faults.open_times = Some(times);
+        });
+    }
+
+    /// Every handle opened from now on fails with `error` after `writes`
+    /// reports (images or brightness), like a device on a marginal link
+    /// that opens and then drops. Until [`MockBackend::clear_faults`].
+    pub fn fail_after_writes(&self, id: &DeviceId, writes: usize, error: DeviceError) {
+        self.with_faults(id, |faults| faults.after_writes = Some((writes, error)));
+    }
+
+    /// Removes the faults of `id`.
+    pub fn clear_faults(&self, id: &DeviceId) {
+        self.with_faults(id, |faults| *faults = Faults::default());
+    }
+
+    /// Opens of `id` so far, failed ones included.
+    pub fn open_attempts(&self, id: &DeviceId) -> usize {
+        self.lock().get(id).map_or(0, |device| device.open_attempts)
+    }
+
+    fn with_faults(&self, id: &DeviceId, f: impl FnOnce(&mut Faults)) {
+        if let Some(device) = self.lock().get_mut(id) {
+            f(&mut device.faults);
+        }
+        self.shared.changed.notify_all();
     }
 
     /// Detaches a device. Open handles report [`DeviceError::Disconnected`].
@@ -185,19 +254,39 @@ impl DeviceBackend for MockBackend {
     }
 
     fn open(&mut self, id: &DeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError> {
-        let devices = self.lock();
+        let mut devices = self.lock();
         let device = devices
-            .get(id)
+            .get_mut(id)
             .filter(|d| d.connected)
             .ok_or(DeviceError::Disconnected)?;
+        device.open_attempts += 1;
+        if let Some(error) = device.faults.open.clone() {
+            match &mut device.faults.open_times {
+                None => return Err(error),
+                Some(0) => device.faults.open = None,
+                Some(left) => {
+                    *left -= 1;
+                    if *left == 0 {
+                        device.faults.open = None;
+                        device.faults.open_times = None;
+                    }
+                    return Err(error);
+                }
+            }
+        }
         let model = device.model.clone().ok_or(DeviceError::Disconnected)?;
         let generation = device.generation;
+        let fail_after = device.faults.after_writes.clone();
         drop(devices);
+        self.shared.changed.notify_all();
         Ok(Box::new(MockHandle {
             backend: self.clone(),
             id: id.clone(),
             model,
             generation,
+            fail_after,
+            written: 0,
+            failed: None,
         }))
     }
 }
@@ -208,9 +297,33 @@ struct MockHandle {
     id: DeviceId,
     model: DeviceModel,
     generation: u64,
+    /// [`MockBackend::fail_after_writes`] when this handle was opened.
+    fail_after: Option<(usize, DeviceError)>,
+    /// Reports this handle wrote.
+    written: usize,
+    /// The injected failure happened: every later call fails too.
+    failed: Option<DeviceError>,
 }
 
 impl MockHandle {
+    /// Counts `reports` about to be written; fails once the injected limit
+    /// is passed, and from then on.
+    fn write(&mut self, reports: usize) -> Result<(), DeviceError> {
+        self.check_failed()?;
+        if let Some((limit, error)) = &self.fail_after
+            && self.written.saturating_add(reports) > *limit
+        {
+            self.failed = Some(error.clone());
+            return Err(error.clone());
+        }
+        self.written = self.written.saturating_add(reports);
+        Ok(())
+    }
+
+    fn check_failed(&self) -> Result<(), DeviceError> {
+        self.failed.clone().map_or(Ok(()), Err)
+    }
+
     fn with_device<T>(
         &self,
         f: impl FnOnce(&mut MockDevice) -> Result<T, DeviceError>,
@@ -240,6 +353,7 @@ impl DeviceHandle for MockHandle {
         &mut self,
         timeout: Duration,
     ) -> Result<Vec<(ControlId, ControlInput)>, DeviceError> {
+        self.check_failed()?;
         let deadline = Instant::now() + timeout;
         let mut devices = self.backend.lock();
         loop {
@@ -266,6 +380,7 @@ impl DeviceHandle for MockHandle {
     }
 
     fn set_image(&mut self, control: ControlId, frame: &Frame) -> Result<(), DeviceError> {
+        self.check_failed()?;
         self.check_display(control)?;
         self.with_device(|device| {
             device.pending.insert(control, Some(frame.clone()));
@@ -274,6 +389,7 @@ impl DeviceHandle for MockHandle {
     }
 
     fn clear_image(&mut self, control: ControlId) -> Result<(), DeviceError> {
+        self.check_failed()?;
         self.check_display(control)?;
         self.with_device(|device| {
             device.pending.insert(control, None);
@@ -282,6 +398,7 @@ impl DeviceHandle for MockHandle {
     }
 
     fn set_brightness(&mut self, percent: u8) -> Result<(), DeviceError> {
+        self.write(1)?;
         self.with_device(|device| {
             device.brightness = Some(percent.min(100));
             Ok(())
@@ -291,6 +408,15 @@ impl DeviceHandle for MockHandle {
     }
 
     fn flush(&mut self) -> Result<(), DeviceError> {
+        let queued = self.with_device(|device| Ok(device.pending.len()))?;
+        if let Err(error) = self.write(queued) {
+            // The reports are lost, as on a device that dropped.
+            let _ = self.with_device(|device| {
+                device.pending.clear();
+                Ok(())
+            });
+            return Err(error);
+        }
         self.with_device(|device| {
             for (control, frame) in std::mem::take(&mut device.pending) {
                 device.image_writes += 1;
@@ -349,6 +475,83 @@ mod tests {
 
         handle.set_brightness(150).unwrap();
         assert_eq!(probe.brightness(&id), Some(100));
+    }
+
+    #[test]
+    fn injected_open_failures_and_counts() {
+        let mut backend = MockBackend::new();
+        let probe = backend.clone();
+        let id = backend.plug(&models::stream_deck_mk2(), "A1");
+        for error in [
+            DeviceError::Io("permission denied".into()),
+            DeviceError::Unsupported("busy".into()),
+            DeviceError::Disconnected,
+        ] {
+            probe.fail_open(&id, error.clone());
+            assert_eq!(backend.open(&id).err(), Some(error.clone()));
+            assert_eq!(backend.open(&id).err(), Some(error));
+            assert_eq!(backend.discover().unwrap().len(), 1, "still listed");
+        }
+        probe.clear_faults(&id);
+        assert!(backend.open(&id).is_ok());
+        assert_eq!(probe.open_attempts(&id), 7);
+
+        probe.fail_open_times(&id, DeviceError::Io("busy".into()), 2);
+        assert!(backend.open(&id).is_err());
+        assert!(backend.open(&id).is_err());
+        assert!(backend.open(&id).is_ok());
+        assert!(backend.open(&id).is_ok());
+    }
+
+    #[test]
+    fn handles_fail_after_the_injected_writes() {
+        let mut backend = MockBackend::new();
+        let probe = backend.clone();
+        let id = backend.plug(&models::stream_deck_mk2(), "A1");
+        probe.fail_after_writes(&id, 2, DeviceError::Io("broken pipe".into()));
+        let mut handle = backend.open(&id).unwrap();
+        handle.set_brightness(50).unwrap();
+        let frame = Frame::filled(72, 72, [1, 2, 3]);
+        handle
+            .set_image(ControlId::Key { index: 0 }, &frame)
+            .unwrap();
+        handle.flush().unwrap();
+        handle
+            .set_image(ControlId::Key { index: 1 }, &frame)
+            .unwrap();
+        let broken = Err(DeviceError::Io("broken pipe".into()));
+        assert_eq!(handle.flush(), broken);
+        assert_eq!(
+            handle.read_input(Duration::from_millis(1)).map(|_| ()),
+            broken
+        );
+        // A new handle fails the same way; without the fault it works.
+        let mut again = backend.open(&id).unwrap();
+        assert!(again.set_brightness(1).is_ok());
+        assert!(again.set_brightness(1).is_ok());
+        assert!(again.set_brightness(1).is_err());
+        probe.clear_faults(&id);
+        let mut fine = backend.open(&id).unwrap();
+        for _ in 0..10 {
+            fine.set_brightness(1).unwrap();
+        }
+    }
+
+    #[test]
+    fn reenumerating_keeps_the_serial_and_fails_old_handles() {
+        let mut backend = MockBackend::new();
+        let probe = backend.clone();
+        let id = backend.plug(&models::stream_deck_mk2(), "A1");
+        let mut old = backend.open(&id).unwrap();
+        old.set_brightness(40).unwrap();
+        probe.reenumerate(&id);
+        assert_eq!(
+            old.read_input(Duration::from_millis(1)),
+            Err(DeviceError::Disconnected)
+        );
+        assert_eq!(probe.brightness(&id), None, "starts at its default");
+        assert_eq!(backend.discover().unwrap()[0].id, id);
+        assert!(backend.open(&id).is_ok());
     }
 
     #[test]

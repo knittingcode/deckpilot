@@ -44,6 +44,25 @@ closed and reopened at any time without interrupting devices.
   "Refresh Devices"). Newly found devices are opened; devices that disappeared
   or whose I/O failed are closed and reopened on a later scan, which handles
   temporary disconnects.
+- **Retries and the flap guard** (`service/device_retry.rs`). A device that
+  is listed but fails to open, or whose connection ends within 30 s of
+  opening, is not tried on every scan: each failure in a row doubles the
+  wait (2, 4, 8, 16, 32, then 60 s, with up to ±20% jitter, never above
+  60 s), per device identity (model and serial, so a new hidraw path keeps
+  the state). A connection that lasts 30 s ends the streak; a streak with
+  no failure for 5 minutes is forgotten. A device with 3 short connections
+  within 5 minutes is _flapping_: its next connections get brightness and
+  key images only once they have lasted 10 s, so one that drops again was
+  sent nothing, and its key presses are ignored until then (the keys show
+  nothing yet). "Refresh Devices", and a device a rescan did not list and a
+  later one lists again (replugged), try at once, unless the device is
+  flapping (a hub that keeps resetting it keeps the waits); the streak
+  stays, so a failure then waits longer still. The agent never resets, re-binds or power-cycles a USB
+  device, and a reconnect restores presentation only (page, layout, key
+  images, brightness); input from an earlier connection is dropped and no
+  action is replayed. Tests drive this with the mock backend's fault
+  injection (`fail_open`, `fail_after_writes`, `reenumerate`) and a moved
+  clock (`tests/device_retry.rs`).
 - **Rendering.** `Runtime::faces` describes each key in a device-independent
   way (`KeyFace`: style, title, detail, highlight). The agent renders faces to
   RGB frames at the size the model reports, and the driver converts them to
@@ -512,6 +531,68 @@ agent. In development, build both first:
 cargo build -p deckpilot-agent
 pnpm dev
 ```
+
+## Diagnostics
+
+`deckpilot-agent diagnose` prints a short summary, and
+`deckpilot-agent diagnose --json` prints a versioned JSON report
+(`"schema": "deckpilot.diagnose"`, `"schemaVersion": 1`) for a support
+request. Its schema is `apps/agent/src/diagnose/schema-v1.json`. New fields
+can be added within a version. A field that changes type or goes away
+needs a new version.
+
+The report contains:
+
+- the versions of the agent, and of the app and plugin host found next to
+  it (they ship in one package);
+- the operating system, the distribution channel, the install type (deb,
+  rpm, AppImage, Flatpak, app, MSI, NSIS, development or unknown) and the IPC protocol range;
+- whether an agent runs, from its instance lock and socket file;
+- on Linux, whether the udev rule is installed, and the Elgato USB devices
+  in `/sys/bus/usb/devices` with their `hidraw` nodes and this user's
+  access to them;
+- on macOS and Windows, the Elgato HID interfaces `hidapi` lists. On
+  Windows, listing them opens each HID device without any access rights, to
+  read its attributes. No report is read or written.
+
+A device's `state` is one of:
+
+- `ok`;
+- `other-elgato-product`: an Elgato product that is not in DeckPilot's
+  model catalog (a Cam Link, a microphone, or a Stream Deck model DeckPilot
+  does not know yet). It is listed but not reported;
+- `usb-present-hid-missing`: the USB device exists but the kernel bound no
+  HID interface, so nothing can see it (see
+  [troubleshooting/usb-hub-resets.md](troubleshooting/usb-hub-resets.md));
+- `hid-without-serial`: the agent identifies devices by serial and skips
+  this one;
+- `node-missing`: sysfs has the `hidraw` node but `/dev` does not (a
+  container, or a sandbox without the device);
+- `no-permission`: the udev rule did not apply.
+
+Each state other than `ok` is also listed under `findings` with a hint.
+
+The command is read-only, and works while the configuration is locked:
+
+- it never starts or connects to an agent;
+- it never opens the database or reads the IPC token. On Linux it opens
+  no device: permissions come from `access(2)`;
+- it writes, creates and resets nothing, and runs no other program;
+- the lock is probed with a shared lock on the existing file, released at
+  once. It is never created. A starting agent retries its lock for 5 s and
+  the app's lock wait polls, so the probe makes neither give up.
+
+The report hides personal data:
+
+- serial numbers become pseudonyms (`sha256:` and 16 hex digits of a
+  SHA-256 over a fixed prefix, on Linux the machine ID, and the serial), so
+  the same device can be recognised across reports from one machine. They
+  are pseudonyms, not secrets: someone who knows the machine ID can test
+  guessed serials against them;
+- the home directory becomes `~`, and the user name (of two or more
+  characters) becomes `<user>` wherever it stands as a word, in paths and
+  messages;
+- environment values and tokens are never included.
 
 ## Testing
 

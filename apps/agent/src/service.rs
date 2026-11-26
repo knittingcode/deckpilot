@@ -35,6 +35,7 @@ use crate::render;
 
 pub mod calls;
 mod deck;
+mod device_retry;
 mod display;
 mod display_redraws;
 mod executions;
@@ -58,6 +59,7 @@ pub mod work_session;
 mod work_session_faces;
 mod workflow_keys;
 
+pub use device_retry::RetryPolicy;
 pub use gestures::GestureHooks;
 pub use security::{AUTO_LOCK_CHECK, Clock, system_clock};
 pub use work_session::{
@@ -774,11 +776,14 @@ struct DeviceSession {
     /// The model has adjustable brightness ([`Capability::Brightness`]);
     /// brightness is only sent to such devices.
     brightness: bool,
+    /// The device is flapping (`device_retry.rs`): nothing is sent to it
+    /// until this time, when its brightness and keys are restored.
+    restore_at: Option<std::time::Instant>,
 }
 
 impl DeviceSession {
     fn set_brightness(&self, percent: u8) {
-        if self.brightness {
+        if self.brightness && self.restore_at.is_none() {
             self.io.set_brightness(percent);
         }
     }
@@ -826,6 +831,13 @@ pub struct Agent {
     next_session: u64,
     /// Last open error per device, to avoid repeating the same warning.
     open_failures: BTreeMap<DeviceId, String>,
+    /// When each device may be opened again, and the flap guard
+    /// (`device_retry.rs`).
+    device_retry: device_retry::DeviceRetry,
+    /// The devices the last successful discovery listed.
+    listed_devices: BTreeSet<DeviceId>,
+    /// The monotonic clock of device retries; tests move it.
+    device_clock: Arc<dyn Fn() -> std::time::Instant + Send + Sync>,
     persisted_project: Option<ProjectId>,
     /// The pages devices show per profile, as last saved (see `deck.rs`).
     saved_pages: Option<String>,
@@ -973,6 +985,9 @@ impl Agent {
         let persisted_project = runtime.active_project_id();
         let protection = security::protection_mode(&paths.database);
         let last_check = (options.clock)();
+        let device_retry = device_retry::DeviceRetry::new(RetryPolicy::for_rescan_interval(
+            options.rescan_interval,
+        ));
         Ok(Self {
             endpoint: endpoint.display(),
             options,
@@ -997,6 +1012,9 @@ impl Agent {
             sessions: BTreeMap::new(),
             next_session: 0,
             open_failures: BTreeMap::new(),
+            device_retry,
+            listed_devices: BTreeSet::new(),
+            device_clock: Arc::new(std::time::Instant::now),
             persisted_project,
             saved_pages: None,
             switches: switch::Switches::default(),
@@ -1045,6 +1063,20 @@ impl Agent {
     #[must_use]
     pub fn with_marquee_clock(mut self, clock: crate::marquee::MarqueeClock) -> Self {
         self.marquee_clock = clock;
+        self
+    }
+
+    /// Retries devices by `policy`, timed by `clock`, instead of the
+    /// policy for the rescan interval and the system's monotonic clock
+    /// (before [`Agent::run`]; tests move the clock).
+    #[must_use]
+    pub fn with_device_retry(
+        mut self,
+        policy: RetryPolicy,
+        clock: impl Fn() -> std::time::Instant + Send + Sync + 'static,
+    ) -> Self {
+        self.device_retry = device_retry::DeviceRetry::new(policy);
+        self.device_clock = Arc::new(clock);
         self
     }
 
@@ -2426,6 +2458,9 @@ impl Agent {
     }
 
     fn refresh_devices(&mut self) {
+        // Asked for by the user: a device waiting after failures is tried
+        // at once (the next failure waits longer still).
+        self.device_retry.bypass_all();
         self.rescan();
         for session in self.sessions.values_mut() {
             session.rendered.clear();
@@ -2457,10 +2492,43 @@ impl Agent {
             self.disconnect(&device);
         }
         self.open_failures.retain(|id, _| present.contains(id));
+        let now = (self.device_clock)();
+        // Not listed at the last rescan (replugged): one open at once,
+        // unless the device is flapping.
+        for device in present.difference(&self.listed_devices) {
+            self.device_retry.listed_again(device, now);
+        }
+        self.device_retry.prune(&present, now);
+        self.listed_devices.clone_from(&present);
         for device in present {
-            if !self.sessions.contains_key(&device) {
+            if self.sessions.contains_key(&device) {
+                if self.device_retry.check_stable(&device, now) {
+                    info!(%device, "device connection is stable again");
+                }
+            } else if self.device_retry.may_open(&device, now) {
                 self.connect(device);
             }
+        }
+        self.restore_settled(now);
+    }
+
+    /// Restores the brightness and keys of flapping devices whose session
+    /// has lasted the settle time (`device_retry.rs`).
+    fn restore_settled(&mut self, now: std::time::Instant) {
+        let due: Vec<DeviceId> = self
+            .sessions
+            .iter()
+            .filter(|(_, session)| session.restore_at.is_some_and(|at| now >= at))
+            .map(|(device, _)| device.clone())
+            .collect();
+        for device in due {
+            if let Some(session) = self.sessions.get_mut(&device) {
+                session.restore_at = None;
+                session.rendered.clear();
+                session.set_brightness(self.brightness);
+            }
+            info!(%device, "restoring a flapping device's keys");
+            self.render(&device, true);
         }
     }
 
@@ -2468,9 +2536,14 @@ impl Agent {
         let handle = match self.options.backend.open(&device) {
             Ok(handle) => handle,
             Err(error) => {
+                let delay = self
+                    .device_retry
+                    .open_failed(&device, (self.device_clock)());
                 let message = error.to_string();
-                if self.open_failures.get(&device) != Some(&message) {
-                    warn!(%device, error = %message, "cannot open device");
+                if self.open_failures.get(&device) == Some(&message) {
+                    debug!(%device, retry_in_ms = delay.as_millis(), "cannot open device");
+                } else {
+                    warn!(%device, error = %message, retry_in_ms = delay.as_millis(), "cannot open device");
                     self.open_failures.insert(device, message);
                 }
                 return;
@@ -2480,10 +2553,14 @@ impl Agent {
         let io = match DeviceIo::spawn(self.next_session, handle, self.signals_tx.clone()) {
             Ok(io) => io,
             Err(error) => {
+                self.device_retry
+                    .open_failed(&device, (self.device_clock)());
                 warn!(%device, %error, "cannot start device thread");
                 return;
             }
         };
+        let now = (self.device_clock)();
+        let flapping = self.device_retry.opened(&device, now);
         self.open_failures.remove(&device);
         let animator = match crate::marquee::Animator::spawn(
             &device.serial,
@@ -2508,6 +2585,9 @@ impl Agent {
                 .catalog()
                 .get(&device.model)
                 .is_some_and(|model| model.capabilities.supports(Capability::Brightness)),
+            // A flapping device gets its keys once the session lasts:
+            // one that fails again soon was sent nothing.
+            restore_at: flapping.then(|| now + self.device_retry.policy().settle),
         };
         session.set_brightness(self.brightness);
         self.sessions.insert(device.clone(), session);
@@ -2527,6 +2607,21 @@ impl Agent {
             // Scrolling stops first, so no frame follows the close.
             session.animator = None;
             session.io.close(Vec::new(), CLOSE_TIMEOUT);
+            match self.device_retry.closed(device, (self.device_clock)()) {
+                device_retry::SessionEnd::Stable => {}
+                device_retry::SessionEnd::Short {
+                    delay,
+                    flapping_started,
+                } => {
+                    if flapping_started {
+                        warn!(
+                            %device,
+                            "device keeps disconnecting soon after it connects; retrying less often and restoring its keys only once it stays connected"
+                        );
+                    }
+                    debug!(%device, retry_in_ms = delay.as_millis(), "device session was short");
+                }
+            }
         }
         self.forget_gestures(device);
         self.titles.forget(device);
@@ -2551,6 +2646,14 @@ impl Agent {
     fn render(&mut self, device: &DeviceId, force: bool) {
         let started = std::time::Instant::now();
         self.display_redraws.rendered(device);
+        if self
+            .sessions
+            .get(device)
+            .is_some_and(|session| session.restore_at.is_some())
+        {
+            // Flapping: drawn once it settles (`restore_settled`).
+            return;
+        }
         let (mut faces, texts) = self.runtime.display_faces(device);
         if self.sessions.contains_key(device) {
             self.titles.record(device, texts);
