@@ -366,3 +366,12 @@ jobs:
       # version mapping), on fake packages.
       - name: Package checks for pre-release versions
         run: tools/ci/test-check-packages.sh "$RUNNER_TEMP/check-packages-test"
+      # The .deb/.rpm maintainer scripts that reload udev, against a
+      # fixture sysfs and a stand-in udevadm.
+      - name: Linux packages' udev reload scripts
+        run: tools/ci/test-udev-scripts.sh "$RUNNER_TEMP/udev-scripts-test"
+      # The .rpm check that only the repository's %post and %postun run, on
+      # rpmbuild packages in a Fedora container (rpm that knows every
+      # scriptlet tag).
+      - name: The .rpm runs exactly the repository's scriptlets
+        run: tools/ci/test-rpm-scriptlets.sh

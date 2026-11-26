@@ -344,6 +344,13 @@ released either. 0.6.0 is the first version intended for publication.
   to its log, closes its connection point, lets a next agent start, and
   ends with a non-zero exit code. The same applies without a tray
   (`--headless`).
+- Linux: the `.deb` and `.rpm` reload udev's rules when they are installed
+  or removed, and after an install apply the Stream Deck rule to an
+  Elgato device that is already plugged in, so it works without
+  unplugging it. Only devices with Elgato's USB vendor ID are touched;
+  without a running udev (containers, image builds) nothing is done and
+  the installation never fails because of it. The rule file no longer
+  tells `.deb` and `.rpm` users to copy it by hand.
 
 ## [0.15.0] - 2026-11-24
 

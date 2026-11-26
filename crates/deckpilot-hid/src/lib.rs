@@ -278,8 +278,106 @@ mod tests {
     use super::*;
     use deckpilot_device::{ImageFormat, KeyGrid};
     use elgato_streamdeck::info::{ImageMirroring, ImageMode, ImageRotation};
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::sync::{Arc, Mutex};
+
+    /// The udev rule the .deb and .rpm install, and their postinst.
+    const UDEV_RULE: &str = include_str!("../../../packaging/linux/70-deckpilot-streamdeck.rules");
+    const POSTINST: &str = include_str!("../../../packaging/linux/postinst.sh");
+
+    /// The (vendor, product) pairs a udev rule line grants access to, per
+    /// subsystem. Every rule line must have exactly the form
+    /// `SUBSYSTEM=="<s>", ATTRS{idVendor}=="<v>", ATTRS{idProduct}=="<p>", TAG+="uaccess"`:
+    /// no MODE, GROUP, OWNER or RUN, only the seat's ACL.
+    fn udev_rule_grants(rule: &str) -> BTreeMap<String, BTreeSet<(u16, u16)>> {
+        let mut grants: BTreeMap<String, BTreeSet<(u16, u16)>> = BTreeMap::new();
+        for line in rule.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = line.split(", ").collect();
+            let value = |part: &str, key: &str| {
+                part.strip_prefix(key)
+                    .and_then(|rest| rest.strip_prefix("==\""))
+                    .and_then(|rest| rest.strip_suffix('"'))
+                    .unwrap_or_else(|| panic!("udev rule line {line:?}: expected {key}==\"...\""))
+                    .to_owned()
+            };
+            let id = |part: &str, key: &str| {
+                let hex = value(part, key);
+                // udev compares the text with sysfs's: four lowercase hex digits.
+                assert!(
+                    hex.len() == 4
+                        && hex
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    "udev rule line {line:?}: {key} is not 4 lowercase hex digits"
+                );
+                u16::from_str_radix(&hex, 16)
+                    .unwrap_or_else(|_| panic!("udev rule line {line:?}: {key} is not hex"))
+            };
+            assert_eq!(parts.len(), 4, "udev rule line {line:?}: unexpected form");
+            assert_eq!(
+                parts[3], "TAG+=\"uaccess\"",
+                "udev rule line {line:?}: only TAG+=\"uaccess\" may grant access"
+            );
+            let subsystem = value(parts[0], "SUBSYSTEM");
+            let pair = (
+                id(parts[1], "ATTRS{idVendor}"),
+                id(parts[2], "ATTRS{idProduct}"),
+            );
+            grants.entry(subsystem).or_default().insert(pair);
+        }
+        grants
+    }
+
+    /// The udev rule covers exactly the models this adapter drives, for
+    /// their hidraw nodes and USB devices: adding a driver without its
+    /// rule (or a rule without a driver) fails here. The postinst
+    /// re-triggers every vendor ID the drivers use.
+    #[test]
+    fn udev_rule_covers_exactly_the_supported_models() {
+        let supported: BTreeSet<(u16, u16)> = ElgatoBackend::new()
+            .models()
+            .iter()
+            .map(|model| {
+                let usb = model.usb.expect("a driven model has a USB identity");
+                (usb.vendor_id, usb.product_id)
+            })
+            .collect();
+        assert!(!supported.is_empty());
+        let grants = udev_rule_grants(UDEV_RULE);
+        assert_eq!(
+            grants.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["hidraw", "usb"]
+        );
+        for (subsystem, pairs) in &grants {
+            assert_eq!(pairs, &supported, "SUBSYSTEM==\"{subsystem}\" lines");
+        }
+        for (vendor, _) in &supported {
+            let filter = format!("[ \"$vendor\" = {vendor:04x} ]");
+            assert!(
+                POSTINST.contains(&filter),
+                "postinst.sh does not re-trigger vendor {vendor:04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn udev_rule_parser_refuses_broad_access_and_unmatchable_ids() {
+        for line in [
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0fd9\", ATTRS{idProduct}==\"0080\", MODE=\"0666\"",
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0fd9\", TAG+=\"uaccess\"",
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0fd9\", ATTRS{idProduct}==\"0080\", TAG+=\"uaccess\", GROUP=\"plugdev\"",
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0FD9\", ATTRS{idProduct}==\"0080\", TAG+=\"uaccess\"",
+            "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"+fd9\", ATTRS{idProduct}==\"0080\", TAG+=\"uaccess\"",
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| udev_rule_grants(line)).is_err(),
+                "accepted {line:?}"
+            );
+        }
+    }
 
     /// The descriptor must agree with the protocol implementation used to
     /// drive the device; this guards against silent mismatches.
