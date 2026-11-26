@@ -2383,7 +2383,8 @@ impl Agent {
         }
         self.open_failures.retain(|id, _| present.contains(id));
         let now = (self.device_clock)();
-        // Replugged, or back under another path: one open at once.
+        // Not listed at the last rescan (replugged): one open at once,
+        // unless the device is flapping.
         for device in present.difference(&self.listed_devices) {
             self.device_retry.listed_again(device, now);
         }
