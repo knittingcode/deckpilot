@@ -316,6 +316,14 @@ released either. 0.6.0 is the first version intended for publication.
   parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
   no build queries the operating system yet.
 
+### Fixed
+
+- Agent: a failure inside the background agent no longer leaves a menu
+  bar or tray icon whose menu does nothing. The agent writes the failure
+  to its log, closes its connection point, lets a next agent start, and
+  ends with a non-zero exit code. The same applies without a tray
+  (`--headless`).
+
 ## [0.15.0] - 2026-11-24
 
 ### Added
