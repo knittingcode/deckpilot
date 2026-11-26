@@ -71,6 +71,8 @@ import type {
   WorkSessionSettings,
   WorkSessionSnapshot,
   WorkSessionSummary,
+  BackToWork,
+  CallsPageKind,
   CallsStatus,
   DeviceId,
 } from "./types"
@@ -580,6 +582,13 @@ export const api = {
   /** Keeps the user's version as `copyName` first; answers the copy's id. */
   restoreCallsLayout: (model: string, copyName: string) =>
     invoke<string | null>("restore_calls_layout", { model, copyName }),
+  setCallsBackToWork: (model: string, back: BackToWork) =>
+    invoke<CallsStatus>("set_calls_back_to_work", { model, back }),
+  // The editor's preview of a call page on a device (fixed content, no
+  // call): on a connection of its own in the backend, one at a time.
+  callsPreviewBegin: (device: DeviceId, page: CallsPageKind) =>
+    invoke<null>("calls_preview_begin", { device, page }),
+  callsPreviewEnd: () => invoke<null>("calls_preview_end"),
 }
 
 /** Backend event carrying the latest {@link AgentConnection}. */

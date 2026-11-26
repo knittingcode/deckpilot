@@ -92,6 +92,24 @@ pub struct CallsDriver {
     /// No device shows a call (the configuration is locked): every frame
     /// is popped and none is pushed. The engine keeps following the calls.
     hidden: bool,
+    /// The editor's previews of a call page (no call, no provider): one
+    /// per device, never at the same time as a real call's frame.
+    previews: BTreeMap<DeviceId, (OverlaySession, Page)>,
+    /// Unit tests: the next preview's push fails as if the device took no
+    /// frame.
+    #[cfg(test)]
+    fail_next_preview: bool,
+}
+
+/// Why a page could not be previewed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewError {
+    /// A real call shows: it always wins.
+    InCall,
+    /// The device's model has no managed layout, or the layout no such page.
+    NoLayout,
+    /// The device could not take the frame.
+    Refused,
 }
 
 impl CallsDriver {
@@ -104,6 +122,9 @@ impl CallsDriver {
             enabled: BTreeMap::new(),
             dismissed: BTreeMap::new(),
             hidden: false,
+            previews: BTreeMap::new(),
+            #[cfg(test)]
+            fail_next_preview: false,
             locale: Locale::default(),
             watchdog_pops: 0,
         }
@@ -246,10 +267,100 @@ impl CallsDriver {
         outcome
     }
 
+    /// Shows `page` of `device`'s managed layout as the editor previews it:
+    /// a frame of its own, with faces drawn from a fixed snapshot in that
+    /// page's state. The snapshot holds no call: no title, no participant,
+    /// the microphone and camera unknown, and the provider's capabilities as
+    /// reported now (so unsupported controls show disabled with their
+    /// reason). Its keys run nothing. A preview already on the device is
+    /// replaced. A real call always wins: refused while one shows, and
+    /// ended by [`CallsDriver::sync`] when one comes.
+    ///
+    /// # Errors
+    ///
+    /// [`PreviewError`].
+    pub fn preview(
+        &mut self,
+        runtime: &mut Runtime,
+        device: &DeviceId,
+        page: Page,
+    ) -> Result<(), PreviewError> {
+        if matches!(self.engine.overlay(), OverlayIntent::Shown { .. })
+            || self.frames.contains_key(device)
+        {
+            return Err(PreviewError::InCall);
+        }
+        let generated = self
+            .layouts
+            .get(&device.model)
+            .ok_or(PreviewError::NoLayout)?;
+        let page_id = *generated.pages.get(&page).ok_or(PreviewError::NoLayout)?;
+        let spec = OverlaySpec {
+            owner: OverlayOwner::Calls,
+            layout: generated.layout.clone(),
+            actions: generated.actions.clone(),
+            page: page_id,
+            dismiss: generated.dismiss,
+        };
+        let state = match page {
+            Page::Incoming => CallState::Incoming,
+            Page::Outgoing => CallState::Outgoing,
+            Page::Active => CallState::Active,
+        };
+        let live = self.engine.snapshot();
+        let mut snapshot = CallSnapshot::idle(live.capabilities, live.generation);
+        snapshot.state = state;
+        snapshot.connected = true;
+        let faces = faces(generated, page_id, &snapshot, self.locale);
+        // The new frame first: when the device takes none, the old preview
+        // (if any) stays as it was, still known.
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_preview) {
+            return Err(PreviewError::Refused);
+        }
+        let session = runtime
+            .push_overlay(device, spec)
+            .map_err(|_| PreviewError::Refused)?;
+        runtime.set_overlay_faces(device, session, faces);
+        if let Some((old, _)) = self.previews.insert(device.clone(), (session, page)) {
+            runtime.pop_overlay(device, old);
+        }
+        Ok(())
+    }
+
+    /// Ends `device`'s preview, if it has one: its frame goes.
+    pub fn end_preview(&mut self, runtime: &mut Runtime, device: &DeviceId) {
+        if let Some((session, _)) = self.previews.remove(device) {
+            runtime.pop_overlay(device, session);
+        }
+    }
+
+    /// Ends every preview.
+    pub fn end_previews(&mut self, runtime: &mut Runtime) {
+        let devices: Vec<DeviceId> = self.previews.keys().cloned().collect();
+        for device in devices {
+            self.end_preview(runtime, &device);
+        }
+    }
+
+    /// The devices with a preview.
+    pub fn previews(&self) -> impl Iterator<Item = &DeviceId> {
+        self.previews.keys()
+    }
+
+    /// The page `device` previews, if it has a preview.
+    pub fn preview_page(&self, device: &DeviceId) -> Option<Page> {
+        self.previews.get(device).map(|(_, page)| *page)
+    }
+
     /// The overlay was dismissed on `device`
     /// ([`deckpilot_core::RuntimeOutcome::OverlayDismissed`]): the runtime
     /// popped it; the device stays on its own presentation for this call.
     pub fn dismissed(&mut self, device: &DeviceId, session: OverlaySession) {
+        // A preview dismissed on the device: the runtime popped its frame.
+        if self.previews.get(device).map(|(s, _)| *s) == Some(session) {
+            self.previews.remove(device);
+        }
         if self
             .frames
             .get(device)
@@ -383,6 +494,10 @@ impl CallsDriver {
             return;
         }
         let intent = self.engine.overlay();
+        if matches!(intent, OverlayIntent::Shown { .. }) {
+            // A real call always wins over the editor's preview.
+            self.end_previews(runtime);
+        }
         let OverlayIntent::Shown { session, page, .. } = intent else {
             // No call: every session ends without resuming, every frame
             // goes.
@@ -475,7 +590,8 @@ impl CallsDriver {
                 let known = self
                     .frames
                     .get(&device)
-                    .is_some_and(|f| f.session == view.session);
+                    .is_some_and(|f| f.session == view.session)
+                    || self.previews.get(&device).map(|(s, _)| *s) == Some(view.session);
                 if view.owner == OverlayOwner::Calls && !known {
                     runtime.pop_overlay(&device, view.session);
                     self.watchdog_pops += 1;
@@ -493,12 +609,41 @@ impl CallsDriver {
     /// consent withdrawn).
     pub fn clear(&mut self, runtime: &mut Runtime) {
         self.returns.clear();
+        self.end_previews(runtime);
         let devices: Vec<DeviceId> = self.frames.keys().cloned().collect();
         for device in devices {
             self.pop(runtime, &device);
         }
         runtime.pop_overlays_of(OverlayOwner::Calls);
     }
+}
+
+/// The parameters that [`settings_of`] reads back as `settings` (its
+/// inverse for every mode, outcome and flag; times as whole seconds).
+pub fn parameters_of(settings: &ReturnSettings) -> ActionParameters {
+    use deckpilot_core::ParameterValue::{Boolean, Choice, Integer};
+    let whole = |d: std::time::Duration| i64::try_from(d.as_secs()).unwrap_or(i64::MAX);
+    let mut parameters = match settings.mode.clamped() {
+        ReturnMode::Timer { after } => ActionParameters::new()
+            .with("mode", Choice("timer".into()))
+            .with("seconds", Integer(whole(after))),
+        ReturnMode::Completion => ActionParameters::new().with("mode", Choice("completion".into())),
+        ReturnMode::CompletionOrTimeout { max } => ActionParameters::new()
+            .with("mode", Choice("completionOrTimeout".into()))
+            .with("maxSeconds", Integer(whole(max))),
+    };
+    let after = |a: AfterRun| {
+        Choice(match a {
+            AfterRun::Resume => "resume".into(),
+            AfterRun::Stay => "stay".into(),
+        })
+    };
+    parameters = parameters
+        .with("onFailure", after(settings.on_failure))
+        .with("onCancel", after(settings.on_cancel))
+        .with("returnAllDevices", Boolean(settings.all_devices))
+        .with("countNavigation", Boolean(settings.qualify.navigation));
+    parameters
 }
 
 /// The *Back to work* settings in an action's parameters (ordinary
