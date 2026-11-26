@@ -502,6 +502,32 @@ fn secrets_in_urls_addresses_and_serials_are_removed() {
         ),
         ("unc server", r"opened \\fileserver\share\x", "fileserver"),
         (
+            "base64 after a bracket",
+            "msg=<aB3/dE5fG7hI9/jK1lM3nO5pQ7/rS9tU1vW3xY5zA7bC9=>",
+            "dE5fG7hI9",
+        ),
+        (
+            "base64 in braces",
+            "signed {MIIBIjAN/BgkqhkiG9w0/BAQEFAAOCAQ8AMIIB/CgKCAQEAu1SU1L7VLPHCgcBz}",
+            "BgkqhkiG9w0",
+        ),
+        (
+            "after one colon",
+            "env:GITHUB_TOKEN=FAKEenvtok",
+            "FAKEenvtok",
+        ),
+        ("after a level", "ERROR:password=FAKEerrpw", "FAKEerrpw"),
+        (
+            "bracket in a quoted value",
+            r#"auth: Some(("bob", "ab(FAKEparen"))"#,
+            "FAKEparen",
+        ),
+        (
+            "closing bracket in a value",
+            r#"password: Some("ab)FAKEclose")"#,
+            "FAKEclose",
+        ),
+        (
             "option-wrapped tuple",
             r#"auth: Some(("bob", Some("FAKEnested")))"#,
             "FAKEnested",

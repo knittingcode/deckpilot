@@ -247,9 +247,12 @@ static FIELD_VALUE: LazyLock<String> = LazyLock::new(|| {
 /// A bracketed group (`open`, `close`, both in `class` form) with up to
 /// four levels of nesting.
 fn nested(open: &str, close: &str, class: &str) -> String {
-    let mut pattern = format!("{open}[^{class}]*{close}");
+    // A quoted string inside is one unit, so a bracket in it does not end
+    // the group; a lone quote is an ordinary character.
+    let quoted = r#""(?:[^"\\]|\\.)*""#;
+    let mut pattern = format!(r#"{open}(?:{quoted}|[^{class}"]|")*{close}"#);
     for _ in 0..3 {
-        pattern = format!("{open}(?:[^{class}]|{pattern})*{close}");
+        pattern = format!(r#"{open}(?:{quoted}|[^{class}"]|"|{pattern})*{close}"#);
     }
     pattern
 }
@@ -261,10 +264,11 @@ const FIELD_SEPARATOR: &str = r#"(\\?["']?\s*(?:=>|->|%3[Dd]|[=:])\s*)"#;
 /// Secret fields: a field (`name=value`, `name: value`, `"name": "value"`,
 /// `name => value`) whose name contains one of the words, is or ends in one
 /// of the short ones, or ends in `_key`, has its value redacted. A name
-/// right after `::` is a module path (a log target), not a field.
+/// right after `::` is a module path (a log target), not a field; after a
+/// single `:` it is one.
 static SECRET_FIELD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?i)(^|[^:A-Za-z0-9_])((?:[A-Za-z0-9_.-]*(?:token|passw(?:or)?d|passphrase|pwd|secret|credential|api[_-]?key|private[_-]?key|access[_-]?key|auth|cookie|session|signature|bearer)[A-Za-z0-9_.-]*)|(?:[A-Za-z0-9.-]*[_.-])?(?:sig|pass|pw|pin|otp)|[A-Za-z0-9.-]*[_.-]key){FIELD_SEPARATOR}({value})",
+        r"(?i)(^:?|[^:A-Za-z0-9_]|[^:]:)((?:[A-Za-z0-9_.-]*(?:token|passw(?:or)?d|passphrase|pwd|secret|credential|api[_-]?key|private[_-]?key|access[_-]?key|auth|cookie|session|signature|bearer)[A-Za-z0-9_.-]*)|(?:[A-Za-z0-9.-]*[_.-])?(?:sig|pass|pw|pin|otp)|[A-Za-z0-9.-]*[_.-]key){FIELD_SEPARATOR}({value})",
         value = *FIELD_VALUE,
     ))
     .expect("valid regex")
@@ -310,10 +314,10 @@ static OPAQUE: LazyLock<Regex> =
 
 /// The same with `/` (base64, a PEM line): redacted only when it mixes
 /// upper and lower case and digits, which paths rarely do.
-/// It must start a word (after a space, a quote, `=`, `:` …), so a path
-/// or URL that goes on after a `.` is not taken for one.
+/// It must start a word (not right after a letter, a digit or `.`), so a
+/// path or URL that goes on after a `.` is not taken for one.
 static OPAQUE_SLASHED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(^|[\s"'=:(\[,;])([A-Za-z0-9+/=_-]{32,})"#).expect("valid regex")
+    Regex::new(r"(^|[^A-Za-z0-9.+/=_-])([A-Za-z0-9+/=_-]{32,})").expect("valid regex")
 });
 
 /// A device ID as the agent logs it: `<model>#<serial>`, the model a dotted
