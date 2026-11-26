@@ -32,6 +32,9 @@ pub const QUIET_STDERR_ARG: &str = "--quiet-stderr";
 pub const OUTPUT_LOG_FILE: &str = "output.log";
 /// The previous [`OUTPUT_LOG_FILE`], kept when it grew too long.
 pub const PREVIOUS_OUTPUT_LOG_FILE: &str = "output.1.log";
+/// The size from which [`OUTPUT_LOG_FILE`] is moved aside when the app
+/// starts an agent, and emptied while the agent runs.
+pub const MAX_OUTPUT_LOG_BYTES: u64 = 1024 * 1024;
 
 /// The AppImage file this process runs from, on Linux.
 ///

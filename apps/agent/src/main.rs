@@ -392,7 +392,7 @@ fn main() -> ExitCode {
     });
     // The output file stays bounded during the run too.
     if args.quiet_stderr {
-        deckpilot_agent::output::spawn_cap();
+        deckpilot_agent::output::spawn_cap(&paths.output_log());
     }
 
     // A previous agent may still be finishing its shutdown (a restart or an

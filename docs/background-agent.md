@@ -534,8 +534,9 @@ Text from system libraries is written as they print it, so DeckPilot
 cannot filter it. When the app starts an agent and the file has reached
 1 MiB, it is renamed to `output.1.log`, replacing the one before, and a new
 file is started. While the agent runs, it checks the file every 30 seconds
-and empties it once it holds more than 1 MiB, with a first line saying so;
-the newest output stays. So the two files hold about 2 MiB at most. On
+and empties it once it holds more than 1 MiB, then writes a line saying
+so; the newest output stays. Every writer appends to the file, so an agent
+that is still stopping and the next one never write over each other. So the two files hold about 2 MiB at most. On
 Windows the agent's standard handles are not inherited by the programs it
 starts, so a program launched from a key does not hold the file open. An
 agent started at login, or from a terminal, writes its standard error

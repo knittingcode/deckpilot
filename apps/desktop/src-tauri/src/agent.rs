@@ -382,8 +382,10 @@ pub fn start_agent_by_user() -> Result<(), String> {
 pub(crate) fn spawn_agent_process() -> Result<std::process::Child, String> {
     let executable = agent_executable().ok_or("the DeckPilot agent executable was not found")?;
     let (path, args) = agent_command(deckpilot_ipc::paths::appimage(), executable);
-    let (stdout, stderr) =
-        crate::agent_output::streams(AgentPaths::resolve(), crate::agent_output::MAX_OUTPUT_BYTES);
+    let (stdout, stderr) = crate::agent_output::streams(
+        AgentPaths::resolve(),
+        deckpilot_ipc::paths::MAX_OUTPUT_LOG_BYTES,
+    );
     let mut command = Command::new(&path);
     command
         .args(args)

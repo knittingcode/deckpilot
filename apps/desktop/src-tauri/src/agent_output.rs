@@ -7,25 +7,18 @@
 //! twice.
 //!
 //! The file is bounded: when the app starts an agent and the file has
-//! reached [`MAX_OUTPUT_BYTES`], it becomes `output.1.log` (replacing the
+//! reached `MAX_OUTPUT_LOG_BYTES`, it becomes `output.1.log` (replacing the
 //! one before) and a new one is begun. While it runs, the agent empties the
-//! file once it passes 1 MiB (`deckpilot_agent::output`). The file is
+//! file once it passes that size (`deckpilot_agent::output`). The file is
 //! readable by the user only (on Unix, mode 0600; the data directory is
-//! 0700 as well).
-//!
-//! On Unix the file is opened for appending. On Windows it is opened for
-//! writing at its end instead, because a handle opened for appending
-//! cannot empty the file.
+//! 0700 as well). It is opened for appending, so an agent that is still
+//! stopping and the next one never write over each other's output.
 
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::process::Stdio;
 
 use deckpilot_ipc::AgentPaths;
-
-/// The size from which the output file is replaced by a new one when an
-/// agent starts.
-pub const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 
 /// Opens the output file for an agent about to start, appending, after
 /// moving a file that has reached `max_bytes` to the previous one. The log
@@ -42,26 +35,21 @@ pub fn open(paths: &AgentPaths, max_bytes: u64) -> io::Result<File> {
         }
     }
     let mut options = OpenOptions::new();
-    options.create(true);
+    options.create(true).append(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.append(true).mode(0o600);
+        options.mode(0o600);
     }
-    #[cfg(not(unix))]
-    options.write(true);
-    #[cfg_attr(unix, allow(unused_mut))]
-    let mut file = options.open(&current)?;
+    let file = options.open(&current)?;
     #[cfg(unix)]
     {
-        // Also for a file that existed with another mode.
+        // Also for a file that existed with another mode. A file system
+        // that refuses the change still gets the output.
         use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        use std::io::{Seek, SeekFrom};
-        file.seek(SeekFrom::End(0))?;
+        if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(0o600)) {
+            eprintln!("cannot make the agent's output file private: {error}");
+        }
     }
     Ok(file)
 }
@@ -140,6 +128,24 @@ mod tests {
             std::fs::read_to_string(paths.output_log()).unwrap(),
             "new run\nagain\n"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An agent that is still stopping and the next one write to the same
+    /// file at once: nothing is written over.
+    #[test]
+    fn two_writers_keep_each_others_output() {
+        let (dir, paths) = temp_paths("two");
+        let mut old = open(&paths, 1024).unwrap();
+        let mut new = open(&paths, 1024).unwrap();
+        writeln!(old, "old one stops").unwrap();
+        writeln!(new, "new one starts").unwrap();
+        writeln!(old, "old one's last words").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(paths.output_log()).unwrap(),
+            "old one stops\nnew one starts\nold one's last words\n"
+        );
+        drop((old, new));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
