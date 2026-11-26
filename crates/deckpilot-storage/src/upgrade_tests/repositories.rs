@@ -106,16 +106,29 @@ fn released_stores_get_the_repository_of_their_role_and_nothing_else_changes() {
                 }
             }
         }
-        // Migration 14 adds no table (15 adds the managed layouts,
-        // `upgrade_tests/managed_layouts.rs`).
+        // Migration 14 adds no table; 15 adds the managed layouts
+        // (`upgrade_tests/managed_layouts.rs`) and 16 the scripts tables,
+        // all empty.
+        let mut added: Vec<&String> = upgraded
+            .tables
+            .keys()
+            .filter(|t| !original.tables.contains_key(*t))
+            .collect();
+        added.sort();
         assert_eq!(
-            upgraded
+            added,
+            ["managed_layouts", "script_trust", "scripts"],
+            "only the managed layouts and the scripts tables are added"
+        );
+        for table in added {
+            assert!(upgraded.tables[table].1.is_empty(), "{table} starts empty");
+        }
+        assert!(
+            original
                 .tables
                 .keys()
-                .filter(|table| *table != "managed_layouts")
-                .collect::<Vec<_>>(),
-            original.tables.keys().collect::<Vec<_>>(),
-            "no table is added"
+                .all(|t| upgraded.tables.contains_key(t)),
+            "no table is removed"
         );
 
         // Recorded and backed up.

@@ -319,6 +319,48 @@ Errors have the codes `repository.<code>` (`invalidKey`, `duplicateKey`,
 repository's resource as used by `PROJECT repositories.<key>`; a missing
 folder is a status, never removed.
 
+## Scripts
+
+The scripts of a profile (the Scripts plugin, `docs/scripts-bridge.md`),
+schema 16 (`crates/deckpilot-storage/src/scripts.rs`):
+
+- `scripts` (portable, deleted with its profile): `id` (uuid), `name`
+  (1–64 characters, unique in the profile without case, no control or
+  bidirectional characters), `source` (at most 256 KiB of UTF-8),
+  `settings` (`timeoutMs` 1 000–600 000, default 60 000; `stopOnError`;
+  `memoryMiB` 16–128, default 64; `description`, at most 500
+  characters), `revision` (every save adds one; the editor's save of an
+  older revision is refused). Names are compared in Unicode NFC and
+  without case (beyond ASCII too), and refuse invisible characters (zero-width, format,
+  separators, tags, variation selectors). At most 500 per profile,
+  however a script is added (created, duplicated, imported).
+- `script_trust` (machine-local, never exported, never synced, never
+  written by an import; deleted with its script): the source hash the
+  user trusted (`NULL`: not trusted), when, and the script's grants
+  (`deckpilot_core::script_grants`).
+
+Trust:
+
+- a script created in the editor is trusted, bound to its hash, with no
+  grants; saving never grants anything;
+- the editor's save of a trusted script binds the new hash and keeps the
+  grants; of a script that is not trusted, keeps it so;
+- an import, an overwrite by one and a duplicate are never trusted; an
+  existing record's grants stay dormant;
+- a script whose stored source does not match the trusted hash is not
+  trusted either;
+- "Trust this script" names the hash of the source the user reviewed and
+  the dormant grants the review showed, and is refused when the stored
+  source has another hash or the grants are not those (dormant grants
+  never come back unseen); grants can be set only on a trusted script,
+  and are checked whole;
+- a script that is not trusted never runs (`scriptNeedsReview`).
+
+Usages (the guarded delete): every action of type `deckpilot.scripts.run`
+whose `script` parameter names it, with that action's bindings, steps
+and nodes. Deleting a script keeps those bindings, which show "Script
+missing".
+
 ## Machine resources
 
 - **MachineConfig** – `os`, `bindings: MachineResourceBinding[]`.
