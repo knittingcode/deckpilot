@@ -4,8 +4,10 @@
 #
 #   tools/compat/matrix.sh [<old tag>] [<work dir>]
 #
-# Builds the agent and the development CLI of <old tag> (default v0.5.0-2)
-# in a separate worktree, and those of this commit, then runs each agent
+# Builds the agent and the development CLI of <old tag> (default: the
+# baseline in tools/release-pipeline/compat-baseline, the latest published
+# release, which the Compatibility and Release workflows use too) in a
+# separate worktree, and those of this commit, then runs each agent
 # against each client on throwaway data directories created with the
 # development password (no credential store is touched). It also checks
 # that an old agent leaves a database of this commit untouched.
@@ -13,18 +15,39 @@
 # Prints one line per case and exits non-zero if any case fails. Nothing is
 # published and nothing outside <work dir> and the old worktree is written.
 #
-# OLD_PROTOCOL is the protocol of <old tag>'s agent (default 4, that of
-# v0.5.0-2). With OLD_BIN and NEW_BIN set (directories holding deckpilot-agent and
+# OLD_PROTOCOL is the protocol of <old tag>'s agent; by default it is read
+# from that tag's crates/deckpilot-ipc/src/protocol.rs (PROTOCOL_VERSION).
+# Older baselines still run by hand, e.g. tools/compat/matrix.sh v0.5.0-2
+# (protocol 4, the never-published first baseline). With OLD_BIN and NEW_BIN set (directories holding deckpilot-agent and
 # deckpilot-dev of <old tag> and of this commit, built beforehand, e.g. in
 # slots of tools/dev/target-slot.sh), nothing is built and no worktree is
 # created; <old tag> then only names the old version in the output.
 set -euo pipefail
 
-OLD_TAG=${1:-v0.5.0-2}
-# The protocol the old agent speaks (4: 0.5.0-2; 10: 0.6.0 to 0.8.1).
-OLD_PROTOCOL=${OLD_PROTOCOL:-4}
-WORK=${2:-$(mktemp -d "${TMPDIR:-/tmp}/deckpilot-compat.XXXXXX")}
 ROOT=$(git rev-parse --show-toplevel)
+OLD_TAG=${1:-$(cat "$ROOT/tools/release-pipeline/compat-baseline")}
+WORK=${2:-$(mktemp -d "${TMPDIR:-/tmp}/deckpilot-compat.XXXXXX")}
+
+# protocol_of <revision>: the IPC protocol its agent speaks, from its
+# PROTOCOL_VERSION (a number, or the name of another constant there).
+protocol_of() {
+  local source value
+  source=$(git -C "$ROOT" show "$1:crates/deckpilot-ipc/src/protocol.rs") || return 1
+  value=$(sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([A-Z0-9_]*\);.*/\1/p' <<<"$source")
+  case "$value" in
+    '' | *[!0-9]*) [ -n "$value" ] && value=$(sed -n "s/^pub const $value: u32 = \([0-9]*\);.*/\1/p" <<<"$source") ;;
+  esac
+  case "$value" in '' | *[!0-9]*) return 1 ;; esac
+  echo "$value"
+}
+# The protocol the old agent speaks (4: 0.5.0-2; 10: 0.6.0 to 0.8.1;
+# 16: 0.10.0 to 0.13.0; 17: 0.14.0 and 0.15.0).
+if [ -z "${OLD_PROTOCOL:-}" ]; then
+  OLD_PROTOCOL=$(protocol_of "$OLD_TAG") || {
+    printf 'cannot read the protocol of %s; set OLD_PROTOCOL\n' "$OLD_TAG" >&2
+    exit 2
+  }
+fi
 OLD_TREE=${OLD_TREE:-"$WORK/old-tree"}
 mkdir -p "$WORK"
 
@@ -135,8 +158,8 @@ case "$status" in
 esac
 status=$(status_of "$OLD_BIN" "$new_data")
 case "$status" in
-  "version=$NEW_VERSION "*) result "$OLD_VERSION client  -> $NEW_VERSION agent (protocol 4)" ok "$status" ;;
-  *) result "$OLD_VERSION client  -> $NEW_VERSION agent (protocol 4)" FAIL "$status" ;;
+  "version=$NEW_VERSION "*) result "$OLD_VERSION client  -> $NEW_VERSION agent (protocol $OLD_PROTOCOL)" ok "$status" ;;
+  *) result "$OLD_VERSION client  -> $NEW_VERSION agent (protocol $OLD_PROTOCOL)" FAIL "$status" ;;
 esac
 stop_agents
 
