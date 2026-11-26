@@ -54,6 +54,9 @@ pub const BACKOFF: [Duration; MAX_RESTARTS] = [
 pub const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// How long a restart waits for the instance lock to be free.
 pub const LOCK_WAIT: Duration = Duration::from_secs(5);
+/// How long an expected stop is believed: an agent still running this long
+/// after it was asked to stop (the request failed) is supervised again.
+pub const STOP_EXPECTED_FOR: Duration = Duration::from_secs(30);
 
 /// How an agent process ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -125,6 +128,11 @@ impl RestartPolicy {
         Some(delay)
     }
 
+    /// The last restart did not happen after all: it does not count.
+    pub fn forget_last(&mut self) {
+        self.restarts.pop_back();
+    }
+
     /// Restarts counted in the window.
     pub fn restarts(&self) -> usize {
         self.restarts.len()
@@ -179,8 +187,9 @@ pub enum Action {
 /// An agent process this app started.
 struct Owned {
     process: Box<dyn Process>,
-    /// The app asked it to stop, or it announced that it stops.
-    stop_expected: bool,
+    /// When the app asked it to stop, or it announced that it stops.
+    /// Forgotten after [`STOP_EXPECTED_FOR`] if it is still running.
+    stop_expected: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -188,6 +197,9 @@ struct Inner {
     owned: Vec<Owned>,
     policy: RestartPolicy,
     supervision: Option<Supervision>,
+    /// Whether anything checks the agents (`run`): without it (a
+    /// development session manages the agent) nothing is recorded.
+    active: bool,
 }
 
 /// The agents this app started, and the restart policy.
@@ -210,14 +222,22 @@ impl Supervisor {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// The supervision loop runs: from now on started agents are recorded.
+    pub fn activate(&self) {
+        self.lock().active = true;
+    }
+
     /// Starts the agent and supervises it (the first launch, an update,
     /// the security flows). Earlier restarts still count.
     pub fn start(&self) -> Result<(), String> {
         let process = self.launcher.launch()?;
-        self.lock().owned.push(Owned {
-            process,
-            stop_expected: false,
-        });
+        let mut inner = self.lock();
+        if inner.active {
+            inner.owned.push(Owned {
+                process,
+                stop_expected: None,
+            });
+        }
         Ok(())
     }
 
@@ -233,18 +253,21 @@ impl Supervisor {
     }
 
     /// This app is about to ask the agent to stop (a restart, Stop agent,
-    /// an update): its exit is not a crash, whatever its code.
-    pub fn expect_stop(&self) {
+    /// an update), at `now`: its exit is not a crash, whatever its code. If
+    /// the stop does not happen, the agent is supervised again after
+    /// [`STOP_EXPECTED_FOR`].
+    pub fn expect_stop(&self, now: Instant) {
         for owned in &mut self.lock().owned {
-            owned.stop_expected = true;
+            owned.stop_expected = Some(now);
         }
     }
 
-    /// The connected agent, process `pid`, announced that it stops.
-    pub fn stopping(&self, pid: u32) {
+    /// The connected agent, process `pid`, announced at `now` that it
+    /// stops.
+    pub fn stopping(&self, pid: u32, now: Instant) {
         for owned in &mut self.lock().owned {
             if owned.process.id() == pid {
-                owned.stop_expected = true;
+                owned.stop_expected = Some(now);
             }
         }
     }
@@ -272,9 +295,19 @@ impl Supervisor {
         inner
             .owned
             .retain_mut(|owned| match owned.process.try_wait() {
-                Ok(None) => true,
+                Ok(None) => {
+                    // Asked to stop long ago and still running: the stop
+                    // failed, and a later exit is a crash again.
+                    if owned
+                        .stop_expected
+                        .is_some_and(|at| now.saturating_duration_since(at) >= STOP_EXPECTED_FOR)
+                    {
+                        owned.stop_expected = None;
+                    }
+                    true
+                }
                 Ok(Some(exit)) => {
-                    if is_crash(owned.stop_expected, exit) {
+                    if is_crash(owned.stop_expected.is_some(), exit) {
                         crashed = Some(exit);
                     }
                     false
@@ -308,9 +341,12 @@ impl Supervisor {
     }
 
     /// A restart did not happen: another agent is there or is starting, or
-    /// an update is in progress. Nothing is shown about it.
+    /// an update is in progress. Nothing is shown about it, and it does not
+    /// count toward the limit.
     fn restart_skipped(&self) {
-        self.lock().supervision = None;
+        let mut inner = self.lock();
+        inner.supervision = None;
+        inner.policy.forget_last();
     }
 
     /// Starting the agent again failed: it stays stopped.
@@ -375,13 +411,7 @@ pub async fn restart(supervisor: &Supervisor, env: &impl Environment) -> Restart
     } else if !env.lock_free().await {
         Restart::LockHeld
     } else {
-        match supervisor.start() {
-            Ok(()) => Restart::Started,
-            Err(error) => {
-                eprintln!("the agent could not be restarted: {error}");
-                Restart::Failed
-            }
-        }
+        start_unless_updating(supervisor, env)
     };
     if outcome == Restart::Failed {
         supervisor.restart_failed();
@@ -389,6 +419,20 @@ pub async fn restart(supervisor: &Supervisor, env: &impl Environment) -> Restart
         supervisor.restart_skipped();
     }
     outcome
+}
+
+/// Starts the agent, unless an update began while the lock was awaited.
+fn start_unless_updating(supervisor: &Supervisor, env: &impl Environment) -> Restart {
+    if env.update_in_progress() {
+        return Restart::UpdateInProgress;
+    }
+    match supervisor.start() {
+        Ok(()) => Restart::Started,
+        Err(error) => {
+            eprintln!("the agent could not be restarted: {error}");
+            Restart::Failed
+        }
+    }
 }
 
 /// One round of supervision: checks the agents this app started and
@@ -404,7 +448,12 @@ pub async fn step(supervisor: &Supervisor, env: &impl Environment) -> Option<Res
             env.changed();
             env.sleep(delay).await;
             let outcome = restart(supervisor, env).await;
-            env.changed();
+            // Only a restart that failed has something new to show. After
+            // the others an agent runs or is about to (the bridge reports
+            // it), and a "stopped" status would overwrite a running one.
+            if outcome == Restart::Failed {
+                env.changed();
+            }
             Some(outcome)
         }
     }
@@ -412,6 +461,7 @@ pub async fn step(supervisor: &Supervisor, env: &impl Environment) -> Option<Res
 
 /// Supervises the agents this app starts, for as long as the app runs.
 pub async fn run(supervisor: &Supervisor, env: &impl Environment) {
+    supervisor.activate();
     loop {
         env.sleep(POLL_INTERVAL).await;
         step(supervisor, env).await;
@@ -576,11 +626,9 @@ mod tests {
 
     fn setup() -> (Supervisor, FakeLauncher, FakeEnv) {
         let launcher = FakeLauncher::default();
-        (
-            Supervisor::new(Box::new(launcher.clone())),
-            launcher,
-            FakeEnv::new(),
-        )
+        let supervisor = Supervisor::new(Box::new(launcher.clone()));
+        supervisor.activate();
+        (supervisor, launcher, FakeEnv::new())
     }
 
     fn run_step(supervisor: &Supervisor, env: &FakeEnv) -> Option<Restart> {
@@ -692,7 +740,7 @@ mod tests {
         // The tray's Quit (or any stop the agent announces).
         let (supervisor, launcher, env) = setup();
         supervisor.start().unwrap();
-        supervisor.stopping(launcher.last_pid());
+        supervisor.stopping(launcher.last_pid(), env.now());
         launcher.exit_last(CRASH);
         assert_eq!(run_step(&supervisor, &env), None);
         assert_eq!(launcher.count(), 1);
@@ -700,7 +748,7 @@ mod tests {
 
         // A stop this app asks for (Stop agent, a restart, an update).
         supervisor.start().unwrap();
-        supervisor.expect_stop();
+        supervisor.expect_stop(env.now());
         launcher.exit_last(KILLED);
         assert_eq!(run_step(&supervisor, &env), None);
         assert_eq!(launcher.count(), 2);
@@ -715,10 +763,65 @@ mod tests {
     }
 
     #[test]
+    fn a_stop_that_did_not_happen_does_not_disable_restarts() {
+        let (supervisor, launcher, env) = setup();
+        supervisor.start().unwrap();
+        // The app asked it to stop, but the request failed: still running.
+        supervisor.expect_stop(env.now());
+        assert_eq!(run_step(&supervisor, &env), None);
+        env.advance(STOP_EXPECTED_FOR);
+        assert_eq!(run_step(&supervisor, &env), None);
+        // A later crash is a crash again.
+        launcher.exit_last(CRASH);
+        assert_eq!(run_step(&supervisor, &env), Some(Restart::Started));
+    }
+
+    #[test]
+    fn skipped_restarts_do_not_use_up_the_limit() {
+        let (supervisor, launcher, env) = setup();
+        env.answers.store(true, Ordering::SeqCst);
+        for _ in 0..5 {
+            supervisor.start().unwrap();
+            launcher.exit_last(CRASH);
+            assert_eq!(run_step(&supervisor, &env), Some(Restart::AgentAnswers));
+        }
+        env.answers.store(false, Ordering::SeqCst);
+        supervisor.start().unwrap();
+        launcher.exit_last(CRASH);
+        env.slept();
+        assert_eq!(run_step(&supervisor, &env), Some(Restart::Started));
+        assert_eq!(
+            env.slept(),
+            [Duration::from_secs(1)],
+            "still the first restart"
+        );
+    }
+
+    #[test]
+    fn a_started_or_skipped_restart_does_not_report_the_agent_stopped() {
+        let (supervisor, launcher, env) = setup();
+        supervisor.start().unwrap();
+        launcher.exit_last(CRASH);
+        assert_eq!(run_step(&supervisor, &env), Some(Restart::Started));
+        // Only the "restarting" notice before the wait.
+        assert_eq!(env.changes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn nothing_is_recorded_without_the_supervision_loop() {
+        // A development session manages the agent: no loop runs.
+        let launcher = FakeLauncher::default();
+        let supervisor = Supervisor::new(Box::new(launcher.clone()));
+        supervisor.start().unwrap();
+        assert_eq!(launcher.count(), 1);
+        assert!(!supervisor.owns_running_agent());
+    }
+
+    #[test]
     fn another_agents_stop_does_not_count_for_this_apps_agent() {
         let (supervisor, launcher, env) = setup();
         supervisor.start().unwrap();
-        supervisor.stopping(launcher.last_pid() + 100);
+        supervisor.stopping(launcher.last_pid() + 100, env.now());
         launcher.exit_last(CRASH);
         assert_eq!(run_step(&supervisor, &env), Some(Restart::Started));
     }
@@ -861,10 +964,12 @@ mod tests {
                 .args(["-9", &pid.to_string()])
                 .status()
                 .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
             let exit = loop {
                 if let Some(exit) = sleeper.try_wait().unwrap() {
                     break exit;
                 }
+                assert!(Instant::now() < deadline, "the killed process did not exit");
                 std::thread::sleep(Duration::from_millis(20));
             };
             assert_eq!(exit, KILLED);

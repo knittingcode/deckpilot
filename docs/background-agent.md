@@ -188,7 +188,8 @@ are a conservative default that the owner chose:
   - an exit after the agent announced `shuttingDown` (the tray's Quit, a
     restart, an update, a signal);
   - an exit after the app asked it to stop (Stop agent, Restart agent, an
-    update);
+    update). If the agent is still running 30 seconds after such a
+    request, the request failed, and a later exit counts as a crash again;
   - an exit with code 0 (for example an agent that found another one
     running).
 - An agent that the app did not start is never restarted. That includes an
@@ -204,15 +205,23 @@ are a conservative default that the owner chose:
     nothing is downgraded.
   - The instance lock is free. The app waits up to 5 seconds for it.
 
-  If any check fails, the app starts nothing and only reconnects.
+  If any check fails, the app starts nothing and only reconnects, and the
+  skipped restart does not count toward the limit. The update check runs
+  again right before the start.
+- The app does not watch for the end of the session (logout, shutdown). If
+  the system ends the agent with a non-zero code a moment before the app,
+  the app may start it once more as the session ends.
 - The restarted agent starts locked, like every agent. The bridge unlocks
   it the way it unlocks any agent that (re)started: with this app's key,
   only while this app is unlocked, and never after a lock that needs the
   password. The supervisor itself never reads or holds a key.
 
-The app sees the exit through the process it started. An agent that stays
-alive without its endpoint is not detected as a crash: before #508, a
-panic in tray mode did that. Such an agent is only reconnected to.
+The app sees the exit through the process it started. The app starts the
+agent with its tray, so this relies on the tray agent's exit codes from
+#508: 1 for an error, 101 for a panic. Before #508, a tray agent exited
+with 0 after an error and stayed alive without its endpoint after a panic.
+Neither is detected as a crash; such an agent is only reconnected to. Only
+a signal (a kill, an abort) is detected without #508.
 
 ### Start at login
 

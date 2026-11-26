@@ -30,7 +30,10 @@ function useExitText() {
   const { t } = useTranslation()
   return (exit: AgentExit) =>
     exit.code !== null
-      ? t("devices:agent.supervision.exitCode", { code: exit.code })
+      ? t("devices:agent.supervision.exitCode", {
+          // Windows crash codes (NTSTATUS) read as hex, e.g. 0xC0000005.
+          code: exit.code < 0 ? `0x${(exit.code >>> 0).toString(16).toUpperCase()}` : exit.code,
+        })
       : exit.signal !== null
         ? t("devices:agent.supervision.exitSignal", { signal: exit.signal })
         : t("devices:agent.supervision.exitUnknown")

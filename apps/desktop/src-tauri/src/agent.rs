@@ -160,7 +160,7 @@ pub fn running_workflows_message(running: u32) -> String {
 /// the current protocol, so the request is repeated with protocol 1.
 pub async fn stop_any_version(paths: &AgentPaths, request: Request) -> Result<(), ClientError> {
     // Asked for: never a crash to restart (`supervisor.rs`).
-    crate::supervisor::global().expect_stop();
+    crate::supervisor::global().expect_stop(std::time::Instant::now());
     let outcome = match self::request(paths, request.clone()).await {
         Err(ClientError::Agent(error)) if error.code == ErrorCode::UnsupportedProtocol => {
             let mut client =
@@ -466,10 +466,17 @@ impl<R: Runtime> crate::supervisor::Environment for SupervisorEnv<R> {
 
     fn update_in_progress(&self) -> bool {
         // An intent that cannot be read counts too: recovery handles it.
-        !matches!(
-            deckpilot_update::intent::UpdateIntent::read(&self.paths.data_dir),
-            Ok(None)
-        )
+        match deckpilot_update::intent::UpdateIntent::read(&self.paths.data_dir) {
+            Ok(None) => false,
+            Ok(Some(_)) => {
+                eprintln!("the agent is not restarted: an update is in progress");
+                true
+            }
+            Err(error) => {
+                eprintln!("the agent is not restarted: the update intent cannot be read ({error})");
+                true
+            }
+        }
     }
 
     fn agent_answers(&self) -> impl Future<Output = bool> + Send {
@@ -538,7 +545,7 @@ async fn subscribe<R: Runtime>(app: &AppHandle<R>, paths: &AgentPaths) -> Result
                 // Any announced stop (Quit, a restart, an update, a
                 // signal) is not restarted.
                 if let Some(pid) = pid {
-                    crate::supervisor::global().stopping(pid);
+                    crate::supervisor::global().stopping(pid, std::time::Instant::now());
                 }
                 // On macOS the tray's "Quit DeckPilot" ends this app too; a
                 // restart or an update does not. Elsewhere the app stays.

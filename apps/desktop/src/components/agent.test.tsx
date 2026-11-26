@@ -223,6 +223,21 @@ describe("stopped agent", () => {
     )
   })
 
+  it("shows a Windows crash code in hex", () => {
+    renderWithApp(<AgentStopped />, {
+      agent: agentConnection({
+        running: false,
+        supervision: {
+          state: "stopped",
+          restarts: 0,
+          windowMinutes: 10,
+          exit: { success: false, code: -1073741819, signal: null },
+        },
+      }),
+    })
+    expect(screen.getByRole("alert")).toHaveTextContent("(exit code 0xC0000005)")
+  })
+
   it("explains when the agent cannot be started from the app", () => {
     renderWithApp(<AgentStopped />, { agent: agentConnection({ running: false, canStart: false }) })
     expect(screen.getByRole("button", { name: "Start agent" })).toBeDisabled()
