@@ -30,8 +30,10 @@ pattern() {
     # Real credential stores.
     keystore) echo '^crates/deckpilot-keystore/|^tools/ci/with-keyring\.sh$|^\.github/workflows/ci\.yml$' ;;
     # Assembly of the release's latest.json, including the pinned download
-    # prefix (common.sh) and the client checks it must satisfy.
-    release_manifest) echo '^tools/ci/|^tools/release-pipeline/common\.sh$|^crates/deckpilot-update/|^\.github/workflows/(release|ci)\.yml$' ;;
+    # prefix (common.sh) and the client checks it must satisfy; also the
+    # release scripts' own tests, among them the Linux packages' udev
+    # maintainer scripts (packaging/linux, tools/ci/test-udev-scripts.sh).
+    release_manifest) echo '^tools/ci/|^packaging/linux/|^tools/release-pipeline/common\.sh$|^crates/deckpilot-update/|^\.github/workflows/(release|ci)\.yml$' ;;
     # The worktree and build cache scripts of tools/dev and their tests.
     dev_tools) echo '^tools/dev/[^/]+\.sh$|^tools/dev/tests/|^\.github/workflows/ci\.yml$' ;;
   esac

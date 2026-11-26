@@ -38,7 +38,10 @@ expect "dev_tools=false keystore=false packaging=true release_manifest=false" ap
 expect "dev_tools=false keystore=false packaging=true release_manifest=false" apps/desktop/package.json
 expect "dev_tools=false keystore=false packaging=true release_manifest=false" apps/desktop/src-tauri/tauri.conf.json
 expect "dev_tools=false keystore=false packaging=true release_manifest=false" Cargo.lock
-expect "dev_tools=false keystore=false packaging=true release_manifest=false" packaging/linux/70-deckpilot-streamdeck.rules
+expect "dev_tools=false keystore=false packaging=true release_manifest=true" packaging/linux/70-deckpilot-streamdeck.rules
+expect "dev_tools=false keystore=false packaging=true release_manifest=true" packaging/linux/postinst.sh
+expect "dev_tools=false keystore=false packaging=false release_manifest=true" tools/ci/test-udev-scripts.sh
+expect "dev_tools=false keystore=false packaging=true release_manifest=false" packaging/flatpak/udev.md
 # The plugin host's entitlement and the check that enforces it.
 expect "dev_tools=false keystore=false packaging=true release_manifest=false" apps/desktop/src-tauri/entitlements/plugin-host.entitlements
 expect "dev_tools=false keystore=false packaging=true release_manifest=false" apps/desktop/src-tauri/tauri.plugins.macos.conf.json

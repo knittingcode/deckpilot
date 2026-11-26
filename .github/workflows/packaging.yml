@@ -224,8 +224,9 @@ jobs:
 
   # The packages built above, installed on clean systems with only the
   # dependencies they declare, and their agent started (under Xvfb, with an
-  # isolated profile): the .deb with apt on a fresh Ubuntu 24.04 runner,
-  # the .rpm with dnf in a Fedora container, the AppImage's agent with and
+  # isolated profile): the .deb with apt on a fresh Ubuntu 24.04 runner
+  # (then reinstalled, removed and purged there and in a container), the
+  # .rpm with dnf in a Fedora container (then reinstalled and removed), the AppImage's agent with and
   # without the system's own tray library, and the agent on a system
   # without any (it must keep running without a tray icon). The agent's
   # tray loads libayatana-appindicator3 at run time; 0.7.0's packages did
@@ -283,7 +284,19 @@ jobs:
         run: |
           appimage=$(find "$RUNNER_TEMP/packages" -name '*.AppImage' | head -n 1)
           tools/ci/check-linux-install.sh appimage "$appimage"
-      - name: Install the .rpm in Fedora and start the agent
+      # The udev rule's maintainer scripts (packaging/linux/postinst.sh,
+      # postrm.sh): reinstalling, removing and purging the .deb installed
+      # above, on this runner, where udev runs (the scripts reload and
+      # trigger for real), then the whole cycle in a container without udev.
+      - name: Reinstall, remove and purge the .deb (udev reload scripts)
+        run: |
+          deb=$(find "$RUNNER_TEMP/packages" -name '*.deb' | head -n 1)
+          timeout 600 tools/ci/check-linux-install.sh deb-lifecycle "$deb"
+      - name: Install, reinstall, remove and purge the .deb in a container without udev
+        run: |
+          deb=$(find "$RUNNER_TEMP/packages" -name '*.deb' | head -n 1)
+          timeout 1200 tools/ci/check-linux-install.sh deb-container "$deb"
+      - name: Install, start, reinstall and remove the .rpm in Fedora
         run: |
           rpm=$(find "$RUNNER_TEMP/packages" -name '*.rpm' | head -n 1)
           if [ -z "$rpm" ]; then
