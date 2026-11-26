@@ -758,38 +758,93 @@ fn the_schema_file_keeps_every_field_of_version_1() {
     );
 }
 
-/// Probing the lock while an agent starts never makes it give up: the
-/// agent retries its lock for `STARTUP_LOCK_WAIT`.
+/// What `probe_lock` says once copies of a released lock's descriptor are
+/// gone: a program another test of this process is starting holds a copy of
+/// every descriptor until it executes (close-on-exec, see `InstanceLock`),
+/// so a lock just released can still read as held for a moment.
+#[cfg(unix)]
+fn probe_until(path: &Path, want: &str) -> &'static str {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let seen = probe_lock(path);
+        if seen == want || std::time::Instant::now() >= deadline {
+            return seen;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Probing the lock while an agent starts never makes it give up: a probe
+/// leaves nothing held, does not block another probe, and a probe that
+/// holds the lock while an agent starts is waited out (the agent retries
+/// for `STARTUP_LOCK_WAIT`).
+///
+/// Shown by the order of events, not by racing a prober that probes
+/// without pause against the agent: such a prober holds the lock most of
+/// the time, and a loaded machine that preempts it while it holds the lock
+/// made every retry of the agent collide with it.
 #[cfg(unix)]
 #[test]
 fn probing_while_an_agent_starts_never_stops_it() {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
     let root = root();
     let env = linux_fixture(root.path());
+    let path = env.paths.lock_file.clone();
     // A previous agent left its lock file behind (the probe never creates it).
-    fs::write(&env.paths.lock_file, "").unwrap();
-    let stop = Arc::new(AtomicBool::new(false));
-    let prober = {
-        let path = env.paths.lock_file.clone();
-        let stop = Arc::clone(&stop);
-        std::thread::spawn(move || {
-            let mut probes = 0_u32;
-            while !stop.load(Ordering::Relaxed) {
-                let _ = probe_lock(&path);
-                probes += 1;
-            }
-            probes
-        })
-    };
+    fs::write(&path, "").unwrap();
+
+    // A probe holds nothing once it returns: after any number of probes the
+    // agent gets its lock (a probe that kept it would make the agent wait in
+    // vain); while the agent holds it, a probe sees it held.
     for _ in 0..20 {
-        let lock =
-            crate::InstanceLock::acquire_waiting(&env.paths.lock_file, crate::STARTUP_LOCK_WAIT)
-                .expect("a starting agent gets its lock despite the probes");
+        for _ in 0..10 {
+            assert_eq!(probe_until(&path, "free"), "free");
+        }
+        let lock = crate::InstanceLock::acquire_waiting(&path, crate::STARTUP_LOCK_WAIT)
+            .expect("a probe that returned holds nothing");
+        assert_eq!(probe_lock(&path), "held");
         drop(lock);
     }
-    stop.store(true, Ordering::Relaxed);
-    assert!(prober.join().unwrap() > 0);
+
+    // A probe in progress (the shared lock `probe_lock` takes, on the same
+    // file) does not block another probe, but does block an agent for that
+    // moment; the agent waits and gets the lock once the probe ends.
+    let probe = fs::File::open(&path).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match probe.try_lock_shared() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                assert!(std::time::Instant::now() < deadline, "the lock stayed held");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(std::fs::TryLockError::Error(error)) => panic!("cannot lock the file: {error}"),
+        }
+    }
+    assert_eq!(
+        probe_lock(&path),
+        "free",
+        "a probe does not block another probe"
+    );
+    assert!(
+        matches!(
+            crate::InstanceLock::acquire(&path),
+            Err(crate::LockError::AlreadyRunning)
+        ),
+        "a probe in progress holds the lock"
+    );
+    // The probe ends while the agent is waiting. The pause only decides
+    // whether the agent's first attempt meets the probe (and so has to
+    // retry); a correct agent gets the lock either way.
+    let end_probe = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        drop(probe);
+    });
+    let lock = crate::InstanceLock::acquire_waiting(&path, crate::STARTUP_LOCK_WAIT)
+        .expect("a starting agent gets its lock despite the probe");
+    end_probe.join().unwrap();
+    assert_eq!(probe_lock(&path), "held");
+    drop(lock);
+    assert_eq!(probe_until(&path, "free"), "free");
 }
 
 /// In a Flatpak the rule directories are the sandbox's: not reported.
