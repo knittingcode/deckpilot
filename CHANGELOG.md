@@ -15,6 +15,8 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-27
+
 ### Added
 
 - Settings › Logs & Diagnostics › Export diagnostics… saves a support
