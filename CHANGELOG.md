@@ -374,6 +374,12 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Fixed
 
+- On Windows, `deckpilot-agent diagnose` and the support bundle no longer
+  show the server and share of a data folder redirected to a network share,
+  a user name shortened to an 8.3 name (`ALEXAN~1`), a computer name longer
+  than 15 characters, the user's domain (`CORP\user`) or the organisation
+  of a OneDrive for work or school folder.
+
 - Agent: a failure inside the background agent no longer leaves a menu
   bar or tray icon whose menu does nothing. The agent writes the failure
   to its log, closes its connection point, lets a next agent start, and

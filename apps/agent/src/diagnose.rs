@@ -29,8 +29,10 @@
 //! serial): stable on one machine, so two reports can be compared, but a
 //! pseudonym, not an irreversible secret (without the machine ID, serials
 //! can be guessed and checked against it). The home directory becomes `~`
-//! and the user name `<user>` in paths and messages. No environment value,
-//! token or configuration value is part of the report.
+//! and the user name `<user>` in paths and messages; this computer's
+//! names, a UNC path's server and share, the user's domain and the
+//! organisation of a `OneDrive` folder go too ([`names`]). No environment
+//! value, token or configuration value is part of the report.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -95,8 +97,17 @@ pub struct Environment {
     /// Linux `/etc/machine-id`: keys the serial pseudonyms. Never reported.
     pub machine_id: Option<String>,
     /// This computer's name: never reported, and replaced with `<host>` in
-    /// the logs of a support bundle ([`bundle`]).
+    /// the report and in the logs of a support bundle ([`bundle`]).
     pub hostname: Option<String>,
+    /// Its other names: on Windows the DNS host name, which may be longer
+    /// than the 15 characters of `COMPUTERNAME`, and with the DNS domain.
+    pub host_aliases: Vec<String>,
+    /// The user's domain (Windows `USERDOMAIN`, `USERDNSDOMAIN`): becomes
+    /// `<domain>`.
+    pub domains: Vec<String>,
+    /// The organisations of the user's `OneDrive` for work or school folders
+    /// (`OneDrive - <org>`): become `<org>`.
+    pub organisations: Vec<String>,
     pub hid: HidSource,
 }
 
@@ -128,6 +139,12 @@ impl Environment {
                 .filter(|user| !user.is_empty()),
             machine_id: read_trimmed(Path::new("/etc/machine-id")).filter(|id| !id.is_empty()),
             hostname: hostname(),
+            host_aliases: host_aliases(),
+            domains: names::useful_names(windows_env(&["USERDOMAIN", "USERDNSDOMAIN"])),
+            organisations: names::organisations_from(windows_env(&[
+                "OneDriveCommercial",
+                "OneDrive",
+            ])),
             hid,
         })
     }
@@ -169,28 +186,86 @@ fn hostname() -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
+/// This computer's other names (Windows): the DNS host name
+/// (`GetComputerNameExW`, through `sysinfo`), alone and with the DNS
+/// domain. `COMPUTERNAME` is its `NetBIOS` name, cut at 15 characters.
+fn host_aliases() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let mut names = Vec::new();
+        if let Some(name) = sysinfo::System::host_name()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+        {
+            if let Some(domain) = windows_env(&["USERDNSDOMAIN"]).into_iter().next() {
+                names.push(format!("{name}.{domain}"));
+            }
+            names.push(name);
+        }
+        names
+    }
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
+/// The values of these environment variables on Windows (only used to
+/// redact, never reported); nothing elsewhere.
+fn windows_env(names: &[&str]) -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    names
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
         .filter(|home| home.is_absolute() && home.components().count() > 1)
 }
 
-/// Removes the home directory and the user name from paths and messages.
-#[derive(Debug, Clone)]
+/// Removes the home directory, the user name and the names of this
+/// computer, its domain and the organisation from paths and messages.
+#[derive(Debug, Clone, Default)]
 struct Redactor {
     home: Option<PathBuf>,
     user: Option<String>,
     /// Paths compare without case (Windows).
     fold_case: bool,
+    /// This computer's names (`<host>`).
+    hosts: Vec<String>,
+    /// The user's domains (`<domain>`).
+    domains: Vec<String>,
+    /// Organisations (`<org>`).
+    organisations: Vec<String>,
 }
 
 impl Redactor {
+    fn new(env: &Environment) -> Self {
+        Self {
+            home: env.home.clone(),
+            user: env.user.clone(),
+            fold_case: env.platform == "windows",
+            hosts: env.host_names(),
+            domains: env.domains.clone(),
+            organisations: env.organisations.clone(),
+        }
+    }
+
     fn path(&self, path: &Path) -> String {
-        // A verbatim path (`\\?\C:\…`, Windows) compares like `C:\…`.
+        // A verbatim drive path (`\\?\C:\…`, Windows) compares like
+        // `C:\…`; `\\?\UNC\…` (any case) is a UNC path.
         let plain = path
             .to_str()
             .and_then(|text| text.strip_prefix(r"\\?\"))
-            .filter(|rest| !rest.starts_with(r"UNC\"))
+            .filter(|rest| {
+                let bytes = rest.as_bytes();
+                bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+            })
             .map(PathBuf::from);
         let path = plain.as_deref().unwrap_or(path);
         let text = match &self.home {
@@ -201,16 +276,53 @@ impl Redactor {
             },
             None => path.display().to_string(),
         };
+        // Windows also reads `//server/share` as a UNC path.
+        let text = if self.fold_case {
+            names::forward_unc(&text)
+        } else {
+            text
+        };
         self.text(&text)
     }
 
-    /// The user name wherever it stands as a word of its own (between
-    /// characters that are not letters or digits), in any text.
+    /// In any text: the server and share of a UNC path; this computer's
+    /// names; the user name wherever it stands as a word of its own
+    /// (between characters that are not letters or digits) and as an 8.3
+    /// short name (`ALEXAN~1`); other users' home directories; the domain
+    /// (also `CORP\<user>`, `<user>@corp.example`) and the organisation
+    /// (also `OneDrive - <org>`).
     fn text(&self, text: &str) -> String {
-        match self.user.as_deref() {
-            Some(user) => replace_word(text, user, "<user>", self.fold_case),
-            None => text.to_owned(),
+        let mut text = names::unc(text);
+        text = names::words(&text, &self.hosts, "<host>");
+        if let Some(user) = self.user.as_deref() {
+            text = replace_word(&text, user, "<user>", self.fold_case);
+            text = names::short_names(&text, user);
         }
+        text = names::other_users(&text);
+        text = names::words(&text, &self.domains, "<domain>");
+        text = names::words(&text, &self.organisations, "<org>");
+        text = names::onedrive(&text);
+        names::qualified_user(&text)
+    }
+}
+
+impl Environment {
+    /// This computer's names, longest first.
+    pub(crate) fn host_names(&self) -> Vec<String> {
+        let mut hosts: Vec<String> = self
+            .hostname
+            .iter()
+            .chain(&self.host_aliases)
+            .flat_map(|name| {
+                // `host.example.com` also as `host`.
+                let short = name.split_once('.').map(|(short, _)| short.to_owned());
+                std::iter::once(name.clone()).chain(short)
+            })
+            .filter(|name| name.chars().count() >= 2)
+            .collect();
+        hosts.sort_by_key(|host| std::cmp::Reverse(host.chars().count()));
+        hosts.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        hosts
     }
 }
 
@@ -290,11 +402,7 @@ pub fn serial_pseudonym(serial: &str, machine_id: Option<&str>) -> String {
 
 /// The report.
 pub fn collect(env: &Environment) -> Value {
-    let redactor = Redactor {
-        home: env.home.clone(),
-        user: env.user.clone(),
-        fold_case: env.platform == "windows",
-    };
+    let redactor = Redactor::new(env);
     let catalog = ModelCatalog::builtin();
     let driven: Vec<(u16, u16)> = deckpilot_hid::ElgatoBackend::new()
         .models()
@@ -945,6 +1053,8 @@ pub fn summary(report: &Value) -> String {
 
 #[path = "diagnose/bundle.rs"]
 pub mod bundle;
+#[path = "diagnose/names.rs"]
+mod names;
 
 #[cfg(test)]
 #[path = "diagnose/tests.rs"]
