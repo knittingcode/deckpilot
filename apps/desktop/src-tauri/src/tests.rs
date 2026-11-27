@@ -69,6 +69,7 @@ impl Harness {
             .manage(AppState::with_presence(paths.clone(), presence).expect("open state"))
             .manage(crate::updates::UpdateManager::default())
             .manage(crate::commands::portability::PendingImport::default())
+            .manage(crate::commands::diagnostics::PendingDiagnostics::default())
             .manage(crate::commands::plugins::PluginEvents::default())
             .manage(crate::windows::WindowRegistry::default())
             .invoke_handler(crate::commands::handler())

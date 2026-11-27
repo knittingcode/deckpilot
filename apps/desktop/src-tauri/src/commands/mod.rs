@@ -15,6 +15,7 @@ pub(crate) mod agent;
 pub(crate) mod assets;
 pub(crate) mod calls;
 mod credentials;
+pub(crate) mod diagnostics;
 mod icons;
 mod key_labels;
 pub(crate) mod key_states;
@@ -84,6 +85,9 @@ pub fn handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         locale::set_agent_locale,
         system::launch_info,
         logs::read_agent_log,
+        diagnostics::prepare_diagnostics,
+        diagnostics::save_diagnostics,
+        diagnostics::discard_diagnostics,
         system::list_action_types,
         system::list_device_models,
         system::migration_notes,

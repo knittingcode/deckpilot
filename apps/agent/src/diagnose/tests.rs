@@ -181,6 +181,7 @@ fn linux_fixture(root: &Path) -> Environment {
         home: Some(home),
         user: Some("alice".into()),
         machine_id: Some(MACHINE_ID.into()),
+        hostname: Some("alice-laptop".into()),
         hid: HidSource::Sysfs,
     }
 }
@@ -574,6 +575,7 @@ fn listed_hid_interfaces_without_usb() {
         home: None,
         user: None,
         machine_id: None,
+        hostname: None,
         hid: HidSource::Listed(Ok(vec![
             deckpilot_hid::HidInterface {
                 vendor_id: 0x0fd9,
@@ -858,4 +860,69 @@ fn a_flatpak_reports_no_udev_rules() {
     assert_eq!(report["install"]["type"], "flatpak");
     assert_eq!(report["udevRules"], Value::Null);
     conforms(&schema_v1(), &report, "flatpak report").unwrap();
+}
+
+/// Windows shapes of the report's paths and names (#515's redaction):
+/// drive letters, case, separators and verbatim paths.
+#[cfg(windows)]
+#[test]
+fn windows_paths_and_names_are_redacted() {
+    let redactor = Redactor {
+        home: Some(PathBuf::from(r"C:\Users\Alice")),
+        user: Some("Alice".into()),
+        fold_case: true,
+    };
+    for (label, path) in [
+        ("drive-letter home", r"C:\Users\Alice\AppData\Roaming\x"),
+        ("lower case", r"c:\users\alice\AppData\Roaming\x"),
+        ("forward slashes", "C:/Users/Alice/AppData/Roaming/x"),
+        ("mixed separators", r"C:\Users/Alice\AppData/Roaming\x"),
+        ("verbatim", r"\\?\C:\Users\Alice\AppData\Roaming\x"),
+    ] {
+        let text = redactor.path(Path::new(path));
+        assert!(text.starts_with('~'), "not below ~: {label}");
+        assert!(
+            !text.to_lowercase().contains("alice"),
+            "the user name is left: {label}"
+        );
+    }
+    // Outside the home directory the user name still goes.
+    let other = redactor.path(Path::new(r"D:\Data\ALICE\x"));
+    assert!(
+        !other.to_lowercase().contains("alice"),
+        "the user name is left: other drive"
+    );
+    assert!(
+        !redactor.text("signed in as alice").contains("alice"),
+        "the user name is left: message"
+    );
+}
+
+/// The endpoint's id is a hash of the data directory's path (with the
+/// user name in it): the report hides it.
+#[test]
+fn the_endpoint_id_is_hidden() {
+    assert_eq!(
+        hide_endpoint_id(r"\\.\pipe\deckpilot-agent-0123456789abcdef"),
+        r"\\.\pipe\deckpilot-agent-<id>"
+    );
+    assert_eq!(
+        hide_endpoint_id("/tmp/deckpilot-501/agent-a4ae57efd340dc75.sock"),
+        "/tmp/deckpilot-501/agent-<id>.sock"
+    );
+    // Anything else stays.
+    assert_eq!(
+        hide_endpoint_id("~/agent-notes/agent-12"),
+        "~/agent-notes/agent-12"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_report_hides_the_endpoint_id() {
+    let root = root();
+    let env = linux_fixture(root.path());
+    let report = collect(&env);
+    let endpoint = report["agent"]["endpoint"].as_str().unwrap();
+    assert!(endpoint.contains("agent-<id>"), "the endpoint keeps its id");
 }

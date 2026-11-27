@@ -1986,6 +1986,29 @@ export interface LogView {
   truncated: boolean
 }
 
+/** One log in a diagnostics bundle. */
+export interface DiagnosticsLogSummary {
+  file: string
+  lines: number
+  truncated: boolean
+}
+
+/** A prepared diagnostics bundle: shown in full before it is saved. */
+export interface DiagnosticsPreview {
+  token: string
+  fileName: string
+  /** The whole bundle, exactly as it will be saved. */
+  text: string
+  bytes: number
+  logs: DiagnosticsLogSummary[]
+  findings: number
+}
+
+export interface SavedDiagnostics {
+  path: string
+  bytes: number
+}
+
 export interface ImportSummary {
   imported: [string, string][]
   removed: [string, string][]

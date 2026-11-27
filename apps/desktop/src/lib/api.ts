@@ -43,6 +43,8 @@ import type {
   ImportSummary,
   LaunchView,
   LogView,
+  DiagnosticsPreview,
+  SavedDiagnostics,
   SecurityPolicy,
   SecurityView,
   WindowSpec,
@@ -162,6 +164,11 @@ export const api = {
     includeAppSettings: boolean
   }) => invoke<ExportResult>("export_configuration", { request }),
   readAgentLog: (lines: number) => invoke<LogView>("read_agent_log", { lines }),
+  prepareDiagnostics: () => invoke<DiagnosticsPreview>("prepare_diagnostics"),
+  /** Opens the save dialog in the app; `null` when the user cancelled. */
+  saveDiagnostics: (token: string, title: string, fileType: string) =>
+    invoke<SavedDiagnostics | null>("save_diagnostics", { token, title, fileType }),
+  discardDiagnostics: () => invoke<null>("discard_diagnostics"),
   previewImport: (path: string, password: string) =>
     invoke<{ token: number; preview: ImportPreview }>("preview_import", { path, password }),
   applyImport: (token: number, options: ImportOptions) =>

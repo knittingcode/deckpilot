@@ -660,7 +660,75 @@ The report hides personal data:
 - the home directory becomes `~`, and the user name (of two or more
   characters) becomes `<user>` wherever it stands as a word, in paths and
   messages;
+- the endpoint's id (`agent-<16 hex>`, a hash of the data directory's
+  path, which contains the user name) becomes `agent-<id>`: the hash is
+  not preimage-resistant, so a guessed user name could be checked against
+  it;
 - environment values and tokens are never included.
+
+### Support bundle
+
+Settings › Logs & Diagnostics › **Export diagnostics…** saves a support
+bundle: one JSON file (`"schema": "deckpilot.support-bundle"`,
+`"schemaVersion": 1`) for a support request. The app runs
+`deckpilot-agent diagnose --bundle` from its own bundle, which prints the
+bundle and, like `diagnose`, starts, opens and writes nothing. The app shows
+the whole bundle and what it contains, and writes it only to the file the
+user picks in a save dialog. Nothing is uploaded.
+
+The bundle contains:
+
+- `report`: the diagnose report above;
+- `logs`: the end of the newest three agent logs (`agent.*.log`, newest
+  first) and of the app's `updates.log`. At most 512 KiB of the agent logs
+  and 64 KiB of the update log are read, 5000 lines in all, each line cut
+  at 2000 characters. A log that is a link is not read;
+- `app`, added by the app: its version, its update channel (`null` while
+  the configuration is locked) and whether it is a debug build;
+- `redaction`: the rules applied.
+
+Every log line, and every string of the report again, goes through one
+redaction filter (`apps/agent/src/diagnose/bundle.rs`):
+
+- secret values:
+  - the value of a field whose name contains `token`, `password`,
+    `passphrase`, `secret`, `credential`, `api_key`, `private_key`,
+    `access_key`, `auth`, `cookie`, `session` or `signature`, is or ends in
+    `sig`, `pass`, `pw`, `pin` or `otp`, or ends in `_key`. This covers
+    `k=v`, `k: v`, `"k": "v"`, `k => v`, `k -> v`, escaped JSON
+    (`\"k\":\"v\"`), `Some(…)`, `Type { … }`, tuples and lists nested up
+    to four levels, a quote left open, and `%3D`. A name right after `::`
+    is a module path (a log target), not a field. Only the first word of a
+    bare value that contains spaces is removed;
+  - the value of such a command-line option (`--password X`);
+  - the credential after `Bearer`, `Basic` and `Digest`;
+  - tokens with a known prefix (`ghp_`, `github_pat_`, `glpat-`, `xox?-`,
+    `sk-`, `AKIA`) and JSON web tokens;
+  - any run of 32 or more letters, digits and `+=_-` that mixes letters and
+    digits, and any such run with `/` (base64) that starts a word and mixes
+    upper and lower case and digits (a path that starts with `/` or goes on
+    after a `.` is kept);
+- URLs: user and password go. A host other than GitHub's or loopback
+  becomes `<host>`, every query value `<redacted>`, and the path after
+  `/webhooks/`, `/services/` or `/hooks/` `<redacted>`;
+- serial numbers become the report's pseudonyms, so a device in the logs
+  matches the report. This applies after a device ID
+  (`elgato.streamdeck.mk2#…`), after `serial=`, `serial_number:` or
+  `ID_SERIAL_SHORT=`, and to every serial of a device the report sees, in
+  any case. The machine ID becomes `<machine-id>`;
+- personal names and addresses:
+  - the home directory becomes `~`;
+  - the user part of another home directory (`/home/…`, `/Users/…`,
+    `/var/home/…`, `/media/…`, `C:\Users\…`) becomes `<user>`;
+  - the user name becomes `<user>`;
+  - this computer's name (`uname -n`, on Windows `COMPUTERNAME`) and the
+    server of a UNC path become `<host>`;
+  - e-mail addresses become `<email>`;
+  - IPv4 and IPv6 addresses other than loopback become `<ip>`.
+
+Redaction is a filter over text: a secret in a form it does not know can
+pass. That is why the app shows the whole bundle before it is saved, and
+says so.
 
 ## Testing
 

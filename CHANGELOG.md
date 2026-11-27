@@ -17,6 +17,16 @@ released either. 0.6.0 is the first version intended for publication.
 
 ### Added
 
+- Settings › Logs & Diagnostics › Export diagnostics… saves a support
+  bundle: one file with the diagnostics report (versions, operating system,
+  distribution channel, the agent's state, the Stream Decks the system
+  sees) and the end of the recent agent and update logs. Tokens, passwords
+  and other secret values, serial numbers (as pseudonyms), the home
+  directory, user and computer names, e-mail and IP addresses and private
+  server names are removed. The app shows everything the file contains
+  before you choose where to save it, and uploads nothing. The same bundle
+  is printed by `deckpilot-agent diagnose --bundle`.
+
 - When a Stream Deck is plugged in but cannot be used, the app shows a
   one-time guide. On Linux, when DeckPilot may not open the device, the
   guide gives the udev fix for your package: replug, or reinstall the

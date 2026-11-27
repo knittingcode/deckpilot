@@ -12,6 +12,7 @@ import { toastFailure } from "@/lib/failure"
 import { useAppContext } from "@/lib/app-context"
 import { diagnosticsReport } from "@/lib/diagnostics"
 import { useTranslation } from "@/i18n"
+import { ExportDiagnosticsButton } from "@/settings/diagnostics-export"
 
 export function DiagnosticsSettings() {
   const { t, i18n } = useTranslation()
@@ -45,6 +46,12 @@ export function DiagnosticsSettings() {
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
+      <SettingsSection
+        id="support-bundle"
+        title={t("settings:diagnostics.bundleTitle")}
+        description={t("settings:diagnostics.bundleDescription")}
+        actions={<ExportDiagnosticsButton />}
+      />
       <SettingsSection
         title={t("settings:diagnostics.title")}
         description={t("settings:diagnostics.description")}

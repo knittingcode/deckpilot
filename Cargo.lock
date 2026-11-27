@@ -1109,6 +1109,7 @@ dependencies = [
  "hkdf",
  "interprocess",
  "rcgen",
+ "regex",
  "reqwest",
  "rusqlite",
  "rustix",

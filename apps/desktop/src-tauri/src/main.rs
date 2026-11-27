@@ -129,6 +129,7 @@ fn main() {
         .manage(lifecycle::MainPresented::default())
         .manage(single_instance::Started::default())
         .manage(commands::portability::PendingImport::default())
+        .manage(commands::diagnostics::PendingDiagnostics::default())
         .manage(commands::plugins::PluginEvents::default())
         .manage(commands::locale::AgentLocale::default())
         .manage(commands::live_preview::LivePreview::default())
