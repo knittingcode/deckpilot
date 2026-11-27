@@ -16,6 +16,7 @@ import { AppTitlebar } from "@/components/app-titlebar"
 import { AppStatusBar } from "@/components/status-bar"
 import { ExecutionSync } from "@/components/execution-sync"
 import { CoreStatusItems } from "@/components/status-sources"
+import { DeviceAccessGuide } from "@/components/device-access-guide"
 import { SecurityGate } from "@/components/security-gate"
 import { DialogProvider } from "@/components/dialogs/dialog-service"
 import { SettingsSidebar } from "@/components/settings-sidebar"
@@ -397,6 +398,7 @@ function Studio() {
                 </div>
                 <AppStatusBar stores={status} />
                 <CoreStatusItems />
+                <DeviceAccessGuide />
                 <ExecutionSync />
                 {moduleStatusItems(context.modules).map(({ key, component: Item }) => (
                   <Item key={key} />
