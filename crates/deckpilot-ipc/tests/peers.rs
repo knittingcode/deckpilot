@@ -971,3 +971,21 @@ async fn a_protocol_20_agent_has_no_device_states() {
     };
     assert!(status.devices.iter().all(|d| d.availability.is_none()));
 }
+
+/// A protocol 21 agent (before the tray status): the client speaks 21 with
+/// it, knows that it reports no tray, and reads its status as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_protocol_21_agent_has_no_tray_status() {
+    let peer = peer(21, "0.16.0");
+    let mut client = AgentClient::connect(&peer.paths, ClientKind::Desktop)
+        .await
+        .unwrap();
+    assert_eq!(*peer.hellos.lock().unwrap(), downgrades(21));
+    assert_eq!(client.protocol(), 21);
+    assert!(client.supports(Capability::DeviceStates));
+    assert!(!client.supports(Capability::TrayStatus));
+    let Ok(Response::Status { status }) = client.request(Request::GetStatus).await else {
+        panic!("status");
+    };
+    assert_eq!(status.tray, None);
+}

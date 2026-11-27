@@ -29,7 +29,11 @@
     },
     "otherInstallation": "The agent belongs to another installation",
     "versionsDiffer": "Agent and app versions differ",
-    "versions": "Agent {{agent}}, app {{app}}."
+    "versions": "Agent {{agent}}, app {{app}}.",
+    "noTray": {
+      "title": "No tray icon",
+      "message": "DeckPilot keeps running in the background. Stop it in Settings › Background Agent."
+    }
   },
   "device": {
     "disconnected": "{{model}} disconnected",
