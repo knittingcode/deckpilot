@@ -17,309 +17,109 @@ released either. 0.6.0 is the first version intended for publication.
 
 ## [0.16.0] - 2026-11-27
 
+**Before you upgrade.** Upgrading to 0.16.0 migrates the local database
+(configuration schema 13 to 16, plugin store schema 6 to 7). An encrypted
+backup of each is written first: `backups/deckpilot-schema13-*.db` next
+to the configuration database and `.backups/plugins-schema6-*.db` next to
+the plugin store (`plugins.db`). Downgrading to 0.15.0 requires restoring a
+compatible backup: a 0.15.0 agent refuses the upgraded configuration and
+leaves it unchanged, and runs without plugins on the upgraded plugin
+store. Changes made after the upgrade are not in the backup. Profiles,
+actions, workflows and plugins are kept by the upgrade; nothing is reset
+(`docs/compatibility.md`).
+
 ### Added
 
-- Settings › Logs & Diagnostics › Export diagnostics… saves a support
-  bundle: one file with the diagnostics report (versions, operating system,
-  distribution channel, the agent's state, the Stream Decks the system
-  sees) and the end of the recent agent and update logs. Tokens, passwords
-  and other secret values, serial numbers (as pseudonyms), the home
-  directory, user and computer names, e-mail and IP addresses and private
-  server names are removed. The app shows everything the file contains
-  before you choose where to save it, and uploads nothing. The same bundle
-  is printed by `deckpilot-agent diagnose --bundle`.
-
-- When a Stream Deck is plugged in but cannot be used, the app shows a
-  one-time guide. On Linux, when DeckPilot may not open the device, the
-  guide gives the udev fix for your package: replug, or reinstall the
-  `.deb`/`.rpm`, or for the AppImage the commands to install the rule. When the USB bus lists the device without its HID interface,
-  it suggests replugging, avoiding the hub or power-cycling it, with a
-  link to the troubleshooting page. The app only shows the commands to
-  copy; it never runs them and never asks for administrator rights.
-
-- The background agent tells the app whether its tray icon is shown (IPC
-  protocol 22). On Linux it checks the session bus for a StatusNotifier
-  host and for its own icon there. When there is none (for example GNOME
-  without an AppIndicator extension), or the icon could not be created,
-  the app says so in Settings › Background Agent and Settings › Devices,
-  explains that the agent keeps running, and offers **Stop background
-  agent**, since the tray's Quit is missing. It shows one notification per
-  agent run each time the app is opened. DeckPilot does not install or enable any desktop extension.
-
-- The configuration app restarts the background agent it started when the
-  agent ends unexpectedly. It restarts it at most 3 times in 10 minutes,
-  after 1, 5 and then 30 seconds. After that, Settings shows
-  "DeckPilot agent stopped" with a Restart button. The app never restarts
-  the agent after a Quit or a stop you asked for, and never restarts an
-  agent it did not start, such as one started at login: it reconnects to
-  that one, as before. A restarted agent starts locked, like any agent, and
-  is unlocked only while the app is unlocked.
-
-- Git Providers (builds with plugins, not bundled yet): the agent can make
-  the server of the GitHub or GitLab plugin a Git Providers connection when
-  you ask, and, only if you also choose so, use the token saved there. It
-  happens once (asking again changes nothing), all or nothing, read-only
-  like the old plugin, and the old plugin keeps its settings and token and
-  keeps running your keys. A GitHub Enterprise Cloud data-residency server
-  or a private-network server without its earlier consent is not imported
-  but reported. The old plugin's time limit is not carried over yet (open
-  decision); its 20 s stays.
-- Projects (builds with plugins): a project repository can be linked to a
-  repository on one of your connections. Choose the connection, find the
-  repository there, check what will be linked and confirm; the link keeps
-  the provider's own id (`gh:…`, `gl:…`), so a rename on the server keeps
-  it, and only the app writes it. In the project editor, each saved
-  repository lists its remotes and has a "Link remote…" button; the link is
-  saved at once, not with the project form.
-- Link remote suggests the remotes of the repository's folder: DeckPilot
-  reads them with `git remote -v` (read-only; it never fetches, pulls or
-  writes, and leaves out any user name, password or token in a URL), and
-  for a connection on the same server "Find origin on …" asks the
-  provider for exactly that repository. You still confirm the link; when
-  the provider does not know it, you search by its path.
-- Settings › Connections (builds with plugins): the servers plugins connect
-  to, per plugin that declares them, with their state (connected, token
-  rejected, missing permission, can't reach the server, certificate not
-  trusted, turned off), the account, Default and Read-only. Add a
-  connection to GitHub.com or GitLab.com, or to GitHub Enterprise Server or
-  a self-managed GitLab at the address you open in the browser (a port or
-  a path is fine), with the token's permissions explained in plain words,
-  read-only unless you allow changes, and a private network only when you
-  say so; it is tested at once. Test, Replace token, Turn off and Remove
-  are on each connection. The token is typed once and never shown again.
-  In English and Polish.
-- Plugins: a connection's HTTP answers carry GitHub's `x-oauth-scopes`,
-  `x-accepted-oauth-scopes` and `github-authentication-token-expiration`
-  (scope names and a date), so a connection's test can name a missing
-  permission or an expiring token; no other plugin request gets them. A
-  connection's refusals always start with their code (`redirect-refused:
-  …`).
-- Plugins: connections (plugin API 1.14, host side). A plugin that
-  declares connection types (DeckPilot's own bundled plugins only) can be
-  connected to several servers, each with its own address, consent, token
-  and status: GitHub.com and GitLab.com at their own addresses, GitHub
-  Enterprise Server and self-managed GitLab at the address the user opens
-  in the browser (`https` only, with a port or a path). Tokens are kept in
-  the encrypted plugin database, protected like the configuration (its key
-  derives from the configuration's), are never sent back to the app, logged, exported or handed to
-  the plugin, and are injected by the agent only into requests to their
-  own server, and only to a connection the user chose for the action (never
-  one a workflow maps in); a redirect off that server ends the request, certificates
-  are checked against the system's trust store with no way to skip it,
-  and a server on a private network needs its own consent (this computer
-  and link-local addresses never). A plugin reaches only the connections
-  an action's parameters name. The app's requests to list, create, test,
-  rename, turn off and remove connections are IPC protocol 20; the plugin
-  store goes to schema 7. No plugin uses them yet.
-- Calls (groundwork): a locked device never shows a call. Locking the
-  configuration takes the Calls overlay off every device, and it comes back
-  after unlocking if the call is still going on.
-- Calls (groundwork, tests): "Back to work" is followed to the end of a
-  real plugin action through a spawned agent and the sandboxed plugin
-  host. A test-only agent option installs the mock call provider; normal
-  builds do not have it, which a test checks.
-- Calls (groundwork, nothing user-visible yet): the provider contract
-  with capability discovery, where every capability a provider does not
-  offer is explicitly unsupported with a reason; the sanitised call state;
-  the `call.state` and `call.control` operations and the gate a control
-  passes (no success without the call app's confirmation); and the plugin
-  manifest's `calls` permission, `callOverlay` and `layoutTemplates` for
-  plugin API 1.16, accepted only for the bundled Calls plugin. No
-  DeckPilot provides plugin API 1.16 yet. Microsoft Teams can only be
-  detected, not controlled: Microsoft retired its device API on
-  2026-06-30 (`docs/calls.md`).
-- Calls (groundwork): the call state engine (incoming, outgoing,
-  connecting, active, ending, ended, failed, unknown) with a timeout on
-  every live state, missed, rejected and remote hang-up, provider and app
-  restarts, meeting-to-meeting moves and simultaneous calls; and the
-  "Back to work" return sessions (timer, real completion, or whichever
-  comes first, 60 s by default), one per device. Tested on a virtual clock;
-  nothing user-visible yet.
-- Calls (groundwork, nothing user-visible yet):
-  - **Per-device overlay.** A device can show the Calls layout without
-    anything of its own presentation changing: profile, page, folder and
-    remembered layouts stay as they were. Keys held during the switch run
-    nothing, Auto Exit pauses underneath, and a protected key always
-    dismisses the overlay.
-  - **Managed Calls layouts.** One per device model, generated for its
-    capability class with stable ids. They are regenerated only while
-    unedited, and "Restore defaults" first keeps your version as a layout
-    of your own. This adds storage schema 15, which is additive.
-- Calls (tests): a mock call provider with full control (answer, reject,
-  cancel, end, microphone, camera), used only by tests. It runs the
-  "Back to work" scenarios on a virtual clock. No real call app is
-  driven.
-- Calls (groundwork, off in every build): the agent runs the Calls overlay
-  when a provider is installed. "Back to work" waits for the real end of
-  what a key started: a workflow, a plugin's action, or an action run in
-  place. Agent tests cover this with the mock provider and a simulated
-  Stream Deck.
-  A managed Calls layout that cannot be stored while the database is busy
-  is tried again after 1 s, then after waits doubling up to a minute;
-  other storage errors are not retried.
-- Calls (groundwork): the agent can preview a call page of the Calls layout
-  on a device for the Device Editor (IPC 19 `previewCallsPage`), with fixed
-  placeholder content and nothing from a real call. Only a connection that
-  declares itself the configuration app may ask; that is a policy guard,
-  while the IPC token is the access boundary. A lock or a real call always
-  wins, and the preview ends with the editor's connection.
-- Calls (groundwork): Settings › Devices › Calls can show a call page on
-  the device ("Show on the device", "End preview"). The preview ends when
-  the settings close, when the window hides or closes, or when the app
-  quits. The settings follow the agent: `callsChanged` names the page each
-  device previews, so a preview the agent ended by itself (a lock, a real
-  call, the dismiss key, a disconnect) shows as ended. A device that takes
-  no preview frame refuses it (`callsPreviewRefused`), and the preview
-  already there stays. The Calls status carries a revision, so the
-  settings never let an older status replace a newer one.
-- Calls (groundwork): Settings › Devices lists the call pages of each Calls
-  layout. A control the call app does not support stays listed, disabled,
-  with the reason (for Teams: Microsoft retired its device API). The
-  *Back to work* settings can be changed there: a 20, 30 or 60 s or
-  custom timer, when what you started ends, or that with a maximum (the
-  default, 60 s), plus what a failure or cancellation does and whether
-  every device goes back to work. A change counts as an edit of the Calls
-  layout. IPC 19 gains `setCallsBackToWork`.
-- Calls (groundwork, off in every build): a detection-only Microsoft Teams
-  provider. It infers that a call is probably active while Teams holds the
-  microphone, recognizing Teams only by its executable name. Answer, end,
-  mute and camera stay unsupported: Microsoft retired the device API. The
-  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
-  no build queries the operating system yet.
-- Calls (groundwork): IPC protocol 19 with `getCallsStatus`,
-  `setCallsOverlay`, `restoreCallsLayout` and the `callsChanged` event.
-  Settings › Devices gets a Calls section, in English and Polish, shown
-  only while Calls is installed, which no build does yet. It shows the
-  call's state, says plainly that Teams can only be detected, has a switch
-  per device for the overlay, and has *Restore defaults*, which first keeps
-  your version of the layout under a name it tells you.
-- System actions: an Open key shows what it opens, the document icon for
-  a file and the open folder for a folder, on the Canvas, in the key
-  preview, in layout previews and on the Stream Deck alike. Nothing chosen,
-  a missing file or folder, or a target that cannot be told (a variable,
-  an application, a network path) shows the document icon. A key's own
-  icon or image, and an icon chosen for the action, always win; the
-  automatic icon is never saved. The target is looked at by its file
-  metadata only, never opened or run, and again when an action, a
-  resource binding, the profile or the layout changes, never on a timer.
-- Projects: a project can list several repositories, each with a key
-  (`cms`, unique in the project), a name, a description, the folder's
-  resource (bound on each computer, never exported) and a default. An
-  existing project with a `repository` role gets that one as its
-  repository `main` when the configuration is upgraded (schema 14); its
-  roles, resources and folder bindings are not changed. Marking a default
-  repository also points the `repository` role at it. Removing a
-  repository never removes its folder binding, and a missing folder is
-  shown, never removed. An export carries the repositories (format 5)
-  only when a project has more than that one.
-- Projects: the project editor has a Repositories section. Add a
-  repository by choosing its folder in the system's folder dialog (its key
-  and name are proposed from the folder name), then rename, describe,
-  reorder, choose another folder, mark the default or remove it. A
-  removal asks first and lists what else uses the folder. Keys are checked
-  as they are typed, a folder that is gone is marked "Folder not found",
-  and folders are set on this computer when the project is saved. The
-  resource role pairs move into a collapsed advanced part.
+- Projects: a project can list several repositories. The project editor
+  has a Repositories section: add a repository by choosing its folder in
+  the system's folder dialog (its key and name are proposed from the
+  folder name), then rename, describe, reorder, choose another folder,
+  mark the default or remove it. Each repository has a key (`cms`, unique
+  in the project), a name, a description and a folder that is bound on
+  each computer and never exported. A removal asks first and lists what
+  else uses the folder; removing a repository never removes its folder
+  binding, and a missing folder is marked "Folder not found", never
+  removed. An existing project with a `repository` role gets that one as
+  its repository `main`; its roles, resources and folder bindings are not
+  changed. The resource role pairs move into a collapsed advanced part. An
+  export carries the repositories (format 5) only when a project has more
+  than one. The repository variables
+  (`{{ projects.current.repositories.cms.path }}`) come with the Projects
+  plugin 0.2.0, in a later release (see "Development status").
 - Action Library: **gesture presets**, one entry that puts several actions
   on the gestures of a key at once. *Brightness Control* (Device) dims by
   10% on a single press, sets 100% on a double click and 50% on a long
   press. Dropped on a key it creates ordinary actions and gesture bindings
-  in one undo step (keeping an occupied key's look and its other
-  gestures), or nothing when the key cannot take it. A key that acts on
-  its press at once is never switched to gestures by a preset: switch it
-  in the Inspector first, which asks; dropped on one
-  gesture card only that gesture changes. Every gesture stays editable on
-  its own; nothing of the preset is stored.
-- Plugin API 1.11: `contributes.actions[].contexts` lets a plugin declare
-  where each action makes sense (key, gesture, display, sequence,
-  workflow), with `Action::contexts` in the SDK. Advisory like the
-  built-ins' contexts: a use elsewhere is reported and still runs. Without
-  the field an action keeps all five.
-- Plugin API 1.10: `contributes.gesturePresets` lets a plugin declare
-  presets over its own actions, with localized texts and `allowPartial`.
-  Presets grant nothing; each action keeps its permissions and checks.
-- Variables: structured values, read member by member.
-  `{{ projects.current.repositories.cms.path }}` is a repository's folder,
-  `{{ projects.current.repository.name }}` the default repository's name
-  (the one marked as default, else the only one; with several and none
-  marked there is no value, never the first). A whole value fills only a
-  JSON parameter and never becomes text. Keys show names and keys only:
-  a folder path, an id or a remote URL shows `-`, and the title picker never
-  offers them. A plugin's action receives a folder path only with
-  `resources:paths`. Plugin API 1.12 (manifest validation only for now):
-  the types `object` and `map` of `repository` and the host sources
-  `host:project.repositories` and `host:project.repository`, for DeckPilot's
-  own bundled plugins. IPC protocol 18; older apps see these variables as
-  JSON. The Projects plugin that declares them follows.
+  in one undo step, keeping an occupied key's look and its other gestures,
+  or nothing when the key cannot take it. A key that acts on its press at
+  once is never switched to gestures by a preset: switch it in the
+  Inspector first. Dropped on one gesture card, only that gesture changes.
+  Every gesture stays editable on its own; nothing of the preset is
+  stored.
+- System actions: an Open key shows what it opens: the document icon for
+  a file and the open folder for a folder, on the Canvas, in previews and
+  on the Stream Deck. A target that cannot be told (a variable, an
+  application, a network path) or is missing shows the document icon. A
+  key's own icon or image, and an icon chosen for the action, always win.
+  The target is looked at by its file metadata only, never opened or run.
 - Settings › Profiles › a profile: "Saved actions" lists the profile's
-  saved actions by name with how many places use each, and can show only
-  the unused ones. Each can be opened in the action editor; an unused one
-  can also be deleted from its row, after the same confirmation as in the
-  editor (the agent still refuses while anything uses it). Nothing is
-  deleted by itself, and there is no "delete all". Until now a saved
-  action that no key, gesture or workflow used could not be opened.
-
-- Plugins (for the coming Scripts plugin, plugin API 1.13, not usable
-  yet): the plugin runtime knows the Scripts bridge's operations (files,
-  processes, the script's run) and refuses them to every plugin until
-  the agent's checks for them land. Files move in chunks within the
-  existing message size limits. The Scripts plugin alone can be given a
-  larger budget of calls per run, and its polling and logging never
-  extend its continuous CPU limit, so a busy script is still stopped
-  after 2 seconds. The agent checks every file operation of a script
-  against that script's own folders and access, never follows a link
-  out of them, never changes a `.git` folder, the home folder, system
-  folders or DeckPilot's own, and asks before it deletes or replaces
-  files, showing what it computed itself. A script runs only the
-  programs granted to it, with an argument list and never a shell (a
-  shell only with its own grant), in its granted folders, with a clean
-  environment, and the program is stopped when the script is stopped,
-  runs out of time or loses its grant. Plugin manifests know the
-  Scripts plugin's permission, its script parameter, its page and its
-  limits (plugin API 1.13), for DeckPilot's own Scripts plugin only. A
-  file a script reads in parts comes from one snapshot of the file, so
-  its parts never mix two versions; a file replaced or changed between
-  them fails the read.
-- Storage (schema 16, not usable yet): the scripts of a profile, and on
-  this computer only whether each is trusted and what it may do. A
-  script made in the editor is trusted with nothing granted; an imported
-  or duplicated one is never trusted and never runs until reviewed. A
-  script can never be granted a container runtime (Docker, Podman and
-  the like) in this version.
-- Calls (groundwork): the per-device "show calls on this device" setting
-  survives a restart of DeckPilot. It is kept on this computer only, and
-  no export includes it.
-- Export and import of scripts (export format 6, only when there are
-  scripts): an export holds a script's code and settings, never whether
-  it is trusted or what it may do. An imported script arrives untrusted
-  with no permissions, and nothing runs on import; the import window
-  says so.
-- The agent runs a script only from the active profile and only while it
-  is trusted; its permissions are read again at every step. Scripts see
-  each repository's remotes, with the connection and the provider's
-  repository they are linked to.
-- A Scripts page (while the Scripts plugin is on, not usable yet): write
-  and edit the profile's scripts in a code editor with JavaScript
-  highlighting, checks and completion, rename, duplicate and delete them
-  (a script's uses are listed first), and review a script that came from
-  elsewhere before trusting it: its code is shown read only, with
-  invisible characters marked, and with the permissions it would get
-  back.
-- On the Scripts page, a script's permissions: which projects, files and
-  folders (picked with the system's dialog), programs and shells it may
-  use, and whether it may delete without asking; container runtimes
-  (Docker, Podman and the like) and programs that act as another user
-  are not available. The Action Library lists a "Run …" entry for every
-  script, which puts the script on a key by reference.
-- Agent: `deckpilot-agent diagnose [--json]`, a read-only report for
-  support. It shows the versions, the installation, whether the agent
-  runs, the udev rule on Linux, and the Elgato devices the system sees. On
-  Linux it says when a Stream Deck's USB device is present but its HID
-  interface is missing (for example behind a monitor's hub) or when the
-  device cannot be opened. It starts and changes nothing, opens no device
-  on Linux, works while the configuration is locked, and replaces serial
-  numbers with pseudonyms and the home directory and the user name with
-  placeholders. The JSON report is versioned (schema 1).
+  saved actions with how many places use each, and can show only the
+  unused ones. Each can be opened in the action editor; an unused one can
+  be deleted from its row after a confirmation. Nothing is deleted by
+  itself.
+- The configuration app restarts the background agent it started when
+  the agent ends unexpectedly: at most 3 times in 10 minutes, after 1, 5
+  and then 30 seconds. After that, Settings shows "DeckPilot agent
+  stopped" with a Restart button. The app never restarts the agent after
+  a Quit or a stop you asked for, and never restarts an agent it did not
+  start (such as one started at login): it reconnects to that one, as
+  before. A restarted agent starts locked and is unlocked only while the
+  app is unlocked.
+- Windows and Linux: starting DeckPilot while it is already open brings
+  the open window to the front (or the password prompt, when the
+  configuration is locked) instead of starting a second app. A second
+  start during startup is ignored, so a double click opens one window. On
+  macOS the system already keeps one app.
+- When a Stream Deck is plugged in but cannot be used, the app shows a
+  one-time guide. On Linux, when DeckPilot may not open the device, it
+  gives the udev fix for your package: replug, reinstall the `.deb` or
+  `.rpm`, or, for the AppImage, the commands to install the rule. When the
+  USB bus lists the device without its HID interface, it suggests
+  replugging, avoiding the hub or power-cycling it, with a link to the
+  troubleshooting page. The app only shows commands to copy; it never runs
+  them and never asks for administrator rights.
+- Tray fallback: the background agent tells the app whether its tray icon
+  is shown (IPC protocol 22). On Linux it checks the session bus for a
+  StatusNotifier host and for its own icon there. When there is none (for
+  example GNOME without an AppIndicator extension), or the icon could not
+  be created, Settings › Background Agent and Settings › Devices say so,
+  explain that the agent keeps running, and offer **Stop background
+  agent**, since the tray's Quit is missing. DeckPilot does not install or
+  enable any desktop extension.
+- Diagnostics: `deckpilot-agent diagnose [--json]`, a read-only report for
+  support: versions, the installation, whether the agent runs, the udev
+  rule on Linux, and the Elgato devices the system sees. On Linux it says
+  when a Stream Deck's USB device is present but its HID interface is
+  missing (for example behind a monitor's hub) or when the device cannot
+  be opened. It starts and changes nothing, opens no device on Linux and
+  works while the configuration is locked. The JSON report is versioned
+  (schema 1).
+- Settings › Logs & Diagnostics › Export diagnostics… saves a support
+  bundle: the diagnostics report and the end of the recent agent and
+  update logs, in one file. Tokens, passwords and other secret values,
+  serial numbers (as pseudonyms), the home directory, user and computer
+  names (on Windows also a domain, an 8.3 short name, a network share and
+  a OneDrive organisation), e-mail and IP addresses and private server
+  names are removed. The app shows everything the file contains before
+  you choose where to save it, and uploads nothing. The same bundle is
+  printed by `deckpilot-agent diagnose --bundle`.
+- Plugin API 1.10 and 1.11 for plugin authors:
+  `contributes.gesturePresets` declares presets over a plugin's own
+  actions (they grant nothing; each action keeps its permissions), and
+  `contributes.actions[].contexts` declares where each action makes sense
+  (key, gesture, display, sequence, workflow), with `Action::contexts` in
+  the SDK. Contexts are advisory: a use elsewhere is reported and still
+  runs.
 
 ### Changed
 
@@ -330,70 +130,94 @@ released either. 0.6.0 is the first version intended for publication.
   not supported, communication error, reconnecting, or unknown while
   devices cannot be listed. A device that is present is never shown as
   disconnected. IPC protocol 21; an older app sees the list it always did.
-  Verified with simulated devices only; not yet on a physical device.
-- System actions: the Action Library offers one Open for files and
-  folders (Choose file… or Choose folder…); Open folder is no longer
-  offered for new keys, actions or workflow nodes. Saved Open folder
-  actions, keys, gestures and workflow steps keep running unchanged with
-  their folder icon; nothing is rewritten.
-- Device Editor: a label picked on the Canvas is nudged with the arrow
-  keys (1 unit, 5 with Shift), as on the Inspector's label stage; each
-  nudge starts from the last one. Escape or a click on the key lets go of
-  the label, and the arrows move between keys again.
 - Devices: a Stream Deck that is listed but cannot be opened, or that
   disconnects soon after it connects, is no longer retried every 2 s.
   Each failure in a row doubles the wait, from 2 s up to 60 s, with some
   jitter, and a connection that lasts 30 s ends the streak. A device that
-  keeps dropping (3 short connections within 5 minutes) also gets its
-  brightness and key images only once a connection has lasted 10 s, so a
-  marginal USB link is not sent a full redraw on every attempt; its key
-  presses are ignored until then. Refresh Devices, and replugging the
-  device, still try at once. DeckPilot never resets or re-binds a USB
-  device, and a reconnect restores the page, layout, key images and
-  brightness, never actions. Verified with simulated devices only; not yet
-  on a physical device.
-
-- Calls (groundwork, inert until the plugin and its policy entry exist):
-  the plugin operations `call.state` and `call.control` of plugin API
-  1.16, in the ABI, the broker, the agent and the guest SDK. Only the
-  bundled plugin `deckpilot.calls` may use them, each with its own grant
-  (`calls`, `calls:control`), a control only in a run you started, and
-  never together with network, credentials, opening pages or tools. A
-  control is answered only once the call app confirmed it. Your consents
-  to observe and to control calls apply as for the call pages, and
-  detection-only Teams refuses every control with the reason. A control
-  from a run you did not start, or one too many, is refused with its own
-  code. The agent's plugin API is not raised yet.
-- Calls: the operating-system signals provider reports its connection, so
-  a Teams control is refused with its reason (no supported API) instead of
-  "not connected".
-- Calls (groundwork, off in every build): a detection-only Microsoft Teams
-  provider. It infers that a call is probably active while Teams holds the
-  microphone, recognizing Teams only by its executable name. Answer, end,
-  mute and camera stay unsupported: Microsoft retired the device API. The
-  parsers for Core Audio, WASAPI and PipeWire are tested on fixtures, and
-  no build queries the operating system yet.
+  keeps dropping (3 short connections within 5 minutes) gets its
+  brightness and key images only once a connection has lasted 10 s, and
+  its key presses are ignored until then. Refresh devices and replugging
+  still try at once. DeckPilot never resets or re-binds a USB device, and
+  a reconnect restores the page, layout, key images and brightness, never
+  actions.
+- System actions: the Action Library offers one Open for files and
+  folders (Choose file… or Choose folder…); Open folder is no longer
+  offered for new keys, actions or workflow steps. Saved Open folder
+  actions keep running unchanged with their folder icon; nothing is
+  rewritten.
+- Device Editor: a label picked on the Canvas is nudged with the arrow
+  keys (1 unit, 5 with Shift), as on the Inspector's label stage. Escape
+  or a click on the key lets go of the label.
+- Agent output: when the configuration app starts the agent, the agent's
+  own output (messages before logging starts, a crash summary, messages
+  from system libraries) goes to `logs/output.log` in the data folder
+  instead of being discarded. It is private to your user and bounded to
+  about 2 MiB (`output.log` and one previous `output.1.log`); ordinary log
+  records stay in the daily log files. An agent started at login or from
+  a terminal is unchanged.
 
 ### Fixed
-
-- On Windows, `deckpilot-agent diagnose` and the support bundle no longer
-  show the server and share of a data folder redirected to a network share,
-  a user name shortened to an 8.3 name (`ALEXAN~1`), a computer name longer
-  than 15 characters, the user's domain (`CORP\user`) or the organisation
-  of a OneDrive for work or school folder.
 
 - Agent: a failure inside the background agent no longer leaves a menu
   bar or tray icon whose menu does nothing. The agent writes the failure
   to its log, closes its connection point, lets a next agent start, and
   ends with a non-zero exit code. The same applies without a tray
   (`--headless`).
-- Linux: the `.deb` and `.rpm` reload udev's rules when they are installed
-  or removed, and after an install apply the Stream Deck rule to an
-  Elgato device that is already plugged in, so it works without
+- Linux: the `.deb` and `.rpm` reload udev's rules when they are
+  installed or removed, and after an install apply the Stream Deck rule
+  to an Elgato device that is already plugged in, so it works without
   unplugging it. Only devices with Elgato's USB vendor ID are touched;
   without a running udev (containers, image builds) nothing is done and
   the installation never fails because of it. The rule file no longer
-  tells `.deb` and `.rpm` users to copy it by hand.
+  tells `.deb` and `.rpm` users to copy it by hand. Uninstalling keeps
+  your configuration and the login item, as before.
+
+### Verification status
+
+- Checked automatically in CI: installing, reinstalling, removing and
+  purging the Linux `.deb` (Ubuntu 24.04) and `.rpm` (Fedora) with the
+  udev reload, no leftover package files and the user's data untouched;
+  and upgrading an installed 0.15.0 `.deb` and AppImage to this version
+  with the profiles, active profile, project and update mode kept, the
+  migration and its backup checked, and the 0.15.0 agent refusing the
+  upgraded data without changing it. Compatibility between a 0.15.0 app
+  or agent and this version is tested in both directions.
+- The device states, the reconnect backoff, the agent restart and the
+  tray fallback are verified with simulated devices and in CI only, not
+  yet on a physical Stream Deck or desktop session. The upgrade of the
+  `.rpm`, the Windows installers and the macOS in-app update from 0.15.0
+  are not tested automatically.
+
+### Development status (not usable in this release)
+
+These parts are in the code but switched off or inert until their
+bundled plugins ship; nothing below is visible or usable in 0.16.0, and
+this release provides plugin API 1.11:
+
+- **Projects plugin 0.2.0** (plugin API 1.12): repository variables
+  (`projects.current.repository`, `projects.current.repositories`), read
+  member by member; a folder path, an id or a remote URL is never shown
+  on a key. IPC protocol 18.
+- **Scripts** (plugin API 1.13): script storage (schema 16) and export
+  (format 6, imported scripts always arrive untrusted with no
+  permissions), a Scripts page with an editor and a review of scripts
+  from elsewhere, per-script permissions for files, folders, programs and
+  shells, and a "Run …" entry in the Action Library. Container runtimes
+  (Docker, Podman and the like) can never be granted in this version.
+- **Git Providers** (plugin API 1.14): Settings › Connections for
+  GitHub.com, GitHub Enterprise Server, GitLab.com and self-managed
+  GitLab, with tokens kept in the encrypted plugin store (schema 7) and
+  injected only into requests to their own server; linking a project
+  repository to a repository on a connection; importing the server and,
+  only if you choose, the token of the old GitHub or GitLab plugin. IPC
+  protocol 20.
+- **Calls**: managed Calls layouts per device model (schema 15), the call
+  state engine, "Back to work" sessions, a per-device overlay setting,
+  and the Settings › Devices › Calls section with a preview of the call
+  pages on the device (IPC protocol 19). A locked device never shows a call. Microsoft Teams
+  can only be detected, not controlled: Microsoft retired its device API
+  on 2026-06-30, so answering, rejecting, muting or ending a Teams call is
+  not supported (`docs/calls.md`).
 
 ## [0.15.0] - 2026-11-24
 
