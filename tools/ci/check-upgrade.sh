@@ -66,7 +66,7 @@ step() { echo "== $*"; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/deckpilot-upgrade.XXXXXX")
 agent_pid=""
 cleanup() {
-  (stop_agent) > /dev/null 2>&1 || true
+  (stop_agent) > /dev/null || true
   rm -rf "${work:?}"
 }
 trap cleanup EXIT
@@ -108,8 +108,13 @@ start_agent() {
   # (and the D-Bus session around it) can be killed without touching any
   # other agent on the machine.
   if command -v setsid > /dev/null; then session=(setsid ${session[@]+"${session[@]}"}); fi
-  in_profile ${session[@]+"${session[@]}"} "$@" --headless --no-usb --plugin-registry-url "$registry" \
-    > "$log" 2>&1 &
+  # `exec` in a subshell: $! is then the pid of setsid itself (it leads
+  # its group), not of a shell around it.
+  (
+    exec env HOME="$profile/home" XDG_DATA_HOME="$profile/xdg-data" XDG_CONFIG_HOME="$profile/xdg-config" \
+      XDG_CACHE_HOME="$profile/xdg-cache" XDG_RUNTIME_DIR="$profile/run" DECKPILOT_DATA_DIR="$data" \
+      ${session[@]+"${session[@]}"} "$@" --headless --no-usb --plugin-registry-url "$registry"
+  ) > "$log" 2>&1 &
   agent_pid=$!
   for _ in $(seq 1 120); do
     if [ -s "$data/agent.token" ] && dev agent > /dev/null 2>&1; then
