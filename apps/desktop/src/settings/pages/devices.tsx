@@ -2,7 +2,13 @@ import { LayoutGrid, RefreshCw } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { AgentBadge, AgentCompatibilityNotice, AgentStopped, DeviceRow } from "@/components/agent"
+import {
+  AgentBadge,
+  AgentCompatibilityNotice,
+  AgentStopped,
+  DeviceRow,
+  TrayFallbackNotice,
+} from "@/components/agent"
 import { GestureDefaultsCard } from "@/components/gesture-editor/gesture-defaults"
 import { SupportedModels } from "@/components/supported-models"
 import { CallsSettings } from "@/settings/calls-settings"
@@ -50,6 +56,7 @@ export function DevicesSettings() {
   return (
     <>
       <AgentCompatibilityNotice />
+      <TrayFallbackNotice />
       <SettingsSection
         title={
           <>

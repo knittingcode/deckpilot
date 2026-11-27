@@ -1,4 +1,4 @@
-import { Play, RefreshCw, RotateCw, TriangleAlert } from "lucide-react"
+import { Info, Play, RefreshCw, RotateCw, Square, TriangleAlert } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -15,6 +15,7 @@ import {
   deviceStateTone,
 } from "@/lib/device-state"
 import { describeLayout } from "@/lib/format"
+import { trayMissing } from "@/lib/tray-state"
 import type { AgentCapability, AgentExit, AgentSupervision, DeviceInfo } from "@/lib/types"
 import { type TranslationKey, Trans, useTranslation } from "@/i18n"
 import { useFormat } from "@/i18n/format"
@@ -262,6 +263,54 @@ export function AgentCompatibilityNotice() {
               {t("devices:compatibility.wait")}
             </Button>
           )}
+        </div>
+      </AlertDescription>
+    </Alert>
+  )
+}
+
+/**
+ * Shown while the agent has no tray icon: what that means, and the app's
+ * own way to stop the agent, since the tray's "Quit DeckPilot" is missing.
+ * It does not install or enable anything.
+ */
+export function TrayFallbackNotice() {
+  const { t } = useTranslation()
+  const { agent, setAgent } = useAppContext()
+  const [busy, setBusy] = useState(false)
+  if (!trayMissing(agent)) return null
+  const stop = async () => {
+    setBusy(true)
+    try {
+      await api.stopAgent()
+      toast.success(t("devices:agent.tray.notice.stopped"))
+      setAgent(await api.agentStatus())
+    } catch (e) {
+      toastFailure(
+        t("devices:agent.tray.notice.notStopped"),
+        e,
+        t("devices:agent.checkLogInDiagnostics"),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Alert>
+      <Info />
+      <AlertTitle>{t("devices:agent.tray.notice.title")}</AlertTitle>
+      <AlertDescription>
+        <p>
+          {agent?.status?.tray === "unavailable"
+            ? t("devices:agent.tray.notice.unavailable")
+            : t("devices:agent.tray.notice.noHost")}
+        </p>
+        <p>{t("devices:agent.tray.notice.stillRunning")}</p>
+        <p>{t("devices:agent.tray.notice.docs")}</p>
+        <div className="mt-2">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void stop()}>
+            <Square /> {t("devices:agent.tray.notice.stop")}
+          </Button>
         </div>
       </AlertDescription>
     </Alert>

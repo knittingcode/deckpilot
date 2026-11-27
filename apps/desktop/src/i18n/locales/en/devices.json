@@ -42,6 +42,27 @@
       "exitCode": "exit code {{code}}",
       "exitSignal": "signal {{signal}}",
       "exitUnknown": "no exit code"
+    },
+    "tray": {
+      "label": "Tray icon",
+      "state": {
+        "shown": "Shown",
+        "noHost": "Probably not shown: no StatusNotifier tray found",
+        "hostUnknown": "Created; not known whether it is shown",
+        "unavailable": "Not available",
+        "disabled": "Off (started without a tray)",
+        "unknown": "Unknown"
+      },
+      "notice": {
+        "title": "The tray icon is not available",
+        "noHost": "DeckPilot found no StatusNotifier tray to show its icon in, so the icon is probably not shown. On GNOME, the tray needs an AppIndicator extension; DeckPilot does not install one.",
+        "unavailable": "The tray icon could not be created, because the AppIndicator library is missing or could not be loaded.",
+        "stillRunning": "The background agent keeps running: your devices and actions work as usual. Without the tray there is no tray menu and no Quit DeckPilot there. Open DeckPilot from your applications menu, and stop the background agent here. Closing this window does not stop it.",
+        "docs": "More in the documentation: Troubleshooting › No tray icon.",
+        "stop": "Stop background agent",
+        "stopped": "The background agent was stopped",
+        "notStopped": "The background agent was not stopped"
+      }
     }
   },
   "detail": {
@@ -63,6 +84,32 @@
     "communicationError": "Communication error",
     "reconnecting": "Reconnecting…",
     "unknown": "State unknown"
+  },
+  "accessGuide": {
+    "permissionTitle": "DeckPilot is not allowed to open your Stream Deck",
+    "permissionIntro": "The Stream Deck is plugged in, but Linux does not let DeckPilot open it. A udev rule gives you access to it without root.",
+    "rule": {
+      "deb": "The .deb package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still cannot open it, reinstall the package, from the folder with the file you downloaded:",
+      "rpm": "The .rpm package installs the rule. Unplug the Stream Deck and plug it in again first. If DeckPilot still cannot open it, reinstall the package, from the folder with the file you downloaded:",
+      "manual": "The AppImage cannot install the rule. Install it once yourself, in a terminal on this computer. The second command shows the rule before you install it:"
+    },
+    "commands": "Commands",
+    "replug": "Then unplug the Stream Deck and plug it in again.",
+    "neverRuns": "DeckPilot does not run these commands and does not ask for administrator rights. You run them yourself if you want to.",
+    "installationLink": "Installation guide",
+    "usbTitle": "Your Stream Deck is not fully detected",
+    "usbIntro": "The USB bus lists the Stream Deck, but its HID interface, which DeckPilot uses, is missing. This happens most often behind a USB hub or a monitor dock.",
+    "usbReplug": "Unplug the Stream Deck and plug it in again.",
+    "usbDirect": "Connect it directly to the computer instead of through a hub or dock.",
+    "usbPowerCycle": "If it is behind a monitor's or dock's hub, turn that device off and on again.",
+    "usbNoReset": "DeckPilot never resets a USB device itself.",
+    "troubleshootingLink": "Troubleshooting page",
+    "copyCommands": "Copy the commands",
+    "copyLink": "Copy the link",
+    "copied": "Copied",
+    "notCopied": "Not copied: select the text and copy it by hand",
+    "once": "This guide is shown once. Settings › Devices keeps showing the device's state.",
+    "done": "Done"
   },
   "stateHint": {
     "usbPresentHidUnavailable": "The USB bus lists the Stream Deck, but its HID interface is missing, often behind a hub or monitor dock. Replug it, or power-cycle the hub.",

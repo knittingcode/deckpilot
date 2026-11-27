@@ -46,6 +46,27 @@
       "exitCode": "kod wyjścia {{code}}",
       "exitSignal": "sygnał {{signal}}",
       "exitUnknown": "brak kodu wyjścia"
+    },
+    "tray": {
+      "label": "Ikona w zasobniku",
+      "state": {
+        "shown": "Widoczna",
+        "noHost": "Prawdopodobnie niewidoczna: nie znaleziono zasobnika StatusNotifier",
+        "hostUnknown": "Utworzona; nie wiadomo, czy jest widoczna",
+        "unavailable": "Niedostępna",
+        "disabled": "Wyłączona (uruchomiono bez zasobnika)",
+        "unknown": "Nieznana"
+      },
+      "notice": {
+        "title": "Ikona w zasobniku jest niedostępna",
+        "noHost": "DeckPilot nie znalazł zasobnika StatusNotifier, w którym mógłby pokazać swoją ikonę, więc ikona prawdopodobnie nie jest widoczna. W GNOME zasobnik wymaga rozszerzenia AppIndicator; DeckPilot go nie instaluje.",
+        "unavailable": "Nie udało się utworzyć ikony w zasobniku, ponieważ brakuje biblioteki AppIndicator lub nie można jej załadować.",
+        "stillRunning": "Agent w tle działa dalej: urządzenia i akcje działają jak zwykle. Bez zasobnika nie ma menu zasobnika ani polecenia Zakończ DeckPilot. Otwieraj DeckPilot z menu aplikacji, a agenta w tle zatrzymuj tutaj. Zamknięcie tego okna go nie zatrzymuje.",
+        "docs": "Więcej w dokumentacji: Rozwiązywanie problemów › Brak ikony w zasobniku.",
+        "stop": "Zatrzymaj agenta w tle",
+        "stopped": "Agent w tle został zatrzymany",
+        "notStopped": "Nie zatrzymano agenta w tle"
+      }
     }
   },
   "detail": {
@@ -67,6 +88,32 @@
     "communicationError": "Błąd komunikacji",
     "reconnecting": "Ponowne łączenie…",
     "unknown": "Stan nieznany"
+  },
+  "accessGuide": {
+    "permissionTitle": "DeckPilot nie ma dostępu do urządzenia Stream Deck",
+    "permissionIntro": "Stream Deck jest podłączony, ale Linux nie pozwala DeckPilotowi go otworzyć. Reguła udev daje Ci do niego dostęp bez uprawnień roota.",
+    "rule": {
+      "deb": "Pakiet .deb instaluje regułę. Najpierw odłącz Stream Decka i podłącz go ponownie. Jeśli DeckPilot nadal nie może go otworzyć, zainstaluj ponownie pobrany pakiet, w folderze, w którym jest plik:",
+      "rpm": "Pakiet .rpm instaluje regułę. Najpierw odłącz Stream Decka i podłącz go ponownie. Jeśli DeckPilot nadal nie może go otworzyć, zainstaluj ponownie pobrany pakiet, w folderze, w którym jest plik:",
+      "manual": "AppImage nie może zainstalować reguły. Zainstaluj ją raz samodzielnie, w terminalu na tym komputerze. Drugie polecenie pokazuje regułę, zanim ją zainstalujesz:"
+    },
+    "commands": "Polecenia",
+    "replug": "Następnie odłącz Stream Decka i podłącz go ponownie.",
+    "neverRuns": "DeckPilot nie uruchamia tych poleceń i nie prosi o uprawnienia administratora. Możesz je uruchomić samodzielnie, jeśli chcesz.",
+    "installationLink": "Instrukcja instalacji",
+    "usbTitle": "Stream Deck nie jest w pełni wykrywany",
+    "usbIntro": "Magistrala USB widzi Stream Decka, ale brakuje jego interfejsu HID, z którego korzysta DeckPilot. Zdarza się to najczęściej za hubem USB lub stacją dokującą monitora.",
+    "usbReplug": "Odłącz Stream Decka i podłącz go ponownie.",
+    "usbDirect": "Podłącz go bezpośrednio do komputera zamiast przez hub lub stację dokującą.",
+    "usbPowerCycle": "Jeśli jest podłączony przez hub monitora lub stacji dokującej, wyłącz to urządzenie i włącz je ponownie.",
+    "usbNoReset": "DeckPilot nigdy sam nie resetuje urządzenia USB.",
+    "troubleshootingLink": "Strona rozwiązywania problemów",
+    "copyCommands": "Kopiuj polecenia",
+    "copyLink": "Kopiuj link",
+    "copied": "Skopiowano",
+    "notCopied": "Nie skopiowano: zaznacz tekst i skopiuj go ręcznie",
+    "once": "Ten przewodnik jest pokazywany raz. Ustawienia › Urządzenia nadal pokazują stan urządzenia.",
+    "done": "Gotowe"
   },
   "stateHint": {
     "usbPresentHidUnavailable": "Magistrala USB widzi Stream Decka, ale brakuje jego interfejsu HID, często za hubem lub stacją dokującą monitora. Podłącz go ponownie albo wyłącz i włącz hub.",

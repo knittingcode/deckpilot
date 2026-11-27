@@ -33,7 +33,11 @@
     },
     "otherInstallation": "Agent należy do innej instalacji",
     "versionsDiffer": "Wersje agenta i aplikacji się różnią",
-    "versions": "Agent {{agent}}, aplikacja {{app}}."
+    "versions": "Agent {{agent}}, aplikacja {{app}}.",
+    "noTray": {
+      "title": "Brak ikony w zasobniku",
+      "message": "DeckPilot działa dalej w tle. Zatrzymasz go w Ustawienia › Agent w tle."
+    }
   },
   "device": {
     "disconnected": "Odłączono: {{model}}",

@@ -92,6 +92,16 @@ closed and reopened at any time without interrupting devices.
   AppIndicator/StatusNotifier support (for example GNOME without the
   extension) do not show the icon, but the agent keeps working. Run with
   `--headless` to disable the tray entirely.
+- **Tray status.** The agent reports whether its tray icon exists and is
+  shown (`AgentStatus.tray`, IPC protocol 22). On Linux it asks the session
+  bus, read-only, whether `org.kde.StatusNotifierWatcher` has an owner with
+  a registered host and lists the agent's own icon, at first every second,
+  then every 3 and later every 15 seconds. When there is no host, or the
+  icon could not be created, the app shows a notice in Settings ›
+  Background Agent and Settings › Devices, with **Stop background agent**,
+  and a status bar notification once per agent run each time the app
+  is opened; see
+  [troubleshooting/no-tray-icon.md](troubleshooting/no-tray-icon.md).
 
 ### Tray menu
 

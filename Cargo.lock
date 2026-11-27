@@ -1128,6 +1128,7 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon 0.26.1",
  "url",
+ "zbus",
  "zeroize",
 ]
 

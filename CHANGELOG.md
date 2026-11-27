@@ -27,6 +27,23 @@ released either. 0.6.0 is the first version intended for publication.
   before you choose where to save it, and uploads nothing. The same bundle
   is printed by `deckpilot-agent diagnose --bundle`.
 
+- When a Stream Deck is plugged in but cannot be used, the app shows a
+  one-time guide. On Linux, when DeckPilot may not open the device, the
+  guide gives the udev fix for your package: replug, or reinstall the
+  `.deb`/`.rpm`, or for the AppImage the commands to install the rule. When the USB bus lists the device without its HID interface,
+  it suggests replugging, avoiding the hub or power-cycling it, with a
+  link to the troubleshooting page. The app only shows the commands to
+  copy; it never runs them and never asks for administrator rights.
+
+- The background agent tells the app whether its tray icon is shown (IPC
+  protocol 22). On Linux it checks the session bus for a StatusNotifier
+  host and for its own icon there. When there is none (for example GNOME
+  without an AppIndicator extension), or the icon could not be created,
+  the app says so in Settings › Background Agent and Settings › Devices,
+  explains that the agent keeps running, and offers **Stop background
+  agent**, since the tray's Quit is missing. It shows one notification per
+  agent run each time the app is opened. DeckPilot does not install or enable any desktop extension.
+
 - The configuration app restarts the background agent it started when the
   agent ends unexpectedly. It restarts it at most 3 times in 10 minutes,
   after 1, 5 and then 30 seconds. After that, Settings shows

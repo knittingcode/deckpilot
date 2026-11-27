@@ -15,7 +15,7 @@ import { AppContext } from "@/lib/app-context"
 import { SecurityContext } from "@/lib/security-context"
 import type { ActionNotification, SecurityView } from "@/lib/types"
 import { installDomStubs } from "@/test/dom"
-import { agentConnection } from "@/test/fixtures"
+import { agentConnection, agentStatus } from "@/test/fixtures"
 import { appContext } from "@/test/render"
 import { emitBackend, resetBackend } from "@/test/tauri"
 
@@ -31,10 +31,10 @@ beforeAll(installDomStubs)
 beforeEach(resetBackend)
 afterEach(cleanup)
 
-async function renderStatusBar() {
+async function renderStatusBar(agent = agentConnection()) {
   const stores = createStatusStores()
   render(
-    <AppContext value={appContext({ agent: agentConnection() })}>
+    <AppContext value={appContext({ agent })}>
       <SecurityContext value={security}>
         <StatusContext value={stores}>
           <AppStatusBar stores={stores} />
@@ -92,6 +92,32 @@ describe("toolbar notifications", () => {
     const read = screen.getByRole("button", { name: "Notifications" })
     expect(read).toHaveFocus()
   })
+
+  it("says once when the agent has no tray icon, and how to stop it", async () => {
+    const user = userEvent.setup()
+    const stores = await renderStatusBar(
+      agentConnection({ status: agentStatus({ protocol: 22, tray: "noHost" }) }),
+    )
+    await user.click(screen.getByRole("button", { name: "Notifications, 1 unread" }))
+    const list = within(screen.getByRole("list", { name: "Notifications" }))
+    expect(list.getByText("No tray icon")).toBeInTheDocument()
+    expect(
+      list.getByText(
+        "DeckPilot keeps running in the background. Stop it in Settings › Background Agent.",
+      ),
+    ).toBeInTheDocument()
+    expect(stores.notifications.getSnapshot()).toHaveLength(1)
+  })
+
+  it.each(["shown", "hostUnknown", "disabled", undefined] as const)(
+    "says nothing about the tray when it is %s",
+    async (tray) => {
+      const stores = await renderStatusBar(
+        agentConnection({ status: agentStatus({ protocol: 22, tray }) }),
+      )
+      expect(stores.notifications.getSnapshot()).toEqual([])
+    },
+  )
 
   it("clears the list", async () => {
     const user = userEvent.setup()
