@@ -40,7 +40,7 @@ pattern() {
     # the updater, the release it starts from, the deckpilot-dev helpers it
     # drives the agents with, and the check itself. Changes that affect
     # bundling run it too (group `packaging`).
-    upgrade) echo '^crates/deckpilot-storage/|^crates/deckpilot-update/|^apps/desktop/src-tauri/src/updates|^tools/release-pipeline/compat-baseline$|^tools/dev/src/validation\.rs$|^tools/release-smoke/(download|common)\.sh$' ;;
+    upgrade) echo '^crates/deckpilot-storage/|^crates/deckpilot-update/|^apps/desktop/src-tauri/src/updates|^tools/release-pipeline/compat-baseline$|^tools/dev/src/|^crates/deckpilot-ipc/|^apps/agent/src/service/security\.rs$|^\.github/updater\.pub$|^tools/release-smoke/(download|common)\.sh$' ;;
     # The worktree and build cache scripts of tools/dev and their tests.
     dev_tools) echo '^tools/dev/[^/]+\.sh$|^tools/dev/tests/|^\.github/workflows/ci\.yml$' ;;
   esac

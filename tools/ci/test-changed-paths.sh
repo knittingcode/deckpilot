@@ -69,7 +69,7 @@ expect "dev_tools=false keystore=false packaging=true release_manifest=true upgr
 expect "dev_tools=false keystore=false packaging=false release_manifest=true upgrade=false" tools/ci/assemble-latest-json.sh
 expect "dev_tools=true keystore=false packaging=false release_manifest=false upgrade=false" tools/dev/worktree-maintenance.sh
 expect "dev_tools=true keystore=false packaging=false release_manifest=false upgrade=false" tools/dev/tests/target-slot.test.sh
-expect "$none" tools/dev/src/main.rs tools/dev/Cargo.toml
+expect "$none" tools/dev/Cargo.toml
 # The upgrade from the latest release: storage and its migrations, the
 # updater, the baseline release, the helpers and download it uses.
 up="dev_tools=false keystore=false packaging=false release_manifest=false upgrade=true"
@@ -79,6 +79,9 @@ expect "$up" apps/desktop/src-tauri/src/updates.rs
 expect "$up" apps/desktop/src-tauri/src/updates_tests.rs
 expect "$up" tools/release-pipeline/compat-baseline
 expect "$up" tools/dev/src/validation.rs
+expect "$up" tools/dev/src/main.rs crates/deckpilot-ipc/src/protocol.rs
+expect "$up" apps/agent/src/service/security.rs
+expect "$up" .github/updater.pub
 expect "$up" tools/release-smoke/download.sh
 expect "dev_tools=false keystore=false packaging=true release_manifest=true upgrade=false" tools/ci/check-upgrade.sh
 expect "$none" tools/release-smoke/linux.sh crates/deckpilot-storage-extra/x.rs

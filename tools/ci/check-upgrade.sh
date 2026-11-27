@@ -55,6 +55,8 @@ fixture_schema=13
 fixture_history="0->13:ok"
 # The profile the old agent activates; the fixture's active one is "Work".
 profile_name=Personal
+# The fixture's stored active project of that profile.
+expected_project=BLOG
 # Never contacted: the plugin registry the agents are pointed at.
 registry=https://127.0.0.1:9/deckpilot-upgrade-check
 fail() { echo "::error::$*" >&2; exit 1; }
@@ -64,7 +66,7 @@ step() { echo "== $*"; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/deckpilot-upgrade.XXXXXX")
 agent_pid=""
 cleanup() {
-  stop_agent 2> /dev/null || true
+  (stop_agent) > /dev/null 2>&1 || true
   rm -rf "${work:?}"
 }
 trap cleanup EXIT
@@ -102,6 +104,10 @@ start_agent() {
   rm -f "$data/agent.token"
   local session=()
   if command -v dbus-run-session > /dev/null; then session=(dbus-run-session --); fi
+  # A process group of its own where setsid exists, so that a hung agent
+  # (and the D-Bus session around it) can be killed without touching any
+  # other agent on the machine.
+  if command -v setsid > /dev/null; then session=(setsid ${session[@]+"${session[@]}"}); fi
   in_profile ${session[@]+"${session[@]}"} "$@" --headless --no-usb --plugin-registry-url "$registry" \
     > "$log" 2>&1 &
   agent_pid=$!
@@ -128,8 +134,7 @@ stop_agent() {
   done
   if kill -0 "$agent_pid" 2> /dev/null; then
     echo "::warning::the agent did not stop within 20 s after Shutdown; killing it"
-    kill "$agent_pid" 2> /dev/null || true
-    pkill -x deckpilot-agent 2> /dev/null || true
+    kill -- "-$agent_pid" 2> /dev/null || kill "$agent_pid" 2> /dev/null || true
   fi
   wait "$agent_pid" 2> /dev/null || true
   agent_pid=""
@@ -162,7 +167,7 @@ sha256_of() {
 # commands that start each version) and install_new (a function that
 # installs the new version, after which new_agent starts it).
 cycle() {
-  local label="$1" before status agent_line schema_line supported old_schema
+  local label="$1" before status stored agent_line schema_line supported old_schema
   new_profile
   step "$label: the release's agent on the 0.14.0 fixture (schema 13)"
   start_agent "$label-old" "${old_agent[@]}"
@@ -195,7 +200,13 @@ cycle() {
   status=$(fingerprint)
   echo "after the upgrade:  $status"
   [ "$status" = "$before" ] || fail "the data changed in the upgrade: before '$before', after '$status'"
-  dev stored
+  # The active project stored for the active profile: Personal's in the
+  # fixture is BLOG (read from the database, whether or not the Projects
+  # plugin reports it).
+  stored=$(dev stored)
+  echo "$stored"
+  [ "$stored" = "stored_active_project=$expected_project" ] \
+    || fail "the stored active project did not survive the upgrade: '$stored', expected $expected_project"
   dev inventory
   schema_line=$(dev schema)
   echo "$schema_line"
@@ -220,7 +231,7 @@ cycle() {
   esac
   if [ "$supported" -gt "$old_schema" ]; then
     case "$schema_line" in
-      *" upgrades=$fixture_history,$old_schema->$supported:ok "*" backup=deckpilot-schema$old_schema-"*".db backup_profiles=3"*) ;;
+      *" upgrades=$fixture_history,$old_schema->$supported:ok "*" backup=deckpilot-schema$old_schema-"*".db backup_profiles=3") ;;
       *) fail "the upgrade from schema $old_schema is not recorded with a backup that opens and holds the 3 profiles: $schema_line" ;;
     esac
     ls -l "$data/backups"

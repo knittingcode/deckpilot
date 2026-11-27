@@ -375,8 +375,6 @@ jobs:
     needs: [package-linux, upgrade-tools]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -399,7 +397,11 @@ jobs:
             -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
             minisign dbus libfuse2t64 libwebkit2gtk-4.1-0
           chmod +x "$RUNNER_TEMP/tools/deckpilot-dev"
+      # The read-only token for the download only: the release's packages
+      # and agents run in later steps, without it.
       - name: The release, its checksums and updater signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tag=$(cat tools/release-pipeline/compat-baseline)
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
