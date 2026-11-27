@@ -73,7 +73,7 @@ pub(crate) fn useful_names(names: impl IntoIterator<Item = String>) -> Vec<Strin
 
 /// A UNC path's server and share: `\\server\share`, `\\?\UNC\server\share`,
 /// `\\.\UNC\server\share`, `\??\UNC\server`, `\Device\Mup\server`,
-/// WebDAV servers (`server@SSL@8443`), `/` or mixed separators after the
+/// `WebDAV` servers (`server@SSL@8443`), `/` or mixed separators after the
 /// server, `//server/share` in text, and doubled (escaped) backslashes.
 /// The local device namespaces (`\\.\pipe\…`, `\\?\C:\…`) are kept, and so
 /// are the administrative shares (`C$`, `ADMIN$`, `IPC$`) and `pipe`.
@@ -151,7 +151,7 @@ fn is_admin_share(share: &str) -> bool {
 /// separator (consumed as `after`), or a run without spaces.
 const SHARE: &str = r#"(?:(?P<spaced>[^\\/"'<>|:*?\r\n]*[^\\/\s"'<>|:*?])(?P<after>[\\/])|(?P<share>[^\\/\s"'<>|:*?,;()\[\]{}]+))"#;
 
-/// A UNC server: a name, and the WebDAV forms `server@SSL`, `server@8443`
+/// A UNC server: a name, and the `WebDAV` forms `server@SSL`, `server@8443`
 /// and `server@SSL@8443`.
 const SERVER: &str = r"(?P<server>[A-Za-z0-9_-][A-Za-z0-9._-]*)(?P<dav>(?:@(?:SSL|\d{1,5}))*)";
 
