@@ -659,7 +659,21 @@ The report hides personal data:
   guessed serials against them;
 - the home directory becomes `~`, and the user name (of two or more
   characters) becomes `<user>` wherever it stands as a word, in paths and
-  messages;
+  messages, and so does an 8.3 short name made from it (`ALEXAN~1`) and
+  the user part of another user's home directory;
+- this computer's names become `<host>`: `uname -n`, and on Windows
+  `COMPUTERNAME` and the DNS host name, which can be longer than the
+  15 characters of `COMPUTERNAME`;
+- the server and share of a UNC path (`\\server\share`,
+  `\\?\UNC\server\share`, `\\.\UNC\server\share`, also a data folder
+  redirected to a network share) become `\\<host>\<share>`. The local
+  device paths (`\\.\pipe\…`, `\\?\C:\…`) and the administrative
+  shares (`C$`, `ADMIN$`, `IPC$`) stay;
+- the user's domain (Windows `USERDOMAIN` and `USERDNSDOMAIN`) becomes
+  `<domain>`, and so does whatever qualifies the user name (`CORP\<user>`,
+  `<user>@corp.example.com`);
+- the organisation of a OneDrive for work or school folder
+  (`OneDrive - Contoso`) becomes `<org>`, wherever its name stands;
 - the endpoint's id (`agent-<16 hex>`, a hash of the data directory's
   path, which contains the user name) becomes `agent-<id>`: the hash is
   not preimage-resistant, so a guessed user name could be checked against
@@ -720,9 +734,12 @@ redaction filter (`apps/agent/src/diagnose/bundle.rs`):
   - the home directory becomes `~`;
   - the user part of another home directory (`/home/…`, `/Users/…`,
     `/var/home/…`, `/media/…`, `C:\Users\…`) becomes `<user>`;
-  - the user name becomes `<user>`;
-  - this computer's name (`uname -n`, on Windows `COMPUTERNAME`) and the
-    server of a UNC path become `<host>`;
+  - the user name, also as an 8.3 short name, becomes `<user>`;
+  - this computer's names (`uname -n`, on Windows `COMPUTERNAME` and the
+    DNS host name) and the server of a UNC path become `<host>`, its share
+    `<share>`;
+  - the user's domain, also in `CORP\<user>`, becomes `<domain>`, and the
+    organisation of a OneDrive folder `<org>`;
   - e-mail addresses become `<email>`;
   - IPv4 and IPv6 addresses other than loopback become `<ip>`.
 

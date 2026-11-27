@@ -182,6 +182,9 @@ fn linux_fixture(root: &Path) -> Environment {
         user: Some("alice".into()),
         machine_id: Some(MACHINE_ID.into()),
         hostname: Some("alice-laptop".into()),
+        host_aliases: Vec::new(),
+        domains: Vec::new(),
+        organisations: Vec::new(),
         hid: HidSource::Sysfs,
     }
 }
@@ -441,6 +444,7 @@ fn redaction_keeps_other_paths_and_partial_names() {
         home: Some("/home/al/".into()),
         user: Some("al".into()),
         fold_case: false,
+        ..Redactor::default()
     };
     // A trailing separator of the home directory does not matter.
     assert_eq!(redactor.path(Path::new("/home/al")), "~");
@@ -448,8 +452,9 @@ fn redaction_keeps_other_paths_and_partial_names() {
         redactor.path(Path::new("/home/al/x")),
         format!("~{}x", std::path::MAIN_SEPARATOR)
     );
-    // Not the home directory, only a prefix of its name.
-    assert_eq!(redactor.path(Path::new("/home/also/x")), "/home/also/x");
+    // Not the home directory, only a prefix of its name: another user's
+    // home directory, whose name goes too.
+    assert_eq!(redactor.path(Path::new("/home/also/x")), "/home/<user>/x");
     assert_eq!(redactor.path(Path::new("/srv/al/x")), "/srv/<user>/x");
     // The name as a word of its own, also inside a segment.
     assert_eq!(
@@ -467,6 +472,7 @@ fn redaction_keeps_other_paths_and_partial_names() {
         home: Some(PathBuf::from("/Users/Al")),
         user: Some("Al".into()),
         fold_case: true,
+        ..Redactor::default()
     };
     assert_eq!(windows.path(Path::new("/users/al")), "~");
     assert_eq!(windows.text("C:/USERS/AL/x"), "C:/USERS/<user>/x");
@@ -576,6 +582,9 @@ fn listed_hid_interfaces_without_usb() {
         user: None,
         machine_id: None,
         hostname: None,
+        host_aliases: Vec::new(),
+        domains: Vec::new(),
+        organisations: Vec::new(),
         hid: HidSource::Listed(Ok(vec![
             deckpilot_hid::HidInterface {
                 vendor_id: 0x0fd9,
@@ -871,6 +880,7 @@ fn windows_paths_and_names_are_redacted() {
         home: Some(PathBuf::from(r"C:\Users\Alice")),
         user: Some("Alice".into()),
         fold_case: true,
+        ..Redactor::default()
     };
     for (label, path) in [
         ("drive-letter home", r"C:\Users\Alice\AppData\Roaming\x"),
@@ -925,4 +935,293 @@ fn the_report_hides_the_endpoint_id() {
     let report = collect(&env);
     let endpoint = report["agent"]["endpoint"].as_str().unwrap();
     assert!(endpoint.contains("agent-<id>"), "the endpoint keeps its id");
+}
+
+/// What [`windows_redactor`]'s names must never leave, without case.
+const WINDOWS_SECRETS: [&str; 9] = [
+    "alexander",
+    "alexan~",
+    "fileserver01",
+    "profiles$",
+    "alexanders-desk",
+    "corp",
+    "contoso",
+    "otherdom",
+    "teamshare",
+];
+
+/// A Windows user `Alexander` of the domain `CORP` (`corp.example.com`) on
+/// `alexanders-desktop-2024` (`COMPUTERNAME` `ALEXANDERS-DESK`), with a
+/// `OneDrive` of `Contoso Ltd`.
+fn windows_redactor() -> Redactor {
+    let env = Environment {
+        hostname: Some("ALEXANDERS-DESK".into()),
+        host_aliases: vec![
+            "alexanders-desktop-2024.corp.example.com".into(),
+            "alexanders-desktop-2024".into(),
+        ],
+        domains: names::useful_names(["CORP".to_owned(), "corp.example.com".to_owned()]),
+        organisations: names::organisations_from([
+            r"C:\Users\Alexander\OneDrive - Contoso Ltd".to_owned(),
+            r"C:\Users\Alexander\OneDrive".to_owned(),
+        ]),
+        ..windows_environment()
+    };
+    Redactor::new(&env)
+}
+
+fn windows_environment() -> Environment {
+    Environment {
+        root: PathBuf::from("/"),
+        platform: "windows",
+        arch: "x86_64",
+        agent_version: "0.15.0",
+        distribution: &GITHUB_LINUX,
+        paths: AgentPaths::in_dir(
+            r"C:\Users\Alexander\AppData\Roaming\io.github.knittingcode.deckpilot",
+        ),
+        data_dir_overridden: false,
+        exe: None,
+        appimage: None,
+        home: Some(PathBuf::from(r"C:\Users\Alexander")),
+        user: Some("Alexander".into()),
+        machine_id: None,
+        hostname: None,
+        host_aliases: Vec::new(),
+        domains: Vec::new(),
+        organisations: Vec::new(),
+        hid: HidSource::Listed(Ok(Vec::new())),
+    }
+}
+
+/// Fails with `label` only: never with the text, which may hold a name.
+fn assert_no_secret(text: &str, label: &str) {
+    let lower = text.to_lowercase();
+    for (index, secret) in WINDOWS_SECRETS.iter().enumerate() {
+        assert!(!lower.contains(secret), "{label}: name {index} is left");
+    }
+}
+
+/// Windows shapes of plain `diagnose` (string fixtures, on every OS): a
+/// UNC data directory, 8.3 short names, the DNS host name, UNC paths after
+/// any character, domains and `OneDrive` organisations all go.
+#[test]
+fn windows_names_are_redacted_in_plain_diagnose() {
+    let redactor = windows_redactor();
+    for (label, input) in [
+        (
+            "unc data directory",
+            r"\\fileserver01\profiles$\Alexander\AppData\Roaming\io.github.knittingcode.deckpilot",
+        ),
+        (
+            "escaped unc",
+            r"\\\\fileserver01\\profiles$\\Alexander\\AppData",
+        ),
+        ("unc share with spaces", r"\\fileserver01\TeamShare Docs\x"),
+        ("verbatim unc", r"\\?\UNC\fileserver01\profiles$\x"),
+        ("device unc", r"\\.\UNC\fileserver01\profiles$\x"),
+        (
+            "lower-case verbatim unc",
+            r"\\?\unc\fileserver01\teamshare\x",
+        ),
+        ("bare unc server", r"\\fileserver01"),
+        ("unc after <", r"open <\\fileserver01\teamshare\x>"),
+        ("unc after ,", r"a,\\fileserver01\teamshare\x"),
+        ("unc after :", r"path:\\fileserver01\teamshare\x"),
+        ("unc after (", r"(\\fileserver01\teamshare)"),
+        (
+            "8.3 home",
+            r"C:\Users\ALEXAN~1\AppData\Local\DeckPilot\deckpilot-agent.exe",
+        ),
+        ("8.3 outside Users", r"D:\ALEXAN~2\x"),
+        ("8.3 with extension", r"D:\Profiles\ALEXAN~1.COR\x"),
+        ("8.3 lower case", r"d:\alexan~1\x"),
+        ("dns host name", r"D:\alexanders-desktop-2024\data"),
+        ("fqdn", "host alexanders-desktop-2024.corp.example.com"),
+        ("netbios name", r"\\ALEXANDERS-DESK\c$\x"),
+        ("domain user", r"signed in as CORP\Alexander"),
+        ("escaped domain user", r"CORP\\Alexander"),
+        ("unknown domain user", r"OTHERDOM\Alexander"),
+        ("upn", "alexander@corp.example.com"),
+        ("upn of another domain", "alexander@otherdom.example"),
+        ("profile with domain", r"C:\Users\Alexander.CORP\AppData"),
+        (
+            "onedrive organisation",
+            r"~\OneDrive - Contoso Ltd\Documents",
+        ),
+        ("onedrive escaped", r"~\\OneDrive - Contoso Ltd\\Documents"),
+        ("onedrive at the end", r"~\OneDrive - Contoso Ltd"),
+        (
+            "unknown onedrive organisation",
+            r"~\OneDrive - TeamShare GmbH\x",
+        ),
+        ("sharepoint library", r"~\Contoso Ltd\Site - Documents"),
+        ("another user", r"C:\Users\OtherDom\Desktop"),
+        ("webdav ssl", r"\\fileserver01@SSL\DavWWWRoot\x"),
+        ("webdav port", r"\\fileserver01@SSL@8443\teamshare\x"),
+        ("mixed separators", r"\\fileserver01/teamshare/x"),
+        ("verbatim unc with /", r"\\?\UNC/fileserver01/teamshare/x"),
+        ("slashed unc in text", "path=//fileserver01/teamshare/x"),
+        ("nt unc", r"\??\UNC\fileserver01\teamshare\x"),
+        ("mup", r"\Device\Mup\fileserver01\teamshare\x"),
+        ("spaced share before /", r"\\fileserver01\TeamShare Docs/x"),
+    ] {
+        assert_no_secret(&redactor.text(input), label);
+        assert_no_secret(&redactor.path(Path::new(input)), label);
+    }
+    // A path that Windows reads as UNC with `/`.
+    assert_no_secret(
+        &redactor.path(Path::new("//fileserver01/profiles$/Alexander/x")),
+        "forward-slash unc",
+    );
+}
+
+/// What support needs stays: the pipe, program paths, short names that are
+/// not the user's, administrative shares and ordinary words.
+#[test]
+fn windows_redaction_keeps_what_support_needs() {
+    let redactor = windows_redactor();
+    for (label, input) in [
+        ("pipe", r"\\.\pipe\deckpilot-agent-<id>"),
+        ("verbatim drive", r"\\?\C:\Program Files\DeckPilot\x"),
+        (
+            "program files",
+            r"C:\Program Files\DeckPilot\deckpilot-agent.exe",
+        ),
+        (
+            "8.3 program files",
+            r"C:\PROGRA~1\DeckPilot\deckpilot-agent.exe",
+        ),
+        (
+            "home",
+            r"~\AppData\Roaming\io.github.knittingcode.deckpilot",
+        ),
+        ("public", r"C:\Users\Public\Documents"),
+        ("plain onedrive", r"~\OneDrive\Documents"),
+        ("escaped drive", r"C:\\Users\\<user>\\AppData"),
+        ("escaped newline", r#""\\n""#),
+        ("drive path", r"D:\Data\x"),
+        ("redacted unc", r"\\<host>\<share>\<user>\AppData"),
+        ("message", "hidapi: no device"),
+        (
+            "url",
+            "see https://github.com/knittingcode/deckpilot/releases",
+        ),
+        ("comment", "// a comment"),
+        ("webdav root", r"\\<host>@SSL\DavWWWRoot\x"),
+    ] {
+        assert!(redactor.text(input) == input, "changed: {label}");
+    }
+    // The shape of a UNC path stays readable.
+    assert_eq!(
+        redactor.text(r"\\fileserver01\profiles$\Alexander\AppData\Roaming\x"),
+        r"\\<host>\<share>\<user>\AppData\Roaming\x"
+    );
+    assert_eq!(
+        redactor.text(r"\\?\UNC\fileserver01\c$\x"),
+        r"\\?\UNC\<host>\c$\x"
+    );
+    assert_eq!(
+        redactor.text(r"\\fileserver01\TeamShare Docs\x y"),
+        r"\\<host>\<share>\x y"
+    );
+    assert_eq!(redactor.text(r"CORP\Alexander"), r"<domain>\<user>");
+    assert_eq!(
+        redactor.text(r"~\OneDrive - Contoso Ltd\Documents"),
+        r"~\OneDrive - <org>\Documents"
+    );
+    assert_eq!(redactor.text(r"C:\Users\ALEXAN~1\x"), r"C:\Users\<user>\x");
+}
+
+/// Plain `diagnose --json` and its summary for a Windows user whose
+/// `AppData` is redirected to a UNC share and whose agent runs from an 8.3
+/// path (string fixtures; nothing of these paths exists). Not on Windows, where probing the lock on a UNC path would look
+/// the server up on the network; the Windows `Path` forms are covered by
+/// `windows_names_are_redacted_in_plain_diagnose`.
+#[cfg(not(windows))]
+#[test]
+fn a_windows_report_with_a_unc_data_directory_hides_the_names() {
+    let mut env = windows_environment();
+    env.hostname = Some("ALEXANDERS-DESK".into());
+    env.host_aliases = vec!["alexanders-desktop-2024".into()];
+    env.domains = vec!["CORP".into()];
+    env.organisations = vec!["Contoso Ltd".into()];
+    env.paths = AgentPaths::in_dir(
+        r"\\fileserver01\profiles$\Alexander.CORP\OneDrive - Contoso Ltd\AppData\Roaming\io.github.knittingcode.deckpilot",
+    );
+    env.exe = Some(PathBuf::from(
+        r"C:\Users\ALEXAN~1\AppData\Local\DeckPilot\deckpilot-agent.exe",
+    ));
+    let report = collect(&env);
+    assert_no_secret(&report.to_string(), "report");
+    assert_no_secret(&summary(&report), "summary");
+    let data = report["agent"]["dataDirectory"].as_str().unwrap_or("");
+    assert!(
+        data.starts_with(r"\\<host>\<share>\")
+            && data.ends_with("io.github.knittingcode.deckpilot"),
+        "the data directory lost its shape"
+    );
+    assert!(
+        report["agent"]["endpoint"]
+            .as_str()
+            .is_some_and(|endpoint| endpoint.contains("agent-<id>")),
+        "the endpoint keeps its id"
+    );
+}
+
+/// The real Windows names (`USERNAME`, `COMPUTERNAME`, the DNS host name
+/// from `GetComputerNameExW`, `USERDOMAIN`) and the real 8.3 temp path of
+/// the CI runner (`C:\Users\RUNNER~1\…`) are redacted.
+#[cfg(windows)]
+#[test]
+fn the_real_windows_names_are_redacted() {
+    let env = Environment {
+        home: dirs_home(),
+        user: std::env::var("USERNAME")
+            .ok()
+            .filter(|user| !user.is_empty()),
+        hostname: hostname(),
+        host_aliases: host_aliases(),
+        domains: names::useful_names(windows_env(&["USERDOMAIN", "USERDNSDOMAIN"])),
+        organisations: names::organisations_from(windows_env(&["OneDriveCommercial", "OneDrive"])),
+        ..windows_environment()
+    };
+    let redactor = Redactor::new(&env);
+    let mut secrets: Vec<String> = env.host_names();
+    secrets.extend(env.domains.iter().cloned());
+    secrets.extend(env.organisations.iter().cloned());
+    let user = env.user.clone().unwrap_or_default();
+    if user.chars().count() >= 4 {
+        // The user name, and the prefix an 8.3 name keeps.
+        secrets.push(user.chars().take(6).collect());
+    }
+    let check = |text: &str, label: &str| {
+        let lower = text.to_lowercase();
+        for (index, secret) in secrets.iter().enumerate() {
+            assert!(
+                !lower.contains(&secret.to_lowercase()),
+                "{label}: real name {index} is left"
+            );
+        }
+    };
+    assert!(
+        !env.host_aliases.is_empty(),
+        "no DNS host name from GetComputerNameExW"
+    );
+    for name in env.host_names() {
+        check(&redactor.text(&format!("host {name} up")), "host name");
+        check(&redactor.text(&format!(r"\\{name}\share\x")), "unc host");
+    }
+    for domain in &env.domains {
+        check(&redactor.text(&format!(r"{domain}\{user}")), "domain user");
+    }
+    check(&redactor.path(&std::env::temp_dir()), "temp dir");
+    if let Ok(exe) = std::env::current_exe() {
+        check(&redactor.path(&exe), "executable");
+    }
+    // GitHub's runners keep their temp directory below the 8.3 name of
+    // the profile (`RUNNER~1`): the real shape of an 8.3 leak.
+    if let Ok(temp) = std::env::var("TEMP") {
+        check(&redactor.path(Path::new(&temp)), "TEMP");
+    }
 }

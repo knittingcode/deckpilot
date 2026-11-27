@@ -21,10 +21,12 @@
 //!   report sees;
 //! - the machine ID;
 //! - the home directory (`~`), the home directories of other users
-//!   (`/home/<user>`), the user name (`<user>`), this computer's name
-//!   (`<host>`), e-mail addresses (`<email>`), IPv4 addresses other than
-//!   loopback (`<ip>`) and the host of URLs, except DeckPilot's own
-//!   (`<host>`).
+//!   (`/home/<user>`), the user name (`<user>`, also as an 8.3 short
+//!   name), this computer's names and the server of a UNC path (`<host>`,
+//!   its share `<share>`), the user's domain (`<domain>`, also in
+//!   `CORP\<user>`), the organisation of a `OneDrive` folder (`<org>`),
+//!   e-mail addresses (`<email>`), IPv4 addresses other than loopback
+//!   (`<ip>`) and the host of URLs, except DeckPilot's own (`<host>`).
 //!
 //! The report's strings get the same pass, after the report's own
 //! redaction. Redaction is a filter over text, so it can miss a secret
@@ -39,7 +41,7 @@ use std::sync::LazyLock;
 use regex::{Captures, Regex};
 use serde_json::{Value, json};
 
-use super::{Environment, collect, hide_endpoint_id, replace_word, serial_pseudonym};
+use super::{Environment, collect, hide_endpoint_id, names, replace_word, serial_pseudonym};
 
 /// The bundle's schema name.
 pub const SCHEMA: &str = "deckpilot.support-bundle";
@@ -121,7 +123,7 @@ pub fn bundle(env: &Environment, created_at: &str, limits: Limits) -> Value {
 }
 
 /// What [`LogRedactor`] replaces, for the bundle's `redaction.rules`.
-const RULES: [&str; 12] = [
+const RULES: [&str; 14] = [
     "secret-fields",
     "authorization-values",
     "url-credentials",
@@ -132,6 +134,8 @@ const RULES: [&str; 12] = [
     "user-directories",
     "user-name",
     "host-name",
+    "domain-names",
+    "organisation-names",
     "email-addresses",
     "ip-addresses",
 ];
@@ -293,16 +297,6 @@ static URL: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid regex")
 });
 
-/// A Windows UNC path's server: `\\server\share`.
-static UNC_SERVER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(^|[\s"'=(\[])(\\{2,})([A-Za-z0-9._-]+)(\\+)"#).expect("valid regex")
-});
-
-/// A verbatim UNC path's server: `\\?\UNC\server\share`.
-static VERBATIM_UNC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(\\{2,}\?\\+UNC\\+)([A-Za-z0-9._-]+)(\\+)").expect("valid regex")
-});
-
 /// Tokens of well-known services and JSON web tokens.
 static KNOWN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
@@ -341,12 +335,6 @@ static SERIAL_FIELD: LazyLock<Regex> = LazyLock::new(|| {
         r#"|Some\((?:"(?:[^"\\]|\\.)*"|[^)]*)\)|[A-Za-z0-9_-]+)"#,
     ))
     .expect("valid regex")
-});
-
-/// Another user's home directory (the user's own is `~` already).
-static USER_DIRECTORY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(/home/|/Users/|/var/home/|/media/|/run/media/|[a-z]:[\\/]+Users[\\/]+|\\\\[^\\\s]+\\+Users\\+)([^/\\\s"']+)"#)
-        .expect("valid regex")
 });
 
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
@@ -450,6 +438,8 @@ pub struct LogRedactor {
     home: Vec<Regex>,
     user: Option<String>,
     hosts: Vec<String>,
+    domains: Vec<String>,
+    organisations: Vec<String>,
     /// Each known serial (without case) and its pseudonym.
     serials: Vec<(Regex, String)>,
     machine_id: Option<String>,
@@ -480,14 +470,7 @@ impl LogRedactor {
                 home.sort_by_key(|variant| std::cmp::Reverse(variant.len()));
             }
         }
-        let mut hosts = Vec::new();
-        if let Some(name) = &env.hostname {
-            hosts.push(name.clone());
-            if let Some((short, _)) = name.split_once('.') {
-                hosts.push(short.to_owned());
-            }
-            hosts.sort_by_key(|host| std::cmp::Reverse(host.len()));
-        }
+        let hosts = env.host_names();
         let machine_id = env.machine_id.clone().filter(|id| id.len() >= 8);
         let serials = env
             .known_serials()
@@ -505,6 +488,8 @@ impl LogRedactor {
                 .collect(),
             user: env.user.clone(),
             hosts,
+            domains: env.domains.clone(),
+            organisations: env.organisations.clone(),
             serials,
             machine_id_pattern: machine_id.as_deref().and_then(literal_ignore_case),
             machine_id,
@@ -527,22 +512,9 @@ impl LogRedactor {
     /// split.
     fn credentials(line: &str) -> String {
         let mut text = URL.replace_all(line, url).into_owned();
-        text = UNC_SERVER
-            .replace_all(&text, |c: &Captures<'_>| {
-                // `\\.\` is the local device namespace (the agent's pipe),
-                // not a server; `\\?\UNC\server` names one after `UNC`.
-                if &c[3] == "." {
-                    c[0].to_owned()
-                } else {
-                    format!("{}{}<host>{}", &c[1], &c[2], &c[4])
-                }
-            })
-            .into_owned();
-        text = VERBATIM_UNC
-            .replace_all(&text, |c: &Captures<'_>| {
-                format!("{}<host>{}", &c[1], &c[3])
-            })
-            .into_owned();
+        // `\\.\` is the local device namespace (the agent's pipe), not a
+        // server.
+        text = names::unc(&text);
         text = KNOWN_TOKEN.replace_all(&text, REDACTED).into_owned();
         text = AUTH_SCHEME
             .replace_all(&text, |c: &Captures<'_>| {
@@ -618,24 +590,17 @@ impl LogRedactor {
                 .replace_all(&text, |c: &Captures<'_>| format!("~{}", &c["end"]))
                 .into_owned();
         }
-        text = USER_DIRECTORY
-            .replace_all(&text, |c: &Captures<'_>| {
-                let name = &c[2];
-                let common = ["shared", "public", "default", "all users", "<user>", "~"];
-                if common.contains(&name.to_lowercase().as_str()) {
-                    c[0].to_owned()
-                } else {
-                    format!("{}<user>", &c[1])
-                }
-            })
-            .into_owned();
+        text = names::other_users(&text);
         text = EMAIL.replace_all(&text, "<email>").into_owned();
-        for host in &self.hosts {
-            text = replace_word(&text, host, "<host>", true);
-        }
+        text = names::words(&text, &self.hosts, "<host>");
         if let Some(user) = &self.user {
             text = replace_word(&text, user, "<user>", true);
+            text = names::short_names(&text, user);
         }
+        text = names::words(&text, &self.domains, "<domain>");
+        text = names::words(&text, &self.organisations, "<org>");
+        text = names::onedrive(&text);
+        text = names::qualified_user(&text);
         text = IPV4
             .replace_all(&text, |c: &Captures<'_>| {
                 let octets: Vec<u16> = (1..=4).filter_map(|i| c[i].parse().ok()).collect();
