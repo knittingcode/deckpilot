@@ -729,6 +729,10 @@ fn windows_names_go_from_the_logs() {
             r"sync ~\OneDrive - TeamShare GmbH\Docs",
         ),
         ("sharepoint library", r"sync ~\Contoso Ltd\Site - Docs"),
+        ("webdav", r"open \\fileserver01@SSL@8443\DavWWWRoot\x"),
+        ("mixed separators", r"open \\fileserver01/teamshare/x"),
+        ("slashed unc", "path=//fileserver01/teamshare/x"),
+        ("nt unc", r"open \??\UNC\fileserver01\teamshare"),
     ] {
         let output = redactor.line(input).to_lowercase();
         for (index, name) in WINDOWS_NAMES.iter().enumerate() {
@@ -745,6 +749,14 @@ fn windows_names_go_from_the_logs() {
         ("escaped home", r"~\\AppData\\Roaming\\x"),
         ("8.3 program files", r"C:\PROGRA~1\DeckPilot\x.exe"),
         ("admin share", r"\\<host>\c$\x"),
+        (
+            "release url",
+            "fetch https://github.com/knittingcode/deckpilot/releases",
+        ),
+        (
+            "json-escaped url",
+            r#"{\"url\":\"https:\/\/github.com\/x\"}"#,
+        ),
     ] {
         assert!(redactor.line(input) == input, "changed: {label}");
     }
@@ -766,6 +778,8 @@ fn the_windows_report_passes_the_log_redaction_unchanged() {
         ("domain user", r"CORP\Alexander"),
         ("host", r"D:\alexanders-desktop-2024\x"),
         ("pipe", r"\\.\pipe\deckpilot-agent-<id>"),
+        ("webdav", r"\\fileserver01@SSL\DavWWWRoot\x"),
+        ("mixed", r"\\fileserver01/teamshare/x"),
     ] {
         let clean = report.text(input);
         assert!(redactor.line(&clean) == clean, "changed: {label}");

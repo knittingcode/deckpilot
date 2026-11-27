@@ -1057,6 +1057,14 @@ fn windows_names_are_redacted_in_plain_diagnose() {
         ),
         ("sharepoint library", r"~\Contoso Ltd\Site - Documents"),
         ("another user", r"C:\Users\OtherDom\Desktop"),
+        ("webdav ssl", r"\\fileserver01@SSL\DavWWWRoot\x"),
+        ("webdav port", r"\\fileserver01@SSL@8443\teamshare\x"),
+        ("mixed separators", r"\\fileserver01/teamshare/x"),
+        ("verbatim unc with /", r"\\?\UNC/fileserver01/teamshare/x"),
+        ("slashed unc in text", "path=//fileserver01/teamshare/x"),
+        ("nt unc", r"\??\UNC\fileserver01\teamshare\x"),
+        ("mup", r"\Device\Mup\fileserver01\teamshare\x"),
+        ("spaced share before /", r"\\fileserver01\TeamShare Docs/x"),
     ] {
         assert_no_secret(&redactor.text(input), label);
         assert_no_secret(&redactor.path(Path::new(input)), label);
@@ -1095,6 +1103,12 @@ fn windows_redaction_keeps_what_support_needs() {
         ("drive path", r"D:\Data\x"),
         ("redacted unc", r"\\<host>\<share>\<user>\AppData"),
         ("message", "hidapi: no device"),
+        (
+            "url",
+            "see https://github.com/knittingcode/deckpilot/releases",
+        ),
+        ("comment", "// a comment"),
+        ("webdav root", r"\\<host>@SSL\DavWWWRoot\x"),
     ] {
         assert!(redactor.text(input) == input, "changed: {label}");
     }

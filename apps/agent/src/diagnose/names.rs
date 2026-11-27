@@ -11,7 +11,7 @@ use super::replace_word;
 
 /// Names that are ordinary path words: a domain or organisation called so
 /// is not replaced (it would destroy the report's paths).
-const COMMON_WORDS: [&str; 14] = [
+const COMMON_WORDS: [&str; 23] = [
     "users",
     "user",
     "home",
@@ -26,6 +26,16 @@ const COMMON_WORDS: [&str; 14] = [
     "shared",
     "temp",
     "workgroup",
+    // The placeholders: replacing them would nest them (`<<host>>`).
+    "host",
+    "share",
+    "domain",
+    "org",
+    "id",
+    "ip",
+    "email",
+    "redacted",
+    "machine-id",
 ];
 
 /// Each of `names` (of two or more characters, longest first, without
@@ -61,13 +71,18 @@ pub(crate) fn useful_names(names: impl IntoIterator<Item = String>) -> Vec<Strin
     out
 }
 
-/// A UNC path's server and share: `\\server\share`, `\\?\UNC\server\share`
-/// and `\\.\UNC\server\share`, also with doubled (escaped) backslashes.
+/// A UNC path's server and share: `\\server\share`, `\\?\UNC\server\share`,
+/// `\\.\UNC\server\share`, `\??\UNC\server`, `\Device\Mup\server`,
+/// WebDAV servers (`server@SSL@8443`), `/` or mixed separators after the
+/// server, `//server/share` in text, and doubled (escaped) backslashes.
 /// The local device namespaces (`\\.\pipe\…`, `\\?\C:\…`) are kept, and so
 /// are the administrative shares (`C$`, `ADMIN$`, `IPC$`) and `pipe`.
 pub(crate) fn unc(text: &str) -> String {
     let text = VERBATIM_UNC.replace_all(text, |c: &Captures<'_>| {
-        format!("{}<host>{}", &c["lead"], share(c))
+        format!("{}<host>{}{}", &c["lead"], &c["dav"], share(c))
+    });
+    let text = SLASHED_UNC.replace_all(&text, |c: &Captures<'_>| {
+        format!("{}{}<host>{}{}", &c["pre"], &c["lead"], &c["dav"], share(c))
     });
     UNC.replace_all(&text, |c: &Captures<'_>| {
         let end = c.name("end").map_or("", |end| end.as_str());
@@ -76,7 +91,13 @@ pub(crate) fn unc(text: &str) -> String {
         if c.name("sep").is_none() && c["server"].len() < 2 {
             return c[0].to_owned();
         }
-        format!("{}{}<host>{}{end}", &c["pre"], &c["lead"], share(c))
+        format!(
+            "{}{}<host>{}{}{end}",
+            &c["pre"],
+            &c["lead"],
+            &c["dav"],
+            share(c)
+        )
     })
     .into_owned()
 }
@@ -105,7 +126,7 @@ fn share(c: &Captures<'_>) -> String {
     // A share with spaces is taken only up to the next backslash, which
     // the pattern consumed.
     let (share, after) = match (c.name("spaced"), c.name("share")) {
-        (Some(spaced), _) => (spaced.as_str(), "\\"),
+        (Some(spaced), _) => (spaced.as_str(), c.name("after").map_or("", |a| a.as_str())),
         (None, Some(share)) => (share.as_str(), ""),
         (None, None) => return sep.to_owned(),
     };
@@ -120,15 +141,19 @@ fn is_admin_share(share: &str) -> bool {
     let lower = share.to_ascii_lowercase();
     matches!(
         lower.as_str(),
-        "admin$" | "ipc$" | "print$" | "pipe" | "mailslot"
+        "admin$" | "ipc$" | "print$" | "pipe" | "mailslot" | "davwwwroot"
     ) || (lower.len() == 2
         && lower.ends_with('$')
         && lower.starts_with(|c: char| c.is_ascii_alphabetic()))
 }
 
 /// What a share name may be: a run with spaces that ends before a
-/// backslash (consumed), or a run without spaces.
-const SHARE: &str = r#"(?:(?P<spaced>[^\\/"'<>|:*?\r\n]*[^\\/\s"'<>|:*?])\\|(?P<share>[^\\/\s"'<>|:*?,;()\[\]{}]+))"#;
+/// separator (consumed as `after`), or a run without spaces.
+const SHARE: &str = r#"(?:(?P<spaced>[^\\/"'<>|:*?\r\n]*[^\\/\s"'<>|:*?])(?P<after>[\\/])|(?P<share>[^\\/\s"'<>|:*?,;()\[\]{}]+))"#;
+
+/// A UNC server: a name, and the WebDAV forms `server@SSL`, `server@8443`
+/// and `server@SSL@8443`.
+const SERVER: &str = r"(?P<server>[A-Za-z0-9_-][A-Za-z0-9._-]*)(?P<dav>(?:@(?:SSL|\d{1,5}))*)";
 
 /// `\\server\share`. Before it: the start, a space, a quote, or one of
 /// `=([<,;{|*` or a backtick (`<\\server`, `,\\server`), each also
@@ -139,15 +164,26 @@ const SHARE: &str = r#"(?:(?P<spaced>[^\\/"'<>|:*?\r\n]*[^\\/\s"'<>|:*?])\\|(?P<
 /// directories.
 static UNC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r#"(?P<pre>^:?|[\s"'=(\[<,;{{|`*]:?|[A-Za-z0-9_]{{2,}}:)(?P<lead>\\{{2,}})(?P<server>[A-Za-z0-9_-][A-Za-z0-9._-]*)(?:(?P<sep>\\+){SHARE}?|(?P<end>$|["'>]))"#,
+        r#"(?P<pre>^:?|[\s"'=(\[<,;{{|`*]:?|[A-Za-z0-9_]{{2,}}:)(?P<lead>\\{{2,}})(?i:{SERVER})(?:(?P<sep>[\\/]+){SHARE}?|(?P<end>$|["'>]))"#,
     ))
     .expect("valid regex")
 });
 
-/// `\\?\UNC\server\share` and `\\.\UNC\server\share`.
+/// `//server/share` in text: only after the start, a space, a quote or
+/// `=([<,;{|*` (never after `scheme:`, which is a URL's), and only with a
+/// share, so a `// comment` or a lone `//x` stays.
+static SLASHED_UNC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r#"(?P<pre>^|[\s"'=(\[<,;{{|`*])(?P<lead>//)(?i:{SERVER})(?P<sep>[\\/]+){SHARE}"#,
+    ))
+    .expect("valid regex")
+});
+
+/// `\\?\UNC\server\share` and `\\.\UNC\server\share` (also with `/`), and
+/// the NT forms `\??\UNC\server` and `\Device\Mup\server`.
 static VERBATIM_UNC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?i)(?P<lead>\\{{2,}}[?.]\\+UNC\\+)(?P<server>[A-Za-z0-9._-]+)(?:(?P<sep>\\+){SHARE}?)?",
+        r"(?i)(?P<lead>(?:[\\/]{{2,}}[?.]|\\+\?\?)[\\/]+UNC[\\/]+|\\+Device\\+Mup\\+){SERVER}(?:(?P<sep>[\\/]+){SHARE}?)?",
     ))
     .expect("valid regex")
 });
