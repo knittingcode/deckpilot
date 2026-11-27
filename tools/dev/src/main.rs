@@ -81,6 +81,8 @@ Commands:
                          Guided test of a physical Stream Deck with the real
                          agent; --mock checks the procedure on a simulated MK.2
   validation seed|populate|unlock|status|stored|inventory <data-dir>
+  validation agent|schema|shutdown <data-dir>
+  validation activate <data-dir> <profile name>
                          Update-test helpers on an isolated data directory
                          (see docs/release-validation.md)
   verify-signature <file> <file.sig>

@@ -280,7 +280,8 @@ never installs an older version than the running one.
 | Update intent and start-up recovery: atomic writing, a damaged intent, completion, an update interrupted before installing (the previous agent is started again), a new agent that does not start (reported and kept), and when rolling back is called safe | `deckpilot-update` `intent` tests; `updates_tests.rs` (`recovery`, on every platform) | automated |
 | The lock probe: a held lock is seen, a free one is released again at once | `deckpilot-ipc` `instance` tests | automated |
 | `DECKPILOT_AGENT_BIN` absent from and ignored by a release build, honoured by a debug build | `crates/deckpilot-distribution/tests/release_build.rs` | automated |
-| Update between two published releases | an installation of one published release updated to the next (not yet done) | not verified |
+| Package upgrade from the latest published release to this commit, on Linux: the release's .deb and AppImage checked (SHA256SUMS, updater signatures with the pinned key, latest.json), installed and run on an isolated profile with a fixture configuration (schema 13, changed by the release's agent over IPC); this commit's .deb installed over it with apt, its AppImage put in place of the release's; the profiles, the active profile and the update mode kept, this commit's schema, the upgrade recorded with a backup that opens with the same key, the agent answering at this commit's protocol; when the schema changed, the release's agent then refuses the upgraded data and changes nothing | `tools/ci/check-upgrade.sh`, Packaging workflow ("Upgrade from the release"; pull requests that change packaging, the storage or the updater, nightly, the release) | automated on Linux; Windows and macOS not run |
+| Update between two published releases | an installation of one published release updated to the next by the in-app updater (not yet done) | not verified |
 
 - Update discovery, manifest validation, signature verification, policy
   decisions and the agent stop/restart sequence are covered by automated
@@ -288,9 +289,12 @@ never installs an older version than the running one.
 - **An actual signed update has not yet been installed end to end between
   two published releases.** Releases have been published since 0.6.0 (the
   latest is 0.15.0, see [releasing.md](releasing.md)), but no installation
-  of one has been updated to the next and checked afterwards; the release
-  smoke test only downloads the update and verifies its checksum and
-  signature. Until it has been verified, the default mode stays "Notify
+  of one has been updated to the next by the in-app updater and checked
+  afterwards; the release smoke test only downloads the update and verifies
+  its checksum and signature. What CI does check is the package upgrade
+  from the latest published release to each commit's Linux packages (the
+  row above): the data path of an update, without the updater's download
+  and signature step, which an unsigned build of a commit cannot pass. Until it has been verified, the default mode stays "Notify
   me".
 - Keychain continuity across a signed update has been verified on
   `v0.6.0-alpha.2` by the *Update continuity* workflow

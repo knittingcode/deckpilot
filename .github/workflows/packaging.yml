@@ -20,10 +20,21 @@
 # registry. The roots' embedding is tested by the registry crate
 # (crates/deckpilot-plugin-registry/tests/embedded_roots.rs).
 #
+# The upgrade from the latest published release (the baseline in
+# tools/release-pipeline/compat-baseline): its .deb and AppImage,
+# downloaded and checked against SHA256SUMS and their updater signatures,
+# installed and run on an isolated profile with a fixture configuration,
+# then upgraded to this commit's packages; the data must survive with
+# this commit's schema and a backup, the new agent must answer at this
+# commit's protocol, and the release's agent must refuse the upgraded data
+# (tools/ci/check-upgrade.sh, jobs upgrade-tools and upgrade-linux).
+#
 # Runs:
 # - on pull requests, only when packaging-relevant paths change
 #   (tools/ci/changed-paths.sh, group `packaging`); otherwise the jobs
-#   report as skipped;
+#   report as skipped. Pull requests that change the storage and its
+#   migrations or the updater (group `upgrade`) build the Linux packages
+#   and run the upgrade (and the Linux install checks) only;
 # - on pushes to main that change those paths, nightly, by hand
 #   (workflow_dispatch), and when called by another workflow (workflow_call):
 #   the release workflow calls it before drafting a release, so version tags
@@ -122,6 +133,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       packaging: ${{ steps.paths.outputs.packaging }}
+      upgrade: ${{ steps.paths.outputs.upgrade }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -141,7 +153,7 @@ jobs:
   package-linux:
     name: Package check (Linux .deb, AppImage)
     needs: changes
-    if: needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.packaging == 'true' || needs.changes.outputs.upgrade == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     outputs:
@@ -309,6 +321,101 @@ jobs:
             exit 0
           fi
           timeout 1200 tools/ci/check-linux-install.sh rpm "$rpm"
+
+  # The client the upgrade check drives the agents with (deckpilot-dev
+  # validation, tools/dev/src/validation.rs), built from this commit while
+  # the packages are built.
+  upgrade-tools:
+    name: Upgrade tools (deckpilot-dev)
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true' || needs.changes.outputs.upgrade == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux system dependencies
+        run: tools/ci/install-linux-deps.sh
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - name: Only the pinned Rust toolchain
+        shell: bash
+        run: tools/ci/rust-pinned-toolchain.sh
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: upgrade-tools
+          save-if: ${{ env.SAVE_RUST_CACHE == 'true' }}
+      - name: Build deckpilot-dev
+        run: cargo build --locked -p deckpilot-dev
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-tools
+          path: target/debug/deckpilot-dev
+          if-no-files-found: error
+          retention-days: 3
+
+  # The upgrade from the latest published release to the packages built
+  # above, on a fresh Ubuntu 24.04 runner (tools/ci/check-upgrade.sh): the
+  # release's .deb and AppImage are downloaded and checked (SHA256SUMS,
+  # updater signatures with the pinned key, latest.json), the .deb is
+  # installed with apt, its agent opens a copy of a fixture configuration
+  # (schema 13, the development password) on an isolated profile and
+  # changes it over IPC, then this commit's .deb is installed over it with
+  # apt and its agent opens the same data: the profiles, the active profile
+  # and the update mode are kept, the schema is this commit's, the upgrade
+  # is recorded with a backup that opens with the same key, and the agent
+  # answers at this commit's protocol. The release's agent must then refuse
+  # the upgraded data and change nothing. The same with the AppImages,
+  # replaced in place as the updater does. Nothing is published; no secret,
+  # credential store or production service is used (the plugin registry
+  # points at an unreachable loopback URL).
+  upgrade-linux:
+    name: Upgrade from the release (Linux .deb and AppImage)
+    needs: [package-linux, upgrade-tools]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-packages
+          path: ${{ runner.temp }}/packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-tools
+          path: ${{ runner.temp }}/tools
+      # minisign for the signatures, D-Bus for the agents' sessions, FUSE
+      # and the WebKitGTK runtime for the AppImages (as install-linux).
+      - name: Test tools
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update -q -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+          timeout 900 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            minisign dbus libfuse2t64 libwebkit2gtk-4.1-0
+          chmod +x "$RUNNER_TEMP/tools/deckpilot-dev"
+      # The read-only token for the download only: the release's packages
+      # and agents run in later steps, without it.
+      - name: The release, its checksums and updater signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(cat tools/release-pipeline/compat-baseline)
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          tools/ci/check-upgrade.sh download "$tag" "$RUNNER_TEMP/release"
+      - name: Upgrade the release's .deb to this commit's with apt
+        run: |
+          deb=$(find "$RUNNER_TEMP/packages" -name '*.deb' | head -n 1)
+          test -n "$deb"
+          timeout 900 tools/ci/check-upgrade.sh deb "$RELEASE_TAG" "$RUNNER_TEMP/release" "$deb" "$RUNNER_TEMP/tools/deckpilot-dev"
+      - name: Replace the release's AppImage with this commit's
+        run: |
+          appimage=$(find "$RUNNER_TEMP/packages" -name '*.AppImage' | head -n 1)
+          test -n "$appimage"
+          timeout 900 tools/ci/check-upgrade.sh appimage "$RELEASE_TAG" "$RUNNER_TEMP/release" "$appimage" "$RUNNER_TEMP/tools/deckpilot-dev"
 
   # Builds the Windows installers with the release configuration, the way
   # the release workflow does (agent built in a bash step with Strawberry
@@ -514,7 +621,16 @@ jobs:
   # packages.
   result:
     name: Packaging result
-    needs: [changes, package-linux, install-linux, package-windows, package-macos]
+    needs:
+      [
+        changes,
+        package-linux,
+        install-linux,
+        upgrade-tools,
+        upgrade-linux,
+        package-windows,
+        package-macos,
+      ]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
