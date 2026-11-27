@@ -221,6 +221,42 @@ signature. Manual checks on real machines:
 | Linux | The agent starts at login (XDG autostart); the tray icon needs AppIndicator support |
 | Linux | AppImage updates in place; `.deb`/`.rpm` updates ask for administrator authorization |
 
+## 4a. Checks for 0.16.0 (devices, agent lifecycle, installers)
+
+0.16.0's device states, reconnect backoff, agent restart, single instance
+and tray fallback are verified with simulated devices and in CI only.
+**None of the checks below has been performed yet.** Use the packages of
+the release-candidate commit (the *Packaging* workflow's artifacts of that
+commit on `main`, built like the release's and, like the release's,
+unsigned on Windows and Linux) and a fresh test user or a backup of the
+data folder. Nothing here resets or re-binds a USB device or changes
+system security settings; the only system file touched is DeckPilot's own
+udev rule, put back at the end.
+
+Before and after each Linux check, save `deckpilot-agent diagnose --json`
+(read-only, redacted) with the result.
+
+| # | Platform | Setup | Steps | Expected |
+| - | -------- | ----- | ----- | -------- |
+| 1 | Ubuntu 24.04, MK.2 direct | `.deb` of 0.15.0 installed and configured (profile, project, a few keys) | Install the 0.16.0 `.deb` over it with the MK.2 plugged in; do not replug | The device works at once; profiles, active profile and project kept; `backups/deckpilot-schema13-*.db` exists |
+| 2 | Ubuntu, permission denied | `sudo mv /usr/lib/udev/rules.d/70-deckpilot-streamdeck.rules ~/`, `sudo udevadm control --reload-rules`, replug | Open the app | "No permission", not "Disconnected"; the one-time guide shows the udev fix; moving the rule back, reloading and replugging makes it Connected |
+| 3 | Ubuntu, busy | MK.2 connected | Hold the device open from a second program you normally use with it | "In use by another program" where the system reports the device busy; otherwise record what is shown |
+| 4 | Ubuntu, MK.2 behind the ThinkVision P49w-30 hub | MK.2 in the monitor's hub | Watch for 10 minutes; unplug and replug the hub's upstream cable once | While `lsusb` lists `0fd9:0080` without a `/dev/hidraw*`: "On USB, not usable" and the hub guide; retries 2 s doubling to 60 s in the agent log, never every 2 s; no redraw flood |
+| 5 | Any, disconnect and reconnect | MK.2 on a non-default page and brightness | Unplug, wait 5 s, replug; then Refresh devices | Back within ~2 s with the same page, layout and brightness; no action runs |
+| 6 | Any, agent crash | App open, agent started by the app (not at login) | `pkill -KILL deckpilot-agent` (Windows: `taskkill /F /IM deckpilot-agent.exe`) four times within 10 minutes, waiting for it to return each time | Restarted after about 1, 5 and 30 s, locked until the app unlocks it; after the fourth, "DeckPilot agent stopped" with Restart; tray Quit is never followed by a restart |
+| 7 | Ubuntu GNOME without an AppIndicator extension | Extension disabled, log out and in | Start DeckPilot | No tray icon; Settings › Background Agent and › Devices show the no-tray notice; **Stop background agent** stops it |
+| 8 | Ubuntu GNOME with the extension; KDE Plasma | — | Start DeckPilot | Tray icon, no notice; tray Quit works |
+| 9 | Windows 11 and Ubuntu, release build | App installed | Start it twice; quit, then double-click the launcher quickly during startup | The second start brings the open window (or the password prompt) to the front; exactly one main window |
+| 10 | Fedora | `.rpm` of 0.15.0 installed and configured | `sudo dnf install` the 0.16.0 `.rpm` | As check 1 (the `.rpm` upgrade is not run in CI) |
+| 11 | Windows 11 | MSI, and separately NSIS, of 0.15.0 installed and configured | Run the 0.16.0 installer of the same kind over it | SmartScreen warns (unsigned); the agent is stopped before files are replaced; data, autostart and the Credential Manager key kept; app and agent at 0.16.0 |
+| 12 | macOS, signed in-app update | 0.15.0 from its release, configured | After 0.16.0 is published: Check for updates, install | No keychain prompt; same configuration; app and agent at 0.16.0. *Update continuity* on the tag covers the keychain part before publication (section 2) |
+| 13 | Any | — | Look at the no-tray notice, the device guide and Export diagnostics… in English and Polish | Text fits, no clipped buttons; Export shows the content before saving |
+
+Record the OS version, package, device firmware and result of each check
+in the release's validation notes. Check 12 can only run after
+publication; every other check can run on the release-candidate packages
+before the tag.
+
 ## Results for 0.5.0
 
 | Area | Result | How |
