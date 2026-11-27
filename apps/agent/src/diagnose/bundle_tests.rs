@@ -70,6 +70,9 @@ fn fixture(root: &Path) -> Environment {
         user: Some(USER.into()),
         machine_id: Some(MACHINE_ID.into()),
         hostname: Some(HOST.into()),
+        host_aliases: Vec::new(),
+        domains: Vec::new(),
+        organisations: Vec::new(),
         hid: HidSource::Listed(Ok(vec![deckpilot_hid::HidInterface {
             vendor_id: 0x0fd9,
             product_id: 0x0080,
@@ -664,5 +667,121 @@ fn windows_shapes() {
     ] {
         let output = redactor.line(input).to_lowercase();
         assert!(!output.contains(&secret.to_lowercase()), "left: {label}");
+    }
+}
+
+/// A Windows user `Alexander` of `CORP` on `alexanders-desktop-2024`
+/// (`COMPUTERNAME` `ALEXANDERS-DESK`) with a `OneDrive` of `Contoso Ltd`.
+fn windows_env(root: &Path) -> Environment {
+    let mut env = fixture(root);
+    env.platform = "windows";
+    env.home = Some(PathBuf::from(r"C:\Users\Alexander"));
+    env.user = Some("Alexander".into());
+    env.hostname = Some("ALEXANDERS-DESK".into());
+    env.host_aliases = vec!["alexanders-desktop-2024".into()];
+    env.domains = vec!["CORP".into(), "corp.example.com".into()];
+    env.organisations = vec!["Contoso Ltd".into()];
+    env
+}
+
+/// Never printed: a failure names the case only.
+const WINDOWS_NAMES: [&str; 8] = [
+    "alexander",
+    "alexan~",
+    "fileserver01",
+    "teamshare",
+    "alexanders-desk",
+    "corp",
+    "contoso",
+    "otherdom",
+];
+
+/// The Windows gaps of #519's re-check 4 in log lines: UNC paths after any
+/// character and in the device namespace, 8.3 names, the DNS host name,
+/// domain-qualified users and `OneDrive` organisations.
+#[test]
+fn windows_names_go_from_the_logs() {
+    let root = root();
+    let redactor = LogRedactor::new(&windows_env(root.path()));
+    for (label, input) in [
+        ("device unc", r"open \\.\UNC\fileserver01\teamshare\x"),
+        ("unc after <", r"path=<\\fileserver01\teamshare\x>"),
+        ("unc after ,", r"paths a,\\fileserver01\teamshare\x"),
+        ("unc after :", r"error:\\fileserver01\teamshare\x"),
+        (
+            "escaped unc",
+            r#"{\"path\":\"\\\\fileserver01\\teamshare\\x\"}"#,
+        ),
+        ("bare unc", r#"server "\\fileserver01""#),
+        ("8.3 home", r"exe C:\Users\ALEXAN~1\AppData\Local\x.exe"),
+        ("8.3 temp", r"temp D:\ALEXAN~1.COR\Temp"),
+        ("dns host name", "connected to alexanders-desktop-2024 now"),
+        ("netbios name", "COMPUTERNAME=ALEXANDERS-DESK"),
+        ("domain user", r"user CORP\Alexander signed in"),
+        ("unknown domain user", r#"user "OTHERDOM\\Alexander""#),
+        ("upn", "user alexander@corp.example.com"),
+        (
+            "onedrive",
+            r"sync C:\Users\Alexander\OneDrive - Contoso Ltd\Docs",
+        ),
+        (
+            "onedrive of another org",
+            r"sync ~\OneDrive - TeamShare GmbH\Docs",
+        ),
+        ("sharepoint library", r"sync ~\Contoso Ltd\Site - Docs"),
+        ("webdav", r"open \\fileserver01@SSL@8443\DavWWWRoot\x"),
+        ("mixed separators", r"open \\fileserver01/teamshare/x"),
+        ("slashed unc", "path=//fileserver01/teamshare/x"),
+        ("nt unc", r"open \??\UNC\fileserver01\teamshare"),
+    ] {
+        let output = redactor.line(input).to_lowercase();
+        for (index, name) in WINDOWS_NAMES.iter().enumerate() {
+            assert!(!output.contains(name), "{label}: name {index} is left");
+        }
+    }
+    for (label, input) in [
+        ("pipe", r"listening on \\.\pipe\deckpilot-agent-<id>"),
+        ("program files", r"C:\Program Files (x86)\DeckPilot\x.exe"),
+        (
+            "escaped program files",
+            r"C:\\Program Files (x86)\\DeckPilot\\x.exe",
+        ),
+        ("escaped home", r"~\\AppData\\Roaming\\x"),
+        ("8.3 program files", r"C:\PROGRA~1\DeckPilot\x.exe"),
+        ("admin share", r"\\<host>\c$\x"),
+        (
+            "release url",
+            "fetch https://github.com/knittingcode/deckpilot/releases",
+        ),
+        (
+            "json-escaped url",
+            r#"{\"url\":\"https:\/\/github.com\/x\"}"#,
+        ),
+    ] {
+        assert!(redactor.line(input) == input, "changed: {label}");
+    }
+}
+
+/// Plain `diagnose`'s Windows output is already clean: the bundle's second
+/// pass changes none of it.
+#[test]
+fn the_windows_report_passes_the_log_redaction_unchanged() {
+    let root = root();
+    let env = windows_env(root.path());
+    let report = crate::diagnose::Redactor::new(&env);
+    let redactor = LogRedactor::new(&env);
+    for (label, input) in [
+        ("unc", r"\\fileserver01\teamshare\Alexander.CORP\AppData\x"),
+        ("verbatim unc", r"\\?\UNC\fileserver01\teamshare\x"),
+        ("8.3", r"C:\Users\ALEXAN~1\AppData\Local\x.exe"),
+        ("onedrive", r"~\OneDrive - Contoso Ltd\AppData"),
+        ("domain user", r"CORP\Alexander"),
+        ("host", r"D:\alexanders-desktop-2024\x"),
+        ("pipe", r"\\.\pipe\deckpilot-agent-<id>"),
+        ("webdav", r"\\fileserver01@SSL\DavWWWRoot\x"),
+        ("mixed", r"\\fileserver01/teamshare/x"),
+    ] {
+        let clean = report.text(input);
+        assert!(redactor.line(&clean) == clean, "changed: {label}");
     }
 }
