@@ -21,10 +21,11 @@ released either. 0.6.0 is the first version intended for publication.
 (configuration schema 13 to 16, plugin store schema 6 to 7). An encrypted
 backup of each is written first: `backups/deckpilot-schema13-*.db` next
 to the configuration database and `.backups/plugins-schema6-*.db` next to
-the plugin store (`plugins.db`). Downgrading to 0.15.0 requires restoring a
-compatible backup: a 0.15.0 agent refuses the upgraded configuration and
-leaves it unchanged, and runs without plugins on the upgraded plugin
-store. Changes made after the upgrade are not in the backup. Profiles,
+the plugin store (`plugins.db`). Downgrading to 0.15.0 requires restoring
+a compatible backup, by hand, of both files: a 0.15.0 agent does not open
+the upgraded configuration and leaves it unchanged, and with only the
+configuration restored it runs without plugins. Changes made after the
+upgrade are not in the backups. Profiles,
 actions, workflows and plugins are kept by the upgrade; nothing is reset
 (`docs/compatibility.md`).
 
@@ -34,7 +35,8 @@ actions, workflows and plugins are kept by the upgrade; nothing is reset
   has a Repositories section: add a repository by choosing its folder in
   the system's folder dialog (its key and name are proposed from the
   folder name), then rename, describe, reorder, choose another folder,
-  mark the default or remove it. Each repository has a key (`cms`, unique
+  mark the default or remove it. Marking a default repository also points
+  the `repository` role at it. Each repository has a key (`cms`, unique
   in the project), a name, a description and a folder that is bound on
   each computer and never exported. A removal asks first and lists what
   else uses the folder; removing a repository never removes its folder
@@ -94,7 +96,8 @@ actions, workflows and plugins are kept by the upgrade; nothing is reset
   example GNOME without an AppIndicator extension), or the icon could not
   be created, Settings › Background Agent and Settings › Devices say so,
   explain that the agent keeps running, and offer **Stop background
-  agent**, since the tray's Quit is missing. DeckPilot does not install or
+  agent**, since the tray's Quit is missing; the app also shows one
+  notification per agent run when it opens. DeckPilot does not install or
   enable any desktop extension.
 - Diagnostics: `deckpilot-agent diagnose [--json]`, a read-only report for
   support: versions, the installation, whether the agent runs, the udev
@@ -102,8 +105,10 @@ actions, workflows and plugins are kept by the upgrade; nothing is reset
   when a Stream Deck's USB device is present but its HID interface is
   missing (for example behind a monitor's hub) or when the device cannot
   be opened. It starts and changes nothing, opens no device on Linux and
-  works while the configuration is locked. The JSON report is versioned
-  (schema 1).
+  works while the configuration is locked. Serial numbers become
+  pseudonyms, and the home folder, user and computer names (on Windows
+  also a domain, an 8.3 short name, a network share and a OneDrive
+  organisation) are replaced. The JSON report is versioned (schema 1).
 - Settings › Logs & Diagnostics › Export diagnostics… saves a support
   bundle: the diagnostics report and the end of the recent agent and
   update logs, in one file. Tokens, passwords and other secret values,
@@ -190,14 +195,16 @@ actions, workflows and plugins are kept by the upgrade; nothing is reset
 
 ### Development status (not usable in this release)
 
-These parts are in the code but switched off or inert until their
-bundled plugins ship; nothing below is visible or usable in 0.16.0, and
-this release provides plugin API 1.11:
+These parts are in the code but inert until their bundled plugins ship,
+and this release provides plugin API 1.11. Settings › Connections and a
+repository's Remotes with its **Link remote…** button are already shown
+but stay empty: no bundled plugin connects to servers yet. Nothing else
+below is visible:
 
 - **Projects plugin 0.2.0** (plugin API 1.12): repository variables
   (`projects.current.repository`, `projects.current.repositories`), read
   member by member; a folder path, an id or a remote URL is never shown
-  on a key. IPC protocol 18.
+  on a key.
 - **Scripts** (plugin API 1.13): script storage (schema 16) and export
   (format 6, imported scripts always arrive untrusted with no
   permissions), a Scripts page with an editor and a review of scripts
@@ -209,13 +216,12 @@ this release provides plugin API 1.11:
   GitLab, with tokens kept in the encrypted plugin store (schema 7) and
   injected only into requests to their own server; linking a project
   repository to a repository on a connection; importing the server and,
-  only if you choose, the token of the old GitHub or GitLab plugin. IPC
-  protocol 20.
+  only if you choose, the token of the old GitHub or GitLab plugin.
 - **Calls**: managed Calls layouts per device model (schema 15), the call
   state engine, "Back to work" sessions, a per-device overlay setting,
   and the Settings › Devices › Calls section with a preview of the call
-  pages on the device (IPC protocol 19). A locked device never shows a call. Microsoft Teams
-  can only be detected, not controlled: Microsoft retired its device API
+  pages on the device. A locked device never shows a call. Microsoft
+  Teams can only be detected, not controlled: Microsoft retired its device API
   on 2026-06-30, so answering, rejecting, muting or ending a Teams call is
   not supported (`docs/calls.md`).
 

@@ -66,7 +66,8 @@ backup; IPC protocol 22 and plugin API 1.11, with the same nine bundled
 plugins (same versions and bytes) as 0.15.0. The steps follow. A 0.15.x
 agent refuses both upgraded files and changes nothing; the way back to
 0.15.x is restoring the pre-migration backups (below). The upgrade of an
-installed 0.15.0 `.deb` and AppImage, including that refusal, runs in the
+installed 0.15.0 `.deb` and AppImage, including the 0.15.0 agent's refusal of the upgraded configuration, runs
+in the
 *Packaging* workflow (`tools/ci/check-upgrade.sh`).
 
 Schema
