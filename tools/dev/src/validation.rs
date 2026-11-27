@@ -164,6 +164,123 @@ fn unlock(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `activate <dir> <profile name>`: makes the named profile the active one
+/// through the running agent (`SetActiveProfile`), as choosing it in the
+/// app does. The agent stores the choice in the configuration, so the
+/// running agent, of whatever version, writes it.
+fn activate(dir: &Path, name: &str) -> Result<(), String> {
+    let runtime = runtime();
+    let Response::Profiles { profiles, .. } =
+        runtime.block_on(request(dir, Request::ListProfiles))?
+    else {
+        return Err("unexpected response to ListProfiles".into());
+    };
+    let id = profiles
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| p.id)
+        .ok_or_else(|| format!("the agent has no profile named `{name}`"))?;
+    match runtime.block_on(request(dir, Request::SetActiveProfile { profile: id }))? {
+        Response::ActiveProfile { profile: Some(p) } if p.id == id => {
+            println!("active profile {}", p.name);
+            Ok(())
+        }
+        other => Err(format!("unexpected {other:?}")),
+    }
+}
+
+/// `agent <dir>`: the running agent's version and protocol, the protocol
+/// this client negotiated with it and its own.
+fn agent(dir: &Path) -> Result<(), String> {
+    let client = runtime()
+        .block_on(AgentClient::connect(
+            &AgentPaths::in_dir(dir),
+            ClientKind::Other,
+        ))
+        .map_err(|e| e.to_string())?;
+    println!(
+        "agent_version={} agent_protocol={} negotiated_protocol={} client_protocol={}",
+        client.agent_version(),
+        client.agent_protocol(),
+        client.protocol(),
+        deckpilot_ipc::PROTOCOL_VERSION,
+    );
+    Ok(())
+}
+
+/// `schema <dir>`: the configuration's schema and the one this build
+/// supports, its recorded schema upgrades, the update mode, and the newest
+/// upgrade's backup: a copy of it (in a temporary folder; the backup itself
+/// is not touched) must open with the agent's key and hold the profiles.
+/// Opened with the key from the running agent, like the app opens it, so a
+/// configuration of an older schema is upgraded first: run it after the
+/// agent of this build has opened the configuration.
+fn schema(dir: &Path) -> Result<(), String> {
+    let key = agent_key(dir)?;
+    let store = SqliteStore::open(dir.join("deckpilot.db"), &Encryption::Key(key.clone()))
+        .map_err(|e| e.to_string())?;
+    let history = store.migration_history().map_err(|e| e.to_string())?;
+    let upgrades = history
+        .iter()
+        .map(|r| format!("{}->{}:{}", r.from_version, r.to_version, r.result))
+        .collect::<Vec<_>>();
+    let updates = store
+        .setting(PREFERENCES_SETTING)
+        .map_err(|e| e.to_string())?
+        .and_then(|json| serde_json::from_str::<UpdatePreferences>(&json).ok())
+        .map_or_else(|| "-".into(), |p| format!("{:?}", p.mode));
+    let backup = match history.iter().rev().find_map(|r| r.backup.as_deref()) {
+        None => "-".to_owned(),
+        Some(path) => {
+            let path = Path::new(path);
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            let profiles = backup_profiles(path, &key)?;
+            format!("{name} backup_profiles={profiles}")
+        }
+    };
+    println!(
+        "schema={} supported={} upgrades={} updates={updates} backup={backup}",
+        store.schema_version().map_err(|e| e.to_string())?,
+        SqliteStore::supported_schema_version(),
+        if upgrades.is_empty() {
+            "-".into()
+        } else {
+            upgrades.join(",")
+        },
+    );
+    Ok(())
+}
+
+/// The number of profiles in a copy of the backup at `path`, opened with
+/// `key` in a temporary folder that is removed afterwards.
+fn backup_profiles(path: &Path, key: &DatabaseKey) -> Result<usize, String> {
+    let copy = std::env::temp_dir().join(format!(
+        "deckpilot-backup-check-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_millis()
+    ));
+    std::fs::create_dir_all(&copy).map_err(|e| e.to_string())?;
+    let result = std::fs::copy(path, copy.join("deckpilot.db"))
+        .map_err(|e| format!("cannot copy the backup {}: {e}", path.display()))
+        .and_then(|_| {
+            SqliteStore::open(copy.join("deckpilot.db"), &Encryption::Key(key.clone()))
+                .map_err(|e| format!("the backup does not open with the agent's key: {e}"))
+        })
+        .and_then(|store| store.list_profiles().map_err(|e| e.to_string()))
+        .map(|profiles| profiles.len());
+    let _ = std::fs::remove_dir_all(&copy);
+    result
+}
+
+/// `shutdown <dir>`: asks the running agent to stop, as Quit does.
+fn shutdown(dir: &Path) -> Result<(), String> {
+    runtime().block_on(request(dir, Request::Shutdown))?;
+    println!("agent asked to stop");
+    Ok(())
+}
+
 /// `status <dir>`: one line with what the update test compares.
 fn status(dir: &Path) -> Result<(), String> {
     let Response::Status { status } = runtime().block_on(request(dir, Request::GetStatus))? else {
@@ -197,6 +314,10 @@ pub fn command(args: &[String]) -> Result<(), String> {
         "unlock" => unlock(&dir),
         "status" => status(&dir),
         "stored" => stored(&dir),
+        "activate" => activate(&dir, rest.get(1).ok_or("expected a profile name")?),
+        "agent" => agent(&dir),
+        "schema" => schema(&dir),
+        "shutdown" => shutdown(&dir),
         other => Err(format!("unknown validation command `{other}`")),
     }
 }

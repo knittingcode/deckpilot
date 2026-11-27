@@ -255,6 +255,7 @@ they report as skipped:
 | Job | Runs on a pull request that changes |
 | --- | ----------------------------------- |
 | Package check (Linux .deb), Package check (Windows installers), in the Packaging workflow | files that affect bundling: `apps/desktop/src-tauri/` `tauri*.json`, `build.rs`, `Cargo.toml`, `capabilities/`, `icons/`, `app-icon.svg`; `apps/agent/` `build.rs`, `Cargo.toml`, `Info.plist`; `packaging/`, `tools/ci/`, `.github/workflows/`, `Cargo.lock`, `Cargo.toml`, `apps/desktop/package.json` |
+| Upgrade tools, Upgrade from the release (with the Linux package check and install), in the Packaging workflow | the files above, and `crates/deckpilot-storage/`, `crates/deckpilot-update/`, `apps/desktop/src-tauri/src/updates*`, `tools/release-pipeline/compat-baseline`, `tools/dev/src/validation.rs`, `tools/release-smoke/download.sh` and `common.sh` (`tools/ci/check-upgrade.sh`) |
 | Credential store (3 platforms) | `crates/deckpilot-keystore/`, `tools/ci/with-keyring.sh`, `.github/workflows/ci.yml` |
 | Release manifest assembly | `tools/ci/`, `.github/workflows/release.yml`, `.github/workflows/ci.yml` |
 | Dev tooling scripts (Linux, macOS) | `tools/dev/*.sh`, `tools/dev/tests/`, `.github/workflows/ci.yml` |

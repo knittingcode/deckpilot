@@ -15,7 +15,7 @@
 # doubt, run.
 set -euo pipefail
 
-groups="packaging keystore release_manifest dev_tools"
+groups="packaging keystore release_manifest dev_tools upgrade"
 # The paths of a group: an extended regular expression on whole paths.
 pattern() {
   case "$1" in
@@ -34,6 +34,13 @@ pattern() {
     # release scripts' own tests, among them the Linux packages' udev
     # maintainer scripts (packaging/linux, tools/ci/test-udev-scripts.sh).
     release_manifest) echo '^tools/ci/|^packaging/linux/|^tools/release-pipeline/common\.sh$|^crates/deckpilot-update/|^\.github/workflows/(release|ci)\.yml$' ;;
+    # The upgrade from the latest published release to this commit's Linux
+    # packages (Packaging, jobs "Upgrade tools" and "Upgrade from the
+    # release"; tools/ci/check-upgrade.sh): the storage and its migrations,
+    # the updater, the release it starts from, the deckpilot-dev helpers it
+    # drives the agents with, and the check itself. Changes that affect
+    # bundling run it too (group `packaging`).
+    upgrade) echo '^crates/deckpilot-storage/|^crates/deckpilot-update/|^apps/desktop/src-tauri/src/updates|^tools/release-pipeline/compat-baseline$|^tools/dev/src/validation\.rs$|^tools/release-smoke/(download|common)\.sh$' ;;
     # The worktree and build cache scripts of tools/dev and their tests.
     dev_tools) echo '^tools/dev/[^/]+\.sh$|^tools/dev/tests/|^\.github/workflows/ci\.yml$' ;;
   esac
