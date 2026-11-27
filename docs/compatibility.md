@@ -19,6 +19,7 @@ page says what happens then and how it is tested.
 | Release 0.13.0 | 0.13.0 | 16 | 13 |
 | Release 0.14.0 | 0.14.0 | 17 | 13 |
 | Release 0.15.0 | 0.15.0 | 17 | 13 |
+| Release 0.16.0 | 0.16.0 | 22 | 16 |
 | Current main | see `Cargo.toml` | 22 | 16 |
 
 Besides these, 0.10.0 provides plugin API 1.9 (0.9.0 provides 1.4): the
@@ -59,7 +60,16 @@ older agent the app's storefront commands answer `null`). The agent caches
 a verified storefront under `<state>/storefront/` and its media under
 `<state>/media/`; an older agent does not read them.
 
-Current main (after 0.15.0) moves the configuration database to schema
+0.16.0 moves the configuration database from schema 13 to 16 and the
+plugin store from schema 6 to 7, in one upgrade, each after its encrypted
+backup; IPC protocol 22 and plugin API 1.11, with the same nine bundled
+plugins (same versions and bytes) as 0.15.0. The steps follow. A 0.15.x
+agent refuses both upgraded files and changes nothing; the way back to
+0.15.x is restoring the pre-migration backups (below). The upgrade of an
+installed 0.15.0 `.deb` and AppImage, including that refusal, runs in the
+*Packaging* workflow (`tools/ci/check-upgrade.sh`).
+
+Schema
 14: projects get their repositories (`docs/data-model.md`,
 "Repositories"). The migration is additive. It adds two columns to
 `projects` and stores, for every project with the `repository` role, the
@@ -86,7 +96,7 @@ settings hidden. Only desktop clients receive `callsChanged`; that is
 hygiene, since the IPC token is the access boundary. Protocol 18, the
 step before it, is structured variables.
 
-Current main then moves it to schema 15: the managed layouts of the Calls
+Then schema 15: the managed layouts of the Calls
 plugin (`docs/calls.md`, "Managed layouts"). The migration is additive: one
 new, empty table (`managed_layouts`); no layout is adopted or rewritten and
 no other table changes. It runs after the same encrypted backup
@@ -97,8 +107,7 @@ too (supported 14); they change nothing. The way back is the pre-migration
 backup, as above: restore it in place of `deckpilot.db`, without its `-wal`
 and `-shm` files.
 
-Current main then moves the configuration database to schema **16**,
-after 15: the scripts of a profile (`docs/data-model.md`, "Scripts"). The
+Then schema **16**, after 15: the scripts of a profile (`docs/data-model.md`, "Scripts"). The
 migration is additive, two new, empty tables: `scripts` (portable, with its
 profile) and `script_trust` (machine-local: the trusted source hash and the
 script's grants, never exported). Nothing existing is rewritten. It runs
@@ -201,7 +210,7 @@ version 2 or 3. IPC: the capability `keyLabels` (protocol 17, with
 `displayTemplates`); key faces carry `labels` and previews `labelBoxes` only
 when a key has labels ([key-text.md](key-text.md#labels)).
 
-Key title appearance (unreleased): a key's appearance may carry
+Key title appearance (0.10.0): a key's appearance may carry
 `fontFamily`, `bold`, `italic` and `underline`, optional fields that older
 agents and apps ignore (an older app drops them when it saves the layout);
 no document version, migration or IPC protocol change. Action types may
@@ -212,7 +221,7 @@ plugin API 1.7 reports such a version `incompatible`; manifests without
 them are unchanged ([key-text.md](key-text.md#plugin-titles),
 [marketplace/sdk/manifest.md](marketplace/sdk/manifest.md#contributesvisualassets)).
 
-Shared visual assets (unreleased,
+Shared visual assets (0.10.0,
 [key-text.md](key-text.md#icons-and-backgrounds)): a key's `icon.id` may be
 a library asset id (`deckpilot.<name>`, `<plugin>.<id>`) besides a profile
 image's UUID, and its `background` may be `asset:<ref>` besides `#rrggbb`
@@ -225,7 +234,7 @@ summaries carry the optional `visualAssets` (older apps ignore it), and
 whose plugin runtime lists the feature `visualAssets` (an older agent would
 answer with the plugin's own icon).
 
-Plugin API 1.9 (unreleased,
+Plugin API 1.9 (0.10.0,
 [marketplace/module-migration.md §7](marketplace/module-migration.md#plugin-api-19-security-reviews-2026-11-20)):
 additive. The manifest kinds `tools`, `resources`, `projectContext` and
 `hostViews`, `openUrl.fromParams`, `resource` parameters, the view kinds
@@ -246,7 +255,7 @@ older agent refuses as unknown; a `resource.resolve` role is the user's
 role name (up to 1,024 characters, not blank), no longer a parameter key.
 No IPC protocol or document change.
 
-Plugin API 1.10 (unreleased,
+Plugin API 1.10 (0.16.0,
 [gestures-and-work-session.md §3.4](gestures-and-work-session.md#34-gesture-presets)):
 additive. `contributes.gesturePresets` validates only with `^1.10`; a
 `^1.9` manifest without it validates exactly as before, and an agent of
@@ -259,7 +268,7 @@ older agent sends neither, and the app then lists no presets. No IPC
 protocol change. The SDK's `GESTURE_PRESETS_API_LEVEL` is 1.10 (nothing
 for the guest).
 
-Plugin API 1.11 (unreleased, [action-contexts.md](action-contexts.md#plugin-actions)):
+Plugin API 1.11 (0.16.0, [action-contexts.md](action-contexts.md#plugin-actions)):
 additive. `contributes.actions[].contexts` validates only with `^1.11`;
 a manifest without it validates exactly as before and its actions keep
 all five contexts. An agent of 1.10 or older reports a `^1.11` version
@@ -270,7 +279,7 @@ document change; contexts stay advisory (reported on save, warned on
 run, never refused). The SDK's `LATEST_API_LEVEL` is 1.11
 (`ACTION_CONTEXTS_API_LEVEL`, `Action::contexts`).
 
-Plugin API 1.12 (unreleased, [variables.md §2.8](variables.md#28-structured-values-and-member-access)):
+Plugin API 1.12 (unreleased; 0.16.0 does not provide it, [variables.md §2.8](variables.md#28-structured-values-and-member-access)):
 additive. Structured variable types (`valueType` `{"type": "object",
 "shape": "repository"}` and `{"type": "map", "of": "repository"}`) and the
 host sources `host:project.repositories` and `host:project.repository`
@@ -286,7 +295,7 @@ before; text of 7 to 9 segments under a module or plugin root, which was not
 a reference, now parses as a member reference and resolves as unknown. No
 database, document or export change.
 
-IPC protocol 22 (unreleased): tray status (capability `trayStatus`,
+IPC protocol 22 (0.16.0): tray status (capability `trayStatus`,
 DP-TRAY-01). `AgentStatus.tray` says whether the agent's tray icon is
 `shown`, created without a StatusNotifier host on Linux (`noHost`), created
 without knowing whether it is shown (`hostUnknown`), could not be created
@@ -297,7 +306,7 @@ older agent gets no `tray` and shows no tray notice; an unknown future value
 reads as `unknown` and shows none either. No request, schema, document or
 export change.
 
-IPC protocol 21 (unreleased): device states (capability `deviceStates`,
+IPC protocol 21 (0.16.0): device states (capability `deviceStates`,
 DP-USB-01). `DeviceInfo.availability` says why a device is or is not usable
 (connected, not connected, USB present but HID unavailable, permission
 denied, unsupported, busy, communication error, reconnecting, unknown), and
@@ -310,7 +319,7 @@ its list is exactly what it was. An app of 21 with an older agent gets no
 future value reads as `unknown`. No request, schema, document or export
 change.
 
-IPC protocol 20 (unreleased; 19 is reserved for the Calls event):
+IPC protocol 20 (0.16.0; 19 is the Calls protocol):
 plugin connections (capability `pluginConnections`, plugin API 1.14):
 `listPluginConnections`, `createPluginConnection`,
 `setPluginConnectionSecret`, `updatePluginConnection`,
@@ -340,7 +349,7 @@ remotes of that repository's bound folder (`repositoryRemotes`, at most 16,
 URLs without credentials), read by the agent with `git remote -v`; the app
 asks only an agent that lists the feature, and sends ids, never a path.
 
-IPC protocol 18 (unreleased): structured variables (capability
+IPC protocol 18 (0.16.0): structured variables (capability
 `structuredVariables`). `CatalogEntry.valueType` may be `object` or `map`
 with the shape's `members` and, for a map, its keys in the context's
 project (`mapKeys`); each structured variable is listed once and the app
@@ -356,7 +365,7 @@ and the nearest older reasons
 (`Response::for_protocol`); no request changes, so an app of 18 works with
 an agent of 17 as before (without repository variables).
 
-Plugin API 1.13 (unreleased, [scripts-bridge.md](scripts-bridge.md)), the
+Plugin API 1.13 (unreleased; 0.16.0 does not provide it, [scripts-bridge.md](scripts-bridge.md)), the
 Scripts host bridge, part 1 of 4: the ABI and the host engine. The
 operations `script.*`, `project.repositories`, `fs.*`, `process.run`,
 `shell.run` and `shell.available` are compatible additions within ABI 1:
