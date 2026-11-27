@@ -336,8 +336,8 @@ case "$kind" in
       [ "$(dpkg-query -W -f '${Version} ${Status}' "$package")" = "$new_version install ok installed" ] \
         || fail "$package is not installed at $new_version: $(dpkg-query -W -f '${Version} ${Status}' "$package")"
       # The installed agent is this commit's.
-      dpkg-deb --fsys-tarfile "$new" | tar -xO ./usr/bin/deckpilot-agent > "$work/new-agent"
-      cmp -s "$work/new-agent" /usr/bin/deckpilot-agent || fail "/usr/bin/deckpilot-agent is not the new package's"
+      dpkg-deb -x "$new" "$work/new-deb"
+      cmp -s "$work/new-deb/usr/bin/deckpilot-agent" /usr/bin/deckpilot-agent || fail "/usr/bin/deckpilot-agent is not the new package's"
       echo "installed: $(dpkg-query -W -f '${Package} ${Version}' "$package"), /usr/bin/deckpilot-agent is the new package's"
       # The release's agent, for the downgrade check: from its package,
       # not installed (the system keeps this commit's).
