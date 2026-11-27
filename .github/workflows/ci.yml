@@ -106,9 +106,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # With Xvfb and D-Bus for the tray test below.
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
-        run: tools/ci/install-linux-deps.sh
+        run: tools/ci/install-linux-deps.sh xvfb xauth dbus
       # Installs the toolchain pinned in rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version && cargo clippy --version
@@ -154,6 +155,16 @@ jobs:
       # feature set, without the other members' features, once.
       - if: runner.os == 'Linux'
         run: cargo test -p deckpilot-plugin-registry --features publish --locked
+      # The tray on Linux (DP-TRAY-01): the agent executable with its real
+      # tray library, under Xvfb on a private session bus, registers its
+      # icon with a minimal StatusNotifier watcher and reports it shown;
+      # without one (GNOME without an AppIndicator extension) it reports
+      # no host, keeps running and quits on `shutdown`. No panel draws the
+      # icon here: registration is checked, not its pixels.
+      - name: Tray with and without a StatusNotifier host
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: xvfb-run -a dbus-run-session -- cargo test -p deckpilot-agent --test tray_linux --locked -- --ignored --nocapture --test-threads 1
       # The guided hardware test, run against a simulated MK.2 with the real
       # agent: checks the procedure (not hardware).
       - name: Hardware test procedure (simulated device)

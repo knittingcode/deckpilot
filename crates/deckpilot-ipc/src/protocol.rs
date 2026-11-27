@@ -223,7 +223,15 @@ use crate::{connections, plugins};
 /// field is left out and those devices are dropped
 /// ([`Response::for_protocol`], [`AgentEvent::for_protocol`]), so its
 /// list is exactly what it was. No request changes.
-pub const PROTOCOL_VERSION: u32 = DEVICE_STATES_PROTOCOL;
+///
+/// Version 22: tray status (capability `trayStatus`, DP-TRAY-01).
+/// `AgentStatus.tray` says whether the agent's tray icon exists and, on
+/// Linux, whether a `StatusNotifier` host shows it ([`TrayState`]), so the
+/// app can explain a missing tray and offer its own way to stop the agent.
+/// A client of protocol 21 or older does not receive the field
+/// ([`Response::for_protocol`], [`AgentEvent::for_protocol`]). No request
+/// changes.
+pub const PROTOCOL_VERSION: u32 = TRAY_STATUS_PROTOCOL;
 
 /// The protocol of Calls ([`Capability::Calls`]).
 pub const CALLS_PROTOCOL: u32 = 19;
@@ -233,6 +241,9 @@ pub const CONNECTIONS_PROTOCOL: u32 = 20;
 
 /// The protocol of device states ([`Capability::DeviceStates`]).
 pub const DEVICE_STATES_PROTOCOL: u32 = 21;
+
+/// The protocol of the tray status ([`Capability::TrayStatus`]).
+pub const TRAY_STATUS_PROTOCOL: u32 = 22;
 
 /// Longest locale tag `setLocale` accepts (`zh-Hant-TW` is 10).
 pub const MAX_LOCALE_TAG: usize = 16;
@@ -440,10 +451,12 @@ pub enum Capability {
     /// Device states: `DeviceInfo.availability` and devices that are
     /// present but not opened. Protocol [`DEVICE_STATES_PROTOCOL`].
     DeviceStates,
+    /// Tray status: `AgentStatus.tray`. Protocol [`TRAY_STATUS_PROTOCOL`].
+    TrayStatus,
 }
 
 impl Capability {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Workflows,
         Self::PrepareForUpdate,
         Self::ModuleNamespaces,
@@ -466,6 +479,7 @@ impl Capability {
         Self::Calls,
         Self::PluginConnections,
         Self::DeviceStates,
+        Self::TrayStatus,
     ];
 
     /// The protocol that introduced the capability.
@@ -491,6 +505,7 @@ impl Capability {
             Self::Calls => CALLS_PROTOCOL,
             Self::PluginConnections => CONNECTIONS_PROTOCOL,
             Self::DeviceStates => DEVICE_STATES_PROTOCOL,
+            Self::TrayStatus => TRAY_STATUS_PROTOCOL,
         }
     }
 
@@ -1759,6 +1774,11 @@ impl Response {
     /// variable registry (before protocol 9).
     #[must_use]
     pub fn for_protocol(mut self, protocol: u32) -> Self {
+        if protocol < TRAY_STATUS_PROTOCOL
+            && let Self::Status { status } = &mut self
+        {
+            status.tray = None;
+        }
         if protocol < DEVICE_STATES_PROTOCOL {
             self = self.without_device_states();
         }
@@ -2212,8 +2232,11 @@ impl AgentEvent {
             return None;
         }
         match self {
-            Self::State { mut status } if protocol < DEVICE_STATES_PROTOCOL => {
-                status.devices = without_device_states(status.devices);
+            Self::State { mut status } if protocol < TRAY_STATUS_PROTOCOL => {
+                status.tray = None;
+                if protocol < DEVICE_STATES_PROTOCOL {
+                    status.devices = without_device_states(status.devices);
+                }
                 Some(Self::State { status })
             }
             Self::SharedVariablesChanged { keys } if protocol < 10 => {
@@ -2354,6 +2377,51 @@ pub struct AgentStatus {
     /// agents and before any app set one: English. Older apps ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
+    /// Whether the agent's tray icon exists and can be seen (protocol 22,
+    /// DP-TRAY-01). `None` from older agents and for clients before
+    /// protocol 22.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tray: Option<TrayState>,
+}
+
+/// Whether the agent's tray icon (macOS: its menu bar item) exists and is
+/// shown, as far as the agent can tell (protocol 22, DP-TRAY-01).
+///
+/// Without a tray icon the tray's menu is missing, including its "Quit
+/// DeckPilot": the app then says so and offers its own way to stop the
+/// agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrayState {
+    /// The icon was created and is shown: on macOS and Windows once it is
+    /// created; on Linux once a `StatusNotifier` host has it registered.
+    Shown,
+    /// Linux: the icon was created, but no `StatusNotifier` host is on the
+    /// session bus (no `org.kde.StatusNotifierWatcher`, or one without a
+    /// host), e.g. GNOME without an `AppIndicator` extension. It is most
+    /// likely not visible; only a legacy `XEmbed` tray could still show it.
+    NoHost,
+    /// Linux: the icon was created; whether a host shows it is not known
+    /// (no session bus, or the host has not listed it yet).
+    HostUnknown,
+    /// The icon could not be created (on Linux: the `AppIndicator` library
+    /// is missing or cannot be loaded). The agent runs without it.
+    Unavailable,
+    /// The agent was started without a tray icon (`--headless`).
+    Disabled,
+    /// A state added by a newer agent.
+    #[serde(other)]
+    Unknown,
+}
+
+impl TrayState {
+    /// Whether the tray (and its "Quit DeckPilot") is known to be missing,
+    /// so the app explains that and offers its own way to stop the agent.
+    /// Not for [`TrayState::Disabled`]: whoever started the agent headless
+    /// asked for that.
+    pub fn is_missing(self) -> bool {
+        matches!(self, Self::NoHost | Self::Unavailable)
+    }
 }
 
 /// A build's distribution record as it crosses the IPC boundary.
@@ -3353,7 +3421,7 @@ mod tests {
             serde_json::to_value(Capability::VariableRegistry).unwrap(),
             "variableRegistry"
         );
-        assert_eq!(PROTOCOL_VERSION, 21);
+        assert_eq!(PROTOCOL_VERSION, 22);
         let projects = deckpilot_core::ModuleId::new("projects").unwrap();
         let legacy = CatalogEntry {
             reference: VariableRef::System(SystemVariable::ProjectCurrentKey),
@@ -3576,6 +3644,115 @@ mod tests {
                 status: status(vec![old(connected), old(gone)]),
             }
         );
+    }
+
+    #[test]
+    fn the_tray_status_needs_protocol_22() {
+        assert!(!Capability::of_protocol(21).contains(&Capability::TrayStatus));
+        assert!(Capability::of_protocol(22).contains(&Capability::TrayStatus));
+        assert_eq!(
+            serde_json::to_value(Capability::TrayStatus).unwrap(),
+            "trayStatus"
+        );
+        let status = |tray: Option<TrayState>| {
+            let mut status: AgentStatus = serde_json::from_str(PREVIOUS_STATUS).unwrap();
+            status.tray = tray;
+            Box::new(status)
+        };
+        let gone = DeviceInfo {
+            never_opened: true,
+            ..device("C", ConnectionState::Disconnected, DeviceAvailability::Busy)
+        };
+
+        // Protocol 22 gets the field, in getStatus and in state events.
+        let response = Response::Status {
+            status: status(Some(TrayState::NoHost)),
+        };
+        assert_eq!(response.clone().for_protocol(22), response);
+        let Response::Status { status: sent } = &response else {
+            unreachable!()
+        };
+        assert_eq!(serde_json::to_value(sent).unwrap()["tray"], "noHost");
+        let event = AgentEvent::State {
+            status: status(Some(TrayState::Unavailable)),
+        };
+        assert_eq!(event.clone().for_protocol(22), Some(event.clone()));
+
+        // Protocol 21: no field, devices unchanged.
+        let mut with_device = status(Some(TrayState::Shown));
+        with_device.devices = vec![gone.clone()];
+        let mut expected = with_device.clone();
+        expected.tray = None;
+        assert_eq!(
+            AgentEvent::State {
+                status: with_device.clone()
+            }
+            .for_protocol(21),
+            Some(AgentEvent::State {
+                status: expected.clone()
+            })
+        );
+        assert_eq!(
+            Response::Status {
+                status: with_device.clone()
+            }
+            .for_protocol(21),
+            Response::Status { status: expected }
+        );
+        let json = serde_json::to_value(&*status(None)).unwrap();
+        assert!(json.get("tray").is_none());
+
+        // Protocol 20: neither the tray nor the device states.
+        let mut old = with_device.clone();
+        old.tray = None;
+        old.devices = Vec::new();
+        assert_eq!(
+            AgentEvent::State {
+                status: with_device.clone()
+            }
+            .for_protocol(20),
+            Some(AgentEvent::State {
+                status: old.clone()
+            })
+        );
+        assert_eq!(
+            Response::Status {
+                status: with_device
+            }
+            .for_protocol(20),
+            Response::Status { status: old }
+        );
+    }
+
+    #[test]
+    fn tray_states_read_from_any_agent() {
+        // An older agent sends no field.
+        let previous: AgentStatus = serde_json::from_str(PREVIOUS_STATUS).unwrap();
+        assert_eq!(previous.tray, None);
+        for (json, state) in [
+            ("shown", TrayState::Shown),
+            ("noHost", TrayState::NoHost),
+            ("hostUnknown", TrayState::HostUnknown),
+            ("unavailable", TrayState::Unavailable),
+            ("disabled", TrayState::Disabled),
+            // A state of a newer agent.
+            ("hiddenByPolicy", TrayState::Unknown),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<TrayState>(json.into()).unwrap(),
+                state
+            );
+        }
+        assert!(TrayState::NoHost.is_missing());
+        assert!(TrayState::Unavailable.is_missing());
+        for state in [
+            TrayState::Shown,
+            TrayState::HostUnknown,
+            TrayState::Disabled,
+            TrayState::Unknown,
+        ] {
+            assert!(!state.is_missing(), "{state:?}");
+        }
     }
 
     #[test]

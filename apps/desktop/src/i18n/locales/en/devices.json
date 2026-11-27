@@ -42,6 +42,27 @@
       "exitCode": "exit code {{code}}",
       "exitSignal": "signal {{signal}}",
       "exitUnknown": "no exit code"
+    },
+    "tray": {
+      "label": "Tray icon",
+      "state": {
+        "shown": "Shown",
+        "noHost": "Probably not shown: no StatusNotifier tray found",
+        "hostUnknown": "Created; not known whether it is shown",
+        "unavailable": "Not available",
+        "disabled": "Off (started without a tray)",
+        "unknown": "Unknown"
+      },
+      "notice": {
+        "title": "The tray icon is not available",
+        "noHost": "DeckPilot found no StatusNotifier tray to show its icon in, so the icon is probably not shown. On GNOME, the tray needs an AppIndicator extension; DeckPilot does not install one.",
+        "unavailable": "The tray icon could not be created, because the AppIndicator library is missing or could not be loaded.",
+        "stillRunning": "The background agent keeps running: your devices and actions work as usual. Without the tray there is no tray menu and no Quit DeckPilot there. Open DeckPilot from your applications menu, and stop the background agent here. Closing this window does not stop it.",
+        "docs": "More in the documentation: Troubleshooting › No tray icon.",
+        "stop": "Stop background agent",
+        "stopped": "The background agent was stopped",
+        "notStopped": "The background agent was not stopped"
+      }
     }
   },
   "detail": {

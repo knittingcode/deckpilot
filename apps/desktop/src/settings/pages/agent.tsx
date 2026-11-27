@@ -1,7 +1,12 @@
 import { RefreshCw, Square } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { AgentBadge, AgentCompatibilityNotice, AgentStopped } from "@/components/agent"
+import {
+  AgentBadge,
+  AgentCompatibilityNotice,
+  AgentStopped,
+  TrayFallbackNotice,
+} from "@/components/agent"
 import { ErrorNotice } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,6 +22,7 @@ import { api } from "@/lib/api"
 import { failureMessage } from "@/lib/failure"
 import { useAppContext } from "@/lib/app-context"
 import { formatTimestamp } from "@/lib/format"
+import { TRAY_STATE_LABEL } from "@/lib/tray-state"
 import { useTranslation } from "@/i18n"
 
 export function AgentSettings() {
@@ -77,6 +83,7 @@ export function AgentSettings() {
   return (
     <>
       <AgentCompatibilityNotice />
+      <TrayFallbackNotice />
       {error && <ErrorNotice error={error} />}
       <SettingsSection
         title={
@@ -107,6 +114,11 @@ export function AgentSettings() {
                 })}
               </Property>
               <Property label={t("settings:agent.backend")}>{status.backend}</Property>
+              {status.tray && (
+                <Property label={t("devices:agent.tray.label")}>
+                  {t(TRAY_STATE_LABEL[status.tray])}
+                </Property>
+              )}
             </PropertyList>
             <SettingsGroup>
               <SettingsRow
